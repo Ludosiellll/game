@@ -1,0 +1,204 @@
+// ignore_for_file: avoid_print — консольный инструмент.
+// Симулятор баланса: бот играет по простой стратегии и печатает, когда
+// наступают ключевые события. Запуск: `dart run tool/simulate.dart`.
+//
+// Профили:
+//   active — играет без перерывов (чистое игровое время);
+//   casual — 10 минут каждые 2 часа с 8:00 до 22:00, 3 тапа/с, 1 буст за сессию;
+//   lazy   — 5 минут в 9:00, 13:00, 18:00 и 22:00, 1 тап/с, без рекламы.
+//
+// Песня: первую бот поёт сразу (ради пробуждения кита), следующие — когда
+// новые семена составят ≥ 75% всех уже заработанных.
+import 'package:skywhale/core/big.dart';
+import 'package:skywhale/core/economy.dart';
+import 'package:skywhale/core/format.dart';
+import 'package:skywhale/core/game_state.dart';
+
+class Profile {
+  const Profile(this.name, this.sessionMinutes, this.sessionHours, this.tapsPerSecond, this.boostPerSession);
+  final String name;
+  final int sessionMinutes;
+
+  /// Часы начала сессий в течение суток; пусто — играет без перерывов.
+  final List<int> sessionHours;
+  final double tapsPerSecond;
+  final bool boostPerSession;
+}
+
+const profiles = [
+  Profile('active', 0, [], 3, false),
+  Profile('casual', 10, [8, 10, 12, 14, 16, 18, 20, 22], 3, true),
+  Profile('lazy', 5, [9, 13, 18, 22], 1, false),
+];
+
+void main(List<String> args) {
+  final hours = args.isNotEmpty ? double.parse(args.first) : 72.0;
+  final only = args.length > 1 ? args[1] : null;
+  for (final p in profiles) {
+    if (only != null && p.name != only) continue;
+    simulate(p, hours);
+    print('');
+  }
+}
+
+void simulate(Profile p, double calendarHours) {
+  const start = 1700000000000;
+  final s = newGame(start);
+  var nowMs = start;
+  var playSeconds = 0.0;
+  final endMs = start + (calendarHours * 3600 * 1000).round();
+  final log = <String>[];
+  var lastRegion = 0;
+  var tapCarry = 0.0;
+  var seedsEarned = Big.zero;
+
+  void event(String what) {
+    log.add(
+      '${_hms(playSeconds).padLeft(9)} игры | ${_dhm(nowMs - start).padLeft(10)} с начала | $what '
+      '| доход ${formatRate(incomePerSecond(s, nowMs))}, цвет ${bloom(s).toStringAsFixed(0)}, '
+      'забег ${formatBig(s.runEarned)}',
+    );
+  }
+
+  void playSecond() {
+    tapCarry += p.tapsPerSecond;
+    while (tapCarry >= 1) {
+      tap(s, nowMs);
+      tapCarry -= 1;
+    }
+    tick(s, 1, nowMs);
+    nowMs += 1000;
+    playSeconds += 1;
+    touch(s, nowMs);
+    _spend(s, nowMs);
+    if (canMigrate(s)) {
+      migrate(s);
+    }
+    if (s.region != lastRegion) {
+      event('регион ${s.region + 1}: ${s.content.regions[s.region].name}');
+      lastRegion = s.region;
+    }
+    if (canSing(s) && (s.songs == 0 || seedsForSong(s) >= seedsEarned.mulNum(0.75))) {
+      final seeds = seedsForSong(s);
+      seedsEarned = seedsEarned + seeds;
+      event('перед песней №${s.songs + 1}: птиц ${s.birds}, растения ${s.generators}');
+      final woke = longSong(s, nowMs)!;
+      lastRegion = 0;
+      event(
+        'Долгая песнь №${s.songs}: +${formatBig(seeds)} семян'
+        '${woke.isEmpty ? '' : ', проснулся: ${woke.map((w) => s.content.whaleById(w).name).join(', ')}'}',
+      );
+      _spendSeeds(s);
+    }
+  }
+
+  if (p.sessionHours.isEmpty) {
+    while (nowMs < endMs && playSeconds < calendarHours * 3600) {
+      playSecond();
+      if (s.songs >= 10) break;
+    }
+  } else {
+    // Симуляция начинается в 8:00 первого дня.
+    var day = 0;
+    outer:
+    while (true) {
+      for (final h in p.sessionHours) {
+        final sessionStart = start + ((day * 24 + h - 8) * 3600 * 1000);
+        if (sessionStart >= endMs) break outer;
+        if (sessionStart > nowMs) {
+          nowMs = sessionStart;
+          applyOffline(s, nowMs);
+        }
+        if (p.boostPerSession) addBoost(s, nowMs);
+        for (var i = 0; i < p.sessionMinutes * 60; i++) {
+          playSecond();
+        }
+      }
+      day += 1;
+    }
+  }
+
+  print(
+    '=== профиль ${p.name}: сессии по ${p.sessionMinutes} мин в ${p.sessionHours.isEmpty ? 'без перерывов' : p.sessionHours.join(', ')} ч, '
+    '${p.tapsPerSecond} тапа/с ===',
+  );
+  log.forEach(print);
+  print(
+    'итог: песен ${s.songs}, регион ${s.region + 1}, цвет ${(regionProgress(s) * 100).toStringAsFixed(0)}%, '
+    'доход ${formatRate(incomePerSecond(s, nowMs))}, Эхо ${formatBig(s.echo)}, птиц ${s.birds}, '
+    'семян ${formatBig(s.seeds)}, растения ${s.generators}',
+  );
+}
+
+/// Жадная покупка: всё, что окупается быстрее всего, пока хватает Эха.
+void _spend(GameState s, int nowMs) {
+  for (var guard = 0; guard < 500; guard++) {
+    final base = incomePerSecond(s, nowMs);
+    String? bestId;
+    var bestPayback = double.infinity;
+    Big? bestCost;
+    for (final g in s.content.generators) {
+      if (!isUnlocked(s, g.id)) continue;
+      final cost = costOf(s, g.id, 1);
+      s.generators[g.id] = s.owned(g.id) + 1;
+      final gain = incomePerSecond(s, nowMs) - base;
+      s.generators[g.id] = s.owned(g.id) - 1;
+      final payback = _payback(cost, gain);
+      if (payback < bestPayback) {
+        bestPayback = payback;
+        bestId = g.id;
+        bestCost = cost;
+      }
+    }
+    final birdPrice = birdCost(s, 1);
+    s.birds += 1;
+    final birdGain = incomePerSecond(s, nowMs) - base;
+    s.birds -= 1;
+    final birdPayback = _payback(birdPrice, birdGain);
+    if (birdPayback < bestPayback) {
+      bestPayback = birdPayback;
+      bestId = 'bird';
+      bestCost = birdPrice;
+    }
+    if (bestId == null || bestCost == null || s.echo < bestCost) return;
+    if (bestId == 'bird') {
+      buyBirds(s, 1);
+    } else {
+      buyGenerator(s, bestId, 1);
+    }
+  }
+}
+
+double _payback(Big cost, Big gain) {
+  if (gain.isZero || gain.isNegative) return double.infinity;
+  return (cost / gain).toDouble();
+}
+
+void _spendSeeds(GameState s) {
+  const priority = ['sprouts', 'sleep', 'flock', 'voice', 'path', 'echo'];
+  var bought = true;
+  while (bought) {
+    bought = false;
+    for (final id in priority) {
+      if (id == 'echo') continue;
+      final cost = memoryCost(s, id);
+      if (cost != null && cost.toDouble() <= 2 && buyMemory(s, id)) bought = true;
+    }
+    if (buyMemory(s, 'echo')) bought = true;
+  }
+}
+
+String _hms(double seconds) {
+  final t = seconds.round();
+  final h = t ~/ 3600;
+  final m = (t % 3600) ~/ 60;
+  return h > 0 ? '$hч${m.toString().padLeft(2, '0')}м' : '$mм${(t % 60).toString().padLeft(2, '0')}с';
+}
+
+String _dhm(int ms) {
+  final t = ms ~/ 1000;
+  final d = t ~/ 86400;
+  final h = (t % 86400) ~/ 3600;
+  final m = (t % 3600) ~/ 60;
+  return d > 0 ? '$dд $hч' : '$hч${m.toString().padLeft(2, '0')}м';
+}

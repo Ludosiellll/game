@@ -1,0 +1,12 @@
+{
+  "name": "skywhale-visual-qa",
+  "private": true,
+  "type": "module",
+  "description": "Скриншоты веб-сборки на размерах телефонов (Playwright + Chromium).",
+  "scripts": {
+    "shots": "node shots.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}
