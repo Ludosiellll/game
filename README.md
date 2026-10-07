@@ -2,7 +2,7 @@
 
 Idle-кликер для Android: огромный кит летит над облаками, на его спине растёт сад, тап по небу — нота песни, серое небо возвращает цвет. Кит взрослеет от китёнка до древнего божества, стражи маршрута и Тень кита вызывают его на бой. Концепция и решения — в репозитории `game-notes` (`10_Project/Game_Concept.md`, `10_Project/Whale_Ages_and_Bosses.md`).
 
-Статус: играбельный прототип в стиле «игрушечное 3D» — пять возрастов кита, бои со стражами и Тенью кита, черты кита. Реклама — заглушка, покупок нет, звука пока нет.
+Статус: играбельный прототип в стиле «игрушечное 3D» — пять возрастов кита, бои со стражами и Тенью кита, черты кита; загрузочный экран и ролик-предыстория в стиле китайской туши. Реклама — заглушка, покупок нет, звука пока нет.
 
 ## Стек
 
@@ -61,14 +61,18 @@ python3 tool/art/pack_sprites.py $RAW assets/sprites   # обрезка, пат�
 
 Весь экспорт занимает около 20 минут на 4 ядрах; упакованные спрайты — около 1,2 МБ.
 
-Интро в стиле китайской живописи тушью (пробные кадры, ждут «ок»): Blender рисует китов без сада в два прохода — объём и линии кисти, остальное (бумага, горы, облака, Мгла, печать, подписи, акварельный разлив цвета) дорисовывает `tool/art/ink_frames.py` на numpy.
+Ролик-предыстория в стиле китайской живописи тушью (`assets/video/intro.mp4`, ~41 с, показывается при первом запуске, повтор — «Ещё» → «Смотреть предысторию»): Blender рисует китов без сада в два прохода — объём и линии кисти, остальное (бумага, горы, облака, Мгла, печать, подписи, акварельный разлив цвета) дорисовывает `tool/art/ink_frames.py` на numpy.
 
 ```bash
 $B -b --python tool/art/toy_scene.py -- ink $RAW/mother --stage=6 --yaw=66 --pitch=99 --tilt=5 --size=2000x1100   # мать-кит из легенды
 $B -b --python tool/art/toy_scene.py -- ink $RAW/calf --stage=1 --traits= --yaw=100 --tilt=8 --pitch=74 --size=900x700
 $B -b --python tool/art/toy_scene.py -- ink $RAW/stone1 --stage=6 --traits=noface,nofins --yaw=48 --pitch=80 --size=1400x700
 $B -b --python tool/art/toy_scene.py -- ink $RAW/stone2 --stage=6 --traits=noface,nofins --yaw=236 --pitch=80 --size=1400x700
-python3 tool/art/ink_frames.py $RAW FONTS out/   # FONTS: MarckScript, MaShanZheng (SIL OFL); нужны numpy, scipy, Pillow
+python3 tool/art/ink_frames.py $RAW FONTS out/             # пробные кадры; FONTS: MarckScript, MaShanZheng (SIL OFL); нужны numpy, scipy, Pillow
+python3 tool/art/ink_frames.py $RAW FONTS assets/intro loading   # фон загрузочного экрана
+python3 tool/art/ink_intro.py $RAW FONTS frames/ --workers=4     # ~980 кадров 1080×1920, около 10 минут на 4 ядрах
+ffmpeg -framerate 24 -i frames/%05d.jpg -vf scale=720:1280:flags=lanczos -c:v libx264 -profile:v main -preset slow \
+  -crf 24 -pix_fmt yuv420p -movflags +faststart -an assets/video/intro.mp4
 ```
 
 Пробный кадр стиля (главный экран и магазин, собраны из этих рендеров) — `docs/art/style_frame_2026-10-07.jpg`, кит без контура и с контуром — `docs/art/outline_ab_2026-10-07.jpg`. Возрасты кита (китёнок → божество) — `docs/art/whale_ages_2026-10-07.jpg`, макет боя со стражем — `docs/art/boss_fight_2026-10-07.jpg`.
@@ -84,7 +88,7 @@ lib/
   art/         SpriteAtlas: загрузка спрайтов и manifest.json
   scene/       сцена: небо, облака, кит по слоям, сад на спине, птицы, эффекты тапа;
                портрет кита с садом (WhalePortrait)
-  ui/          главный экран, HUD, листы Сад/Кит/Путь/Ещё, экран боя, окна,
+  ui/          загрузочный экран и ролик (intro_screen.dart), главный экран, HUD, листы Сад/Кит/Путь/Ещё, экран боя, окна,
                сочные виджеты (juicy.dart)
 tool/
   simulate.dart   бот-игрок для настройки баланса
@@ -118,6 +122,8 @@ test/             тесты правил на отдельном тестово
 | Файл | Автор | Лицензия | Откуда |
 | --- | --- | --- | --- |
 | `assets/fonts/Nunito-*.ttf` (статические начертания из вариативного шрифта, fontTools instancer; `Nunito-Black` — ось wght 1000) | The Nunito Project Authors | SIL OFL 1.1 | github.com/google/fonts, `ofl/nunito` |
+| `assets/fonts/MarckScript-Regular.ttf` (надписи загрузки и ролика) | Denis Masharov, Marck Fogel | SIL OFL 1.1 | github.com/google/fonts, `ofl/marckscript` |
+| `assets/video/intro.mp4`, `assets/intro/loading.jpg` (ролик и фон загрузки в стиле туши; в кадр вписаны глифы Marck Script и Ma Shan Zheng, оба SIL OFL) | наш код: `tool/art/toy_scene.py` (режим `ink`) → `ink_frames.py` / `ink_intro.py` | собственные | рендер из кода |
 | `assets/sprites/*.webp`, `manifest.json` (кит пяти возрастов, постройки, птицы, облака, боссы, иконки) | наш код: `tool/art/toy_scene.py` (Blender 4.5 LTS) → `tool/art/pack_sprites.py` | собственные | рендер из кода, сторонних моделей и текстур нет |
 
 3D-арт (`tool/art/toy_scene.py` и его рендеры) построен из примитивов нашим кодом — сторонних моделей и текстур в нём нет.

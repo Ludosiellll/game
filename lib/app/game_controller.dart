@@ -385,6 +385,14 @@ class GameController extends ChangeNotifier {
     return true;
   }
 
+  bool get shouldShowIntro => _ready && !state.introSeen;
+
+  Future<void> markIntroSeen() async {
+    if (state.introSeen) return;
+    state.introSeen = true;
+    await saveNow();
+  }
+
   Future<void> resetProgress() async {
     state = eco.newGame(_now(), content: content);
     pendingOffline = null;

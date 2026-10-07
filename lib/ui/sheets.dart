@@ -11,6 +11,7 @@ import '../core/game_state.dart';
 import '../core/story.dart';
 import '../scene/whale_scene.dart';
 import 'hud.dart';
+import 'intro_screen.dart';
 import 'juicy.dart';
 
 /// Окно-панель снизу с лентой-заголовком и красной кнопкой закрытия.
@@ -928,9 +929,16 @@ class MoreSheet extends StatelessWidget {
                 children: [
                   Text('Об игре', style: _title()),
                   Text(
-                    'Песнь небесного кита, версия 0.2. Вся 3D-графика построена нашим кодом в Blender. '
+                    'Песнь небесного кита, версия 0.3. Вся 3D-графика и ролик построены нашим кодом в Blender. '
                     'Реклама пока заглушка.',
                     style: _caption(),
+                  ),
+                  TextButton(
+                    key: const ValueKey('more-intro'),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(builder: (route) => IntroScreen(onDone: () => Navigator.of(route).pop())),
+                    ),
+                    child: const Text('Смотреть предысторию'),
                   ),
                   TextButton(
                     onPressed: () => showLicensePage(context: context, applicationName: 'Песнь небесного кита'),

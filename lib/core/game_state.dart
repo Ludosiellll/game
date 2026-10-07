@@ -31,6 +31,7 @@ class GameState {
     this.bossWins = 0,
     this.fightCooldownUntilMs = 0,
     this.lastSongMs = 0,
+    this.introSeen = false,
     this.content = defaultContent,
   }) : traits = traits ?? <String, int>{},
        cyclePeak = cyclePeak ?? Big.zero,
@@ -127,6 +128,9 @@ class GameState {
 
   /// Когда спета последняя Долгая песнь (0 — ещё не пели).
   int lastSongMs;
+
+  /// Ролик-предыстория уже показан (при первом запуске он идёт один раз).
+  bool introSeen;
 
   /// Баланс и контент, по которым играется эта партия (не сохраняется).
   final GameContent content;

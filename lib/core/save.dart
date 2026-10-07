@@ -40,6 +40,7 @@ String encodeSave(GameState s) => jsonEncode({
   'bossWins': s.bossWins,
   'fightCooldownUntilMs': s.fightCooldownUntilMs,
   'lastSongMs': s.lastSongMs,
+  'introSeen': s.introSeen,
 });
 
 /// Разбор сохранения. Возвращает `null`, если данные повреждены или созданы
@@ -86,6 +87,8 @@ GameState? decodeSave(String raw, {GameContent content = defaultContent}) {
       bossWins: (data['bossWins'] as num?)?.toInt() ?? bossesMet.length,
       fightCooldownUntilMs: (data['fightCooldownUntilMs'] as num? ?? 0).toInt(),
       lastSongMs: (data['lastSongMs'] as num? ?? 0).toInt(),
+      // В старых сохранениях отметки нет: кто уже играл, тому ролик не показываем.
+      introSeen: data['introSeen'] as bool? ?? ((data['taps'] as num? ?? 0) > 0 || songs > 0),
       content: content,
     );
   } catch (_) {

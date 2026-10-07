@@ -29,6 +29,8 @@ const allGens = { flower: 60, bush: 50, hive: 40, mill: 30, lantern: 20, observa
 const nav = { garden: [0.09, 62], whale: [0.265, 62], path: [0.735, 62], more: [0.91, 62], event: [0.875, 190] };
 
 const scenarios = [
+  // Загрузочный экран: снимок, пока свиток ещё на экране.
+  { name: '00_loading', save: null, wait: 900 },
   { name: '01_calf_start', save: null },
   { name: '02_calf_garden', save: { ...base, echo: '320e0', runEarned: '900e0', generators: { flower: 26, bush: 9 }, birds: 3 }, taps: 6 },
   {
@@ -88,7 +90,8 @@ for (const sc of scenarios) {
   }
   await page.goto(URL, { waitUntil: 'load' });
   await page.waitForFunction(() => document.querySelector('flutter-view') !== null, null, { timeout: 60000 });
-  await page.waitForTimeout(3500);
+  // Загрузка держится ≥1,4 с, потом плавный переход; ролик в Chromium без H.264 сразу уступает игре.
+  await page.waitForTimeout(sc.wait ?? 4800);
   const tap = async ([fx, fromBottom]) => page.touchscreen.tap(Math.round(viewport.width * fx), viewport.height - fromBottom);
   if (sc.open) {
     await tap(nav[sc.open]);

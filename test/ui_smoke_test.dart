@@ -8,6 +8,7 @@ import 'package:skywhale/core/economy.dart';
 import 'package:skywhale/core/save.dart';
 import 'package:skywhale/ui/fight_screen.dart';
 import 'package:skywhale/ui/game_screen.dart';
+import 'package:skywhale/ui/intro_screen.dart';
 import 'package:skywhale/ui/juicy.dart';
 
 const start = 1700000000000;
@@ -19,6 +20,7 @@ Future<void> _loadFonts() async {
     loader.addFont(rootBundle.load('assets/fonts/Nunito-$w.ttf'));
   }
   await loader.load();
+  await (FontLoader('MarckScript')..addFont(rootBundle.load('assets/fonts/MarckScript-Regular.ttf'))).load();
 }
 
 /// Сохранение «молодой кит во втором регионе». С [guardianReady] сад дорос
@@ -87,6 +89,31 @@ void main() {
     expect(c.fight!.hp.toDouble(), lessThan(hp));
     expect(tester.takeException(), isNull);
     c.closeFight();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('загрузочный экран собирается с полосой-мазком', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    await tester.runAsync(_loadFonts);
+    await tester.pumpWidget(MaterialApp(theme: J.theme(), home: const LoadingScreen(progress: 0.6)));
+    await tester.pump();
+    expect(find.text('Небо просыпается…'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('ролик не запустился — экран сразу уступает место игре', (tester) async {
+    var done = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: J.theme(),
+        home: IntroScreen(onDone: () => done++),
+      ),
+    );
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pump(const Duration(seconds: 6));
+    expect(done, 1);
     await tester.pumpWidget(const SizedBox());
   });
 }

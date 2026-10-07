@@ -63,5 +63,21 @@ void main() {
     test('сохранение из более новой версии игры не загружается', () {
       expect(decodeSave('{"v": 999}'), isNull);
     });
+
+    test('новая игра ещё не видела предысторию; отметка переживает сохранение', () {
+      final fresh = newGame(now, content: testContent);
+      expect(fresh.introSeen, isFalse);
+      expect(decodeSave(encodeSave(fresh..introSeen = true), content: testContent)!.introSeen, isTrue);
+    });
+
+    test('старое сохранение без отметки: у кого есть прогресс, тому ролик не показываем', () {
+      final old = encodeSave(original).replaceAll('"introSeen":false,', '').replaceAll(',"introSeen":false', '');
+      expect(old, isNot(contains('introSeen')));
+      expect(decodeSave(old, content: testContent)!.introSeen, isTrue);
+      final empty = encodeSave(newGame(now, content: testContent))
+          .replaceAll(',"introSeen":false', '')
+          .replaceAll('"introSeen":false,', '');
+      expect(decodeSave(empty, content: testContent)!.introSeen, isFalse);
+    });
   });
 }

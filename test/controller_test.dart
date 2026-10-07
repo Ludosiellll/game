@@ -24,6 +24,18 @@ void main() {
       expect(c.pendingOffline, isNull);
     });
 
+    test('предыстория показывается при первом запуске один раз', () async {
+      final store = MemorySaveStore();
+      final c = make(store);
+      await c.init();
+      expect(c.shouldShowIntro, isTrue);
+      await c.markIntroSeen();
+      expect(c.shouldShowIntro, isFalse);
+      final again = make(store);
+      await again.init();
+      expect(again.shouldShowIntro, isFalse);
+    });
+
     test('после часа отсутствия начисляет офлайн и показывает окно', () async {
       final saved = newGame(start, content: testContent)..generators['flower'] = 10;
       final store = MemorySaveStore(encodeSave(saved));

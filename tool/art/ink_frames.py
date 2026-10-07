@@ -501,6 +501,30 @@ def frame_title(renders, fonts, out):
     save(with_text(img, base, np.maximum(title, sub)), os.path.join(out, "ink_1_title.jpg"))
 
 
+def frame_loading(renders, fonts, out):
+    """Фон загрузочного экрана: свиток с названием, кит-мать и китёнок, без подписи
+    (полосу загрузки рисует игра). 720×1280, чтобы не утяжелять APK."""
+    rng = np.random.default_rng(11)
+    base = paper(rng)
+    dens = landscape(rng, ((1500, 520, 0.38, 260, 5), (1660, 430, 0.62, 200, 4), (1890, 380, 0.95, 150, 3)), (1730, 1990))
+    occl = np.zeros((H, W), np.float32)
+    f, l = cloud_ribbon(rng, 1120, 1300, 460, 64, -1)
+    dens = dens * (1 - f) + l * 0.85
+    # Киты ближе к центру: на вытянутых экранах фон обрезается по бокам.
+    put(dens, occl, load_render(os.path.join(renders, "mother"), 760, rng), 560, 880)
+    put(dens, occl, load_render(os.path.join(renders, "calf"), 250, rng), 340, 1150)
+    f, l = cloud_ribbon(rng, -60, 1080, 560, 70, 1)
+    dens = dens * (1 - f) + l * 0.85
+    dens = np.maximum(dens, birds(rng, 850, 520, 60, 5) * 0.8)
+    title = text_layer("Песнь\nнебесного кита", os.path.join(fonts, "MarckScript-Regular.ttf"), 112, 540, 300, spacing=6)
+    img = ink_over(base, dens)
+    img = paint(img, seal(fonts, 900, 190, 70, rng), SEAL, 0.92)
+    img = with_text(img, base, title)
+    path = os.path.join(out, "loading.jpg")
+    Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8)).resize((720, 1280), Image.LANCZOS).save(path, quality=84)
+    print("FRAME", path)
+
+
 def frame_gloom(renders, fonts, out):
     """Кадр 2: Мгла пьёт песни неба, киты стаи каменеют и становятся островами."""
     rng = np.random.default_rng(23)
@@ -599,3 +623,5 @@ if __name__ == "__main__":
         frame_gloom(renders, fonts, out)
     if "3" in only:
         frame_color(renders, fonts, out)
+    if "loading" in only:
+        frame_loading(renders, fonts, out)
