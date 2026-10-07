@@ -39,12 +39,14 @@ B=/path/to/blender   # Blender 4.5 LTS, достаточно версии без
 $B -b --python tool/art/toy_scene.py -- scene out/scene.png --size=1000x1250 --samples=64   # кит с садом
 $B -b --python tool/art/toy_scene.py -- icons out/icons    # иконки предметов (цветок, куст, улей…, птица)
 $B -b --python tool/art/toy_scene.py -- clouds out/clouds  # облака
-# --yaw=112 — поворот кита, --outline — тёмный контур, --flat — кит крупными гранями
+$B -b --python tool/art/toy_scene.py -- scene out/stage5.png --stage=5 --ortho=11   # возраст 1..5 в общем масштабе
+$B -b --python tool/art/toy_scene.py -- boss out/boss.png  # страж Пояса бурь
+# --yaw=112 — поворот кита, --pitch/--tilt — камера и наклон кита (сцена боя), --outline — контур, --flat — крупные грани
 ```
 
 Кадр сцены 1000×1250 на 4 ядрах рендерится примерно 2–3 минуты, иконка — несколько секунд.
 
-Пробный кадр стиля (главный экран и магазин, собраны из этих рендеров) — `docs/art/style_frame_2026-10-07.jpg`, кит без контура и с контуром — `docs/art/outline_ab_2026-10-07.jpg`.
+Пробный кадр стиля (главный экран и магазин, собраны из этих рендеров) — `docs/art/style_frame_2026-10-07.jpg`, кит без контура и с контуром — `docs/art/outline_ab_2026-10-07.jpg`. Возрасты кита (китёнок → божество) — `docs/art/whale_ages_2026-10-07.jpg`, макет боя со стражем — `docs/art/boss_fight_2026-10-07.jpg`.
 
 ## Устройство кода
 
