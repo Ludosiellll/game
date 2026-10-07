@@ -32,6 +32,18 @@ cd tool/visual_qa && npm install && node shots.mjs   # скриншоты в too
 
 В контейнерах без видеокарты Chromium запускается с `--enable-unsafe-swiftshader`, а локаль браузера задаётся `ru-RU`: системная локаль `C` ломает старт Flutter web («Incorrect locale information provided»).
 
+Арт в стиле «игрушечное 3D» (проба, ждёт утверждения): модели строятся кодом в Blender 4.5 LTS, рендер Cycles на CPU с прозрачным фоном, игра получает готовые PNG.
+
+```bash
+B=/path/to/blender   # Blender 4.5 LTS, достаточно версии без интерфейса
+$B -b --python tool/art/toy_scene.py -- scene out/scene.png --size=1000x1250 --samples=64   # кит с садом
+$B -b --python tool/art/toy_scene.py -- icons out/icons    # иконки предметов (цветок, куст, улей…, птица)
+$B -b --python tool/art/toy_scene.py -- clouds out/clouds  # облака
+# --yaw=112 — поворот кита, --outline — тёмный контур, --flat — кит крупными гранями
+```
+
+Кадр сцены 1000×1250 на 4 ядрах рендерится примерно 2–3 минуты, иконка — несколько секунд.
+
 ## Устройство кода
 
 ```
@@ -44,6 +56,7 @@ lib/
 tool/
   simulate.dart   бот-игрок для настройки баланса
   visual_qa/      скриншоты веб-сборки
+  art/            модели и рендер арта в Blender (toy_scene.py)
 test/             тесты правил на отдельном тестовом наборе чисел (test_content.dart)
 ```
 
@@ -63,5 +76,7 @@ test/             тесты правил на отдельном тестово
 | Файл | Автор | Лицензия | Откуда |
 | --- | --- | --- | --- |
 | `assets/fonts/Nunito-*.ttf` (статические начертания из вариативного шрифта, fontTools instancer) | The Nunito Project Authors | SIL OFL 1.1 | github.com/google/fonts, `ofl/nunito` |
+
+3D-арт (`tool/art/toy_scene.py` и его рендеры) построен из примитивов нашим кодом — сторонних моделей и текстур в нём нет.
 
 Чужие скриншоты и картинки в репозиторий не кладём. Новые ассеты добавлять только с записью в эту таблицу.
