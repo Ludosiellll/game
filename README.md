@@ -61,6 +61,16 @@ python3 tool/art/pack_sprites.py $RAW assets/sprites   # обрезка, пат�
 
 Весь экспорт занимает около 20 минут на 4 ядрах; упакованные спрайты — около 1,2 МБ.
 
+Интро в стиле китайской живописи тушью (пробные кадры, ждут «ок»): Blender рисует китов без сада в два прохода — объём и линии кисти, остальное (бумага, горы, облака, Мгла, печать, подписи, акварельный разлив цвета) дорисовывает `tool/art/ink_frames.py` на numpy.
+
+```bash
+$B -b --python tool/art/toy_scene.py -- ink $RAW/mother --stage=6 --yaw=66 --pitch=99 --tilt=5 --size=2000x1100   # мать-кит из легенды
+$B -b --python tool/art/toy_scene.py -- ink $RAW/calf --stage=1 --traits= --yaw=100 --tilt=8 --pitch=74 --size=900x700
+$B -b --python tool/art/toy_scene.py -- ink $RAW/stone1 --stage=6 --traits=noface,nofins --yaw=48 --pitch=80 --size=1400x700
+$B -b --python tool/art/toy_scene.py -- ink $RAW/stone2 --stage=6 --traits=noface,nofins --yaw=236 --pitch=80 --size=1400x700
+python3 tool/art/ink_frames.py $RAW FONTS out/   # FONTS: MarckScript, MaShanZheng (SIL OFL); нужны numpy, scipy, Pillow
+```
+
 Пробный кадр стиля (главный экран и магазин, собраны из этих рендеров) — `docs/art/style_frame_2026-10-07.jpg`, кит без контура и с контуром — `docs/art/outline_ab_2026-10-07.jpg`. Возрасты кита (китёнок → божество) — `docs/art/whale_ages_2026-10-07.jpg`, макет боя со стражем — `docs/art/boss_fight_2026-10-07.jpg`.
 
 ## Устройство кода

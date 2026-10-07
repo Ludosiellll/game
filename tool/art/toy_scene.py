@@ -59,7 +59,8 @@ OUTLINE = "outline" in OPTS
 FLAT = "flat" in OPTS
 ORTHO = float(OPTS["ortho"]) if "ortho" in OPTS else None
 _DEFAULT_SIZE = {"scene": (900, 1125), "icons": (256, 256), "clouds": (512, 320), "boss": (900, 900),
-                 "sprites": (1024, 1024), "items": (640, 640), "birds": (256, 256), "bosses": (768, 768)}[MODE]
+                 "sprites": (1024, 1024), "items": (640, 640), "birds": (256, 256), "bosses": (768, 768),
+                 "ink": (1200, 900)}[MODE]
 W, H = tuple(int(s) for s in OPTS["size"].split("x")) if "size" in OPTS else _DEFAULT_SIZE
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -299,11 +300,16 @@ STAGES = {
     5: dict(name="deity", head=2.8, tail=4.5, w=1.9, h=1.65, scale=1.4,
             body="#EEF2FF", belly="#FFF1D6", fin="#9FF3FF", eye=0.86, fins=1.15,
             deck=(1.4, 2.6, -0.4), traits=("crystals", "runes", "halo", "aurora", "whiskers", "stars")),
+    # Мать-кит из легенды для интро в стиле туши: длинная, с плавниками горбача и усами дракона.
+    6: dict(name="legend", head=3.0, tail=5.6, w=1.35, h=1.22, scale=1.0,
+            body="#2C4A73", belly="#E6ECF0", fin="#28456C", eye=0.55, fins=1.9,
+            deck=(1.2, 2.0, -0.3), traits=("lids", "whiskers", "grooves")),
 }
 STAGE = int(OPTS.get("stage", 2))
 ST = STAGES[STAGE]
 HEAD_L, TAIL_L, BODY_W, BODY_H = ST["head"], ST["tail"], ST["w"], ST["h"]
-TRAITS = ST["traits"]
+# --traits=a,b — свой набор черт (для интро в стиле туши), пустой — без черт.
+TRAITS = tuple(t for t in OPTS["traits"].split(",") if t and t != "1") if "traits" in OPTS else ST["traits"]
 
 
 def aurora_mat():
@@ -419,7 +425,7 @@ def make_whale():
     head = (0.0, 0.7, 0.3)
     ek = ST["eye"]
     eye_color = "#2B2363" if STAGE == 5 else C["eye"]
-    for side in (-1, 1):
+    for side in (-1, 1) if "noface" not in TRAITS else ():
         loc, n = surface(head, head_dir(side * 30, 4))
         up, right = frame(n)
         eye = part("eye", sphere((0, 0, 0), 1, material=mat(eye_color, 0.15), smooth=True, uv=True))
@@ -433,6 +439,8 @@ def make_whale():
         if "lids" in TRAITS:  # тяжёлые мудрые веки
             lid = sphere((0, 0, 0), 1, material=mat(ST["body"], 0.45), smooth=True, uv=True)
             on_surface(lid, loc + up * 0.13 * ek, n, (0.235 * ek, 0.17 * ek, 0.118 * ek))
+        if STAGE == 6:  # у легенды нет румянца
+            continue
         loc, n = surface(head, head_dir(side * 50, -8))
         blush = sphere((0, 0, 0), 1, material=mat(C["blush"], 0.8), smooth=True, uv=True)
         on_surface(blush, loc, n, (0.17 * ek, 0.11 * ek, 0.03))
@@ -444,14 +452,15 @@ def make_whale():
         el = -6 - 7 * (1 - (a / 15) ** 2)
         loc, n = surface(head, head_dir(a, el))
         pts.append(loc + n * 0.02)
-    part("smile", tube("smile", pts, 0.035, mat(C["mouth"], 0.3)))
+    if "noface" not in TRAITS:
+        part("smile", tube("smile", pts, 0.035, mat(C["mouth"], 0.3)))
     loc, n = surface(head, head_dir(0, -12))
     ANCHORS["mouth"] = (loc.copy(), n.copy())
 
     fin_mat = aurora_mat() if "aurora" in TRAITS else mat(ST["fin"], 0.45)
     fs = ST["fins"] / 0.72
     # Боковые плавники: плоские «лопатки» вниз-наружу-назад.
-    for side in (-1, 1):
+    for side in (-1, 1) if "nofins" not in TRAITS else ():
         root, _ = surface((0, 0.9, -0.1), (side, 0.05, -0.6))
         span = Vector((side * 0.85, -0.45, -0.5)).normalized()
         across = Vector((0, 0, 1)).cross(span).normalized()
@@ -528,6 +537,14 @@ def make_whale():
                                                (0.58, -1.25, -0.6), (0.66, -1.65, -0.62)]):
                 pts.append(loc + Vector((side * dx, dy, dz)))
             tube("whisker", pts, 0.045, color)
+    if "grooves" in TRAITS:  # борозды на горле и брюхе, как у горбача
+        for x in (-0.55, -0.3, -0.1, 0.1, 0.3, 0.55):
+            line = []
+            for i in range(9):
+                y = 1.9 - i * 0.32
+                loc, n = surface((x * BODY_W, y, -0.2), (x * 0.6, 0, -1))
+                line.append(loc + n * 0.01)
+            tube("groove", line, 0.022, mat(ST["belly"], 0.6))
     if "gem" in TRAITS:  # сияющий камень на лбу
         loc, n = surface((0, 1.0, 0.3), head_dir(0, 22))
         g = group([cone((0, 0, 0.1), 0.14, 0.0, 0.2, verts=4, material=mat("#FFF6D0", 0.2, emit=3.5)),
@@ -1244,6 +1261,45 @@ def render(path):
     print("RENDERED", path)
 
 
+def ink_lines():
+    """Линии «кистью» для интро в стиле туши: каллиграфическая толщина, сужение
+    к концам штриха и лёгкое дрожание руки. Рисуются отдельным проходом без тел."""
+    scene.render.use_freestyle = True
+    scene.render.line_thickness_mode = "ABSOLUTE"
+    settings = bpy.context.view_layer.freestyle_settings
+    ls = settings.linesets[0] if len(settings.linesets) else settings.linesets.new("ink")
+    style = bpy.data.linestyles.new("ink")
+    ls.linestyle = style
+    ls.select_by_visibility = True
+    ls.select_by_edge_types = True
+    ls.select_silhouette = True
+    ls.select_border = True
+    ls.select_external_contour = True
+    ls.select_crease = False
+    style.color = (0.04, 0.035, 0.03)
+    style.caps = "ROUND"
+    style.use_chaining = True
+    base = W / 150
+    style.thickness = base
+    cal = style.thickness_modifiers.new("cal", "CALLIGRAPHY")
+    cal.orientation = math.radians(55)
+    cal.thickness_min = base * 0.25
+    cal.thickness_max = base * 1.4
+    taper = style.thickness_modifiers.new("taper", "ALONG_STROKE")
+    taper.blend = "MULTIPLY"
+    taper.mapping = "CURVE"
+    pts = taper.curve.curves[0].points
+    pts[0].location = (0.0, 0.1)
+    pts[1].location = (1.0, 0.05)
+    pts.new(0.18, 1.0)
+    pts.new(0.7, 0.9)
+    taper.curve.update()
+    wobble = style.geometry_modifiers.new("wobble", "PERLIN_NOISE_1D")
+    wobble.frequency = 8
+    wobble.amplitude = W / 900
+    bpy.context.view_layer.use_solid = False
+
+
 def clear_created():
     for o in reversed(CREATED):
         bpy.data.objects.remove(o, do_unlink=True)
@@ -1512,5 +1568,23 @@ elif MODE == "bosses":
         fit_camera(camera, margin=0.04)
         render(os.path.join(OUT, f"boss_{name}.png"))
         clear_created()
+elif MODE == "ink":
+    # Кит для интро в стиле туши: без сада, сбоку. Два прохода — объём (shade.png)
+    # и линии кисти (lines.png); тушь и бумагу дорисовывает tool/art/ink_frames.py.
+    os.makedirs(OUT, exist_ok=True)
+    make_whale()
+    whale_root = bpy.data.objects.new("whale_root", None)
+    scene.collection.objects.link(whale_root)
+    for o in CREATED:
+        if o.parent is None:
+            o.parent = whale_root
+    whale_root.rotation_euler = (TILT, math.radians(float(OPTS.get("roll", 0))), YAW)
+    aim_camera(camera)
+    fit_camera(camera, margin=0.04)
+    render(os.path.join(OUT, "shade.png"))
+    ink_lines()
+    scene.render.filepath = os.path.join(OUT, "lines.png")
+    bpy.ops.render.render(write_still=True)
+    print("RENDERED", scene.render.filepath)
 else:
     raise SystemExit(f"неизвестный режим: {MODE}")
