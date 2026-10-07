@@ -189,7 +189,6 @@ void main() {
       expect(s.songs, 1);
     });
 
-
     test('без готовности песнь не поётся и ничего не сбрасывает', () {
       final s = newGame(now, content: testContent)..echo = Big.from(500);
       expect(longSong(s, now), isNull);

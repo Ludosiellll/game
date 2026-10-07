@@ -31,8 +31,11 @@ import math
 import os
 import sys
 
+import json
+
 import bmesh
 import bpy
+from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
@@ -55,11 +58,16 @@ TILT = math.radians(float(OPTS.get("tilt", 0)))
 OUTLINE = "outline" in OPTS
 FLAT = "flat" in OPTS
 ORTHO = float(OPTS["ortho"]) if "ortho" in OPTS else None
-_DEFAULT_SIZE = {"scene": (900, 1125), "icons": (256, 256), "clouds": (512, 320), "boss": (900, 900)}[MODE]
+_DEFAULT_SIZE = {"scene": (900, 1125), "icons": (256, 256), "clouds": (512, 320), "boss": (900, 900),
+                 "sprites": (1024, 1024), "items": (640, 640), "birds": (256, 256), "bosses": (768, 768)}[MODE]
 W, H = tuple(int(s) for s in OPTS["size"].split("x")) if "size" in OPTS else _DEFAULT_SIZE
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
+# Разрешение — сразу: от его пропорций зависит проекция точек в кадр (world_to_camera_view).
+scene.render.resolution_x = W
+scene.render.resolution_y = H
+scene.render.resolution_percentage = 100
 
 # Камера: ортографическая «изометрия» (наклон 55° от вертикали, поворот −38°).
 CAM_PITCH, CAM_TURN = math.radians(float(OPTS.get("pitch", 55))), math.radians(-38)
@@ -330,6 +338,17 @@ def gold(emit=0.6):
     return mat(C["gold"], 0.3, emit=emit)
 
 
+# Части кита для спрайтов: какие объекты к какому слою и где опорные точки.
+PARTS = {"fin": [], "fluke": [], "eye": [], "eye_hl": [], "smile": [], "halo": [], "star": []}
+EYES = []  # (точка, нормаль, вверх, вправо, размер)
+ANCHORS = {}
+
+
+def part(role, obj):
+    PARTS[role].append(obj)
+    return obj
+
+
 def make_whale():
     seg, rings = (14, 9) if FLAT else (40, 24)
     bpy.ops.mesh.primitive_uv_sphere_add(segments=seg, ring_count=rings, radius=1)
@@ -403,12 +422,13 @@ def make_whale():
     for side in (-1, 1):
         loc, n = surface(head, head_dir(side * 30, 4))
         up, right = frame(n)
-        eye = sphere((0, 0, 0), 1, material=mat(eye_color, 0.15), smooth=True, uv=True)
+        eye = part("eye", sphere((0, 0, 0), 1, material=mat(eye_color, 0.15), smooth=True, uv=True))
+        EYES.append((loc.copy(), n.copy(), up.copy(), right.copy(), ek))
         on_surface(eye, loc, n, (0.2 * ek, 0.27 * ek, 0.1 * ek))
         hl_up = -0.02 if "lids" in TRAITS else 0.09
-        hl = sphere((0, 0, 0), 1, material=mat(C["white"], 0.2, emit=0.6), smooth=True, uv=True)
+        hl = part("eye_hl", sphere((0, 0, 0), 1, material=mat(C["white"], 0.2, emit=0.6), smooth=True, uv=True))
         on_surface(hl, loc + (up * hl_up - right * 0.06 * side) * ek, n, (0.07 * ek, 0.08 * ek, 0.04), lift=0.08 * ek)
-        hl2 = sphere((0, 0, 0), 1, material=mat(C["white"], 0.2, emit=0.6), smooth=True, uv=True)
+        hl2 = part("eye_hl", sphere((0, 0, 0), 1, material=mat(C["white"], 0.2, emit=0.6), smooth=True, uv=True))
         on_surface(hl2, loc + (-up * 0.1 + right * 0.06 * side) * ek, n, (0.035 * ek, 0.035 * ek, 0.02), lift=0.08 * ek)
         if "lids" in TRAITS:  # тяжёлые мудрые веки
             lid = sphere((0, 0, 0), 1, material=mat(ST["body"], 0.45), smooth=True, uv=True)
@@ -424,7 +444,9 @@ def make_whale():
         el = -6 - 7 * (1 - (a / 15) ** 2)
         loc, n = surface(head, head_dir(a, el))
         pts.append(loc + n * 0.02)
-    tube("smile", pts, 0.035, mat(C["mouth"], 0.3))
+    part("smile", tube("smile", pts, 0.035, mat(C["mouth"], 0.3)))
+    loc, n = surface(head, head_dir(0, -12))
+    ANCHORS["mouth"] = (loc.copy(), n.copy())
 
     fin_mat = aurora_mat() if "aurora" in TRAITS else mat(ST["fin"], 0.45)
     fs = ST["fins"] / 0.72
@@ -435,7 +457,8 @@ def make_whale():
         across = Vector((0, 0, 1)).cross(span).normalized()
         flat_n = span.cross(across).normalized()
         rot = Matrix((span, across, flat_n)).transposed()
-        fin = sphere((0, 0, 0), 1, material=fin_mat, smooth=not FLAT, uv=True)
+        fin = part("fin", sphere((0, 0, 0), 1, material=fin_mat, smooth=not FLAT, uv=True))
+        ANCHORS[f"fin{side}"] = root.copy()
         fin.matrix_world = (Matrix.Translation(root + span * 0.55 * fs) @ rot.to_4x4()
                             @ Matrix.Diagonal((0.72 * fs, 0.34 * fs ** 0.5, 0.09, 1)))
 
@@ -444,7 +467,8 @@ def make_whale():
              (0.8, -0.6), (0.55, -0.52), (0.3, -0.52), (0.12, -0.6), (0.0, -0.5)]
     left = [(-x, y) for x, y in reversed(right[1:-1])]
     k = 1.25 * fs ** 0.6
-    fluke = prism("fluke", [(x * k, y * k) for x, y in right + left], 0.12, fin_mat, smooth=not FLAT)
+    fluke = part("fluke", prism("fluke", [(x * k, y * k) for x, y in right + left], 0.12, fin_mat, smooth=not FLAT))
+    ANCHORS["fluke"] = Vector((0, -TAIL_L + 0.25, 0.52 * TAIL_L / 3.0))
     bevel(fluke, 0.04, segments=3)
     fluke.location = (0, -TAIL_L + 0.25, 0.52 * TAIL_L / 3.0)
     fluke.rotation_euler = (math.radians(18), 0, 0)
@@ -511,14 +535,14 @@ def make_whale():
         q = n.to_track_quat("Z", "Y")
         g.matrix_world = Matrix.Translation(loc + n * 0.12) @ q.to_matrix().to_4x4() @ Matrix.Diagonal((1, 1.3, 0.6, 1))
     if "halo" in TRAITS:  # нимб над головой
-        halo = torus((0, DECK_Y + DECK_B + 0.35, TOP + 1.15), 0.75, 0.07, gold(4.0))
+        halo = part("halo", torus((0, DECK_Y + DECK_B + 0.35, TOP + 1.15), 0.75, 0.07, gold(4.0)))
         halo.rotation_euler = (math.radians(18), 0, 0)
     if "stars" in TRAITS:  # искры вокруг
         for i in range(16):
             a = i * 2.4
             r = 2.2 + (i % 3) * 0.5
-            sphere((math.cos(a) * r * 0.7, math.sin(a) * r * 1.3 - 0.6, 0.6 + (i % 5) * 0.45),
-                   0.06 + (i % 3) * 0.025, sub=2, material=mat("#FFF6C2", 0.3, emit=6.0), smooth=True)
+            part("star", sphere((math.cos(a) * r * 0.7, math.sin(a) * r * 1.3 - 0.6, 0.6 + (i % 5) * 0.45),
+                        0.06 + (i % 3) * 0.025, sub=2, material=mat("#FFF6C2", 0.3, emit=6.0), smooth=True))
 
 
 # --- палуба и сад -------------------------------------------------------------------------
@@ -814,78 +838,135 @@ def floating_island(s=1.0):
     ]
 
 
-# Сад на спине для каждого возраста: (постройка, x, y, поворот, масштаб) в координатах палубы.
-def garden_layout():
-    P = C
-    people = lambda i: person([P["shirt1"], P["shirt2"], P["shirt3"]][i % 3], [P["hair1"], P["hair2"], P["hair3"]][i % 3])
-    if STAGE == 1:
-        items = [(tent(), 0.05, -0.2, 0.0, 1), (campfire(), 0.38, 0.25, 0, 1), (crate(), -0.48, -0.02, 0.2, 0.9),
-                 (tree(0.75), -0.38, -0.58, 0, 1), (bush(), 0.48, -0.52, 0, 0.75),
-                 (people(0), -0.15, 0.3, 0.3, 1), (people(2), 0.24, 0.55, -0.5, 1)]
-        flowers = [(0.0, 0.7, P["petal1"]), (-0.38, 0.45, P["petal2"]), (0.58, -0.05, P["petal3"])]
-    elif STAGE == 2:
-        items = [(windmill(), -0.5, -1.0, 0, 1.05), (observatory(), 0.55, -1.2, 0, 1), (tree(1.0), 0.0, -1.55, 0, 1),
-                 (pine(1.0), -0.88, -0.3, 0, 1), (tree(0.8), 0.92, -0.35, 0, 1),
-                 (house(P["roof"]), 0.32, -0.32, 0.15, 1), (house(P["roof2"]), -0.52, 0.42, -0.1, 1),
-                 (lantern_house(), 0.62, 0.55, 0, 1), (hive(), -0.05, 0.98, 0, 1),
-                 (bush(), 0.72, 1.12, 0, 1), (bush(), -0.78, 1.0, 0, 0.85), (bush(), -0.95, -1.05, 0, 0.8),
-                 (people(0), 0.12, 0.62, 0.4, 1), (people(1), 0.2, -0.82, -0.5, 1), (people(2), -0.62, 0.95, 0.2, 1)]
-        items += [([stone(0, 0)], x, y, 0, 1) for (x, y) in [(0.05, 0.05), (-0.12, 0.2), (-0.25, 0.32), (0.18, -0.08)]]
-        flowers = [(0.28, 1.5, P["petal1"]), (-0.32, 1.5, P["petal2"]), (0.02, 0.32, P["petal3"]),
-                   (0.98, 0.15, P["petal4"]), (-0.98, 0.2, P["petal1"]), (0.15, -0.95, P["petal2"]),
-                   (-0.2, -1.42, P["petal3"]), (0.45, 1.25, P["petal2"]), (-0.55, 1.35, P["petal3"])]
-    elif STAGE == 3:
-        items = [(lighthouse(), -0.55, -1.45, 0, 1), (windmill(), 0.5, -1.55, 0, 1), (observatory(), 0.88, -0.55, 0, 0.9),
-                 (pine(1.0), -0.98, -0.7, 0, 1), (tree(0.9), 0.02, -1.95, 0, 1),
-                 (house(P["roof"]), 0.22, -0.8, 0.1, 1), (house(P["roof2"]), -0.55, -0.35, -0.1, 1),
-                 (house(P["roof3"]), 0.55, 0.22, 0.15, 1), (house(P["roof"]), -0.42, 0.55, -0.05, 1),
-                 (lantern_house(), 0.0, 0.0, 0, 0.95), (hive(), 0.12, 1.2, 0, 1),
-                 (bush(), 0.78, 1.32, 0, 1), (bush(), -0.78, 1.3, 0, 0.9), (bush(), -1.02, 0.2, 0, 0.8),
-                 (people(0), 0.25, 0.75, 0.4, 1), (people(1), -0.15, -1.0, -0.5, 1), (people(2), -0.75, 0.95, 0.2, 1),
-                 (people(1), 0.75, -0.2, -0.3, 1)]
-        flowers = [(0.3, 1.7, P["petal1"]), (-0.32, 1.72, P["petal2"]), (1.02, 0.65, P["petal4"]),
-                   (-1.05, -0.2, P["petal1"]), (0.35, -1.25, P["petal2"]), (-0.3, 1.05, P["petal3"]),
-                   (0.55, 1.6, P["petal3"]), (-0.6, 1.62, P["petal1"]), (0.95, -1.15, P["petal2"])]
-    elif STAGE == 4:
-        items = [(bell_tower(), 0.0, -1.6, 0, 1), (tower(P["lamp_roof"]), -0.88, -1.3, 0, 1),
-                 (tower(P["roof3"], 1.15), 0.88, -1.15, 0, 1), (windmill(), 0.15, -2.25, 0, 0.9),
-                 (house2(P["roof"]), -0.45, -0.78, 0.1, 1), (house(P["roof2"]), 0.42, -0.62, -0.1, 1),
-                 (house(P["roof3"]), -0.92, -0.2, 0.1, 1), (house2(P["roof2"]), 0.0, -0.12, 0, 1),
-                 (house(P["roof"]), 0.88, -0.05, -0.15, 1), (house(P["roof2"]), -0.48, 0.48, 0.05, 1),
-                 (house2(P["roof3"]), 0.48, 0.55, -0.05, 1), (observatory(), -0.12, 1.2, 0, 0.9),
-                 (big_tree(1.15), 0.98, 1.1, 0, 1), (pine(1.1), -1.0, 0.95, 0, 1),
-                 (lamp_post(), 0.25, 1.0, 0, 1), (lamp_post(), -0.42, 1.05, 0, 1), (lamp_post(), 0.3, -1.12, 0, 1),
-                 (bush(), 0.55, 1.62, 0, 0.9), (bush(), -0.62, 1.72, 0, 0.9),
-                 (people(0), 0.22, 0.2, 0.4, 1), (people(1), -0.2, -1.1, -0.5, 1), (people(2), -0.75, 1.3, 0.2, 1),
-                 (people(1), 0.7, 0.95, -0.3, 1), (people(0), -0.55, 0.0, 0.6, 1)]
-        flowers = [(0.25, 1.95, P["petal1"]), (-0.3, 1.98, P["petal2"]), (1.12, 0.45, P["petal4"]),
-                   (-1.15, 0.45, P["petal1"]), (0.6, -1.6, P["petal2"]), (-0.6, -1.65, P["petal3"])]
-    else:
-        items = [(temple(), 0.0, -0.1, 0, 1.25), (big_tree(1.5, (P["memory"], P["memory2"])), 0.0, -1.75, 0, 1),
-                 (tower(P["gold"]), -0.92, -1.15, 0, 1), (tower(P["gold"]), 0.92, -1.05, 0, 1),
-                 (house(P["lamp_roof"]), -0.78, -0.42, 0.2, 1), (house2(P["gold"]), 0.8, -0.38, -0.2, 1),
-                 (house2(P["lamp_roof"]), -0.98, 0.32, 0.1, 1), (house(P["gold"]), 0.98, 0.35, -0.1, 1),
-                 (house(P["roof3"]), -0.62, 0.95, 0.1, 1), (house(P["lamp_roof"]), 0.62, 1.0, -0.1, 1),
-                 (statue(), 0.0, 1.2, 0, 1.2),
-                 (tree(0.8, (P["memory"], P["memory2"])), -1.1, -0.85, 0, 1),
-                 (tree(0.8, (P["memory"], P["memory2"])), 1.1, -0.75, 0, 1),
-                 (lamp_post(), 0.55, 0.42, 0, 1), (lamp_post(), -0.55, 0.42, 0, 1),
-                 (lamp_post(), 0.42, -0.78, 0, 1), (lamp_post(), -0.42, -0.8, 0, 1),
-                 (people(0), 0.25, 0.75, 2.8, 1), (people(1), -0.25, 0.72, 3.4, 1), (people(2), 0.0, 0.6, 3.14, 1),
-                 (people(1), 0.6, -1.3, 0.3, 1), (people(0), -0.55, -1.35, -0.3, 1)]
-        flowers = [(0.3, 1.95, P["petal1"]), (-0.3, 1.98, P["petal2"]), (0.0, 2.1, P["petal3"]),
-                   (1.15, 0.9, P["petal4"]), (-1.15, 0.9, P["petal1"]), (0.35, -2.2, P["petal2"]),
-                   (-0.35, -2.2, P["petal3"]), (1.2, -0.2, P["petal1"]), (-1.2, -0.2, P["petal2"])]
-    items += [(flower(p, 1.2), x, y, 0, 1) for (x, y, p) in flowers]
-    return items
+# --- сад по возрастам -----------------------------------------------------------------------
+
+def _person(i):
+    return person([C["shirt1"], C["shirt2"], C["shirt3"]][i % 3], [C["hair1"], C["hair2"], C["hair3"]][i % 3])
+
+
+# Постройка по ключу «вид:параметр». Спрайты рендерятся по ключам, поэтому
+# один и тот же список задаёт и картинку сада, и места построек в игре.
+ITEM_BUILDERS = {
+    "flower": lambda a: flower(C[a], 1.2),
+    "bush": lambda a: bush(),
+    "hive": lambda a: hive(),
+    "mill": lambda a: windmill(),
+    "lantern": lambda a: lantern_house(),
+    "observatory": lambda a: observatory(),
+    "house": lambda a: house(C[a]),
+    "house2": lambda a: house2(C[a]),
+    "tree": lambda a: tree(1.0),
+    "memtree": lambda a: tree(1.0, crown=(C["memory"], C["memory2"])),
+    "pine": lambda a: pine(1.0),
+    "bigtree": lambda a: big_tree(1.0),
+    "membigtree": lambda a: big_tree(1.0, (C["memory"], C["memory2"])),
+    "tent": lambda a: tent(),
+    "campfire": lambda a: campfire(),
+    "crate": lambda a: crate(),
+    "person": lambda a: _person(int(a)),
+    "stone": lambda a: [stone(0, 0)],
+    "lighthouse": lambda a: lighthouse(),
+    "belltower": lambda a: bell_tower(),
+    "tower": lambda a: tower(C[a]),
+    "temple": lambda a: temple(),
+    "statue": lambda a: statue(),
+    "lamppost": lambda a: lamp_post(),
+}
+
+# Постройки, которые появляются по мере покупки растений (id в игре = вид).
+GENERATOR_KINDS = ("flower", "bush", "hive", "mill", "lantern", "observatory")
+
+
+def item_parts(key):
+    kind, _, arg = key.partition(":")
+    return ITEM_BUILDERS[kind](arg)
+
+
+def _flowers(spots):
+    return [("flower:" + p, x, y, 1.0) for (x, y, p) in spots]
+
+
+# Сад на спине: (ключ постройки, x, y, масштаб) в координатах палубы.
+GARDEN = {
+    1: [("tent", 0.05, -0.2, 1), ("campfire", 0.38, 0.25, 1), ("crate", -0.48, -0.02, 0.9),
+        ("tree", -0.38, -0.58, 0.75), ("bush", 0.48, -0.52, 0.75),
+        ("person:0", -0.15, 0.3, 1), ("person:2", 0.24, 0.55, 1)]
+       + _flowers([(0.0, 0.7, "petal1"), (-0.38, 0.45, "petal2"), (0.58, -0.05, "petal3"),
+                   (-0.6, 0.15, "petal4"), (0.32, -0.72, "petal1")]),
+    2: [("mill", -0.5, -1.0, 1.05), ("tree", 0.55, -1.2, 0.9), ("tree", 0.0, -1.55, 1.0),
+        ("pine", -0.88, -0.3, 1.0), ("tree", 0.92, -0.35, 0.8),
+        ("house:roof", 0.32, -0.32, 1), ("house:roof2", -0.52, 0.42, 1), ("house:roof3", 0.62, 0.55, 0.9),
+        ("hive", -0.05, 0.98, 1),
+        ("bush", 0.72, 1.12, 1), ("bush", -0.78, 1.0, 0.85), ("bush", -0.95, -1.05, 0.8),
+        ("person:0", 0.12, 0.62, 1), ("person:1", 0.2, -0.82, 1), ("person:2", -0.62, 0.95, 1),
+        ("stone", 0.05, 0.05, 1), ("stone", -0.12, 0.2, 1), ("stone", -0.25, 0.32, 1), ("stone", 0.18, -0.08, 1)]
+       + _flowers([(0.28, 1.5, "petal1"), (-0.32, 1.5, "petal2"), (0.02, 0.32, "petal3"),
+                   (0.98, 0.15, "petal4"), (-0.98, 0.2, "petal1"), (0.15, -0.95, "petal2"),
+                   (-0.2, -1.42, "petal3"), (0.45, 1.25, "petal2"), (-0.55, 1.35, "petal3")]),
+    3: [("lighthouse", -0.55, -1.45, 1), ("mill", 0.5, -1.55, 1), ("observatory", 0.88, -0.55, 0.9),
+        ("pine", -0.98, -0.7, 1), ("tree", 0.02, -1.95, 0.9),
+        ("house:roof", 0.22, -0.8, 1), ("house:roof2", -0.55, -0.35, 1), ("house:roof3", 0.55, 0.22, 1),
+        ("house:roof", -0.42, 0.55, 1), ("lantern", 0.0, 0.0, 0.95), ("hive", 0.12, 1.2, 1),
+        ("bush", 0.78, 1.32, 1), ("bush", -0.78, 1.3, 0.9), ("bush", -1.02, 0.2, 0.8),
+        ("person:0", 0.25, 0.75, 1), ("person:1", -0.15, -1.0, 1), ("person:2", -0.75, 0.95, 1),
+        ("person:1", 0.75, -0.2, 1)]
+       + _flowers([(0.3, 1.7, "petal1"), (-0.32, 1.72, "petal2"), (1.02, 0.65, "petal4"),
+                   (-1.05, -0.2, "petal1"), (0.35, -1.25, "petal2"), (-0.3, 1.05, "petal3"),
+                   (0.55, 1.6, "petal3"), (-0.6, 1.62, "petal1"), (0.95, -1.15, "petal2")]),
+    4: [("belltower", 0.0, -1.6, 1), ("tower:lamp_roof", -0.88, -1.3, 1), ("tower:roof3", 0.88, -1.15, 1.1),
+        ("mill", 0.15, -2.25, 0.9),
+        ("house2:roof", -0.45, -0.78, 1), ("house:roof2", 0.42, -0.62, 1), ("house:roof3", -0.92, -0.2, 1),
+        ("house2:roof2", 0.0, -0.12, 1), ("lantern", 0.88, -0.05, 1), ("house:roof2", -0.48, 0.48, 1),
+        ("house2:roof3", 0.48, 0.55, 1), ("observatory", -0.12, 1.2, 0.9), ("hive", 0.42, 1.55, 0.9),
+        ("bigtree", 0.98, 1.1, 1.15), ("pine", -1.0, 0.95, 1.1),
+        ("lamppost", 0.25, 1.0, 1), ("lamppost", -0.42, 1.05, 1), ("lamppost", 0.3, -1.12, 1),
+        ("bush", 0.55, 1.95, 0.9), ("bush", -0.62, 1.72, 0.9),
+        ("person:0", 0.22, 0.2, 1), ("person:1", -0.2, -1.1, 1), ("person:2", -0.75, 1.3, 1),
+        ("person:1", 0.7, 0.95, 1), ("person:0", -0.55, 0.0, 1)]
+       + _flowers([(0.25, 2.15, "petal1"), (-0.3, 2.1, "petal2"), (1.12, 0.45, "petal4"),
+                   (-1.15, 0.45, "petal1"), (0.6, -1.6, "petal2"), (-0.6, -1.65, "petal3")]),
+    5: [("temple", 0.0, -0.1, 1.25), ("membigtree", 0.0, -1.75, 1.5),
+        ("tower:gold", -0.92, -1.15, 1), ("tower:gold", 0.92, -1.05, 1),
+        ("house:lamp_roof", -0.78, -0.42, 1), ("house2:gold", 0.8, -0.38, 1),
+        ("house2:lamp_roof", -0.98, 0.32, 1), ("lantern", 0.98, 0.35, 1),
+        ("observatory", -0.62, 0.95, 0.9), ("mill", 0.62, 1.0, 0.85), ("hive", -0.35, 1.55, 0.9),
+        ("statue", 0.0, 1.2, 1.2),
+        ("memtree", -1.1, -0.85, 0.8), ("memtree", 1.1, -0.75, 0.8),
+        ("lamppost", 0.55, 0.42, 1), ("lamppost", -0.55, 0.42, 1),
+        ("lamppost", 0.42, -0.78, 1), ("lamppost", -0.42, -0.8, 1),
+        ("bush", 0.45, 1.75, 0.9), ("bush", -0.95, 1.2, 0.85),
+        ("person:0", 0.25, 0.75, 1), ("person:1", -0.25, 0.72, 1), ("person:2", 0.0, 0.6, 1),
+        ("person:1", 0.6, -1.3, 1), ("person:0", -0.55, -1.35, 1)]
+       + _flowers([(0.3, 1.95, "petal1"), (-0.3, 1.98, "petal2"), (0.0, 2.1, "petal3"),
+                   (1.15, 0.9, "petal4"), (-1.15, 0.9, "petal1"), (0.35, -2.2, "petal2"),
+                   (-0.35, -2.2, "petal3"), (1.2, -0.2, "petal1"), (-1.2, -0.2, "petal2")]),
+}
+
+# Пороги появления: k-я постройка растения видна, когда куплено ≥ порога.
+GENERATOR_THRESHOLDS = {
+    "flower": [1, 3, 6, 10, 15, 25, 40, 60, 100, 150, 200],
+    "bush": [1, 10, 25, 50, 100],
+    "hive": [1, 25, 50],
+    "mill": [1, 25, 50],
+    "lantern": [1, 25, 50],
+    "observatory": [1, 25, 50],
+}
+
+
+def item_scale():
+    """Масштаб построек относительно кита: на гиганте помещается целый город."""
+    return (ST["scale"] / STAGES[2]["scale"]) ** -0.65
 
 
 def make_garden():
     face = FACE_CAMERA - YAW  # фасады — к камере
-    # Постройки растут медленнее кита: на гиганте помещается целый город.
-    k = (ST["scale"] / STAGES[2]["scale"]) ** -0.65
-    for (parts, x, y, turn, s) in garden_layout():
-        group(parts, loc=(x, DECK_Y + y, TOP), rot=face + turn, scale=s * k)
+    k = item_scale()
+    groups = []
+    for (key, x, y, s) in GARDEN[STAGE]:
+        g = group(item_parts(key), loc=(x, DECK_Y + y, TOP), rot=face, scale=s * k)
+        g["item"] = key
+        groups.append(g)
+    return groups
 
 
 # --- облака и птицы -------------------------------------------------------------------------
@@ -910,7 +991,8 @@ CLOUDS = [
 ]
 
 
-def bird():
+def bird(wing=-0.3):
+    """Круглая певчая птица; wing — угол крыльев (кадры взмаха: −0.95, −0.3, 0.35)."""
     parts = [
         sphere((0, 0, 0), 0.2, scale=(1, 1.05, 0.95), sub=3, material=mat(C["bird"], 0.5), smooth=True),
         sphere((0, 0.06, -0.06), 0.15, scale=(0.95, 0.9, 0.85), sub=3, material=mat(C["bird_belly"], 0.6), smooth=True),
@@ -923,7 +1005,7 @@ def bird():
         parts.append(sphere((side * 0.085, 0.165, 0.05), 0.038, sub=3, material=mat(C["eye"], 0.15), smooth=True))
         parts.append(sphere((side * 0.075, 0.195, 0.07), 0.013, sub=2, material=mat(C["white"], 0.2, emit=0.6), smooth=True))
         parts.append(sphere((side * 0.3, -0.03, 0.04), 0.15, scale=(1, 0.62, 0.17), sub=3, smooth=True,
-                            material=mat(C["bird_wing"], 0.5), rot=(0, side * -0.3, side * 0.2)))
+                            material=mat(C["bird_wing"], 0.5), rot=(0, side * wing, side * 0.2)))
     return parts
 
 
@@ -975,6 +1057,88 @@ def storm_petrel():
     b2 = lightning(0.7)
     b2.location = (1.75, 0.4, -0.1)
     parts += [b1, b2]
+    return parts
+
+
+def fog_boss():
+    """Ворчливый Туман — страж Рассветного моря: пухлая серая туча, ворчит и моросит."""
+    grey, dark = "#AEB3CC", "#3E4266"
+    parts = cloud([(0, 0, 0.0, 1.0), (-0.95, 0.05, -0.25, 0.7), (0.95, 0.0, -0.22, 0.72),
+                   (-0.45, -0.2, 0.55, 0.62), (0.5, -0.15, 0.6, 0.6), (0, 0.1, 0.78, 0.52)], base=-0.75, color=grey)
+    for side in (-1, 1):
+        parts.append(sphere((side * 0.33, 0.9, 0.2), 0.18, scale=(1, 0.5, 1.15), sub=3, smooth=True,
+                            material=mat(C["white"], 0.3)))
+        parts.append(sphere((side * 0.3, 0.99, 0.15), 0.085, sub=2, smooth=True, material=mat(dark, 0.2)))
+        parts.append(sphere((side * 0.27, 1.04, 0.19), 0.025, sub=1, material=mat(C["white"], 0.2, emit=0.5)))
+        parts.append(box((side * 0.34, 0.93, 0.45), (0.36, 0.09, 0.08), material=mat(dark, 0.5),
+                         rot=(0, -side * 0.42, 0), bev=0.02))
+        # Надутые щёки и кулачки-тучки по бокам.
+        parts.append(sphere((side * 0.62, 0.8, -0.1), 0.14, scale=(1, 0.5, 0.8), sub=2, smooth=True,
+                            material=mat("#C7CBE0", 0.8)))
+        parts.append(sphere((side * 1.55, 0.25, 0.25), 0.3, sub=3, smooth=True, material=mat(grey, 0.9)))
+    # Надутый рот уголками вниз.
+    parts.append(sphere((0, 0.97, -0.17), 0.13, scale=(1, 0.4, 0.45), sub=2, smooth=True, material=mat(dark, 0.4)))
+    for side in (-1, 1):
+        parts.append(sphere((side * 0.13, 0.95, -0.22), 0.05, scale=(1, 0.4, 0.6), sub=2, smooth=True,
+                            material=mat(dark, 0.4)))
+    # Морось под тучей.
+    for (x, y, z) in [(-0.6, 0.2, -1.05), (0.1, 0.3, -1.2), (0.7, 0.1, -1.0), (-0.2, 0.0, -1.45), (0.45, 0.25, -1.5)]:
+        parts.append(cone((x, y, z + 0.06), 0.045, 0.0, 0.12, verts=8, smooth=True, material=mat("#8FD3FF", 0.2, emit=0.3)))
+        parts.append(sphere((x, y, z), 0.047, sub=2, smooth=True, material=mat("#8FD3FF", 0.2, emit=0.3)))
+    return parts
+
+
+def eater_boss():
+    """Пожиратель Света — страж Полей сияния: угорь из тьмы с огоньком-приманкой."""
+    dark, light, glow = "#2A2357", "#4C3F8F", "#F07BFF"
+    parts = []
+    n = 22
+    for i in range(n):
+        t = i / (n - 1)
+        x = 0.95 * math.sin(t * 2.2 * math.pi) * (1 - 0.25 * t)
+        z = 1.0 - 2.5 * t
+        y = 0.1 - 0.25 * t
+        r = 0.4 * (1 - 0.72 * t) + 0.06
+        parts.append(sphere((x, y, z), r, sub=3, smooth=True, material=mat(dark if i % 2 else light, 0.45)))
+        if i % 3 == 1 and i < n - 3:
+            parts.append(sphere((x, y + r * 0.85, z), r * 0.22, sub=2, smooth=True, material=mat(glow, 0.3, emit=3.0)))
+    # Голова с раскрытой пастью.
+    hx, hy, hz = 0.0, 0.35, 1.35
+    parts.append(sphere((hx, hy, hz), 0.55, scale=(1.0, 1.0, 0.85), sub=3, smooth=True, material=mat(dark, 0.45)))
+    parts.append(sphere((hx, hy + 0.3, hz - 0.32), 0.38, scale=(1.0, 0.75, 0.4), sub=3, smooth=True,
+                        material=mat(light, 0.45), rot=(0.35, 0, 0)))
+    parts.append(sphere((hx, hy + 0.42, hz - 0.12), 0.3, scale=(1.0, 0.5, 0.45), sub=3, smooth=True,
+                        material=mat("#5A1838", 0.6)))
+    for k in range(5):
+        tx = -0.24 + k * 0.12
+        parts.append(cone((tx, hy + 0.55, hz + 0.02), 0.04, 0.0, 0.12, verts=6, material=mat(C["white"], 0.3),
+                          rot=(math.pi, 0, 0)))
+        parts.append(cone((tx + 0.06, hy + 0.58, hz - 0.3), 0.035, 0.0, 0.1, verts=6, material=mat(C["white"], 0.3)))
+    for side in (-1, 1):
+        parts.append(sphere((side * 0.27, hy + 0.42, hz + 0.25), 0.13, scale=(1, 0.5, 0.8), sub=3, smooth=True,
+                            material=mat("#FFD1F7", 0.3, emit=4.0)))
+        parts.append(sphere((side * 0.27, hy + 0.48, hz + 0.24), 0.045, scale=(0.5, 1, 1.4), sub=2, smooth=True,
+                            material=mat("#1A0F2E", 0.2)))
+        parts.append(box((side * 0.28, hy + 0.42, hz + 0.45), (0.3, 0.08, 0.07), material=mat("#140D2A", 0.5),
+                         rot=(0, -side * 0.45, 0), bev=0.02))
+        parts.append(cone((side * 0.55, hy - 0.05, hz + 0.25), 0.16, 0.0, 0.5, verts=6, material=mat(glow, 0.3, emit=1.2),
+                          rot=(0, side * 1.2, 0)))
+    # Приманка на усике.
+    pts = [(0, hy - 0.1, hz + 0.45), (0.05, hy, hz + 0.85), (0.25, hy + 0.2, hz + 1.1), (0.45, hy + 0.35, hz + 1.05)]
+    curve = bpy.data.curves.new("lure", type="CURVE")
+    curve.dimensions = "3D"
+    curve.bevel_depth = 0.03
+    curve.bevel_resolution = 3
+    spline = curve.splines.new("POLY")
+    spline.points.add(len(pts) - 1)
+    for p, co in zip(spline.points, pts):
+        p.co = (*co, 1)
+    lure = bpy.data.objects.new("lure", curve)
+    bpy.context.collection.objects.link(lure)
+    lure.data.materials.append(mat(dark, 0.5))
+    CREATED.append(lure)
+    parts.append(lure)
+    parts.append(sphere((0.45, hy + 0.35, hz + 1.05), 0.12, sub=3, smooth=True, material=mat("#FFF3B0", 0.2, emit=6.0)))
     return parts
 
 
@@ -1086,6 +1250,188 @@ def clear_created():
     CREATED.clear()
 
 
+# --- выгрузка спрайтов для игры ---------------------------------------------------------------
+
+def _meshes(objs):
+    return [o for o in objs if o.type in {"MESH", "CURVE"}]
+
+
+def _project(camera, p):
+    """Точка мира → пиксели кадра (x вправо, y вниз) и глубина от камеры."""
+    v = world_to_camera_view(scene, camera, p)
+    return [round(v.x * W, 2), round((1 - v.y) * H, 2), round(v.z, 4)]
+
+
+def _render_layer(path, visible, holdout=(), border=None):
+    """Рендер слоя: видны только `visible`, `holdout` вырезают то, что за ними."""
+    show = set(visible) | set(holdout)
+    for o in scene.objects:
+        if o.type in {"MESH", "CURVE"}:
+            o.hide_render = o not in show
+            o.is_holdout = o in holdout
+    scene.render.use_border = border is not None
+    scene.render.use_crop_to_border = False
+    if border:
+        x0, y0, x1, y1 = border
+        scene.render.border_min_x, scene.render.border_max_x = max(0, x0 / W), min(1, x1 / W)
+        scene.render.border_min_y, scene.render.border_max_y = max(0, 1 - y1 / H), min(1, 1 - y0 / H)
+    render(path)
+
+
+def _orient(obj, loc, normal, size, lift=0.0):
+    q = normal.to_track_quat("Z", "Y")
+    obj.matrix_world = Matrix.Translation(loc + normal * lift) @ q.to_matrix().to_4x4() @ Matrix.Diagonal((*size, 1))
+
+
+def export_whale_sprites(camera):
+    """Кит одного возраста по слоям + места построек на палубе (сырые PNG и JSON).
+
+    Слои: тело с палубой; дальний и ближний плавник и хвост (с вырезом тела —
+    для анимации поворотом); заплатки «глаза закрыты» и «рот открыт»; нимб.
+    Всё в одном кадре: координаты в JSON — пиксели этого кадра.
+    """
+    os.makedirs(OUT, exist_ok=True)
+    make_whale()
+    make_deck()
+    whale_objs = list(CREATED)
+    garden = make_garden()
+    root = bpy.data.objects.new("whale_root", None)
+    scene.collection.objects.link(root)
+    for o in CREATED:
+        if o.parent is None:
+            o.parent = root
+    root.rotation_euler = (0, 0, YAW)
+    root.scale = (ST["scale"],) * 3
+    fit_camera(camera, margin=0.07)
+    bpy.context.view_layer.update()
+    M = root.matrix_world
+    ppu = W / camera.data.ortho_scale
+
+    def proj(p_local):
+        return _project(camera, M @ Vector(p_local))
+
+    k = item_scale()
+    slots, seen = [], {}
+    for (key, x, y, size) in GARDEN[STAGE]:
+        px, py, depth = proj((x, DECK_Y + y, TOP))
+        slot = {"item": key, "x": px, "y": py, "depth": depth, "scale": round(size * k * ST["scale"], 4)}
+        kind = key.split(":")[0]
+        if kind in GENERATOR_KINDS:
+            i = seen.get(kind, 0)
+            seen[kind] = i + 1
+            th = GENERATOR_THRESHOLDS[kind]
+            slot["gen"] = kind
+            slot["need"] = th[i] if i < len(th) else th[-1] * (i - len(th) + 2)
+        slots.append(slot)
+    slots.sort(key=lambda sl: -sl["depth"])  # дальние рисуются первыми
+
+    fins = sorted(PARTS["fin"], key=lambda f: _project(camera, f.matrix_world.translation)[2])
+    near_fin, far_fin = fins[0], fins[1]
+    near_side = -1 if near_fin is PARTS["fin"][0] else 1  # плавники созданы в порядке сторон −1, 1
+    eye_px = []
+    for (loc, n, up, right, ek) in EYES:
+        cx, cy, _ = proj(loc)
+        eye_px.append([cx, cy, round(0.3 * ek * ST["scale"] * ppu, 2)])
+    mouth = proj(ANCHORS["mouth"][0])
+    data = {
+        "age": STAGE, "name": ST["name"], "size": [W, H], "ppu": round(ppu, 4), "scale": ST["scale"],
+        "itemScale": round(k, 4), "slots": slots, "eyes": eye_px, "mouth": mouth[:2],
+        "finNear": proj(ANCHORS[f"fin{near_side}"])[:2], "finFar": proj(ANCHORS[f"fin{-near_side}"])[:2],
+        "fluke": proj(ANCHORS["fluke"])[:2], "bodyColor": ST["body"],
+    }
+
+    special = set(PARTS["fin"]) | set(PARTS["fluke"]) | set(PARTS["halo"]) | set(PARTS["star"])
+    body = [o for o in _meshes(whale_objs) if o not in special]
+    out = lambda name: os.path.join(OUT, f"{name}.png")
+    _render_layer(out("body"), body)
+    _render_layer(out("fin_far"), [far_fin])
+    _render_layer(out("fin_near"), [near_fin], holdout=body)
+    _render_layer(out("fluke"), PARTS["fluke"], holdout=body)
+    if PARTS["halo"]:
+        _render_layer(out("halo"), PARTS["halo"], holdout=body)
+        data["halo"] = True
+
+    # Заплатка «глаза закрыты»: глаза и блики спрятаны, вместо них — дуги век.
+    closed = []
+    for (loc, n, up, right, ek) in EYES:
+        pts = []
+        for i in range(9):
+            u = -1 + 2 * i / 8
+            pts.append(loc + right * (u * 0.19 * ek) - up * (0.035 * ek * (1 - u * u)) + n * (0.03 * ek))
+        curve = bpy.data.curves.new("lid", type="CURVE")
+        curve.dimensions = "3D"
+        curve.bevel_depth = 0.032 * ek
+        curve.bevel_resolution = 3
+        curve.use_fill_caps = True
+        spl = curve.splines.new("POLY")
+        spl.points.add(len(pts) - 1)
+        for p, co in zip(spl.points, pts):
+            p.co = (*co, 1)
+        obj = bpy.data.objects.new("lid", curve)
+        bpy.context.collection.objects.link(obj)
+        obj.data.materials.append(mat(C["mouth"], 0.3))
+        obj.parent = root
+        closed.append(obj)
+    bpy.context.view_layer.update()
+    xs = [e[0] for e in eye_px]
+    ys = [e[1] for e in eye_px]
+    r = max(e[2] for e in eye_px) * 1.9
+    eyes_box = (min(xs) - r, min(ys) - r, max(xs) + r, max(ys) + r)
+    no_eyes = [o for o in body if o not in PARTS["eye"] and o not in PARTS["eye_hl"]]
+    _render_layer(out("eyes_closed"), no_eyes + closed, border=eyes_box)
+    data["eyesBox"] = [round(v, 2) for v in eyes_box]
+
+    # Заплатка «рот открыт»: кит поёт.
+    loc, n = ANCHORS["mouth"]
+    m_dark = sphere((0, 0, 0), 1, material=mat("#3A1E3F", 0.4), smooth=True, uv=True)
+    _orient(m_dark, loc, n, (0.17, 0.13, 0.06), lift=0.0)
+    m_tongue = sphere((0, 0, 0), 1, material=mat("#FF7FA0", 0.5), smooth=True, uv=True)
+    up = n.cross(Vector((0, 0, 1)).cross(n)).normalized()
+    _orient(m_tongue, loc - up * 0.05, n, (0.1, 0.06, 0.06), lift=0.012)
+    for o in (m_dark, m_tongue):
+        o.parent = root
+    bpy.context.view_layer.update()
+    mr = 0.42 * ST["scale"] * ppu
+    mouth_box = (mouth[0] - mr, mouth[1] - mr * 0.7, mouth[0] + mr, mouth[1] + mr * 0.8)
+    no_smile = [o for o in body if o not in PARTS["smile"]]
+    _render_layer(out("mouth_open"), no_smile + [m_dark, m_tongue], border=mouth_box)
+    data["mouthBox"] = [round(v, 2) for v in mouth_box]
+
+    with open(os.path.join(OUT, "whale.json"), "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    print("EXPORTED", OUT)
+
+
+def export_items(camera):
+    """Каждая постройка сада отдельно, с мягкой тенью от ловца теней (сырые PNG и JSON)."""
+    os.makedirs(OUT, exist_ok=True)
+    keys = sorted({key for lst in GARDEN.values() for (key, *_rest) in lst})
+    only = OPTS.get("only", "").split(",") if "only" in OPTS else None
+    ortho = 3.2
+    meta = {}
+    for key in keys:
+        if only and key not in only:
+            continue
+        aim_camera(camera)
+        camera.data.ortho_scale = ortho
+        up = camera.matrix_world.to_3x3() @ Vector((0, 1, 0))
+        camera.location = camera.location + up * (ortho * 0.18)
+        group(item_parts(key), rot=FACE_CAMERA)
+        bpy.ops.mesh.primitive_plane_add(size=4, location=(0, 0, 0))
+        catcher = bpy.context.active_object
+        catcher.is_shadow_catcher = True
+        CREATED.append(catcher)
+        bpy.context.view_layer.update()
+        ax, ay, _ = _project(camera, Vector((0, 0, 0)))
+        name = key.replace(":", "_")
+        render(os.path.join(OUT, f"item_{name}.png"))
+        meta[key] = {"file": f"item_{name}", "anchor": [ax, ay], "ppu": round(W / ortho, 4)}
+        clear_created()
+    with open(os.path.join(OUT, "items.json"), "w") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=1)
+    print("EXPORTED", OUT)
+
+
 # --- режимы -----------------------------------------------------------------------------------
 
 ICONS = {
@@ -1146,5 +1492,25 @@ elif MODE == "boss":
     group(storm_petrel(), rot=FACE_CAMERA)
     fit_camera(camera, margin=0.04)
     render(OUT)
+elif MODE == "sprites":
+    export_whale_sprites(camera)
+elif MODE == "items":
+    export_items(camera)
+elif MODE == "birds":
+    os.makedirs(OUT, exist_ok=True)
+    for i, wing in enumerate((-0.95, -0.3, 0.35)):
+        aim_camera(camera)
+        group(bird(wing), rot=FACE_CAMERA + 0.5)
+        camera.data.ortho_scale = 1.05
+        render(os.path.join(OUT, f"bird{i}.png"))
+        clear_created()
+elif MODE == "bosses":
+    os.makedirs(OUT, exist_ok=True)
+    for name, build, pitch in (("fog", fog_boss, 62), ("petrel", storm_petrel, 62), ("eater", eater_boss, 66)):
+        aim_camera(camera, pitch=math.radians(pitch))
+        group(build(), rot=FACE_CAMERA)
+        fit_camera(camera, margin=0.04)
+        render(os.path.join(OUT, f"boss_{name}.png"))
+        clear_created()
 else:
     raise SystemExit(f"неизвестный режим: {MODE}")

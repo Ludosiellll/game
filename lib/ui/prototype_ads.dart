@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app/ad_service.dart';
-import 'palette.dart';
+import 'juicy.dart';
 
 /// Заглушка рекламы для прототипа: честно говорит, что рекламы ещё нет,
 /// и выдаёт награду после короткого ожидания.
@@ -55,7 +55,7 @@ class _PrototypeAdDialogState extends State<_PrototypeAdDialog> {
   Widget build(BuildContext context) {
     final ready = _left <= 0;
     return AlertDialog(
-      backgroundColor: Palette.paper,
+      backgroundColor: J.panelTop,
       title: const Text('Здесь будет реклама'),
       content: Text(
         ready

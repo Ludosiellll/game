@@ -4,8 +4,9 @@ import 'package:flutter/services.dart';
 
 import 'app/game_controller.dart';
 import 'app/save_store.dart';
+import 'art/sprite_atlas.dart';
 import 'ui/game_screen.dart';
-import 'ui/palette.dart';
+import 'ui/juicy.dart';
 import 'ui/prototype_ads.dart';
 
 Future<void> main() async {
@@ -14,14 +15,15 @@ Future<void> main() async {
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   final navigatorKey = GlobalKey<NavigatorState>();
   final controller = GameController(store: PrefsSaveStore(), ads: PrototypeAdService(navigatorKey));
-  await controller.init();
-  runApp(SkywhaleApp(controller: controller, navigatorKey: navigatorKey));
+  final results = await Future.wait([controller.init(), SpriteAtlas.load()]);
+  runApp(SkywhaleApp(controller: controller, atlas: results[1] as SpriteAtlas, navigatorKey: navigatorKey));
 }
 
 class SkywhaleApp extends StatelessWidget {
-  const SkywhaleApp({super.key, required this.controller, required this.navigatorKey});
+  const SkywhaleApp({super.key, required this.controller, required this.atlas, required this.navigatorKey});
 
   final GameController controller;
+  final SpriteAtlas atlas;
   final GlobalKey<NavigatorState> navigatorKey;
 
   @override
@@ -30,13 +32,8 @@ class SkywhaleApp extends StatelessWidget {
       title: 'Песнь небесного кита',
       debugShowCheckedModeBanner: false,
       navigatorKey: navigatorKey,
-      theme: ThemeData(
-        useMaterial3: true,
-        fontFamily: 'Nunito',
-        scaffoldBackgroundColor: Palette.paper,
-        colorScheme: ColorScheme.fromSeed(seedColor: Palette.calm, surface: Palette.paper, primary: Palette.calm),
-      ),
-      home: GameScreen(controller: controller),
+      theme: J.theme(),
+      home: GameScreen(controller: controller, atlas: atlas),
     );
   }
 }

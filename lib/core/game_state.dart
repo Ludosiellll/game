@@ -28,6 +28,7 @@ class GameState {
     Big? cyclePeak,
     Big? lastCyclePeak,
     Set<String>? bossesMet,
+    this.bossWins = 0,
     this.fightCooldownUntilMs = 0,
     this.lastSongMs = 0,
     this.content = defaultContent,
@@ -117,6 +118,9 @@ class GameState {
 
   /// Боссы, которых кит уже побеждал хотя бы раз (для сюжетных сцен).
   final Set<String> bossesMet;
+
+  /// Сколько всего боёв выиграно (для статистики).
+  int bossWins;
 
   /// До какого момента нельзя снова начать бой после поражения.
   int fightCooldownUntilMs;

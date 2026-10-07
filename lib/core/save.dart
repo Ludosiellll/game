@@ -37,6 +37,7 @@ String encodeSave(GameState s) => jsonEncode({
   'cyclePeak': s.cyclePeak.toJson(),
   'lastCyclePeak': s.lastCyclePeak.toJson(),
   'bossesMet': s.bossesMet.toList()..sort(),
+  'bossWins': s.bossWins,
   'fightCooldownUntilMs': s.fightCooldownUntilMs,
   'lastSongMs': s.lastSongMs,
 });
@@ -56,6 +57,7 @@ GameState? decodeSave(String raw, {GameContent content = defaultContent}) {
     final years = (data['years'] as num?)?.toDouble() ?? songs * content.fight.yearsPerSong;
     final age = math.min((data['age'] as num?)?.toInt() ?? _ageForRegion(content, region), content.ages.length - 1);
     final guardianRef = data['guardianRef'];
+    final bossesMet = {...((data['bossesMet'] as List?) ?? const []).map((e) => e.toString())};
     return GameState(
       echo: Big.fromJson(data['echo']),
       runEarned: Big.fromJson(data['runEarned']),
@@ -80,7 +82,8 @@ GameState? decodeSave(String raw, {GameContent content = defaultContent}) {
       guardianRef: guardianRef == null ? null : Big.fromJson(guardianRef),
       cyclePeak: Big.fromJson(data['cyclePeak']),
       lastCyclePeak: Big.fromJson(data['lastCyclePeak']),
-      bossesMet: {...((data['bossesMet'] as List?) ?? const []).map((e) => e.toString())},
+      bossesMet: bossesMet,
+      bossWins: (data['bossWins'] as num?)?.toInt() ?? bossesMet.length,
       fightCooldownUntilMs: (data['fightCooldownUntilMs'] as num? ?? 0).toInt(),
       lastSongMs: (data['lastSongMs'] as num? ?? 0).toInt(),
       content: content,

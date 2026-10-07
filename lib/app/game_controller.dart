@@ -140,7 +140,7 @@ class GameController extends ChangeNotifier {
     eco.tick(state, step, n);
     eco.touch(state, n);
     final f = fight;
-    if (f != null && !f.over) {
+    if (f != null && !f.over && !fightPaused) {
       f.tick(step);
       _afterFightAction();
     }
@@ -232,6 +232,9 @@ class GameController extends ChangeNotifier {
 
   /// Идущий бой (или законченный, пока игрок смотрит итог).
   Fight? fight;
+
+  /// Время боя стоит (заставка с именем босса, окно итогов).
+  bool fightPaused = false;
 
   /// Итог закрыт наградой или отступлением — повторно не применяется.
   bool _fightSettled = false;
@@ -393,6 +396,12 @@ class GameController extends ChangeNotifier {
 
   void debugAddEcho(num amount) {
     state.echo = state.echo + Big.from(amount);
+    notifyListeners();
+  }
+
+  /// Состарить кита (для проверки превращений).
+  void debugAddYears(double years) {
+    state.years += years;
     notifyListeners();
   }
 

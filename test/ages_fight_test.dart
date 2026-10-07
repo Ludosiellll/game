@@ -196,8 +196,21 @@ void main() {
       expect(s.echo.toDouble(), closeTo(10 + 54 * 60, 1e-6));
       expect(r.firstWin, isTrue);
       expect(s.bossesMet, contains('fog'));
+      expect(s.bossWins, 1);
       expect(s.guardiansBeaten, 1);
       expect(canMigrate(s), isTrue);
+    });
+
+    test('каждая победа идёт в счёт, даже над знакомым боссом; поражение — нет', () {
+      final s = regionDone();
+      finishFight(s, startGuardianFight(s, now)!..outcome = FightOutcome.lost, now);
+      expect(s.bossWins, 0);
+      skipFightCooldown(s);
+      finishFight(s, startGuardianFight(s, now)!..outcome = FightOutcome.won, now);
+      s.guardiansBeaten = 0; // тот же страж в следующем цикле
+      final again = finishFight(s, startGuardianFight(s, now)!..outcome = FightOutcome.won, now)!;
+      expect(again.firstWin, isFalse);
+      expect(s.bossWins, 2);
     });
 
     test('поражение ничего не отнимает, но повтор — через минуту (или сразу за рекламу)', () {
@@ -342,11 +355,55 @@ void main() {
       expect(f.addTime(), isFalse);
     });
 
-    test('сила против здоровья: сад и 4 тапа в секунду с крещендо ×2', () {
+    test('подсказка силы проигрывает копию боя: сад один выбивает 200 HP за 20 с из 40 — сила 200%', () {
+      final f = makeFight(hp: 200, dps: 10, tap: 0);
+      expect(f.powerRatio(tapsPerSecond: 0), closeTo(2, 0.02));
+    });
+
+    test('не успел — сила равна доле выбитого здоровья', () {
+      final f = makeFight(hp: 800, dps: 10, tap: 0);
+      expect(f.powerRatio(tapsPerSecond: 0), closeTo(0.5, 0.01));
+    });
+
+    test('тапы, крещендо и Песнь кита идут в счёт силы', () {
       final f = makeFight(hp: 1000, dps: 10, tap: 5);
-      // (10 + 5 × 4 × 2) × 40 = 2000 → вдвое больше здоровья.
-      expect(f.expectedDamage().toDouble(), closeTo(2000, 1e-9));
-      expect(f.powerRatio(), closeTo(2, 1e-9));
+      expect(f.powerRatio(), greaterThan(f.powerRatio(tapsPerSecond: 0) + 0.5));
+    });
+
+    test('подсказка не трогает сам бой', () {
+      final f = makeFight(boss: testContent.bossById('petrel'), hp: 800)..tick(3);
+      final hp = f.hp.toDouble();
+      final notes = f.notes.length;
+      f.powerRatio();
+      expect(f.hp.toDouble(), hp);
+      expect(f.elapsed, closeTo(3, 1e-9));
+      expect(f.notes.length, notes);
+      expect(f.outcome, FightOutcome.ongoing);
+    });
+
+    test('страж в момент появления по силам обычной игре, но не «пропевается» без неё', () {
+      // Боевой баланс: юный кит во втором регионе, сад только что дорос до цели.
+      final s = newGame(now)
+        ..age = 1
+        ..years = 180
+        ..songs = 1
+        ..region = 1
+        ..guardiansBeaten = 1
+        ..birds = 8
+        ..generators.addAll({'flower': 60, 'bush': 50, 'hive': 30, 'mill': 12});
+      expect(guardianReady(s), isTrue);
+      final f = startGuardianFight(s, now)!;
+      expect(f.powerRatio(), greaterThan(1));
+      expect(f.canAutoWin, isFalse);
+    });
+
+    test('автоигра доводит бой до конца и лопает ноты в полёте', () {
+      final f = makeFight(boss: testContent.bossById('petrel'), hp: 1e6, dps: 10, tap: 5, random: math.Random(3))
+        ..autoPlay(popChance: 1);
+      expect(f.outcome, FightOutcome.lost);
+      expect(f.elapsed, closeTo(40, 0.11));
+      expect(f.notesLanded, 0);
+      expect(f.mute, 1);
     });
 
     test('автопобеда, если сад сам выбивает здоровье с запасом 25%', () {
@@ -467,6 +524,7 @@ void main() {
         ..cyclePeak = Big.from(1e9)
         ..lastCyclePeak = Big.fromLog10(400)
         ..bossesMet.addAll({'fog', 'petrel'})
+        ..bossWins = 5
         ..fightCooldownUntilMs = now + 5000;
       final r = decodeSave(encodeSave(s), content: testContent)!;
       expect(r.years, closeTo(123.5, 1e-9));
@@ -479,6 +537,7 @@ void main() {
       expect(r.cyclePeak.toDouble(), closeTo(1e9, 1));
       expect(r.lastCyclePeak.exponent, 400);
       expect(r.bossesMet, {'fog', 'petrel'});
+      expect(r.bossWins, 5);
       expect(r.fightCooldownUntilMs, now + 5000);
     });
 

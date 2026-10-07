@@ -1,32 +1,40 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../app/game_controller.dart';
-import '../core/story.dart';
-import '../scene/scene_view.dart';
+import '../art/sprite_atlas.dart';
+import '../scene/whale_scene.dart';
 import 'dialogs.dart';
+import 'fight_screen.dart';
 import 'hud.dart';
-import 'palette.dart';
-import 'tabs.dart';
+import 'juicy.dart';
+import 'sheets.dart';
 
-/// Главный экран: сцена с китом сверху, вкладки снизу.
+/// Главный экран: сцена с китом на весь экран, сочный интерфейс поверх.
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key, required this.controller});
+  const GameScreen({super.key, required this.controller, required this.atlas});
 
   final GameController controller;
+  final SpriteAtlas atlas;
+
+  /// Где по высоте экрана центр кита.
+  static const double whaleCenterY = 0.53;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 3, vsync: this);
+class _GameScreenState extends State<GameScreen> {
   late final AppLifecycleListener _lifecycle;
   StreamSubscription<GameEvent>? _events;
   bool _dialogOpen = false;
+  bool _inFight = false;
+  FightEndEvent? _fightEnd;
 
   GameController get c => widget.controller;
+  SpriteAtlas get atlas => widget.atlas;
 
   @override
   void initState() {
@@ -46,12 +54,11 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   void dispose() {
     _events?.cancel();
     _lifecycle.dispose();
-    _tabs.dispose();
     super.dispose();
   }
 
   Future<void> _showOfflineIfAny() async {
-    if (_dialogOpen || c.pendingOffline == null || !mounted) return;
+    if (_dialogOpen || _inFight || c.pendingOffline == null || !mounted) return;
     _dialogOpen = true;
     await showOfflineDialog(context, c);
     _dialogOpen = false;
@@ -63,111 +70,116 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       case MigrationEvent(:final region):
         await showMigrationDialog(context, c, region);
       case SongEvent():
-        _tabs.animateTo(1);
         await showSongDialog(context, c, e);
       case FightEndEvent():
-        break;
+        // Итог показываем, когда экран боя закроется (иначе его закрытие сняло бы окно).
+        if (e.won) _fightEnd = e;
     }
+  }
+
+  Future<void> _fight({required bool trial}) async {
+    if (_inFight) return;
+    final started = trial ? c.startTrialFight() : c.startGuardianFight();
+    if (!started) return;
+    _inFight = true;
+    final nav = Navigator.of(context);
+    while (nav.canPop()) {
+      nav.pop();
+    }
+    await nav.push(
+      PageRouteBuilder<void>(
+        opaque: true,
+        transitionDuration: const Duration(milliseconds: 350),
+        pageBuilder: (_, _, _) => FightScreen(controller: c, atlas: atlas),
+        transitionsBuilder: (_, anim, _, child) => FadeTransition(opacity: anim, child: child),
+      ),
+    );
+    _inFight = false;
+    final end = _fightEnd;
+    _fightEnd = null;
+    if (end == null || !mounted) return;
+    final reward = end.reward!;
+    if (reward.newAge != null) {
+      await showAgeUpDialog(context, atlas, c, reward.newAge!, reward.woke);
+    } else {
+      await showBossWinDialog(context, atlas, end);
+    }
+  }
+
+  void _shop() => showJuicySheet(
+    context,
+    title: 'САД',
+    builder: (_) => ShopSheet(controller: c, atlas: atlas),
+  );
+
+  void _whale() => showJuicySheet(
+    context,
+    title: 'КИТ',
+    ribbon: J.purpleButton,
+    builder: (_) => WhaleSheet(controller: c, atlas: atlas, onTrial: () => _fight(trial: true)),
+  );
+
+  void _path() => showJuicySheet(
+    context,
+    title: 'ПУТЬ',
+    ribbon: J.greenButton,
+    builder: (_) => PathSheet(controller: c, atlas: atlas, onFight: () => _fight(trial: false)),
+  );
+
+  void _more() => showJuicySheet(
+    context,
+    title: 'ЕЩЁ',
+    ribbon: J.whiteButton,
+    builder: (_) => MoreSheet(controller: c),
+  );
+
+  /// Морда кита на экране — оттуда звучат ноты большой кнопки.
+  Offset _mouth() {
+    final size = MediaQuery.sizeOf(context);
+    final age = atlas.age(c.state.age);
+    final b = age.bounds.inflate(age.frame.width * 0.02);
+    final k = math.min(size.width * 0.98 / b.width, size.height * 0.56 / b.height);
+    final center = Offset(size.width / 2, size.height * GameScreen.whaleCenterY);
+    return center + (age.mouth - b.center) * k + const Offset(0, -30);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Palette.paper,
-      body: Column(
+      backgroundColor: const Color(0xFF52B4FF),
+      body: Stack(
         children: [
-          Expanded(
-            flex: 57,
-            child: Stack(
-              fit: StackFit.expand,
+          Positioned.fill(
+            child: WhaleScene(controller: c, atlas: atlas, centerY: GameScreen.whaleCenterY),
+          ),
+          SafeArea(
+            child: Column(
               children: [
-                SceneView(controller: c),
-                SafeArea(bottom: false, child: Hud(controller: c)),
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: RegionBar(controller: c, onOpenSong: () => _tabs.animateTo(1)),
+                const SizedBox(height: 4),
+                TopHud(controller: c),
+                const SizedBox(height: 6),
+                RegionBar(controller: c),
+                const Spacer(),
+                SideButtons(
+                  controller: c,
+                  atlas: atlas,
+                  onFight: () => _fight(trial: false),
+                  onWhale: _whale,
+                  onPath: _path,
                 ),
-                _TapHint(controller: c),
+                BottomBar(
+                  controller: c,
+                  atlas: atlas,
+                  onShop: _shop,
+                  onWhale: _whale,
+                  onPath: _path,
+                  onMore: _more,
+                  singAt: _mouth,
+                ),
               ],
             ),
           ),
-          Expanded(
-            flex: 43,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Palette.paper,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-                boxShadow: [BoxShadow(color: const Color(0xFF1B2030).withValues(alpha: 0.18), blurRadius: 16)],
-              ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  children: [
-                    TabBar(
-                      controller: _tabs,
-                      labelColor: Palette.ink,
-                      unselectedLabelColor: Palette.inkSoft,
-                      indicatorColor: Palette.accent,
-                      labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-                      tabs: const [
-                        Tab(text: 'Сад'),
-                        Tab(text: 'Песнь'),
-                        Tab(text: 'Ещё'),
-                      ],
-                    ),
-                    Expanded(
-                      child: TabBarView(
-                        controller: _tabs,
-                        children: [
-                          GardenTab(controller: c),
-                          SongTab(controller: c),
-                          MoreTab(controller: c),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
         ],
-      ),
-    );
-  }
-}
-
-/// Подсказка для самого первого тапа.
-class _TapHint extends StatelessWidget {
-  const _TapHint({required this.controller});
-
-  final GameController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: ListenableBuilder(
-        listenable: controller,
-        builder: (context, _) {
-          final visible = controller.state.taps == 0 && controller.state.songs == 0;
-          return AnimatedOpacity(
-            opacity: visible ? 1 : 0,
-            duration: const Duration(milliseconds: 400),
-            child: Align(
-              alignment: const Alignment(0, 0.42),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Palette.paper.withValues(alpha: 0.9),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  firstHint,
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Palette.ink),
-                ),
-              ),
-            ),
-          );
-        },
       ),
     );
   }

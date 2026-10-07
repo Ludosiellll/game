@@ -542,7 +542,14 @@ const List<BossDef> _bosses = [
 
 const List<TraitDef> _traits = [
   TraitDef(id: 'voice', name: 'Голос', description: '+25% к силе тапа', maxLevel: 25, costBase: 3, costGrowth: 1.6),
-  TraitDef(id: 'heart', name: 'Сердце', description: '+10% ко всему доходу', maxLevel: 25, costBase: 5, costGrowth: 1.7),
+  TraitDef(
+    id: 'heart',
+    name: 'Сердце',
+    description: '+10% ко всему доходу',
+    maxLevel: 25,
+    costBase: 5,
+    costGrowth: 1.7,
+  ),
   TraitDef(
     id: 'fins',
     name: 'Плавники',

@@ -20,6 +20,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/fonts/OFL-Nunito.txt
+    - assets/sprites/
   fonts:
     - family: Nunito
       fonts:
@@ -31,3 +32,5 @@ flutter:
           weight: 700
         - asset: assets/fonts/Nunito-ExtraBold.ttf
           weight: 800
+        - asset: assets/fonts/Nunito-Black.ttf
+          weight: 900

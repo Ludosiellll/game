@@ -304,6 +304,7 @@ FightReward? finishFight(GameState s, Fight f, int nowMs) {
   final echo = unboostedIncome(s).mulNum(f.boss.payoutSeconds);
   _earn(s, echo);
   final firstWin = s.bossesMet.add(f.boss.id);
+  s.bossWins += 1;
   int? newAge;
   String? woke;
   if (f.kind == FightKind.guardian) {

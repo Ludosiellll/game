@@ -91,14 +91,66 @@ class Fight {
   bool get songReady => songCharge >= 1 - 1e-9; // 0.1 × 10 в double — это 0.9999999
   double get hpFraction => maxHp.isZero ? 0 : (hp / maxHp).toDouble().clamp(0.0, 1.0);
 
-  /// Ожидаемый урон за бой при обычной игре: сад плюс тапы с частотой
-  /// `tapsPerSecond` и средним крещендо. Для подсказки «хватит ли сил».
-  Big expectedDamage({double tapsPerSecond = 4, double avgCrescendo = 2}) =>
-      (gardenDps + tapDamage.mulNum(tapsPerSecond * avgCrescendo)).mulNum(duration);
+  /// Сила против здоровья босса для подсказки «хватит ли сил»: тот же бой
+  /// с начала, на копии, сыгранный обычной игрой ([autoPlay]). Победа к
+  /// середине боя — 2 (200%), впритык — 1; не успел — доля выбитого здоровья.
+  /// Формула «сад + тапы» занижала силу почти втрое: не видела Песни, роста
+  /// крещендо и нот.
+  double powerRatio({double tapsPerSecond = 4}) {
+    if (maxHp.isZero) return double.infinity;
+    final probe = Fight(
+      kind: kind,
+      boss: boss,
+      rules: rules,
+      maxHp: maxHp,
+      duration: duration,
+      gardenDps: gardenDps,
+      tapDamage: tapDamage,
+      critChance: critChance,
+      random: math.Random(1),
+    )..autoPlay(tapsPerSecond: tapsPerSecond);
+    return probe.outcome == FightOutcome.won ? duration / probe.elapsed : 1 - probe.hpFraction;
+  }
 
-  /// Сила против здоровья босса: 1 — впритык, больше — с запасом.
-  double powerRatio({double tapsPerSecond = 4}) =>
-      maxHp.isZero ? double.infinity : (expectedDamage(tapsPerSecond: tapsPerSecond) / maxHp).toDouble();
+  /// Играет бой до конца за игрока: [tapsPerSecond] тапов в секунду, доля
+  /// [popChance] тёмных нот лопается через [popDelay] с после вылета, по
+  /// трещине щита бьёт раз в [crackDelay] с, Песнь кита — как только готова.
+  /// Для подсказки силы и симулятора баланса.
+  void autoPlay({
+    double tapsPerSecond = 4,
+    double popChance = 0.6,
+    double popDelay = 1.2,
+    double crackDelay = 0.6,
+    double step = 0.1,
+  }) {
+    var tapAcc = 0.0;
+    var crackTimer = 0.0;
+    final willPop = <int, bool>{};
+    final seenAt = <int, double>{};
+    while (!over) {
+      tapAcc += tapsPerSecond * step;
+      while (tapAcc >= 1) {
+        tap();
+        tapAcc -= 1;
+      }
+      for (final n in List<DarkNote>.of(notes)) {
+        seenAt.putIfAbsent(n.id, () => elapsed);
+        final popIt = willPop.putIfAbsent(n.id, () => _rng.nextDouble() < popChance);
+        if (popIt && elapsed - seenAt[n.id]! >= popDelay) pop(n.id);
+      }
+      if (shieldUp) {
+        crackTimer += step;
+        if (crackTimer >= crackDelay) {
+          hitCrack();
+          crackTimer = 0;
+        }
+      } else {
+        crackTimer = 0;
+      }
+      if (songReady) releaseSong();
+      tick(step);
+    }
+  }
 
   /// Сад сам выбьет здоровье с запасом — можно «пропеть» бой сразу.
   bool get canAutoWin => gardenDps.mulNum(duration) >= maxHp.mulNum(rules.autoWinMargin);

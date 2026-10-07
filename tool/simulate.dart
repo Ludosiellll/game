@@ -130,7 +130,7 @@ void simulate(Profile p, double calendarHours) {
     attempts[key] = (attempts[key] ?? 0) + 1;
     final statKey = f.kind == FightKind.trial ? 'Тень' : f.boss.name;
     attempts['$statKey (всего)'] = (attempts['$statKey (всего)'] ?? 0) + 1;
-    _botFight(f, p, rng);
+    _botFight(f, p);
     // Бой занимает игровое время: сад всё это время приносит доход.
     tick(s, f.elapsed, nowMs);
     nowMs += (f.elapsed * 1000).round();
@@ -228,38 +228,11 @@ void simulate(Profile p, double calendarHours) {
   }
 }
 
-/// Бот в бою: тапы, ноты, трещины щита, Песнь кита, +15 с за рекламу.
-void _botFight(Fight f, Profile p, math.Random rng) {
+/// Бот в бою: автоигра с привычками профиля и +15 с за рекламу, если он их смотрит.
+void _botFight(Fight f, Profile p) {
   if (f.autoWin()) return;
-  const dt = 0.1;
-  var tapAcc = 0.0;
-  var crackTimer = 0.0;
-  final willPop = <int, bool>{};
-  final seenAt = <int, double>{};
   while (true) {
-    while (!f.over) {
-      tapAcc += p.fightTaps * dt;
-      while (tapAcc >= 1) {
-        f.tap();
-        tapAcc -= 1;
-      }
-      for (final n in List<DarkNote>.of(f.notes)) {
-        seenAt.putIfAbsent(n.id, () => f.elapsed);
-        final pop = willPop.putIfAbsent(n.id, () => rng.nextDouble() < p.popChance);
-        if (pop && f.elapsed - seenAt[n.id]! >= p.popDelay) f.pop(n.id);
-      }
-      if (f.shieldUp) {
-        crackTimer += dt;
-        if (crackTimer >= p.crackDelay) {
-          f.hitCrack();
-          crackTimer = 0;
-        }
-      } else {
-        crackTimer = 0;
-      }
-      if (f.songReady) f.releaseSong();
-      f.tick(dt);
-    }
+    f.autoPlay(tapsPerSecond: p.fightTaps, popChance: p.popChance, popDelay: p.popDelay, crackDelay: p.crackDelay);
     if (f.outcome == FightOutcome.lost && p.fightAds && f.addTime()) continue;
     return;
   }

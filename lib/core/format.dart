@@ -64,3 +64,13 @@ double _pow10Small(int n) {
       return 100;
   }
 }
+
+/// «1 ч 05 мин», «12 мин», «40 с».
+String formatDuration(double seconds) {
+  final s = seconds.round();
+  final h = s ~/ 3600;
+  final m = (s % 3600) ~/ 60;
+  if (h > 0) return '$h ч ${m.toString().padLeft(2, '0')} мин';
+  if (m > 0) return '$m мин';
+  return '$s с';
+}
