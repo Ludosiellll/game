@@ -69,6 +69,9 @@ const scenarios = [
       traits: { fins: 1 }, whales: ['dawn'], generators: { flower: 40, bush: 30, hive: 10 }, birds: 5 },
     open: 'whale', steps: [{ tap: [0.82, 0.51] }, { wait: 900 }, { tap: [0.5, 0.79] }, { wait: 700 },
       { shot: '16a_victory' }, { wait: 3000 }] },
+  // Страж побеждён, регион восстановлен — боковая кнопка «В ПУТЬ».
+  { name: '17_migrate_ready', save: { ...base, age: 1, years: 150, songs: 1, region: 0, guardiansBeaten: 1,
+      echo: '2e3', generators: { flower: 60, bush: 30 }, birds: 3 } },
 ];
 
 const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] });

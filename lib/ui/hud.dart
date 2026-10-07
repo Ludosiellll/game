@@ -232,7 +232,7 @@ class SideButtons extends StatelessWidget {
             size: 62,
             colors: J.greenButton,
             onPressed: () => controller.migrate(),
-            child: const OutlinedText('➜', size: 30),
+            child: const OutlinedText('»', size: 40), // «➜» нет в Nunito
           ),
         ),
       );
