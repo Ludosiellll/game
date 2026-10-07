@@ -19,8 +19,22 @@ class GameState {
     required this.taps,
     required this.playSeconds,
     required this.createdMs,
+    this.years = 0,
+    this.age = 0,
+    this.scales = 0,
+    Map<String, int>? traits,
+    this.guardiansBeaten = 0,
+    this.guardianRef,
+    Big? cyclePeak,
+    Big? lastCyclePeak,
+    Set<String>? bossesMet,
+    this.fightCooldownUntilMs = 0,
+    this.lastSongMs = 0,
     this.content = defaultContent,
-  });
+  }) : traits = traits ?? <String, int>{},
+       cyclePeak = cyclePeak ?? Big.zero,
+       lastCyclePeak = lastCyclePeak ?? Big.zero,
+       bossesMet = bossesMet ?? <String>{};
 
   factory GameState.fresh(int nowMs, {GameContent content = defaultContent}) => GameState(
     echo: Big.zero,
@@ -76,9 +90,44 @@ class GameState {
   double playSeconds;
   final int createdMs;
 
+  /// Возраст кита в годах. Кит не сбрасывается Долгой песнью.
+  double years;
+
+  /// Индекс возраста в `content.ages` (0 — китёнок).
+  int age;
+
+  /// Чешуйки — награда за боссов, тратятся на черты кита.
+  int scales;
+
+  /// Уровни черт кита.
+  final Map<String, int> traits;
+
+  /// Сколько стражей маршрута побеждено в этом цикле: страж региона `r`
+  /// побеждён, если `guardiansBeaten > r`.
+  int guardiansBeaten;
+
+  /// Доход в секунду в момент, когда появился страж текущего региона:
+  /// от него считается здоровье стража. `null` — страж ещё не появился.
+  Big? guardianRef;
+
+  /// Наибольший доход в секунду в этом цикле и в прошлом — от них считается
+  /// здоровье Тени кита (испытание возраста).
+  Big cyclePeak;
+  Big lastCyclePeak;
+
+  /// Боссы, которых кит уже побеждал хотя бы раз (для сюжетных сцен).
+  final Set<String> bossesMet;
+
+  /// До какого момента нельзя снова начать бой после поражения.
+  int fightCooldownUntilMs;
+
+  /// Когда спета последняя Долгая песнь (0 — ещё не пели).
+  int lastSongMs;
+
   /// Баланс и контент, по которым играется эта партия (не сохраняется).
   final GameContent content;
 
   int owned(String generatorId) => generators[generatorId] ?? 0;
   int memoryLevel(String nodeId) => memory[nodeId] ?? 0;
+  int traitLevel(String traitId) => traits[traitId] ?? 0;
 }

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:skywhale/app/game_controller.dart';
 import 'package:skywhale/app/save_store.dart';
 import 'package:skywhale/core/economy.dart';
+import 'package:skywhale/core/fight.dart';
 import 'package:skywhale/core/save.dart';
 
 import 'test_content.dart';
@@ -91,6 +92,78 @@ void main() {
       c.onFrame(0.5);
       c.onFrame(0.5);
       expect(c.state.echo.toDouble(), closeTo(0.4, 1e-9));
+    });
+  });
+
+  group('бои в контроллере', () {
+    Future<GameController> ready() async {
+      final saved = newGame(start, content: testContent)
+        ..generators['flower'] = 30
+        ..generators['bush'] = 10;
+      final c = make(MemorySaveStore(encodeSave(saved)));
+      await c.init();
+      return c;
+    }
+
+    test('страж появляется, когда регион восстановлен; бой начинается и идёт по кадрам', () async {
+      final c = await ready();
+      expect(c.canFightGuardian, isTrue);
+      expect(c.startGuardianFight(), isTrue);
+      expect(c.startGuardianFight(), isFalse, reason: 'второй бой поверх первого не начинается');
+      final hp = c.fight!.hp.toDouble();
+      c.onFrame(1);
+      expect(c.fight!.hp.toDouble(), lessThan(hp));
+      expect(c.fightTap(), isNotNull);
+    });
+
+    test('победа применяет награду один раз и шлёт событие', () async {
+      final c = await ready();
+      final events = <GameEvent>[];
+      final sub = c.events.listen(events.add);
+      c.startGuardianFight();
+      c.fight!.hp = c.fight!.hp.mulNum(1e-9);
+      c.fightTap();
+      c.fightTap();
+      await Future<void>.delayed(Duration.zero);
+      expect(c.fight!.outcome, FightOutcome.won);
+      expect(c.state.scales, 1);
+      expect(c.lastReward, isNotNull);
+      expect(events.whereType<FightEndEvent>().single.won, isTrue);
+      c.closeFight();
+      expect(c.fight, isNull);
+      expect(c.state.scales, 1);
+      expect(canMigrate(c.state), isTrue);
+      await sub.cancel();
+    });
+
+    test('время вышло: +15 с за рекламу продолжают бой; отступление — пауза перед повтором', () async {
+      final c = await ready();
+      c.startGuardianFight();
+      for (var i = 0; i < 41; i++) {
+        c.onFrame(1);
+      }
+      expect(c.fight!.outcome, FightOutcome.lost);
+      expect(await c.fightAddTime(), isTrue);
+      expect(c.fight!.outcome, FightOutcome.ongoing);
+      for (var i = 0; i < 16; i++) {
+        c.onFrame(1);
+      }
+      expect(c.fight!.outcome, FightOutcome.lost);
+      expect(await c.fightAddTime(), isFalse);
+      c.retreatFight();
+      expect(c.fight, isNull);
+      expect(c.fightCooldownLeft, closeTo(60, 1e-9));
+      expect(c.startGuardianFight(), isFalse);
+      expect(await c.skipFightCooldownWithAd(), isTrue);
+      expect(c.startGuardianFight(), isTrue);
+    });
+
+    test('черта кита покупается за чешуйки', () async {
+      final c = await ready();
+      c.state.scales = 2;
+      expect(c.buyTrait('voice'), isTrue);
+      expect(c.state.traitLevel('voice'), 1);
+      expect(c.buyTrait('voice'), isFalse);
     });
   });
 }

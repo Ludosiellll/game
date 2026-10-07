@@ -5,6 +5,7 @@ import '../app/game_controller.dart';
 import '../core/big.dart';
 import '../core/economy.dart' as eco;
 import '../core/format.dart';
+import '../core/game_state.dart';
 import '../core/story.dart';
 import 'palette.dart';
 import 'widgets.dart';
@@ -268,7 +269,7 @@ class SongTab extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      s.whales.contains(w.id) ? (whaleMemory[w.id] ?? '') : 'Проснётся после песни №${w.atSong}.',
+                      s.whales.contains(w.id) ? (whaleMemory[w.id] ?? '') : _wakeHint(s, w.id),
                       style: _captionStyle,
                     ),
                   ],
@@ -488,4 +489,13 @@ class MoreTab extends StatelessWidget {
     );
     if (ok == true) await controller.resetProgress();
   }
+}
+
+
+/// Когда проснётся кит стаи: при переходе нашего кита в нужный возраст.
+String _wakeHint(GameState s, String whaleId) {
+  for (final a in s.content.ages) {
+    if (a.whale == whaleId) return 'Проснётся, когда наш кит станет: ${a.name.toLowerCase()}.';
+  }
+  return 'Спит.';
 }

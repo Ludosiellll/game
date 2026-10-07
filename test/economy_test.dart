@@ -117,6 +117,8 @@ void main() {
         ..generators['bush'] = 10;
       expect(bloom(s), closeTo(60, 1e-9));
       expect(regionProgress(s), closeTo(1, 1e-9));
+      expect(guardianReady(s), isTrue, reason: 'дальше пускает только побеждённый страж');
+      s.guardiansBeaten = 1;
       expect(canMigrate(s), isTrue);
     });
 
@@ -131,7 +133,8 @@ void main() {
     test('миграция открывает новые растения и удваивает доход', () {
       final s = newGame(now, content: testContent)
         ..generators['flower'] = 30
-        ..generators['bush'] = 10;
+        ..generators['bush'] = 10
+        ..guardiansBeaten = 1;
       final before = productionPerSecond(s, now).toDouble();
       expect(migrate(s), isTrue);
       expect(s.region, 1);
@@ -160,6 +163,7 @@ void main() {
       ..region = 2
       ..generators['observatory'] =
           10 // 3000 цвета ≥ 2500
+      ..guardiansBeaten = 3
       ..runEarned = Big.from(4e9);
 
     test('песнь доступна только после восстановления последнего региона', () {
@@ -185,12 +189,6 @@ void main() {
       expect(s.songs, 1);
     });
 
-    test('первая песнь будит Рассветного кита', () {
-      final s = readyToSing();
-      final woke = longSong(s, now);
-      expect(woke, ['dawn']);
-      expect(s.whales, contains('dawn'));
-    });
 
     test('без готовности песнь не поётся и ничего не сбрасывает', () {
       final s = newGame(now, content: testContent)..echo = Big.from(500);

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'big.dart';
 import 'content.dart';
+import 'fight.dart';
 import 'game_state.dart';
 
 /// Правила экономики. Числа баланса берутся из `s.content`, текущий момент
@@ -57,12 +58,14 @@ Big productionPerSecond(GameState s, int nowMs) {
   return total.mulNum(globalMultiplier(s, nowMs));
 }
 
-/// Общий множитель дохода: регион, память, киты, буст.
+/// Общий множитель дохода: регион, память, «Сердце» кита, киты стаи, буст.
 double globalMultiplier(GameState s, int nowMs) {
   final c = s.content;
   var m = math.pow(c.regionIncomeMultiplier, s.region).toDouble();
   m *= 1 + c.memoryEffects.echoIncomePerLevel * s.memoryLevel('echo');
+  m *= 1 + c.traitEffects.heartIncomePerLevel * s.traitLevel('heart');
   if (s.whales.contains('night')) m *= c.whaleEffects.nightIncomeMultiplier;
+  if (s.whales.contains('mother')) m *= c.whaleEffects.motherIncomeMultiplier;
   if (isBoosted(s, nowMs)) m *= 2;
   return m;
 }
@@ -75,8 +78,12 @@ Big tapValue(GameState s, int nowMs) {
   return s.whales.contains('storm') ? value.mulNum(c.whaleEffects.stormTapAndBirdMultiplier) : value;
 }
 
+/// Тап игрока: сила тапа с «Голосом» кита (птицы поют без него).
+Big playerTapValue(GameState s, int nowMs) =>
+    tapValue(s, nowMs).mulNum(1 + s.content.traitEffects.voiceTapPerLevel * s.traitLevel('voice'));
+
 void tap(GameState s, int nowMs) {
-  _earn(s, tapValue(s, nowMs));
+  _earn(s, playerTapValue(s, nowMs));
   s.taps += 1;
 }
 
@@ -95,9 +102,17 @@ Big incomePerSecond(GameState s, int nowMs) => productionPerSecond(s, nowMs) + b
 /// Продвинуть игру на `dtSeconds` активного времени.
 void tick(GameState s, double dtSeconds, int nowMs) {
   if (dtSeconds <= 0) return;
-  _earn(s, incomePerSecond(s, nowMs).mulNum(dtSeconds));
+  final income = incomePerSecond(s, nowMs);
+  _earn(s, income.mulNum(dtSeconds));
   s.playSeconds += dtSeconds;
+  s.years += dtSeconds * s.content.fight.yearsPerSecond;
+  final base = isBoosted(s, nowMs) ? unboostedIncome(s) : income;
+  if (base > s.cyclePeak) s.cyclePeak = base;
+  if (guardianReady(s)) guardianReference(s, nowMs);
 }
+
+/// Доход в секунду без буста за рекламу: от него считается сила боссов.
+Big unboostedIncome(GameState s) => incomePerSecond(s, s.boostUntilMs);
 
 // ---------------------------------------------------------------------------
 // Птицы
@@ -151,21 +166,182 @@ double regionProgress(GameState s) {
   return p.clamp(0.0, 1.0);
 }
 
-bool isLastRegion(GameState s) => s.region >= s.content.regions.length - 1;
+/// Сколько регионов маршрута доступно киту его возраста.
+int openRegions(GameState s) => math.min(s.content.regions.length, currentAge(s).regionsOpen);
 
-bool canMigrate(GameState s) => !isLastRegion(s) && regionProgress(s) >= 1;
+bool isLastRegion(GameState s) => s.region >= openRegions(s) - 1;
+
+bool canMigrate(GameState s) => !isLastRegion(s) && regionProgress(s) >= 1 && guardianBeaten(s);
 
 /// Перелёт в следующий регион: сад и Эхо сохраняются, доход растёт.
 bool migrate(GameState s) {
   if (!canMigrate(s)) return false;
   s.region += 1;
+  s.guardianRef = null;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Возраст кита
+
+AgeDef currentAge(GameState s) => s.content.ages[s.age];
+
+/// Следующий возраст или `null`, если кит уже достиг последнего.
+AgeDef? nextAge(GameState s) => s.age + 1 < s.content.ages.length ? s.content.ages[s.age + 1] : null;
+
+/// Кит набрал годы для следующего возраста — открыто испытание.
+bool trialUnlocked(GameState s) {
+  final next = nextAge(s);
+  return next != null && s.years >= next.years;
+}
+
+// ---------------------------------------------------------------------------
+// Стражи регионов
+
+BossDef guardianOf(GameState s, int region) => s.content.bossById(s.content.regions[region].guardian);
+
+bool guardianBeaten(GameState s) => s.guardiansBeaten > s.region;
+
+/// Регион восстановлен, а страж ещё не побеждён — он появился и ждёт боя.
+bool guardianReady(GameState s) => !guardianBeaten(s) && regionProgress(s) >= 1;
+
+/// Опорный доход стража фиксируется, когда страж появился: дальше сад растёт,
+/// а страж остаётся прежним — поэтому рост помогает его победить.
+Big? guardianReference(GameState s, int nowMs) {
+  if (s.guardianRef == null && guardianReady(s)) s.guardianRef = unboostedIncome(s);
+  return s.guardianRef;
+}
+
+Big guardianHp(GameState s, int nowMs) =>
+    _bossHp(guardianReference(s, nowMs) ?? unboostedIncome(s), guardianOf(s, s.region), s);
+
+/// Здоровье Тени кита — от пика дохода прошлого цикла (или этого, если он выше).
+Big trialHp(GameState s) {
+  final ref = s.lastCyclePeak > s.cyclePeak ? s.lastCyclePeak : s.cyclePeak;
+  return _bossHp(ref, s.content.bossById(s.content.fight.trialBoss), s);
+}
+
+Big _bossHp(Big reference, BossDef b, GameState s) {
+  final ref = reference < Big.one ? Big.one : reference;
+  return ref.mulNum(b.seconds * b.hpFactor);
+}
+
+// ---------------------------------------------------------------------------
+// Бои
+
+bool onFightCooldown(GameState s, int nowMs) => nowMs < s.fightCooldownUntilMs;
+
+double fightCooldownLeft(GameState s, int nowMs) => math.max(0, (s.fightCooldownUntilMs - nowMs) / 1000);
+
+/// Повторить бой сразу (за рекламу).
+void skipFightCooldown(GameState s) => s.fightCooldownUntilMs = 0;
+
+/// Длительность боя с «Плавниками» кита.
+double fightSeconds(GameState s, BossDef b) =>
+    b.seconds + s.content.traitEffects.finsFightSecondsPerLevel * s.traitLevel('fins');
+
+double fightCritChance(GameState s) =>
+    s.content.fight.baseCrit + s.content.traitEffects.spiritCritPerLevel * s.traitLevel('spirit');
+
+Fight _fight(GameState s, int nowMs, FightKind kind, BossDef boss, Big hp, math.Random? random) => Fight(
+  kind: kind,
+  boss: boss,
+  rules: s.content.fight,
+  maxHp: hp,
+  duration: fightSeconds(s, boss),
+  gardenDps: incomePerSecond(s, nowMs),
+  tapDamage: playerTapValue(s, nowMs).mulNum(s.content.fight.tapMultiplier),
+  critChance: fightCritChance(s),
+  random: random,
+);
+
+Fight? startGuardianFight(GameState s, int nowMs, {math.Random? random}) {
+  if (!guardianReady(s) || onFightCooldown(s, nowMs)) return null;
+  return _fight(s, nowMs, FightKind.guardian, guardianOf(s, s.region), guardianHp(s, nowMs), random);
+}
+
+Fight? startTrialFight(GameState s, int nowMs, {math.Random? random}) {
+  if (!trialUnlocked(s) || onFightCooldown(s, nowMs)) return null;
+  final boss = s.content.bossById(s.content.fight.trialBoss);
+  return _fight(s, nowMs, FightKind.trial, boss, trialHp(s), random);
+}
+
+class FightReward {
+  const FightReward({
+    required this.scales,
+    required this.years,
+    required this.echo,
+    required this.firstWin,
+    this.newAge,
+    this.woke,
+  });
+
+  final int scales;
+  final double years;
+  final Big echo;
+
+  /// Этого босса победили впервые (сюжетная сцена).
+  final bool firstWin;
+
+  /// Новый возраст кита после испытания.
+  final int? newAge;
+
+  /// Проснувшийся кит стаи.
+  final String? woke;
+}
+
+/// Итог боя. Победа — награды (и новый возраст после испытания), поражение —
+/// пауза перед повтором. Ничего не отнимается.
+FightReward? finishFight(GameState s, Fight f, int nowMs) {
+  if (f.outcome == FightOutcome.lost) {
+    s.fightCooldownUntilMs = nowMs + (s.content.fight.retrySeconds * 1000).round();
+    return null;
+  }
+  if (f.outcome != FightOutcome.won) return null;
+  final scales = f.boss.scales + f.boss.scalesPerAge * s.age;
+  s.scales += scales;
+  s.years += f.boss.years;
+  final echo = unboostedIncome(s).mulNum(f.boss.payoutSeconds);
+  _earn(s, echo);
+  final firstWin = s.bossesMet.add(f.boss.id);
+  int? newAge;
+  String? woke;
+  if (f.kind == FightKind.guardian) {
+    s.guardiansBeaten = math.max(s.guardiansBeaten, s.region + 1);
+    s.guardianRef = null;
+  } else if (nextAge(s) != null) {
+    s.age += 1;
+    newAge = s.age;
+    final whale = currentAge(s).whale;
+    if (whale != null && s.whales.add(whale)) woke = whale;
+  }
+  s.fightCooldownUntilMs = 0;
+  return FightReward(scales: scales, years: f.boss.years, echo: echo, firstWin: firstWin, newAge: newAge, woke: woke);
+}
+
+// ---------------------------------------------------------------------------
+// Черты кита (за чешуйки)
+
+/// Цена следующего уровня черты или `null`, если уровень максимальный.
+int? traitCost(GameState s, String traitId) {
+  final t = s.content.traitById(traitId);
+  final level = s.traitLevel(traitId);
+  if (level >= t.maxLevel) return null;
+  return (t.costBase * math.pow(t.costGrowth, level) - 1e-9).ceil();
+}
+
+bool buyTrait(GameState s, String traitId) {
+  final cost = traitCost(s, traitId);
+  if (cost == null || s.scales < cost) return false;
+  s.scales -= cost;
+  s.traits[traitId] = s.traitLevel(traitId) + 1;
   return true;
 }
 
 // ---------------------------------------------------------------------------
 // Долгая песнь (престиж), Дерево памяти, киты
 
-bool canSing(GameState s) => isLastRegion(s) && regionProgress(s) >= 1;
+bool canSing(GameState s) => isLastRegion(s) && regionProgress(s) >= 1 && guardianBeaten(s);
 
 /// Семена за песню: floor(scale × (заработано за забег / divisor)^power).
 Big seedsForSong(GameState s) {
@@ -180,27 +356,36 @@ Big seedsForSong(GameState s) {
   return _floor(raw);
 }
 
-/// Спеть Долгую песнь. Возвращает id проснувшихся китов или `null`,
-/// если петь ещё рано.
+/// Спеть Долгую песнь: кит засыпает на век (+годы), сад отцветает, жители
+/// сменяются поколением. Возвращает id проснувшихся китов (теперь их будят
+/// испытания, поэтому список пуст) или `null`, если петь ещё рано.
 List<String>? longSong(GameState s, int nowMs) {
   if (!canSing(s)) return null;
   s.seeds = s.seeds + seedsForSong(s);
+  s.years += songYears(s, nowMs);
   s.songs += 1;
+  s.lastSongMs = nowMs;
   s.echo = Big.zero;
   s.runEarned = Big.zero;
   s.region = 0;
   s.birds = 0;
   s.generators.clear();
+  s.guardiansBeaten = 0;
+  s.guardianRef = null;
+  s.lastCyclePeak = s.cyclePeak;
+  s.cyclePeak = Big.zero;
   final sprouts = s.content.memoryEffects.sproutsFlowersPerLevel * s.memoryLevel('sprouts');
   if (sprouts > 0) s.generators[s.content.generators.first.id] = sprouts;
-  final woke = <String>[];
-  for (final w in s.content.whales) {
-    if (s.songs >= w.atSong && !s.whales.contains(w.id)) {
-      s.whales.add(w.id);
-      woke.add(w.id);
-    }
-  }
-  return woke;
+  return <String>[];
+}
+
+/// Сколько лет даст Долгая песнь сейчас: полный век, если с прошлой песни
+/// прошло не меньше `songFullCycleHours`, иначе долю. Первая — всегда век.
+double songYears(GameState s, int nowMs) {
+  final rules = s.content.fight;
+  if (s.songs == 0) return rules.yearsPerSong;
+  final hours = (nowMs - s.lastSongMs) / 3.6e6;
+  return rules.yearsPerSong * (hours / rules.songFullCycleHours).clamp(0.0, 1.0);
 }
 
 /// Цена следующего уровня узла или `null`, если уровень максимальный.
@@ -235,7 +420,9 @@ class OfflineResult {
 
 /// Лимит офлайна в часах.
 double offlineCapHours(GameState s) =>
-    s.content.baseOfflineHours + s.content.memoryEffects.sleepHoursPerLevel * s.memoryLevel('sleep');
+    s.content.baseOfflineHours +
+    s.content.memoryEffects.sleepHoursPerLevel * s.memoryLevel('sleep') +
+    s.content.traitEffects.finsOfflineHoursPerLevel * s.traitLevel('fins');
 
 /// Начислить доход за время отсутствия и обновить отметку времени.
 ///
@@ -255,6 +442,7 @@ OfflineResult applyOffline(GameState s, int nowMs) {
   var earned = incomePerSecond(s, s.boostUntilMs).mulNum(seconds);
   if (s.whales.contains('dawn')) earned = earned.mulNum(s.content.whaleEffects.dawnOfflineMultiplier);
   _earn(s, earned);
+  s.years += seconds * s.content.fight.yearsPerSecond;
   return OfflineResult(seconds: seconds, earned: earned, capped: rawSeconds > capSeconds);
 }
 

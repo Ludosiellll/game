@@ -65,6 +65,8 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       case SongEvent():
         _tabs.animateTo(1);
         await showSongDialog(context, c, e);
+      case FightEndEvent():
+        break;
     }
   }
 

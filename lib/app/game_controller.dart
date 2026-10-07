@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
 import '../core/big.dart';
 import '../core/content.dart';
 import '../core/economy.dart' as eco;
+import '../core/fight.dart';
 import '../core/game_state.dart';
 import '../core/save.dart';
 import 'ad_service.dart';
@@ -28,6 +30,14 @@ class SongEvent extends GameEvent {
   final List<String> woke;
 }
 
+/// Бой закончился: победа с наградой или отступление.
+class FightEndEvent extends GameEvent {
+  const FightEndEvent({required this.fight, this.reward});
+  final Fight fight;
+  final eco.FightReward? reward;
+  bool get won => reward != null;
+}
+
 /// Тап по небу: где он был и сколько дал (для волны и всплывающего числа).
 class TapEffect {
   const TapEffect({required this.x, required this.y, required this.value});
@@ -38,9 +48,17 @@ class TapEffect {
 
 /// Связывает правила экономики с временем, сохранением, рекламой и экраном.
 class GameController extends ChangeNotifier {
-  GameController({required this.store, int Function()? now, this.content = defaultContent, AdService? ads})
-    : _now = now ?? _systemNow,
-      ads = ads ?? const InstantAdService();
+  GameController({
+    required this.store,
+    int Function()? now,
+    this.content = defaultContent,
+    AdService? ads,
+    this.fightRandom,
+  }) : _now = now ?? _systemNow,
+       ads = ads ?? const InstantAdService();
+
+  /// Случайность боёв (в тестах — предсказуемая).
+  final math.Random? fightRandom;
 
   static int _systemNow() => DateTime.now().millisecondsSinceEpoch;
 
@@ -121,6 +139,11 @@ class GameController extends ChangeNotifier {
     final n = _now();
     eco.tick(state, step, n);
     eco.touch(state, n);
+    final f = fight;
+    if (f != null && !f.over) {
+      f.tick(step);
+      _afterFightAction();
+    }
     _sinceNotify += step;
     if (_sinceNotify >= 0.1) {
       _sinceNotify = 0;
@@ -200,6 +223,128 @@ class GameController extends ChangeNotifier {
 
   bool buyMemory(String nodeId) {
     if (!eco.buyMemory(state, nodeId)) return false;
+    notifyListeners();
+    unawaited(saveNow());
+    return true;
+  }
+
+  // --- бои -------------------------------------------------------------------
+
+  /// Идущий бой (или законченный, пока игрок смотрит итог).
+  Fight? fight;
+
+  /// Итог закрыт наградой или отступлением — повторно не применяется.
+  bool _fightSettled = false;
+
+  /// Награда последнего выигранного боя (для окна итогов).
+  eco.FightReward? lastReward;
+
+  bool get canFightGuardian => eco.guardianReady(state);
+  bool get canFightTrial => eco.trialUnlocked(state);
+  double get fightCooldownLeft => eco.fightCooldownLeft(state, _now());
+
+  bool startGuardianFight() => _start(eco.startGuardianFight(state, _now(), random: fightRandom));
+
+  bool startTrialFight() => _start(eco.startTrialFight(state, _now(), random: fightRandom));
+
+  bool _start(Fight? f) {
+    if (f == null || fight != null) return false;
+    fight = f;
+    _fightSettled = false;
+    lastReward = null;
+    notifyListeners();
+    return true;
+  }
+
+  TapHit? fightTap() {
+    final hit = fight?.tap();
+    _afterFightAction();
+    return hit;
+  }
+
+  Big? fightPop(int noteId) {
+    final damage = fight?.pop(noteId);
+    _afterFightAction();
+    return damage;
+  }
+
+  bool fightCrack() {
+    final ok = fight?.hitCrack() ?? false;
+    _afterFightAction();
+    return ok;
+  }
+
+  Big? fightSong() {
+    final damage = fight?.releaseSong();
+    _afterFightAction();
+    return damage;
+  }
+
+  bool fightAutoWin() {
+    final ok = fight?.autoWin() ?? false;
+    _afterFightAction();
+    return ok;
+  }
+
+  /// +15 секунд за рекламу — в бою или сразу после того, как время вышло.
+  Future<bool> fightAddTime() async {
+    final f = fight;
+    if (f == null || f.extraTimeUsed || _fightSettled) return false;
+    if (!await ads.showRewarded()) return false;
+    final ok = f.addTime();
+    notifyListeners();
+    return ok;
+  }
+
+  /// Отступить после поражения: начинается пауза перед повтором.
+  void retreatFight() {
+    final f = fight;
+    if (f == null) return;
+    if (!_fightSettled && f.outcome == FightOutcome.lost) {
+      eco.finishFight(state, f, _now());
+      _fightSettled = true;
+      _events.add(FightEndEvent(fight: f));
+    }
+    closeFight();
+  }
+
+  /// Закрыть экран боя (после итогов).
+  void closeFight() {
+    final f = fight;
+    if (f != null && !_fightSettled && f.outcome == FightOutcome.ongoing) {
+      // Выход посреди боя — как поражение, но без паузы: ничего не потеряно.
+      _fightSettled = true;
+    }
+    fight = null;
+    notifyListeners();
+    unawaited(saveNow());
+  }
+
+  /// Повторить бой сразу, не дожидаясь паузы, — за рекламу.
+  Future<bool> skipFightCooldownWithAd() async {
+    if (!eco.onFightCooldown(state, _now())) return true;
+    if (!await ads.showRewarded()) return false;
+    eco.skipFightCooldown(state);
+    notifyListeners();
+    return true;
+  }
+
+  void _afterFightAction() {
+    final f = fight;
+    if (f == null) return;
+    if (!_fightSettled && f.outcome == FightOutcome.won) {
+      lastReward = eco.finishFight(state, f, _now());
+      _fightSettled = true;
+      _events.add(FightEndEvent(fight: f, reward: lastReward));
+      unawaited(saveNow());
+    }
+    notifyListeners();
+  }
+
+  // --- черты кита ---------------------------------------------------------------
+
+  bool buyTrait(String traitId) {
+    if (!eco.buyTrait(state, traitId)) return false;
     notifyListeners();
     unawaited(saveNow());
     return true;
