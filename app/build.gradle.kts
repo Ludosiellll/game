@@ -22,12 +22,26 @@ android {
         buildConfigField("String", "SUPABASE_KEY", "\"${providers.gradleProperty("forma.supabase.key").getOrElse("")}\"")
     }
 
+    // A stable release key keeps updates installable over the previous version (and the phone's data).
+    // CI passes it from repository secrets; without them the build falls back to the debug key.
+    val keystore = providers.environmentVariable("FORMA_KEYSTORE").orNull
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = providers.environmentVariable("FORMA_KEYSTORE_PASSWORD").get()
+                keyAlias = providers.environmentVariable("FORMA_KEY_ALIAS").getOrElse("forma")
+                keyPassword = providers.environmentVariable("FORMA_KEYSTORE_PASSWORD").get()
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

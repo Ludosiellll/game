@@ -1,0 +1,57 @@
+name: Tests and Android APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Engine tests
+        run: ./gradlew :core:test
+
+      - name: App tests (Robolectric, sync, screenshots)
+        run: ./gradlew :app:testDebugUnitTest -Proborazzi.test.record=true
+
+      - name: Release signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.FORMA_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.FORMA_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/forma.jks"
+            echo "FORMA_KEYSTORE=$RUNNER_TEMP/forma.jks" >> "$GITHUB_ENV"
+            echo "FORMA_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "Signed with the stable release key." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::No FORMA_KEYSTORE_BASE64 / FORMA_KEYSTORE_PASSWORD secrets: the APK is signed with a throwaway debug key and will not install over a previous build."
+            echo "⚠️ Debug-signed APK: add the FORMA_KEYSTORE_* secrets for installable updates." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build APK
+        run: ./gradlew :app:assembleRelease
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: forma-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: screenshots
+          path: app/build/shots/
+          retention-days: 7
+          if-no-files-found: ignore
