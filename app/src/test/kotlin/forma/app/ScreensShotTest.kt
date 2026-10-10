@@ -198,6 +198,8 @@ class ScreensShotTest {
             "calc" to { CalculatorsScreen() },
             "onboarding" to { OnboardingScreen() },
             "more" to { forma.app.ui.screens.MoreScreen() },
+            "library" to { forma.app.ui.screens.LibraryScreen(forma.app.ui.LibraryMode.Browse) },
+            "libswap" to { forma.app.ui.screens.LibraryScreen(forma.app.ui.LibraryMode.SwapInWorkout(active, 0, "squat")) },
             "cloud" to {
                 forma.app.ui.screens.CloudContent(
                     forma.app.sync.CloudState(configured = true, ready = true, email = "denis@example.com", lastSyncAt = System.currentTimeMillis() - 2 * 3_600_000),
@@ -216,7 +218,7 @@ class ScreensShotTest {
         for (l in Looks.all) {
             look = l.id
             for ((name, s) in screens) {
-                if (l.id != "carbon" && name in setOf("runsetup", "exercise", "calc", "onboarding", "liftdone", "more", "cloudoff")) continue
+                if (l.id != "carbon" && name in setOf("runsetup", "exercise", "calc", "onboarding", "liftdone", "more", "cloudoff", "library", "libswap")) continue
                 screen = s
                 settle()
                 compose.onRoot().captureRoboImage("build/shots/${l.id}-$name.png")

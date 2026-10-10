@@ -1,5 +1,6 @@
 package forma.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -120,12 +121,15 @@ private fun TemplateCard(t: Template) {
     val today = remember { repo.today() }
     val plan by produceState<LiftPlan?>(null, t.id) { value = runCatching { repo.liftPlan(t.id, today) }.getOrNull() }
     FCard(gap = 0.dp) {
-        Text(t.title, style = T.title(20.sp), modifier = Modifier.padding(bottom = 8.dp))
+        Text(t.title, style = T.title(20.sp))
+        Text("Нажми на упражнение, чтобы заменить его.", style = T.secondary(12.sp), modifier = Modifier.padding(bottom = 8.dp))
         t.slots.forEachIndexed { i, s ->
             Hairline()
             val item = plan?.items?.getOrNull(i)
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                Modifier.fillMaxWidth().clickable {
+                    nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInPlan(s.exerciseId, item?.exerciseId ?: s.exerciseId)))
+                }.padding(vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {

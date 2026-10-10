@@ -24,6 +24,7 @@ data class Backup(
     val slots: List<SlotStateEntity>,
     val stats: List<ExerciseStatEntity>,
     val bodyWeights: List<BodyWeightEntity>,
+    val customExercises: List<forma.core.model.Exercise> = emptyList(),
 )
 
 class BackupManager(private val repo: TrainingRepository) {
@@ -34,7 +35,7 @@ class BackupManager(private val repo: TrainingRepository) {
             createdAt = System.currentTimeMillis(), profile = st.profileNow(), program = st.programNow(),
             runState = st.runState.let { st.runStateNow() }, settings = st.settingsNow(), liftState = st.liftStateNow(),
             workouts = b.workouts(), sets = b.sets(), runs = b.runs(), points = b.points(), slots = b.slots(), stats = b.stats(),
-            bodyWeights = b.bodyWeights(),
+            bodyWeights = b.bodyWeights(), customExercises = st.customNow(),
         )
     }
 
@@ -62,6 +63,8 @@ class BackupManager(private val repo: TrainingRepository) {
         b.runState?.let { st.setRunState(it) }
         st.setSettings(b.settings)
         st.setLiftState(b.liftState)
+        st.setCustom(b.customExercises)
+        repo.refreshCustom()
         repo.db.sync().reset()
         repo.notifyChanged()
         return b.workouts.size

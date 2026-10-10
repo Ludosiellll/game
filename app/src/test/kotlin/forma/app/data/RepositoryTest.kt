@@ -2,7 +2,11 @@ package forma.app.data
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import forma.core.model.Catalog
+import forma.core.model.Equipment
 import forma.core.model.Experience
+import forma.core.model.LoadKind
+import forma.core.model.Muscle
 import forma.core.model.Goal
 import forma.core.model.Profile
 import forma.core.model.RunLevel
@@ -148,6 +152,48 @@ class RepositoryTest {
         assertEquals(monday.plusDays(8).toEpochDay(), repo.store.settingsNow().pauseUntil)
         assertEquals(monday.plusDays(7).toEpochDay(), repo.store.programNow()!!.startEpochDay)
         assertTrue(!repo.paused(repo.store.settingsNow(), monday.plusDays(9)))
+    }
+
+    @Test fun exercisesCanBeSwappedAddedAndMadeUp() = runBlocking {
+        repo.completeOnboarding(profile)
+        val program = repo.store.programNow()!!
+        val tpl = program.templates.first()
+        val day = LocalDate.ofEpochDay(program.startEpochDay)
+        val id = repo.startLift(tpl.id, day)
+        fun plan() = runBlocking { repo.planOf(db.workouts().get(id)!!)!! }
+        val first = plan().items[0]
+        val second = plan().items[1]
+
+        // Today only: the plan stays as it was.
+        assertTrue(repo.swapExercise(id, first.position, "leg_press", forever = false))
+        assertEquals("leg_press", plan().items[0].exerciseId)
+        assertEquals(first.exerciseId, repo.liftPlan(tpl.id, day.plusDays(7)).items[0].exerciseId)
+        // Not once its first set is logged.
+        repo.logSet(id, plan().items[0], 100.0, 10, null)
+        assertTrue(!repo.swapExercise(id, first.position, "hack_squat", forever = false))
+
+        // For good: every next session, even after the plan is rebuilt; and back on request.
+        assertTrue(repo.swapExercise(id, second.position, "db_bench", forever = true))
+        assertEquals("db_bench", repo.liftPlan(tpl.id, day.plusDays(7)).items[1].exerciseId)
+        repo.updateProfile(repo.store.profileNow()!!.copy(sessionMinutes = 90))
+        assertEquals("db_bench", repo.liftPlan(tpl.id, day.plusDays(7)).items[1].exerciseId)
+        repo.setSwap(second.exerciseId, null)
+        assertEquals(second.exerciseId, repo.liftPlan(tpl.id, day.plusDays(7)).items[1].exerciseId)
+
+        // An own exercise added for today is found, planned and evaluated like any other.
+        val mine = repo.addCustom(Catalog.makeCustom("custom_test", "Жим лэндмайн", Equipment.BARBELL, Muscle.SHOULDERS, LoadKind.EXTERNAL))
+        assertEquals("custom_test", forma.core.model.ExerciseSearch.search("лэндмайн").first().id)
+        assertTrue(repo.addToWorkout(id, mine.id))
+        val added = plan().items.last()
+        assertEquals("custom_test", added.exerciseId)
+        assertTrue(added.prescription.calibrate)
+        repo.logSet(id, added, 30.0, 10, 2)
+        assertTrue(repo.finishLift(id, 7).reports.any { it.exerciseId == "custom_test" })
+        // It travels with the cloud documents; removed, it leaves the lists but its history keeps the name.
+        assertTrue(repo.store.syncDocs().containsKey("custom_exercises"))
+        repo.archiveCustom("custom_test")
+        assertTrue(Catalog.all.none { it.id == "custom_test" })
+        assertEquals("Жим лэндмайн", Catalog["custom_test"].name)
     }
 
     @Test fun runIsSavedAndMovesTheLadder() = runBlocking {

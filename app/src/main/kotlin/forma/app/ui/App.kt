@@ -133,6 +133,7 @@ private fun ScreenFor(screen: Screen) {
         Screen.Body -> BodyScreen()
         Screen.Cloud -> CloudScreen()
         is Screen.CloudSignIn -> CloudSignInScreen(screen.restore)
+        is Screen.Library -> forma.app.ui.screens.LibraryScreen(screen.mode)
     }
 }
 

@@ -183,11 +183,25 @@ fun WorkoutScreen(workoutId: Long) {
                         Text(it2.name, style = T.body(13.sp, FontWeight.Bold).copy(color = if (sel) F.c.bg else F.c.text), maxLines = 1)
                     }
                 }
+                val shape = if (F.shape.pill) RoundedCornerShape(50) else RoundedCornerShape(F.shape.radiusSmall)
+                Box(
+                    Modifier.size(36.dp).clip(shape).border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
+                        .clickable(onClickLabel = "Добавить упражнение") { nav.push(Screen.Library(forma.app.ui.LibraryMode.AddToWorkout(workoutId))) },
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Ic.plus, "Добавить упражнение", tint = F.c.text, modifier = Modifier.size(16.dp)) }
             }
 
             // Header.
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(item.name, style = T.title(if (F.type.capsTitles) 34.sp else 24.sp))
+                Row(verticalAlignment = Alignment.Top) {
+                    Text(item.name, style = T.title(if (F.type.capsTitles) 34.sp else 24.sp), modifier = Modifier.weight(1f))
+                    // Another exercise in its place: only before its first set (the sets belong to the exercise).
+                    if (doneBy[item.position].isNullOrEmpty()) {
+                        GhostButton("Заменить", {
+                            nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInWorkout(workoutId, item.position, item.exerciseId)))
+                        }, height = 36.dp)
+                    }
+                }
                 val p = item.prescription
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (ex.load != LoadKind.TIMED) {

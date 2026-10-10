@@ -106,37 +106,120 @@ class TrainingRepository(
 
     suspend fun liftPlan(templateId: String, date: LocalDate, forceDeload: Boolean = false): LiftPlan {
         val program = store.programNow() ?: error("no program")
-        val profile = store.profileNow() ?: error("no profile")
         val settings = store.settingsNow()
         val t = program.template(templateId)
+        val deload = deloadOn(date, forceDeload)
+        val items = t.slots.mapIndexed { i, spec -> buildItem(i, swapped(spec, settings), date, deload) }
+        return LiftPlan(t.id, t.title, items, deload)
+    }
+
+    private suspend fun deloadOn(date: LocalDate, force: Boolean): Boolean {
+        val program = store.programNow() ?: return force
         val reactive = store.liftStateNow().reactiveDeloadStart
-        val deload = forceDeload || ProgramGenerator.isDeloadWeek(program, date) ||
-            (reactive != null && date.toEpochDay() in reactive until reactive + 7)
+        return force || ProgramGenerator.isDeloadWeek(program, date) || (reactive != null && date.toEpochDay() in reactive until reactive + 7)
+    }
+
+    /** The plan's slot with the exercise the user put in its place for good, if any. */
+    private fun swapped(spec: SlotSpec, settings: Settings): SlotSpec {
+        val id = settings.swaps[spec.exerciseId]?.takeIf { Catalog.find(it)?.archived == false } ?: return spec
+        return spec.copy(exerciseId = id, increment = null)
+    }
+
+    /** One exercise of a session: today's prescription from its own progress, the stored estimate or a start hint. */
+    private suspend fun buildItem(position: Int, spec: SlotSpec, date: LocalDate, deload: Boolean): LiftItem {
+        val program = store.programNow() ?: error("no program")
+        val profile = store.profileNow() ?: error("no profile")
+        val settings = store.settingsNow()
         val rirOffset = if (deload) 0 else ProgramGenerator.rirOffset(program, date)
-        val slots = db.state().slots().associateBy { it.slotKey }
-        val stats = db.state().stats().associateBy { it.exerciseId }
         val trained = when (profile.experience) {
             Experience.NOVICE -> 1.0
             Experience.INTERMEDIATE -> 1.35
             Experience.ADVANCED -> 1.7
         }
-        val items = t.slots.mapIndexed { i, spec ->
-            val ex = exercise(spec.exerciseId, settings)
-            val slotRow = slots[spec.key]
-            val st = slotRow?.toState() ?: SlotState.fresh(spec)
-            val hint = Progression.startHint(ex, profile.bodyWeightKg, profile.sex == Sex.FEMALE, trained)
-            val lastDay = slotRow?.updatedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate().toEpochDay() }
-            val p = Progression.prescribe(
-                ex, spec, st, if (deload) Phase.DELOAD else Phase.NORMAL, rirOffset,
-                stats[ex.id]?.e1rm, profile.bodyWeightKg, hint,
-                daysSinceLast = lastDay?.let { date.toEpochDay() - it },
-            )
-            val warm = if (spec.role == SlotRole.MAIN && p.weight != null && ex.load == LoadKind.EXTERNAL && !deload) {
-                WarmUp.sets(p.weight!!, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
-            } else emptyList()
-            LiftItem(i, spec, ex.id, ex.name, p, warm, ex.step)
+        val ex = exercise(spec.exerciseId, settings)
+        val slotRow = db.state().slot(spec.key)
+        val st = slotRow?.toState() ?: SlotState.fresh(spec)
+        val hint = Progression.startHint(ex, profile.bodyWeightKg, profile.sex == Sex.FEMALE, trained)
+        val lastDay = slotRow?.updatedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate().toEpochDay() }
+        val p = Progression.prescribe(
+            ex, spec, st, if (deload) Phase.DELOAD else Phase.NORMAL, rirOffset,
+            db.state().stat(ex.id)?.e1rm, profile.bodyWeightKg, hint,
+            daysSinceLast = lastDay?.let { date.toEpochDay() - it },
+        )
+        val warm = if (spec.role == SlotRole.MAIN && p.weight != null && ex.load == LoadKind.EXTERNAL && !deload) {
+            WarmUp.sets(p.weight!!, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
+        } else emptyList()
+        return LiftItem(position, spec, ex.id, ex.name, p, warm, ex.step)
+    }
+
+    // ---------- exercise swaps and own exercises ----------
+
+    /** What can replace the exercise at [position] of a session: same movement first; timed holds only for holds. */
+    fun alternativesFor(exerciseId: String): List<Exercise> {
+        val ex = Catalog[exerciseId]
+        return Catalog.alternatives(ex).filter { (it.load == LoadKind.TIMED) == (ex.load == LoadKind.TIMED) }
+    }
+
+    /**
+     * Puts [newId] in place of the exercise at [position] of a running session (only before its first set).
+     * [forever] also replaces it in every future session of the plan, until changed back.
+     */
+    suspend fun swapExercise(workoutId: Long, position: Int, newId: String, forever: Boolean): Boolean {
+        val w = db.workouts().get(workoutId) ?: return false
+        val plan = planOf(w) ?: return false
+        val old = plan.items.firstOrNull { it.position == position } ?: return false
+        if (db.sets().forWorkout(workoutId).any { it.position == position }) return false
+        val original = store.programNow()?.templates?.firstOrNull { it.id == plan.templateId }?.slots?.getOrNull(position)
+        val base = original ?: old.slot
+        val spec = if (newId == base.exerciseId) base else base.copy(exerciseId = newId, increment = null)
+        val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload)
+        replacePlan(workoutId, plan.copy(items = plan.items.map { if (it.position == position) item else it }))
+        if (forever && original != null) setSwap(original.exerciseId, newId)
+        return true
+    }
+
+    /** Adds [exerciseId] at the end of a running session, for today only (3 sets in a range that suits it). */
+    suspend fun addToWorkout(workoutId: Long, exerciseId: String): Boolean {
+        val w = db.workouts().get(workoutId) ?: return false
+        val plan = planOf(w) ?: return false
+        val ex = Catalog[exerciseId]
+        val spec = when {
+            ex.load == LoadKind.TIMED -> SlotSpec(ex.id, 3, 20, 60, 1, 60, SlotRole.ACCESSORY)
+            ex.compound -> SlotSpec(ex.id, 3, 6, 10, 2, 120, SlotRole.SECONDARY)
+            else -> SlotSpec(ex.id, 3, 10, 15, 2, 75, SlotRole.ACCESSORY)
         }
-        return LiftPlan(t.id, t.title, items, deload)
+        val position = (plan.items.maxOfOrNull { it.position } ?: -1) + 1
+        val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload)
+        replacePlan(workoutId, plan.copy(items = plan.items + item))
+        return true
+    }
+
+    /** Replaces [planId] by [newId] in every session from now on; the same id (or null) brings the original back. */
+    suspend fun setSwap(planId: String, newId: String?) {
+        val s = store.settingsNow()
+        val swaps = if (newId == null || newId == planId) s.swaps - planId else s.swaps + (planId to newId)
+        store.setSettings(s.copy(swaps = swaps))
+        onChange()
+    }
+
+    /** Loads the user's own exercises into the catalog (start, after sync, after edits). */
+    suspend fun refreshCustom() = Catalog.setCustom(store.customNow())
+
+    suspend fun addCustom(ex: Exercise): Exercise {
+        val e = ex.copy(custom = true, archived = false)
+        store.setCustom(store.customNow().filter { it.id != e.id } + e)
+        refreshCustom()
+        onChange()
+        return e
+    }
+
+    /** Removes an own exercise from the lists; its history keeps its name. */
+    suspend fun archiveCustom(id: String) {
+        store.setCustom(store.customNow().map { if (it.id == id) it.copy(archived = true) else it })
+        val s = store.settingsNow()
+        store.setSettings(s.copy(swaps = s.swaps.filterValues { it != id }))
+        refreshCustom()
+        onChange()
     }
 
     /** Starts (or returns the already running) lifting session. */

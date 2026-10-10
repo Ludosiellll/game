@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import forma.core.model.Exercise
 import forma.core.model.Profile
 import forma.core.plan.Program
 import forma.core.run.RunState
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -38,6 +40,8 @@ data class Settings(
     val pauseFrom: Long? = null,
     /** … to this one, inclusive. */
     val pauseUntil: Long? = null,
+    /** Exercises replaced for good: plan exercise id → the one done instead. Survives plan changes. */
+    val swaps: Map<String, String> = emptyMap(),
 )
 
 /** Lifting state that is not per exercise. */
@@ -64,6 +68,7 @@ class SettingsStore(context: Context, name: String = "forma") {
         val runState = stringPreferencesKey("run_state")
         val settings = stringPreferencesKey("settings")
         val lift = stringPreferencesKey("lift_state")
+        val custom = stringPreferencesKey("custom_exercises")
     }
 
     /** Documents copied to the cloud, by cloud key, with the type that must decode them. */
@@ -73,6 +78,7 @@ class SettingsStore(context: Context, name: String = "forma") {
         "run_state" to (Keys.runState to RunState.serializer()),
         "settings" to (Keys.settings to Settings.serializer()),
         "lift_state" to (Keys.lift to LiftState.serializer()),
+        "custom_exercises" to (Keys.custom to ListSerializer(Exercise.serializer())),
     )
 
     private fun <T> read(key: Preferences.Key<String>, s: KSerializer<T>): Flow<T?> =
@@ -106,6 +112,10 @@ class SettingsStore(context: Context, name: String = "forma") {
     val runState: Flow<RunState?> = read(Keys.runState, RunState.serializer())
     val settings: Flow<Settings> = read(Keys.settings, Settings.serializer()).map { it ?: Settings() }
     val liftState: Flow<LiftState> = read(Keys.lift, LiftState.serializer()).map { it ?: LiftState() }
+    /** The user's own exercises, removed ones included (their history must still open). */
+    val customExercises: Flow<List<Exercise>> = read(Keys.custom, ListSerializer(Exercise.serializer())).map { it.orEmpty() }
+    suspend fun customNow() = customExercises.first()
+    suspend fun setCustom(list: List<Exercise>) = write(Keys.custom, ListSerializer(Exercise.serializer()), list)
 
     suspend fun profileNow() = profile.first()
     suspend fun programNow() = program.first()

@@ -32,6 +32,7 @@ import forma.core.model.LoadKind
 import forma.core.strength.OneRm
 import forma.core.text.Ru
 import java.time.LocalDate
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @Composable
@@ -88,6 +89,19 @@ fun ExerciseScreen(exerciseId: String) {
                 }
             }
         }
+        if (ex.aliases.isNotEmpty()) Text("Ещё называют: ${ex.aliases.joinToString(", ")}", style = T.secondary(13.sp))
+        val similar = remember(exerciseId) { repo.alternativesFor(exerciseId).take(5) }
+        if (similar.isNotEmpty()) {
+            SectionLabel("Похожие")
+            FCard(gap = 0.dp) {
+                similar.forEachIndexed { i, o ->
+                    if (i > 0) Hairline()
+                    forma.app.ui.components.ListRow(o.name, (o.primary.map { it.ru } + o.equipment.ru).joinToString(" · ")) {
+                        nav.push(forma.app.ui.Screen.Exercise(o.id))
+                    }
+                }
+            }
+        }
         if (mine.isNotEmpty()) {
             SectionLabel("Последние тренировки")
             FCard(gap = 0.dp) {
@@ -99,6 +113,13 @@ fun ExerciseScreen(exerciseId: String) {
                     }
                 }
             }
+        }
+        if (ex.custom && !ex.archived) {
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            forma.app.ui.components.GhostButton("Убрать из списка", {
+                scope.launch { repo.archiveCustom(ex.id); nav.back() }
+            }, Modifier.fillMaxWidth())
+            Text("История останется, упражнение просто перестанет предлагаться.", style = T.secondary(12.sp))
         }
     }
 }

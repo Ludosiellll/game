@@ -27,6 +27,18 @@ sealed interface Screen {
     data object Cloud : Screen
     /** [restore]: opened from the first launch to bring an existing copy back. */
     data class CloudSignIn(val restore: Boolean) : Screen
+    data class Library(val mode: LibraryMode = LibraryMode.Browse) : Screen
+}
+
+/** What the exercise library was opened for. */
+sealed interface LibraryMode {
+    data object Browse : LibraryMode
+    /** Replace the exercise at [position] of a running session (today or for good). */
+    data class SwapInWorkout(val workoutId: Long, val position: Int, val exerciseId: String) : LibraryMode
+    /** Replace a plan exercise for good; [planExerciseId] is the plan's own choice, [currentId] what is done now. */
+    data class SwapInPlan(val planExerciseId: String, val currentId: String) : LibraryMode
+    /** Add an exercise to a running session. */
+    data class AddToWorkout(val workoutId: Long) : LibraryMode
 }
 
 class Navigator(start: Screen) {
