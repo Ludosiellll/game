@@ -68,7 +68,44 @@ class RaceGoalTest {
         assertEquals(2, apart.week.days.sumOf { d -> d.sessions.count { it.kind == SessionKind.LIFT } })
     }
 
+    @Test fun aRaceOfUpToThreeKilometresDecidesTheRunningWhateverTheFocusIsCalled() {
+        // Denis picked "endurance" (he runs out of breath) with 1500 m as the goal: race pace every week, no long run.
+        val denis = Profile(
+            aim = Aim(LiftFocus.POWERBUILDING, RunFocus.ENDURANCE, Emphasis.BALANCED), experience = Experience.ADVANCED,
+            runLevel = RunLevel.BASE, trainingDays = setOf(2, 4, 6, 7), runGoal = RunGoal(1500, 330), lapMeters = lap, doubleDays = true,
+        )
+        fun runs(p: forma.core.plan.Program, k: SessionKind) = p.week.days.sumOf { d -> d.sessions.count { it.kind == k } }
+        for (focus in listOf(RunFocus.ENDURANCE, RunFocus.HEALTH, RunFocus.SPEED)) {
+            val p = ProgramGenerator.generate(denis.copy(aim = denis.aim.copy(run = focus)), LocalDate.of(2026, 10, 12))
+            assertEquals(2, runs(p, SessionKind.RUN_QUALITY), "$focus")
+            assertEquals(0, runs(p, SessionKind.RUN_LONG), "$focus")
+            assertTrue(p.runCaps.longMax <= 90, "$focus: ${p.runCaps}")
+            // What he chose stays his: only the running is planned by the goal.
+            assertEquals(focus, p.aim.run)
+        }
+        // Without a goal (or with a 10 km one) endurance still means the long run.
+        for (g in listOf(null, RunGoal(10_000, 2700))) {
+            val p = ProgramGenerator.generate(denis.copy(runGoal = g), LocalDate.of(2026, 10, 12))
+            assertEquals(1, runs(p, SessionKind.RUN_LONG), "$g")
+        }
+    }
+
     // ---------- race pace ----------
+
+    @Test fun theRacePaceLadderNeverGetsEasierOnAnyTrack() {
+        // Steps 3, 5 and 7 lengthen the reps (400, 600, 800 m for 1500): on the track too, never the same lap count.
+        for (track in listOf(200, 230, 250, 300, 333, 400)) {
+            val reps = (0 until RunPlan.goalLadderSize - 1).map { stage ->
+                RunPlan.goalPace(RunState(walkStage = -1, goalStage = stage), goal, track).segments.first { it.kind == SegmentKind.WORK }.laps!!
+            }
+            assertTrue(reps.zipWithNext().all { (a, b) -> b >= a }, "$track m: $reps")
+            for (longer in listOf(3, 5, 7)) assertTrue(reps[longer] > reps[longer - 1], "$track m: $reps")
+        }
+        // On 230 m: 600 m is 3 laps, 800 m is 3,5 (805 m), not 3 again.
+        val two = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 7), goal, lap)
+        assertEquals("Темп цели · 2 × 3,5 круга", two.title)
+        assertTrue(two.note.contains("начни с середины круга"), two.note)
+    }
 
     @Test fun racePaceIsInWholeLapsWithTheGoalLapTime() {
         val w = RunPlan.goalPace(RunState(walkStage = -1), goal, lap)
@@ -173,6 +210,8 @@ class RaceGoalTest {
         val t = RunTracker(w)
         t.start(0)
         val warm = 12 * 60 * 1000L
+        // On the line as the warm-up ends: the start.
+        assertEquals(Press.Start, t.press(warm))
         // First rep (51 s planned): on the line at 52 s — on pace, a moment after the beep.
         val first = assertNotNull(t.lap(warm + 52_000))
         assertEquals(52.0, first.seconds, 1e-9)
@@ -204,6 +243,7 @@ class RaceGoalTest {
         val t = RunTracker(w)
         t.start(0)
         val warm = 12 * 60 * 1000L
+        assertEquals(Press.Start, t.press(warm))
         t.tick(warm + 1000)
         t.lap(warm + 47_000)
         val tl = t.timeline(warm + 47_000)
@@ -222,6 +262,7 @@ class RaceGoalTest {
         val t = RunTracker(w)
         t.start(0)
         val warm = 12 * 60 * 1000L
+        assertEquals(Press.Start, t.press(warm))
         assertNotNull(t.lap(warm + 52_000))
         assertNull(t.lap(warm + 53_000))
         // Twenty seconds later, still in that rep's grace: the rep is complete, so it is a lap of the recovery.
@@ -236,6 +277,7 @@ class RaceGoalTest {
         val t = RunTracker(w)
         t.start(0)
         val warm = 12 * 60 * 1000L
+        assertEquals(Press.Start, t.press(warm))
         t.lap(warm + 51_000)
         // Rest, then the second rep skipped at its start.
         val rep2 = warm + (51 + 90) * 1000L
@@ -252,6 +294,7 @@ class RaceGoalTest {
         val t = RunTracker(w)
         t.start(0)
         val start = 12 * 60 * 1000L
+        assertEquals(Press.Start, t.press(start))
         // Half a lap, then six laps of 54 s: 7 presses.
         var at = start + 27_000L
         assertEquals(1, t.lap(at)!!.number)
@@ -301,6 +344,7 @@ class RaceGoalTest {
         val t = RunTracker(w)
         t.start(0)
         val warm = 12 * 60 * 1000L
+        assertEquals(Press.Start, t.press(warm))
         assertNotNull(t.lap(warm + 40_000))
         // The rep ended early and the plan jumped to the rest; the second tap 0.3 s later is still a double tap.
         assertEquals(Press.Ignored, t.press(warm + 40_300))
@@ -318,6 +362,156 @@ class RaceGoalTest {
         assertNull(l.rep)
         assertEquals(listOf(null, null, null, null, null, null), t.repTimes())
         assertEquals(0, t.repsDone(warm + 20_000))
+    }
+
+    // ---------- what moves the ladders ----------
+
+    @Test fun repsFasterThanTheGoalAreOneStepAndAHintNotTwoSteps() {
+        val st = RunState(walkStage = -1, vdot = 45.0, goalStage = 2, runs = 4)
+        val w = RunPlan.goalPace(st, goal, lap)
+        val target = goal.pace
+        // 2.5 % faster at a moderate effort: one step, and "keep the lap time".
+        val fast = RunPlan.after(st, w, RunResult(1.0, 7, w.totalSeconds, workPace = target * 0.975), caps, day = 30, goal = goal)
+        assertEquals(3, fast.state.goalStage)
+        assertTrue(fast.outcomes.contains(RunOutcome.TooFast))
+        // An extra rep at the goal pace: two steps.
+        val more = RunPlan.after(st, w, RunResult(1.0, 7, w.totalSeconds, workPace = target, reps = w.reps + 1), caps, day = 30, goal = goal)
+        assertEquals(4, more.state.goalStage)
+        // Not measured at all (no laps, no GPS): it moves on effort, and says the pace is unknown.
+        val blind = RunPlan.after(st, w, RunResult(1.0, 7, w.totalSeconds), caps, day = 30, goal = goal)
+        assertEquals(3, blind.state.goalStage)
+        assertTrue(blind.outcomes.contains(RunOutcome.PaceUnknown))
+    }
+
+    @Test fun aLighterWeekMovesNoLadder() {
+        val st = RunState(walkStage = -1, vdot = 45.0, goalStage = 4, intervalStage = 3, tempoStage = 2, runs = 10)
+        val g = RunPlan.goalPace(st, goal, lap, cutback = true)
+        assertTrue(g.cutback)
+        val ga = RunPlan.after(st, g, RunResult(1.0, 7, g.totalSeconds, workPace = goal.pace), caps, day = 40, goal = goal)
+        assertEquals(4, ga.state.goalStage)
+        assertTrue(ga.outcomes.contains(RunOutcome.LighterWeek("goal")))
+        for (w in listOf(RunPlan.intervals(st, cutback = true), RunPlan.tempo(st, cutback = true))) {
+            assertTrue(w.cutback, w.title)
+            val a = RunPlan.after(st, w, RunResult(1.0, w.targetRpe, w.totalSeconds), caps, day = 40)
+            assertEquals(st.intervalStage, a.state.intervalStage)
+            assertEquals(st.tempoStage, a.state.tempoStage)
+        }
+        // The full session moves it as before.
+        val full = RunPlan.goalPace(st, goal, lap)
+        assertTrue(!full.cutback)
+        assertEquals(5, RunPlan.after(st, full, RunResult(1.0, 7, full.totalSeconds, workPace = goal.pace), caps, day = 40, goal = goal).state.goalStage)
+    }
+
+    @Test fun theFormRisesOnlyWhenHardRunsAreOnPaceWithEffortToSpareForAMonth() {
+        val st = RunState(walkStage = -1, vdot = 46.0, intervalStage = 2, runs = 10)
+        val w = RunPlan.intervals(st)
+        val target = RunPlan.paces(st)!!.interval.toDouble()
+        fun three(pace: Double, rpe: Int, goal: RunGoal? = null, gap: Long = 7): RunState {
+            var s = st
+            for (k in 1..3) s = RunPlan.after(s, w, RunResult(1.0, rpe, w.totalSeconds, workPace = pace), caps, day = k * gap, goal = goal).state
+            return s
+        }
+        // 2 % slower than asked, at the planned effort: the paces stay (it used to say "the form grew").
+        assertEquals(46.0, three(target * 1.02, 8).vdot)
+        // On pace but at the limit: they stay too.
+        assertEquals(46.0, three(target, 8).vdot)
+        // On pace with effort to spare, three times: one point up.
+        assertEquals(47.0, three(target - 2, 7).vdot)
+        // Training for 1500 m the time trial measures the form instead.
+        assertEquals(46.0, three(target - 2, 7, goal).vdot)
+        // At most once in four weeks.
+        val raised = RunState(walkStage = -1, vdot = 46.0, intervalStage = 2, runs = 10, qualityOnPace = 2, lastVdotUpDay = 10)
+        assertEquals(46.0, RunPlan.after(raised, w, RunResult(1.0, 7, w.totalSeconds, workPace = target - 2), caps, day = 30).state.vdot)
+        assertEquals(47.0, RunPlan.after(raised, w, RunResult(1.0, 7, w.totalSeconds, workPace = target - 2), caps, day = 38).state.vdot)
+    }
+
+    @Test fun onATrackGpsDoesNotJudgeThePace() {
+        val w = RunPlan.goalPace(RunState(walkStage = -1), goal, lap)
+        val t = RunTracker(w)
+        t.start(0)
+        // GPS on a small loop, no lap pressed: no pace from it.
+        var lat = 53.9
+        for (sec in 0..1500) {
+            lat += 4.0 / 111_195.0
+            t.onFix(Fix(sec * 1000L, lat, 27.56, 4f), sec * 1000L)
+        }
+        assertNull(t.result(1_500_000, 7).workPace)
+    }
+
+    // ---------- waiting on the line ----------
+
+    @Test fun afterTheWarmUpThePlanWaitsForTheStartPressWhereverTheRunnerIs() {
+        val w = RunPlan.goalPace(RunState(walkStage = -1), goal, lap)
+        val t = RunTracker(w)
+        t.start(0)
+        val warm = 12 * 60 * 1000L
+        // A minute before: the coach says to finish the lap; at the end no countdown, but "go to the line".
+        val cues = t.tick(warm).map { (it as forma.core.run.RunEvent.Timeline).cue }
+        assertTrue(cues.any { it is Cue.MinuteLeft })
+        assertEquals(1, cues.count { it is Cue.ToLine })
+        assertTrue(cues.none { it is Cue.Countdown })
+        // Half a minute to get to the line: the plan stands still, nothing is said, the rep has not begun.
+        assertTrue(t.waiting(warm + 30_000))
+        assertTrue(t.tick(warm + 30_000).isEmpty())
+        assertEquals(SegmentKind.WARMUP, t.timeline(warm + 30_000).segment!!.kind)
+        assertEquals(0, t.workSec(warm + 30_000))
+        // A press that late is the start, not a 30-second lap; the rep and its beeps go from it.
+        assertEquals(Press.Start, t.press(warm + 30_000))
+        assertTrue(!t.waiting(warm + 30_000))
+        val started = t.tick(warm + 31_000).map { (it as forma.core.run.RunEvent.Timeline).cue }
+        assertTrue(started.any { it is Cue.SegmentStart && it.segment.kind == SegmentKind.WORK })
+        val l = assertNotNull(t.lap(warm + 30_000 + 52_000))
+        assertEquals(52.0, l.seconds, 1e-9)
+        assertEquals(1, l.rep)
+        assertEquals(0, l.verdict)
+        // The second rep comes 90 s after the first ended early (51 s planned): on the clock as before.
+        assertEquals(SegmentKind.RECOVERY, t.timeline(warm + 30_000 + 60_000).segment!!.kind)
+        // The wait is time spent, not work done, and it survives a restore.
+        val back = RunTracker.restore(t.snapshot(warm + 90_000), 0)
+        assertEquals(listOf(52.0), back.laps.map { it.seconds })
+        assertTrue(!back.waiting(0))
+        assertEquals(t.timeline(warm + 90_000).index, back.timeline(0).index)
+    }
+
+    @Test fun theTimeTrialStartsWithThePressHoweverLateItIs() {
+        val w = RunPlan.goalTest(RunState(walkStage = -1, vdot = 45.0), goal, lap)
+        val t = RunTracker(w)
+        t.start(0)
+        val warm = 12 * 60 * 1000L
+        // 45 s to walk to the start half a lap before the line.
+        assertEquals(Press.Start, t.press(warm + 45_000))
+        var at = warm + 45_000 + 27_000L
+        assertEquals(1, t.lap(at)!!.number)
+        repeat(6) {
+            at += 54_000
+            t.lap(at)
+        }
+        assertEquals(27 + 6 * 54, t.result(at + 1000, 9).testSeconds)
+    }
+
+    @Test fun waitingCanBeSkippedAndSurvivesARestore() {
+        val w = RunPlan.goalPace(RunState(walkStage = -1), goal, lap)
+        val warm = 12 * 60 * 1000L
+        // Brought back while waiting: still waiting, and the first press is the start.
+        val t = RunTracker(w)
+        t.start(0)
+        val back = RunTracker.restore(t.snapshot(warm + 20_000), 0)
+        back.resume(0)
+        assertTrue(back.waiting(1_000))
+        assertEquals(Press.Start, back.press(1_000))
+        // Skipping while waiting skips that rep: the recovery after it begins, the rep is not done.
+        val s = RunTracker(w)
+        s.start(0)
+        s.skipSegment(warm + 20_000)
+        assertTrue(!s.waiting(warm + 20_000))
+        assertEquals(SegmentKind.RECOVERY, s.timeline(warm + 21_000).segment!!.kind)
+        assertEquals(0, s.repsDone(warm + 60_000))
+        assertEquals(listOf(1), s.snapshot(warm + 60_000).skippedReps)
+        // Off a stadium nothing waits: the timed plan goes on by itself.
+        val road = RunTracker(RunPlan.goalPace(RunState(walkStage = -1), goal, null))
+        road.start(0)
+        assertTrue(!road.waiting(warm + 10_000))
+        assertEquals(SegmentKind.WORK, road.timeline(warm + 10_000).segment!!.kind)
     }
 
     @Test fun aTypoInTheTrialTimeChangesNothing() {

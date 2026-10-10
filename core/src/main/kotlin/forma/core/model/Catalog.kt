@@ -219,10 +219,11 @@ object Catalog {
             aliases = "наклонный жим гантелей|incline dumbbell press"),
         mc("smith_incline", "Жим на наклонной в Смите", Equipment.MACHINE, Pattern.INCLINE_PUSH, listOf(CH, SH), listOf(TR), step = 2.5,
             compound = true, ratio = 0.35, aliases = "наклонный жим в смите|smith incline"),
+        // A second copy of the next one (2026-10-10): kept for history, out of every list; swaps to it lead to the next one.
         mc("machine_incline_press", "Жим в тренажёре на наклонной", Equipment.MACHINE, Pattern.INCLINE_PUSH, listOf(CH), listOf(SH, TR),
-            compound = true, ratio = 0.5, aliases = "наклонный жим в тренажёре|жим на верх груди в тренажёре|incline machine press"),
+            compound = true, ratio = 0.3).copy(archived = true),
         mc("incline_machine_press", "Жим на наклонной в тренажёре", Equipment.MACHINE, Pattern.INCLINE_PUSH, listOf(CH, SH), listOf(TR),
-            compound = true, ratio = 0.3, aliases = "наклонный жим в тренажёре"),
+            compound = true, ratio = 0.3, aliases = "наклонный жим в тренажёре|жим в тренажёре на наклонной|жим на верх груди в тренажёре|incline machine press"),
 
         // ---------- presses: overhead ----------
         bb("ohp", "Жим штанги стоя", Pattern.VERTICAL_PUSH, listOf(SH), listOf(TR, CO), false, 0.3,
@@ -383,7 +384,12 @@ object Catalog {
     private val byId = builtIn.associateBy { it.id }
 
     /** Everything that can be logged: the built-in catalog and the user's own exercises (not the removed ones). */
-    val all: List<Exercise> get() = builtIn + custom.values.filter { !it.archived }
+    val all: List<Exercise> get() = listed + custom.values.filter { !it.archived }
+
+    private val listed = builtIn.filter { !it.archived }
+
+    /** Built-in exercises that became another one: the one to use instead (history keeps the old id and name). */
+    val moved: Map<String, String> = mapOf("machine_incline_press" to "incline_machine_press")
 
     /** The user's own exercises (from storage or the cloud). Built-in ids cannot be replaced. */
     fun setCustom(list: List<Exercise>) {

@@ -40,6 +40,8 @@ data class RunWorkout(
     val lapMeters: Int? = null,
     /** A time trial over this distance (the race itself): its time gives the fitness. */
     val testMeters: Int? = null,
+    /** Shortened for a lighter week: done, it moves no ladder (the full step is still ahead). */
+    val cutback: Boolean = false,
 ) {
     /** Work reps (WORK segments) in the plan. */
     val reps: Int get() = segments.count { it.kind == SegmentKind.WORK }

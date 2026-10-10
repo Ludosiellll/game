@@ -159,12 +159,25 @@ private fun TemplateCard(t: Template) {
     if (slot != null) {
         val item = plan?.items?.firstOrNull { it.position == e }
         val kept = t.slots.count { it.exerciseId !in settings.removed }
+        // The weight step belongs to the exercise done (after a swap, the one in its place), not to the plan's slot.
+        val exId = item?.exerciseId ?: settings.swaps[slot.exerciseId] ?: slot.exerciseId
+        val ex = forma.core.model.Catalog.find(exId)
+        val loaded = ex != null && (ex.load == forma.core.model.LoadKind.EXTERNAL || ex.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS)
         PlanExerciseDialog(
             name = item?.name ?: slot.exerciseId,
-            sets = item?.slot?.sets ?: slot.sets,
+            // From the settings, not the plan being loaded: opened in that moment, an unchanged save kept the override.
+            sets = settings.sets[slot.exerciseId]?.coerceIn(1, forma.app.data.TrainingRepository.MAX_SETS) ?: slot.sets,
             planned = slot.sets,
             canRemove = kept > 1,
-            onSets = { n -> scope.launch { repo.setPlanSets(slot.exerciseId, n, slot.sets) }; editing = -1 },
+            step = if (loaded) settings.steps[exId] ?: ex!!.step else null,
+            defaultStep = ex?.step ?: 2.5,
+            onSave = { n, st ->
+                scope.launch {
+                    repo.setPlanSets(slot.exerciseId, n, slot.sets)
+                    if (st != null && ex != null) repo.setStep(exId, st, ex.step)
+                }
+                editing = -1
+            },
             onSwap = {
                 editing = -1
                 nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInPlan(slot.exerciseId, item?.exerciseId ?: slot.exerciseId)))
@@ -178,10 +191,11 @@ private fun TemplateCard(t: Template) {
 /** One exercise of the plan: how many sets from now on, another exercise in its place, or out of the plan. */
 @Composable
 private fun PlanExerciseDialog(
-    name: String, sets: Int, planned: Int, canRemove: Boolean,
-    onSets: (Int) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, onDismiss: () -> Unit,
+    name: String, sets: Int, planned: Int, canRemove: Boolean, step: Double?, defaultStep: Double,
+    onSave: (Int, Double?) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, onDismiss: () -> Unit,
 ) {
     var n by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(sets) }
+    var st by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(step) }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = F.c.surface,
@@ -194,6 +208,16 @@ private fun PlanExerciseDialog(
                     { n = (n - 1).coerceAtLeast(1) }, { n = (n + 1).coerceAtMost(forma.app.data.TrainingRepository.MAX_SETS) },
                     Modifier.fillMaxWidth(), "Меньше подходов", "Больше подходов",
                 )
+                val chosen = st
+                if (chosen != null) {
+                    // Weights come in the steps a gym really has: with 2.5 kg plates the barbell goes in 5 kg steps.
+                    Text("Шаг веса — как позволяют блины и гантели в твоём зале", style = T.secondary(13.sp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        (listOf(1.0, 2.0, 2.5, 5.0) + defaultStep).distinct().sorted().forEach { v ->
+                            forma.app.ui.components.Chip(Ru.kg(v), chosen == v, { st = v }, Modifier.weight(1f), minWidth = 0.dp)
+                        }
+                    }
+                }
                 GhostButton("Заменить упражнение", onSwap, Modifier.fillMaxWidth())
                 if (canRemove) {
                     GhostButton("Убрать из плана", onRemove, Modifier.fillMaxWidth(), color = F.c.bad)
@@ -202,7 +226,7 @@ private fun PlanExerciseDialog(
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton({ onSets(n) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+            androidx.compose.material3.TextButton({ onSave(n, st) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
         },
         dismissButton = { androidx.compose.material3.TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
     )

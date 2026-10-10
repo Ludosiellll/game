@@ -256,12 +256,17 @@ class ScreensShotTest {
             store.setRunState(store.runStateNow().copy(vdot = 43.5, runs = 4, goalStage = 2, qualityCount = 2, lastTestDay = repo.today().toEpochDay() - 10))
             repo.runFor(SessionKind.RUN_QUALITY, repo.today())
         }
-        // Third rep of 8 × 1 lap: the second was a bit fast.
+        // After the warm-up the plan waits on the line; then the third rep of 8 × 1 lap: the second was a bit fast.
         val tracker = RunTracker(pace)
         tracker.start(0)
         val warm = 12 * 60 * 1000L
         val work = pace.segments.first { it.kind == SegmentKind.WORK }.seconds
         val rest = pace.segments.first { it.kind == SegmentKind.RECOVERY }.seconds
+        RunSession.tracker = tracker
+        RunSession.gpsEnabled = false
+        RunSession.publish(warm + 20_000)
+        val waitShot: @Composable () -> Unit = { RunActiveScreen() }
+        tracker.press(warm)
         tracker.lap(warm + (work + 1) * 1000L)
         val rep2 = warm + (work + rest) * 1000L
         tracker.lap(rep2 + (work - 3) * 1000L)
@@ -285,6 +290,14 @@ class ScreensShotTest {
         }
         shot("setup") { RunSetupScreen(pace, SessionKind.RUN_QUALITY) }
         shot("run") { RunActiveScreen() }
+        // The wait on the line, from a tracker of its own (the one above has started).
+        val waiting = RunTracker(pace)
+        waiting.start(0)
+        RunSession.tracker = waiting
+        RunSession.publish(warm + 20_000)
+        shot("wait", waitShot)
+        RunSession.tracker = tracker
+        RunSession.publish(now)
         // The other six reps pressed on the line (one fast, one slow), then the run is over.
         val desired = listOf(51.5, 52.0, 49.0, 51.0, 54.0, 51.5)
         var t = now
@@ -323,6 +336,7 @@ class ScreensShotTest {
         val tt = RunTracker(trial)
         tt.start(0)
         val go = 12 * 60 * 1000L
+        tt.press(go)
         var at = go + 27_000L
         tt.lap(at)
         listOf(53, 54, 54, 55, 56, 52).forEach { at += it * 1000L; tt.lap(at) }

@@ -18,23 +18,30 @@ object ProgramGenerator {
     fun generate(profile: Profile, today: LocalDate): Program {
         val aim = profile.aim.normalized()
         val days = profile.trainingDays.filter { it in 1..7 }.toSet().ifEmpty { setOf(1, 3, 5) }
-        val mix = Scheduler.mix(
-            aim, days.size, profile.experience, profile.runLevel, profile.doubleDays,
-            middleGoal = profile.runGoal?.middleDistance == true && aim.run != RunFocus.NONE,
-        )
+        val middleGoal = profile.runGoal?.middleDistance == true && aim.run != RunFocus.NONE
+        val plan = planAim(aim, middleGoal)
+        val mix = Scheduler.mix(plan, days.size, profile.experience, profile.runLevel, profile.doubleDays, middleGoal = middleGoal)
         // Upper / lower / upper only when there are hard runs to put after the upper body; with easy runs alone the
         // full-body sessions (legs three times a week) stay.
-        val templates = Templates.forWeek(aim, profile.experience, mix.lifts, shared = profile.doubleDays && mix.quality + mix.long > 0)
+        val templates = Templates.forWeek(plan, profile.experience, mix.lifts, shared = profile.doubleDays && mix.quality + mix.long > 0)
             .map { Templates.fit(it, profile.sessionMinutes) }
-        val week = Scheduler.schedule(days, mix, templates, aim)
+        val week = Scheduler.schedule(days, mix, templates, plan)
         val block = when (profile.experience) {
             Experience.NOVICE -> 0
             Experience.INTERMEDIATE -> 5
             Experience.ADVANCED -> 4
         }
         val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        return Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(aim), monday.toEpochDay(), aim, today.toEpochDay())
+        return Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(plan), monday.toEpochDay(), aim, today.toEpochDay())
     }
+
+    /**
+     * The aim the running is planned by. A race of up to 3 km decides it whatever the focus is called: for 1500 m
+     * endurance is built by race pace, intervals and easy running (the speed plan), not by long runs for a half
+     * marathon, and running "for health" has no hard runs at all.
+     */
+    fun planAim(aim: Aim, middleGoal: Boolean): Aim =
+        if (middleGoal && aim.run != RunFocus.SPEED && aim.run != RunFocus.NONE) aim.copy(run = RunFocus.SPEED) else aim
 
     /** How long easy and long runs may grow: by what running is for and how much of the week it gets. */
     fun caps(aim: Aim): RunCaps {
@@ -56,8 +63,11 @@ object ProgramGenerator {
 
     /** Starting point of the running ladders from what the person told about their running. */
     fun initialRunState(profile: Profile): RunState {
-        val vdot = if (profile.raceMeters != null && profile.raceSeconds != null && profile.raceMeters > 0 && profile.raceSeconds > 0) {
-            (Vdot.fromRace(profile.raceMeters, profile.raceSeconds) * 2).toInt() / 2.0
+        // Only a believable race (2:10–15:00 a km) gives paces; the fitness stays within what people run.
+        val m = profile.raceMeters
+        val sec = profile.raceSeconds
+        val vdot = if (m != null && sec != null && m > 0 && sec > 0 && sec / (m / 1000) in forma.core.run.RunPlan.PLAUSIBLE_PACE) {
+            ((Vdot.fromRace(m, sec) * 2).toInt() / 2.0).coerceIn(20.0, 85.0)
         } else null
         // Novice runners with BMI over 30 get injured more (Nielsen et al. 2013) and fewer when they start with less
         // running (Bertelsen et al.): they start shorter and grow by the same rules.

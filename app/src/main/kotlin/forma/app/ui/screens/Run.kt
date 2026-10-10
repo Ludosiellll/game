@@ -58,7 +58,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import forma.app.data.AppJson
@@ -152,8 +155,17 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
         nav.replaceTop(Screen.RunActive)
     }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { start() }
+    // No Russian voice in the phone: said here, not discovered on the track by the silence.
+    var speaks by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(voice) { if (voice) forma.app.run.VoiceCoach.checkRussian(context) { speaks = it } }
     ScrollScreen(bottomInset = true) {
         TopBar(if (workout.isOpenEnded) "Свободный бег" else workout.title, onBack = { nav.back() })
+        if (voice && speaks == false) {
+            Banner("В телефоне нет русского голоса: подсказок голосом не будет, только писки. Нажми — откроются настройки синтеза речи, там скачай русский.", F.c.warn) {
+                val open = listOf(android.content.Intent("com.android.settings.TTS_SETTINGS"), android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA))
+                open.firstOrNull { runCatching { context.startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess }
+            }
+        }
         if (workout.note.isNotEmpty()) Text(workout.note, style = T.body(16.sp))
         if (!workout.isOpenEnded) {
             FCard {
@@ -301,6 +313,7 @@ fun RunActiveScreen() {
     val lapM = w.lapMeters
     // An easy or long run kept going past its plan: the clock goes on, the extra counts.
     val over = w.continuable && tl.finished
+    val waiting = u.waiting
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
         // The numbers scroll on a short phone; the buttons stay at the bottom.
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -328,6 +341,7 @@ fun RunActiveScreen() {
                         when {
                             w.isOpenEnded -> "Время"
                             over -> "План выполнен"
+                            waiting -> CoachText.segmentName(w, tl.index + 1)
                             seg != null -> CoachText.segmentName(w, tl.index)
                             else -> "Готово"
                         },
@@ -341,17 +355,30 @@ fun RunActiveScreen() {
                     race -> tl.segmentElapsed
                     else -> tl.segmentRemaining
                 }
-                val size = 112 * F.type.bigNumberScale
-                // "25:04" or "1:05:09" must fit a narrow phone: the timer shrinks instead of being cut.
-                NumText(
-                    Ru.clock(big), style = T.number(size.sp).copy(lineHeight = (size * 1.07f).sp, textAlign = TextAlign.Center),
-                    modifier = Modifier.fillMaxWidth(), maxLines = 1,
-                    autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 40.sp, maxFontSize = size.sp, stepSize = 4.sp),
-                )
+                // Already huge: a large system font does not make it bigger, it would only push the rest off the screen.
+                val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale
+                val size = 112 * F.type.bigNumberScale / fontScale
+                if (waiting) {
+                    // After the warm-up the plan waits for the runner on the line: the rep starts with the press.
+                    BasicText(
+                        "На старт", Modifier.fillMaxWidth().padding(vertical = 18.dp),
+                        style = T.body((56 / fontScale).sp, FontWeight.ExtraBold).copy(color = F.c.text, textAlign = TextAlign.Center),
+                        maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = (56 / fontScale).sp, stepSize = 2.sp),
+                    )
+                } else {
+                    // "25:04" or "1:05:09" must fit a narrow phone: the timer shrinks instead of being cut.
+                    NumText(
+                        Ru.clock(big), style = T.number(size.sp).copy(lineHeight = (size * 1.07f).sp, textAlign = TextAlign.Center),
+                        modifier = Modifier.fillMaxWidth(), maxLines = 1,
+                        autoSize = TextAutoSize.StepBased(minFontSize = 32.sp, maxFontSize = size.sp, stepSize = 4.sp),
+                    )
+                }
                 Text(
                     when {
                         w.isOpenEnded -> "с начала"
                         over -> "сверх плана +${Ru.clock(u.overSec)} · «Стоп», когда хватит"
+                        waiting -> CoachText.startWhere(w, tl.index + 1) + " и жми «Круг», когда побежишь: " +
+                            (if (w.testMeters != null) "время забега" else "отрезок") + " пойдёт с нажатия"
                         race -> "время забега · финиш — последнее нажатие «Круг»"
                         else -> "осталось в отрезке"
                     },
@@ -362,12 +389,15 @@ fun RunActiveScreen() {
                 Banner("Телефон закрыл приложение во время пробежки. Время и дистанция до этого момента сохранены: ▶ — продолжить, «Стоп» — закончить.", F.c.warn)
             }
 
-            val target = seg?.pace
+            // Waiting on the line, the numbers are those of the rep about to start.
+            val shownIndex = if (waiting) tl.index + 1 else tl.index
+            val shown = if (waiting) w.segments.getOrNull(shownIndex) else seg
+            val target = shown?.pace
             if (lapM != null) {
                 // On a stadium: the lap to run and the last one pressed, judged against its target.
                 val l = u.lastLap
-                val repNo = if (seg?.kind == SegmentKind.WORK) w.segments.take(tl.index + 1).count { it.kind == SegmentKind.WORK } else null
-                val lapsInRep = seg?.laps?.let { kotlin.math.ceil(it).toInt() }
+                val repNo = if (shown?.kind == SegmentKind.WORK) w.segments.take(shownIndex + 1).count { it.kind == SegmentKind.WORK } else null
+                val lapsInRep = shown?.laps?.let { kotlin.math.ceil(it).toInt() }
                 val lapNo = if (repNo != null && l?.rep == repNo && !l.closesRep) l.number + 1 else 1
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatTile(
@@ -375,9 +405,10 @@ fun RunActiveScreen() {
                         target?.let { Ru.lapRange(Track.lapSec(it.fast.toDouble(), lapM), Track.lapSec(it.slow.toDouble(), lapM)) } ?: "—",
                         when {
                             w.isOpenEnded -> "свободный бег"
+                            waiting -> "отсчёт — с нажатия"
                             repNo != null && lapsInRep != null && lapsInRep > 1 -> "круг ${minOf(lapNo, lapsInRep)} из $lapsInRep"
                             target == null -> "сейчас без темпа"
-                            seg.kind != SegmentKind.WORK -> "медленнее — нормально"
+                            shown.kind != SegmentKind.WORK -> "медленнее — нормально"
                             else -> "писк — ты на линии"
                         },
                         F.c.text, Modifier.weight(1f),
@@ -414,14 +445,17 @@ fun RunActiveScreen() {
                 else Metric(if (u.gps) Ru.km2(u.distanceM) else "—", "км", Modifier.weight(1f), Alignment.Start)
                 Metric(Ru.clock(u.elapsedSec), if (w.isOpenEnded || over) "время" else "из ${Ru.clock(w.totalSeconds)}", Modifier.weight(1f), Alignment.CenterHorizontally)
                 val clock = u.lapClock
-                if (lapM != null && !u.gps && clock != null) Metric(Ru.clock(clock), "этот круг", Modifier.weight(1f), Alignment.End)
+                // Waiting on the line no lap is running: the warm-up's twelve minutes are not "this lap".
+                if (lapM != null && !u.gps && clock != null) Metric(if (waiting) "—" else Ru.clock(clock), "этот круг", Modifier.weight(1f), Alignment.End)
                 else Metric(u.avgPace?.let { Ru.pace(it) } ?: "–:––", "средний темп", Modifier.weight(1f), Alignment.End)
             }
             Hairline()
             if (!w.isOpenEnded && seg != null) {
-                val next = w.segments.getOrNull(tl.index + 1)
+                // Waiting on the line, the rep about to start is on top already: "next" is what follows it.
+                val nextIndex = shownIndex + 1
+                val next = w.segments.getOrNull(nextIndex)
                 Text(
-                    if (next != null) "Далее: ${CoachText.segmentName(w, tl.index + 1).lowercase()}, ${next.laps?.let { Ru.laps(it) } ?: Ru.clock(next.seconds)}" else "Последний отрезок",
+                    if (next != null) "Далее: ${CoachText.segmentName(w, nextIndex).lowercase()}, ${next.laps?.let { Ru.laps(it) } ?: Ru.clock(next.seconds)}" else "Последний отрезок",
                     style = T.secondary(14.sp),
                 )
             }
@@ -431,7 +465,8 @@ fun RunActiveScreen() {
             if (lapM != null && !finished) {
                 val running = u.state == RunTracker.State.RUNNING
                 val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-                val on = running && !locked
+                // The lock guards everything but this button: it is what the runner needs on the line.
+                val on = running
                 Box(
                     Modifier.fillMaxWidth().height(84.dp).clip(RoundedCornerShape(if (F.shape.pill) 42.dp else F.shape.radius))
                         .background(if (on) F.c.accent else F.c.surface2)
@@ -443,34 +478,63 @@ fun RunActiveScreen() {
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("КРУГ", style = T.body(28.sp, FontWeight.ExtraBold).copy(color = if (on) F.c.onAccent else F.c.text3, letterSpacing = 3.sp))
-                        Text(if (running) "жми на линии" else "на паузе", style = T.body(12.sp, FontWeight.SemiBold).copy(color = if (on) F.c.onAccent else F.c.text3))
+                        Text(if (waiting) "СТАРТ" else "КРУГ", style = T.body(28.sp, FontWeight.ExtraBold).copy(color = if (on) F.c.onAccent else F.c.text3, letterSpacing = 3.sp))
+                        Text(
+                            when {
+                                !running -> "на паузе"
+                                waiting -> "жми, когда побежишь"
+                                else -> "жми на линии"
+                            },
+                            style = T.body(12.sp, FontWeight.SemiBold).copy(color = if (on) F.c.onAccent else F.c.text3),
+                        )
                     }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                     if (!w.isOpenEnded && seg != null) {
+                        // Inside a rep (or waiting for one) a stray tap must not throw it away: hold to skip.
+                        val hold = waiting || seg.kind == SegmentKind.WORK
+                        val skip = { RunService.send(context, RunService.ACTION_SKIP) }
                         Box(
                             Modifier.size(width = 104.dp, height = 52.dp).clip(RoundedCornerShape(if (F.shape.pill) 26.dp else F.shape.radiusSmall))
                                 .border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, RoundedCornerShape(if (F.shape.pill) 26.dp else F.shape.radiusSmall))
-                                .combinedClickable(enabled = !locked, role = Role.Button, onClickLabel = "Следующий отрезок", onClick = {
-                                    RunService.send(context, RunService.ACTION_SKIP)
-                                }),
+                                .combinedClickable(
+                                    enabled = !locked, role = Role.Button,
+                                    onClickLabel = if (hold) "Удерживай, чтобы пропустить отрезок" else "Следующий отрезок", onClick = { if (!hold) skip() },
+                                    onLongClickLabel = "Пропустить отрезок", onLongClick = skip,
+                                ),
                             contentAlignment = Alignment.Center,
-                        ) { Text("Отрезок ›", style = T.body(13.sp, FontWeight.Bold).copy(color = if (locked) F.c.text3 else F.c.text2)) }
+                        ) {
+                            BasicText(
+                                if (hold) "Пропустить\nудерживай" else "Дальше ›", Modifier.padding(horizontal = 8.dp),
+                                style = T.body(if (hold) 12.sp else 13.sp, FontWeight.Bold).copy(color = if (locked) F.c.text3 else F.c.text2, lineHeight = 1.15.em, textAlign = TextAlign.Center),
+                                maxLines = 2, autoSize = TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = if (hold) 12.sp else 13.sp, stepSize = 0.5.sp),
+                            )
+                        }
                     }
                 }
                 val paused = u.state == RunTracker.State.PAUSED
+                // On a stadium the pause sits right under the lap button: a slip of the finger must not stop the plan.
+                val holdPause = lapM != null && !paused
+                val toggle = { RunService.send(context, if (paused) RunService.ACTION_RESUME else RunService.ACTION_PAUSE) }
+                val tint = if (locked) F.c.text3 else if (F.c.dark) F.c.bg else Color.White
                 Box(
                     Modifier.size(96.dp).clip(if (F.shape.pill) CircleShape else RoundedCornerShape(F.shape.radius))
                         .background(if (locked) F.c.surface2 else F.c.endurance)
                         .semantics { contentDescription = if (paused) "Продолжить" else "Пауза" }
-                        .combinedClickable(enabled = !locked, role = Role.Button, onClick = {
-                            RunService.send(context, if (paused) RunService.ACTION_RESUME else RunService.ACTION_PAUSE)
-                        }),
+                        .combinedClickable(
+                            enabled = !locked, role = Role.Button,
+                            onClickLabel = if (holdPause) "Удерживай, чтобы поставить на паузу" else null, onClick = { if (!holdPause) toggle() },
+                            onLongClickLabel = if (holdPause) "Пауза" else null, onLongClick = if (holdPause) toggle else null,
+                        ),
                     contentAlignment = Alignment.Center,
-                ) { Icon(if (paused) Ic.play else Ic.pause, null, tint = if (locked) F.c.text3 else if (F.c.dark) F.c.bg else Color.White, modifier = Modifier.size(36.dp)) }
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(if (paused) Ic.play else Ic.pause, null, tint = tint, modifier = Modifier.size(if (holdPause) 30.dp else 36.dp))
+                        if (holdPause) Text("удерживай", style = T.body(10.sp, FontWeight.Bold).copy(color = tint))
+                    }
+                }
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                     Box(
                         Modifier.size(width = 104.dp, height = 52.dp).clip(RoundedCornerShape(if (F.shape.pill) 26.dp else F.shape.radiusSmall))
@@ -482,14 +546,31 @@ fun RunActiveScreen() {
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("Стоп\nудерживай", style = T.body(12.sp, FontWeight.Bold).copy(color = if (locked) F.c.text3 else F.c.bad, lineHeight = 14.sp), textAlign = TextAlign.Center)
+                        BasicText(
+                            "Стоп\nудерживай", Modifier.padding(horizontal = 8.dp),
+                            style = T.body(12.sp, FontWeight.Bold).copy(color = if (locked) F.c.text3 else F.c.bad, lineHeight = 1.15.em, textAlign = TextAlign.Center),
+                            maxLines = 2, autoSize = TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = 12.sp, stepSize = 0.5.sp),
+                        )
                     }
                 }
             }
-            if (locked) Text("Экран заблокирован от случайных нажатий", style = T.secondary(12.sp), modifier = Modifier.align(Alignment.CenterHorizontally))
+            if (locked) {
+                Text(
+                    if (lapM != null) "Заблокировано всё, кроме «Круг»" else "Экран заблокирован от случайных нажатий",
+                    style = T.secondary(12.sp), modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
+            }
         }
     }
 }
+
+/** The saved run and its summary through a turn of the phone: the "what next" must not turn into "already saved". */
+private val SavedRunSaver = androidx.compose.runtime.saveable.Saver<Pair<Long, RunSummary>?, String>(
+    save = { v -> v?.let { (id, sum) -> "$id|" + forma.app.data.AppJson.encodeToString(RunSummary.serializer(), sum) } },
+    restore = { t ->
+        runCatching { t.substringBefore('|').toLong() to forma.app.data.AppJson.decodeFromString(RunSummary.serializer(), t.substringAfter('|')) }.getOrNull()
+    },
+)
 
 /** A typed time-trial time ("5:52") over [meters], or null when it is not one: no colon, or a pace no one runs. */
 private fun trialSeconds(text: String, meters: Int): Int? {
@@ -590,9 +671,10 @@ fun RunDoneScreen(workoutId: Long) {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val tracker = remember { RunSession.tracker }
-    // What the runner enters survives a turn of the phone.
-    var rpe by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(tracker?.workout?.targetRpe ?: 5) }
-    var saved by remember { mutableStateOf<Pair<Long, RunSummary>?>(null) }
+    // What the runner enters survives a turn of the phone. No effort is chosen for them: the next step depends on it,
+    // and a value left as it was would count every run as "as planned".
+    var rpe by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(0) }
+    var saved by androidx.compose.runtime.saveable.rememberSaveable(stateSaver = SavedRunSaver) { mutableStateOf<Pair<Long, RunSummary>?>(null) }
     var saving by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var testKm by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
@@ -605,8 +687,11 @@ fun RunDoneScreen(workoutId: Long) {
     var testTime by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(tracker?.takeIf { it.workout.testMeters != null }?.result(android.os.SystemClock.elapsedRealtime(), 5)?.testSeconds?.let { Ru.clock(it) } ?: "")
     }
-    // An easy or long run kept going past its plan: the extra counts unless the runner says it was not running.
-    var countExtra by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
+    // An easy or long run kept going past its plan: the extra counts unless the runner says it was not running — but not
+    // after the hour-long auto-stop, which is a phone forgotten in a pocket far more often than a run.
+    var countExtra by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(tracker?.let { (it.timelineMs(android.os.SystemClock.elapsedRealtime()) / 1000).toInt() - it.workout.totalSeconds < 3600 - 60 } ?: true)
+    }
 
     if (workoutId != 0L) {
         // Opened from history: a saved run.
@@ -682,11 +767,11 @@ fun RunDoneScreen(workoutId: Long) {
                 FCard(gap = 4.dp) {
                     Toggle(
                         "Сверх плана +${Ru.clock(over)}",
-                        if (countExtra) "Засчитать: следующая пробежка станет длиннее" else "Не считать: например, телефон просто остался включённым",
+                        if (countExtra) "Засчитать: если было легко, следующая станет длиннее" else "Не считать: например, телефон просто остался включённым",
                         countExtra,
                     ) { countExtra = it }
                 }
-            } else if (w.type == RunType.TEST && result.workDistanceM == null) {
+            } else if (w.type == RunType.TEST && w.testMeters == null && result.workDistanceM == null) {
                 NumberField(testKm, { testKm = it }, "Сколько пробежал за 12 минут (если без GPS)", "км")
             }
             if (repsKind && w.reps > 0) {
@@ -698,8 +783,8 @@ fun RunDoneScreen(workoutId: Long) {
                 Text(
                     when {
                         reps > w.reps -> "Больше плана при той же тяжести — следующий шаг будет крупнее."
-                        reps == w.reps -> "Сделал больше плана — нажми «+»: это учтётся."
-                        else -> "Меньше плана — этот шаг повторится."
+                        reps == w.reps -> "Ровно по плану. Сделал больше — нажми «+»: это учтётся."
+                        else -> "Меньше плана — шаг повторится, а не получится второй раз подряд — шаг назад."
                     },
                     style = T.secondary(13.sp),
                 )
@@ -708,9 +793,13 @@ fun RunDoneScreen(workoutId: Long) {
             SectionLabel("Насколько тяжело было?")
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { (1..5).forEach { v -> Chip("$v", rpe == v, { rpe = v }, Modifier.weight(1f), minWidth = 0.dp) } }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { (6..10).forEach { v -> Chip("$v", rpe == v, { rpe = v }, Modifier.weight(1f), minWidth = 0.dp) } }
-            Text(Texts.RPE.first { it.first == rpe }.second + " · по этой оценке приложение решит, усложнять ли следующий бег", style = T.secondary(14.sp))
-            PrimaryButton(if (saving) "Сохраняю…" else "Сохранить", {
-                if (saving) return@PrimaryButton
+            Text(
+                Texts.RPE.firstOrNull { it.first == rpe }?.let { it.second + " · по этой оценке приложение решит, усложнять ли следующий бег" }
+                    ?: "Оцени, как тяжело было: от этого зависит следующий шаг.",
+                style = T.secondary(14.sp).copy(color = if (rpe == 0) F.c.warn else F.c.text2),
+            )
+            PrimaryButton(if (saving) "Сохраняю…" else if (rpe == 0) "Сначала оценка" else "Сохранить", {
+                if (saving || rpe == 0) return@PrimaryButton
                 saving = true
                 scope.launch {
                     try {
@@ -720,7 +809,10 @@ fun RunDoneScreen(workoutId: Long) {
                         if (repsKind) r = r.copy(reps = reps)
                         if (!countExtra && tracker.workout.continuable) {
                             val extra = ((tracker.timelineMs(android.os.SystemClock.elapsedRealtime()) / 1000).toInt() - tracker.workout.totalSeconds).coerceAtLeast(0)
-                            r = r.copy(durationSec = (r.durationSec - extra).coerceAtLeast(1))
+                            val kept = (r.durationSec - extra).coerceAtLeast(1)
+                            // The distance of the time kept, at the run's own pace: else the pace in history is a fiction.
+                            val share = kept.toDouble() / r.durationSec.coerceAtLeast(1)
+                            r = r.copy(durationSec = kept, distanceM = r.distanceM?.let { it * share })
                         }
                         val points = RunSession.points.map { TrackPointEntity(0, it.timeMs, it.lat, it.lon, it.accuracy) }
                         // The day it was run: a run brought back after the app was closed may be saved days later.
@@ -730,7 +822,7 @@ fun RunDoneScreen(workoutId: Long) {
                         saving = false
                     }
                 }
-            }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, enabled = !saving)
+            }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, enabled = !saving && rpe > 0)
             Box(
                 Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp).clip(RoundedCornerShape(F.shape.radiusSmall))
                     .clickable(enabled = !saving, role = Role.Button, onClick = { confirmDiscard = true })
@@ -749,7 +841,7 @@ fun RunDoneScreen(workoutId: Long) {
             }
             LapsCard(s.second.laps, test = s.second.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
             Text("Нагрузка: ${s.second.load.roundToInt()} (оценка × минуты).", style = T.secondary(13.sp))
-            PrimaryButton("Готово", { nav.tab(Screen.Today) }, Modifier.fillMaxWidth())
+            NextToday { nav.tab(Screen.Today) }
         }
     }
 }

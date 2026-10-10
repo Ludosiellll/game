@@ -121,7 +121,17 @@ fun ExerciseScreen(exerciseId: String) {
                     if (i > 0) Hairline()
                     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
                         Text(shortDate(LocalDate.ofEpochDay(sets.first().epochDay)), style = T.secondary(12.sp))
-                        NumText(sets.joinToString("  ") { if (ex.load == LoadKind.TIMED) "${it.reps} с" else "${Ru.kg(it.weight)}×${it.reps}" }, style = T.number(15.sp, FontWeight.SemiBold))
+                        // "+10 кг × 8" for a weighted pull-up, "помощь 15 кг × 8" with help: a bare "-15×8" says nothing.
+                        NumText(
+                            sets.joinToString("  ") {
+                                when {
+                                    ex.load == LoadKind.TIMED -> "${it.reps} с"
+                                    ex.load == LoadKind.BODYWEIGHT_PLUS || ex.assisted -> "${forma.app.ui.Texts.weight(ex, it.weight)} × ${it.reps}"
+                                    else -> "${Ru.kg(it.weight)}×${it.reps}"
+                                }
+                            },
+                            style = T.number(15.sp, FontWeight.SemiBold),
+                        )
                     }
                 }
             }

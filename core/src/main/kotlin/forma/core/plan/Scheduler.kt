@@ -236,16 +236,21 @@ object Scheduler {
             out += "Бег почти не мешает росту мышц и силы, если тяжёлые ноги и тяжёлый бег разнесены хотя бы на 6 часов, лучше на сутки."
         }
         val hardWithLift = slots.filter { it.lift != null && it.run?.isHardRun == true }
+        // Said only of the days the week really has (four days can put the legs alone and the easy run after the upper body).
+        val easyAfterLegs = slots.any { legs(it.lift, templates) && it.run?.kind == SessionKind.RUN_EASY }
+        val easyAfterUpper = slots.any { it.lift != null && !legs(it.lift, templates) && it.run?.kind == SessionKind.RUN_EASY }
         if (hardWithLift.isNotEmpty() && hardWithLift.none { legs(it.lift, templates) }) {
-            out += "Тяжёлый бег — в дни верха: руки и спина ему не мешают. Ноги — в день лёгкого бега."
+            out += "Тяжёлый бег — в дни верха: руки и спина ему не мешают." + if (easyAfterLegs) " Ноги — в день лёгкого бега." else ""
         }
         if (slots.any { it.lift != null && it.run != null }) {
             val hardUpper = slots.any { it.lift != null && it.run?.isHardRun == true && !legs(it.lift, templates) }
-            val easyAfter = slots.any { it.lift != null && it.run != null && !it.run.isHardRun }
             out += when {
                 aim.emphasis == Emphasis.RUN -> "В дни «бег + силовая» сначала бег. Если получится, разнеси их на 6+ часов."
-                hardUpper -> "В день верха тяжёлый бег — первым: ноги свежие, а верху бег почти не мешает." +
-                    if (easyAfter) " В день ног — сначала зал, потом лёгкий бег." else ""
+                hardUpper -> "В день верха тяжёлый бег — первым: ноги свежие, а верху бег почти не мешает." + when {
+                    easyAfterLegs -> " В день ног — сначала зал, потом лёгкий бег."
+                    easyAfterUpper -> " В день верха с лёгким бегом — сначала зал, потом бег."
+                    else -> ""
+                }
                 else -> "В дни «силовая + лёгкий бег» за один заход — сначала силовая. Если можешь разнести, бег утром, зал через 6+ часов."
             }
         }

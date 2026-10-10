@@ -22,6 +22,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,6 +40,7 @@ import forma.core.plan.PlannedSession
 import forma.core.plan.Program
 import forma.core.plan.SessionKind
 import java.time.DayOfWeek
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 /** Scrolling screen body with the status bar inset. */
@@ -151,6 +155,52 @@ fun sessionTitle(s: PlannedSession, program: Program?): String = when (s.kind) {
 fun kindLabel(s: PlannedSession): String = when (s.kind) {
     SessionKind.LIFT -> "Силовая"
     SessionKind.RUN_EASY -> "Бег"
-    SessionKind.RUN_QUALITY -> "Качественный бег"
+    SessionKind.RUN_QUALITY -> "Тяжёлый бег"
     SessionKind.RUN_LONG -> "Длинный бег"
+}
+
+/**
+ * After a session on a day with two (the gym and the stadium): the other one, ready to start — "Готово" becomes the
+ * second button. Nothing when the day is done.
+ */
+@Composable
+fun NextToday(onDone: () -> Unit) {
+    val repo = forma.app.ui.LocalRepo.current
+    val nav = forma.app.ui.LocalNav.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val today = forma.app.ui.rememberToday(repo)
+    val monday = androidx.compose.runtime.remember(today) { today.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) }
+    val week by androidx.compose.runtime.remember(monday) { repo.weekFlow(monday) }.collectAsState(initial = emptyList())
+    val program by repo.store.program.collectAsState(initial = null)
+    val active by androidx.compose.runtime.remember { repo.db.workouts().observeActive() }.collectAsState(initial = null)
+    val day = week.firstOrNull { it.date == today }
+    val next = day?.planned?.firstOrNull { !day.isDone(it) }
+    // The run is named as it will be (race pace, intervals, a test), not by its kind.
+    val runTitle by androidx.compose.runtime.produceState<String?>(null, next) {
+        value = next?.takeIf { it.isRun }?.let { repo.runFor(it.kind, today).title }
+    }
+    var starting by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    if (next == null || next.isRun && runTitle == null) {
+        forma.app.ui.components.PrimaryButton("Готово", onDone, Modifier.fillMaxWidth())
+        return
+    }
+    val title = runTitle ?: sessionTitle(next, program)
+    forma.app.ui.components.PrimaryButton("Дальше: $title", {
+        if (starting) return@PrimaryButton
+        starting = true
+        scope.launch {
+            try {
+                if (next.isRun) {
+                    nav.replaceTop(forma.app.ui.Screen.RunSetup(repo.runFor(next.kind, today), next.kind))
+                } else {
+                    val a = active
+                    val id = if (a != null && a.templateId == next.templateId) a.id else repo.startLift(next.templateId!!, today)
+                    nav.replaceTop(forma.app.ui.Screen.Workout(id))
+                }
+            } finally {
+                starting = false
+            }
+        }
+    }, Modifier.fillMaxWidth())
+    forma.app.ui.components.GhostButton("Готово на сегодня", onDone, Modifier.fillMaxWidth())
 }

@@ -117,8 +117,31 @@ class ProfileDraft(p: Profile) {
         return RunGoal(m, sec).takeIf { it.pace in 130.0..900.0 }
     }
 
+    /**
+     * The recent race, if its time is a believable one: minutes and seconds ("25:30", not "2530" — 42 hours), at a pace
+     * someone runs (2:10–15:00 a km). A typo would give paces of minus several hours and a session that ends itself.
+     */
+    val race: Pair<Double, Double>? get() {
+        val km = raceKm ?: return null
+        if (':' !in raceTime) return null
+        val sec = parseClock(raceTime)?.takeIf { it > 0 } ?: return null
+        return (km * 1000 to sec).takeIf { sec / km in forma.core.run.RunPlan.PLAUSIBLE_PACE }
+    }
+
+    /** A race distance picked and a time typed that is not one. */
+    val raceTimeBad: Boolean get() = raceKm != null && raceTime.isNotBlank() && race == null
+
+    /** A goal distance picked without a believable time: saving would quietly drop the goal and its progress. */
+    val goalBad: Boolean get() = racing && goalMeters != null && runGoal == null
+
+    /** On a stadium with a lap length that is not one. */
+    val lapBad: Boolean get() = stadium && lapOrNull == null
+
+    /** Nothing typed that would be lost or misread on saving. */
+    val fieldsOk: Boolean get() = !raceTimeBad && !goalBad && !lapBad
+
     fun toProfile(base: Profile): Profile {
-        val race = raceKm?.let { km -> parseClock(raceTime)?.takeIf { it > 0 }?.let { km * 1000 to it } }
+        val race = race
         val aim = aim
         return base.copy(
             goal = aim.nearestGoal(), aim = aim, experience = experience, runLevel = runLevel, trainingDays = days.ifEmpty { setOf(1, 3, 5) },
@@ -172,7 +195,7 @@ fun OnboardingScreen() {
                         nav.replaceAll(Screen.Today)
                     }
                 },
-                Modifier.weight(2f), enabled = step != 2 || draft.days.isNotEmpty(),
+                Modifier.weight(2f), enabled = draft.fieldsOk && (step != 2 || draft.days.isNotEmpty()),
             )
         }
     }
@@ -222,8 +245,17 @@ private fun ExperienceStep(d: ProfileDraft) {
                 Chip(label, d.raceKm == km, { d.raceKm = if (d.raceKm == km) null else km }, Modifier.weight(1f))
             }
         }
-        if (d.raceKm != null) NumberField(d.raceTime, { d.raceTime = it }, "Время", "мм:сс", keyboard = KeyboardType.Text, placeholder = "25:30")
+        if (d.raceKm != null) {
+            NumberField(d.raceTime, { d.raceTime = it }, "Время", "мм:сс", keyboard = KeyboardType.Text, placeholder = "25:30")
+            RaceTimeHint(d)
+        }
     }
+}
+
+/** Under the race time: what a typo there would do. */
+@Composable
+fun RaceTimeHint(d: ProfileDraft) {
+    if (d.raceTimeBad) Text("Не похоже на время забега: впиши минуты и секунды через двоеточие, например 25:30.", style = T.secondary(13.sp).copy(color = F.c.bad))
 }
 
 @Composable

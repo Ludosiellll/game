@@ -32,6 +32,8 @@ data class RunUi(
     val lapClock: Int? = null,
     /** An easy or long run kept going past its plan: seconds beyond it. */
     val overSec: Int = 0,
+    /** On a stadium after the warm-up: the plan waits for the start press on the line. */
+    val waiting: Boolean = false,
 )
 
 /** A run on disk, enough to carry on after the process was killed. */
@@ -168,6 +170,7 @@ object RunSession {
             gpsEnabled, t.lastAccuracy, startedAtWall, restored, t.laps.lastOrNull(), t.laps.size,
             if (t.workout.lapMeters != null) t.lapClockSec(nowMs) else null,
             if (t.workout.isOpenEnded) 0 else ((t.timelineMs(nowMs) / 1000).toInt() - t.workout.totalSeconds).coerceAtLeast(0),
+            t.waiting(nowMs),
         )
     }
 

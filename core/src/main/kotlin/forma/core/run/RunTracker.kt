@@ -27,6 +27,10 @@ data class TrackerSnapshot(
     val skippedReps: List<Int> = emptyList(),
     /** Segments the runner started by pressing on the line (timeline ms), by index; −1 is an open-ended run. */
     val starts: Map<Int, Long> = emptyMap(),
+    /** Time the plan stood still while the runner got to the start line (see [RunTimeline.startOnLine]). */
+    val heldMs: Long = 0,
+    /** Active time of the last press, so a double tap stays one press after a restore. */
+    val lastPressMs: Long? = null,
 )
 
 /** What a press of the lap button was. */
@@ -119,6 +123,12 @@ class RunTracker(
     /** Active time of the last press: a double tap is judged on the clock, not on the plan's timeline (which jumps). */
     private var lastPressMs: Long? = null
 
+    /** The rep that waits for the start press on the line after the warm-up, if any (see [RunTimeline.startOnLine]). */
+    private val waitsAt: Int? = RunTimeline.startOnLine(workout)
+
+    /** Time the plan stood still at the end of the warm-up while the runner got to the line. */
+    private var heldMs = 0L
+
     fun start(nowMs: Long) {
         if (state != State.READY) return
         startedAt = nowMs
@@ -152,12 +162,45 @@ class RunTracker(
     private var skipMs = 0L
     private var skippedWorkSec = 0
 
-    /** Position in the planned timeline: active time plus skipped parts. */
-    fun timelineMs(nowMs: Long): Long = activeMs(nowMs) + skipMs
+    /** Position in the planned timeline: active time plus skipped parts, less the wait on the line. */
+    fun timelineMs(nowMs: Long): Long = planAt(activeMs(nowMs))
+
+    /** The plan at [active] ms of running: it stands at the last moment of the warm-up until the start press. */
+    private fun planAt(active: Long): Long {
+        val t = active + skipMs - heldMs
+        val w = waitsAt ?: return t
+        if (w in starts || w in skippedReps) return t
+        return minOf(t, bounds[w].first - 1)
+    }
+
+    /** The plan waits for the runner's start press on the line: the warm-up is over, the first rep has not begun. */
+    fun waiting(nowMs: Long): Boolean {
+        val w = waitsAt ?: return false
+        if (state != State.RUNNING && state != State.PAUSED) return false
+        return w !in starts && w !in skippedReps && activeMs(nowMs) + skipMs - heldMs >= bounds[w].first - 1
+    }
+
+    /** Ends the wait on the line: the plan goes on from the start of the rep. */
+    private fun release(nowMs: Long) {
+        val w = waitsAt ?: return
+        val t = activeMs(nowMs) + skipMs - heldMs
+        if (t > bounds[w].first) heldMs += t - bounds[w].first
+    }
 
     /** Jumps to the start of the next segment. Skipped running time does not count as done. */
     fun skipSegment(nowMs: Long) {
         if (workout.isOpenEnded || (state != State.RUNNING && state != State.PAUSED)) return
+        val wait = waitsAt?.takeIf { waiting(nowMs) }
+        if (wait != null) {
+            // Waiting on the line: skipping skips the rep that waits, and the recovery after it starts.
+            release(nowMs)
+            val seg = workout.segments[wait]
+            skippedWorkSec += seg.seconds
+            skippedReps += wait
+            skipMs += seg.seconds * 1000L
+            lastTickSec = (timelineMs(nowMs) / 1000).toInt() - 1
+            return
+        }
         val tl = RunTimeline.at(workout, (timelineMs(nowMs) / 1000).toInt())
         val seg = tl.segment ?: return
         if (seg.kind == SegmentKind.WORK || seg.kind == SegmentKind.RUN) skippedWorkSec += tl.segmentRemaining
@@ -207,7 +250,7 @@ class RunTracker(
         lastFix = fix
         lastFixActiveMs = active
         distanceM += d
-        val seg = RunTimeline.at(workout, ((active + skipMs) / 1000).toInt()).segment
+        val seg = RunTimeline.at(workout, (planAt(active) / 1000).toInt()).segment
         if (seg != null && (seg.kind == SegmentKind.WORK || seg.kind == SegmentKind.RUN)) workDistanceM += d
         window.addLast(active to distanceM)
         while (window.size > 2 && active - window.first().first > 30_000) window.removeFirst()
@@ -261,7 +304,7 @@ class RunTracker(
     /** Completion is the share of the planned running done: a skipped cool-down or warm-up does not count against it. */
     fun snapshot(nowMs: Long) = TrackerSnapshot(
         workout, state, activeMs(nowMs), skipMs, skippedWorkSec, distanceM, workDistanceM, nextKm, lastKmSec, fixes,
-        taps.toList(), lapList.toList(), skippedReps.sorted(), starts.toMap(),
+        taps.toList(), lapList.toList(), skippedReps.sorted(), starts.toMap(), heldMs, lastPressMs,
     )
 
     /** Start and end of every segment on the timeline, ms. */
@@ -304,6 +347,14 @@ class RunTracker(
     fun press(nowMs: Long): Press {
         if (state != State.RUNNING) return Press.Ignored
         val active = activeMs(nowMs)
+        // The plan waits on the line: this is the start, whenever it comes (never a double tap of a lap before it).
+        val w = waitsAt
+        if (w != null && waiting(nowMs)) {
+            lastPressMs = active
+            release(nowMs)
+            starts[w] = bounds[w].first
+            return Press.Start
+        }
         val last = lastPressMs
         if (last != null && active - last < MIN_LAP_MS) return Press.Ignored
         lastPressMs = active
@@ -332,7 +383,8 @@ class RunTracker(
         val from = if (prev != null && prev >= start) prev else start
         val result = if (rep != null && seg != null) {
             val target = seg.lapSec?.times(part)
-            val range = seg.pace?.let { p -> lapM?.let { Track.lapSec(p.fast.toDouble(), it) * part to Track.lapSec(p.slow.toDouble(), it) * part } }
+            // A rep in laps is judged lap by lap; a timed one (no lap count fits it) has no lap to judge against.
+            val range = if (laps == null) null else seg.pace?.let { p -> lapM?.let { Track.lapSec(p.fast.toDouble(), it) * part to Track.lapSec(p.slow.toDouble(), it) * part } }
             val number = workout.segments.take(rep + 1).count { it.kind == SegmentKind.WORK }
             val of = laps?.let { kotlin.math.ceil(it).toInt() }
             // A time trial is run evenly at first; in its second half faster is what it is for.
@@ -368,6 +420,22 @@ class RunTracker(
         }
     }
 
+    /**
+     * The trial's laps look like laps: none under half or over 1.7 times its planned time. A forgotten press makes one
+     * lap double, and then a press in the cool-down would close the trial a minute late — the time is not trusted, the
+     * runner types it.
+     */
+    private fun trialLapsSane(): Boolean {
+        val seg = workout.segments.firstOrNull { it.kind == SegmentKind.WORK } ?: return true
+        val lapSec = seg.lapSec ?: return true
+        val laps = seg.laps ?: return true
+        val first = if (laps % 1.0 != 0.0) laps % 1.0 else 1.0
+        return lapList.filter { it.rep == 1 }.all { l ->
+            val expected = lapSec * if (l.number == 1) first else 1.0
+            l.seconds in expected * 0.5..expected * 1.7
+        }
+    }
+
     /** Seconds into the lap being run: since the last press, or since the current segment began if it came later. */
     fun lapClockSec(nowMs: Long): Int {
         val t = timelineMs(nowMs)
@@ -400,10 +468,11 @@ class RunTracker(
         val lapPace = if (lapM != null && timed.isNotEmpty() && timed.size * 2 >= reps.size) {
             timed.sumOf { it.second!! } / (timed.sumOf { it.first.laps!! * lapM } / 1000.0)
         } else null
-        val testSeconds = if (workout.testMeters != null) reps.firstOrNull()?.roundToInt() else null
+        val testSeconds = if (workout.testMeters != null && trialLapsSane()) reps.firstOrNull()?.roundToInt() else null
         return RunResult(
             completed = completed, rpe = rpe, durationSec = sec,
-            distanceM = distanceM.takeIf { it > 0 }, workPace = lapPace ?: gpsPace,
+            // On a small loop GPS cuts the bends: without laps pressed the pace is unknown, not a guess.
+            distanceM = distanceM.takeIf { it > 0 }, workPace = lapPace ?: gpsPace.takeIf { lapM == null },
             workDistanceM = workDistanceM.takeIf { it > 0 }, workSec = if (workout.isOpenEnded) null else work,
             laps = lapList.toList().takeIf { it.isNotEmpty() }, testSeconds = testSeconds,
         )
@@ -432,6 +501,8 @@ class RunTracker(
             }
             skippedReps += s.skippedReps
             starts += s.starts
+            heldMs = s.heldMs
+            lastPressMs = s.lastPressMs
             when (s.state) {
                 State.READY -> Unit
                 State.FINISHED -> {
@@ -444,7 +515,7 @@ class RunTracker(
                     state = State.PAUSED
                 }
             }
-            lastTickSec = ((s.activeMs + s.skipMs) / 1000).toInt()
+            lastTickSec = (planAt(s.activeMs) / 1000).toInt()
         }
     }
 }

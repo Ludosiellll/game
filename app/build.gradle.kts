@@ -14,7 +14,13 @@ android {
         applicationId = "io.github.ludosiellll.forma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // Minutes from 2026-01-01 to the commit the app is built from: every newer commit installs over an older one, and
+        // an older APK cannot quietly replace a newer app (Android refuses a lower code). The same commit gives the same
+        // code locally and in CI.
+        versionCode = providers.exec {
+            commandLine("git", "log", "-1", "--format=%ct")
+            isIgnoreExitValue = true
+        }.standardOutput.asText.map { out -> out.trim().toLongOrNull()?.let { ((it - 1_767_225_600L) / 60).toInt().coerceAtLeast(1) } ?: 1 }.getOrElse(1)
         versionName = "0.1.0"
 
         // Cloud copy (Supabase). The publishable key is public by design: row level security protects the data.

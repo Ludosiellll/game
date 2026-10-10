@@ -143,7 +143,7 @@ private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState
         Text("Цель", style = T.secondary(13.sp))
         Text("${goalDistance(goal.meters)} за ${Ru.clock(goal.seconds)}", style = T.title(26.sp).copy(color = F.c.endurance))
         Text(
-            "Темп ${Ru.pace(goal.pace)} /км" + (lap?.let { " · круг $it м — ${Ru.lap(forma.core.run.Track.lapSec(goal.pace, it))}" } ?: ""),
+            "Темп ${Ru.pace(goal.pace)} /км" + (lap?.let { " · " + Ru.nobreak("круг $it м — ${Ru.lap(forma.core.run.Track.lapSec(goal.pace, it))}") } ?: ""),
             style = T.body(15.sp, FontWeight.SemiBold),
         )
         when {
@@ -185,7 +185,12 @@ private fun RunTab() {
         FCard(gap = 6.dp) {
             Text("VDOT — беговая форма", style = T.secondary(13.sp))
             NumText(Ru.one(vdot), style = T.number(44.sp).copy(color = F.c.endurance))
-            Text("По формулам Дэниелса. Растёт, когда интервалы и темповые получаются в нужном темпе.", style = T.secondary(12.sp))
+            val middle = profile?.runGoal?.middleDistance == true
+            Text(
+                if (middle) "По формулам Дэниелса. Меняется по контрольным забегам на дистанцию цели."
+                else "По формулам Дэниелса. Меняется по контрольным забегам и когда тяжёлые пробежки идут в темпе с запасом.",
+                style = T.secondary(12.sp),
+            )
         }
         SectionLabel("Прогноз на забег")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -193,6 +198,8 @@ private fun RunTab() {
                 StatTile(label, Ru.clock(Vdot.predictSeconds(vdot, m).roundToInt()), null, F.c.text, Modifier.weight(1f))
             }
         }
+        // A forecast from short races for long ones assumes training for them: say so instead of promising it.
+        Text("Если готовиться к этой дистанции: на длинные нужны длинные пробежки, без них прогноз оптимистичен.", style = T.secondary(12.sp))
         val p = PaceTable.forVdot(vdot)
         SectionLabel("Темпы, мин/км")
         FCard(gap = 0.dp) {
@@ -217,7 +224,11 @@ private fun RunTab() {
             Text("Цель программы — 30 минут бега без остановки. Потом приложение рассчитает темпы.", style = T.secondary(13.sp))
         }
     } else {
-        Empty("Темпы и прогнозы появятся после контрольного забега (12 минут) — он встанет в план после пары пробежек. Можно указать недавний результат в профиле.")
+        val g = profile?.runGoal
+        Empty(
+            if (g?.middleDistance == true) "Темпы и прогнозы появятся после контрольного забега на ${goalDistance(g.meters)} — он встанет в план после пары пробежек."
+            else "Темпы и прогнозы появятся после контрольного забега (12 минут) — он встанет в план после пары пробежек. Можно указать недавний результат в профиле.",
+        )
     }
     // Weekly distance and time.
     val dayOf = workouts.associate { it.id to it.epochDay }

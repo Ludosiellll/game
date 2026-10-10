@@ -38,7 +38,8 @@ fun ProfileScreen() {
     val scope = rememberCoroutineScope()
     val profile by repo.store.profile.collectAsState(initial = null)
     val base = profile ?: return
-    val d = remember(base) { ProfileDraft(base) }
+    // Kept through rotation and the system closing the app in the background.
+    val d = androidx.compose.runtime.saveable.rememberSaveable(base, saver = ProfileDraft.Saver) { ProfileDraft(base) }
     ScrollScreen {
         TopBar("Цель, дни и данные", "План пересчитается, прогресс по упражнениям сохранится", onBack = { nav.back() })
         AimPicker(d)
@@ -70,7 +71,10 @@ fun ProfileScreen() {
                 Chip(label, d.raceKm == km, { d.raceKm = if (d.raceKm == km) null else km }, Modifier.weight(1f))
             }
         }
-        if (d.raceKm != null) NumberField(d.raceTime, { d.raceTime = it }, "Время недавнего забега", "мм:сс", keyboard = KeyboardType.Text, placeholder = "25:30")
+        if (d.raceKm != null) {
+            NumberField(d.raceTime, { d.raceTime = it }, "Время недавнего забега", "мм:сс", keyboard = KeyboardType.Text, placeholder = "25:30")
+            RaceTimeHint(d)
+        }
         RunGoalPicker(d)
         SectionLabel("О себе")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -83,11 +87,14 @@ fun ProfileScreen() {
         }
         NumberField(d.height, { d.height = it }, "Рост", "см", keyboard = KeyboardType.Number, placeholder = "—")
         NumberField(d.restingHr, { d.restingHr = it }, "Пульс в покое", "уд/мин", keyboard = KeyboardType.Number, placeholder = "—")
+        if (!d.fieldsOk) {
+            Text("Сначала исправь поле, подсвеченное выше: иначе оно сохранится не так, как задумано.", style = T.secondary(13.sp).copy(color = forma.app.ui.theme.F.c.bad))
+        }
         PrimaryButton("Сохранить и пересчитать план", {
             scope.launch {
                 repo.updateProfile(d.toProfile(base))
                 nav.back()
             }
-        }, Modifier.fillMaxWidth().padding(top = 6.dp), enabled = d.days.isNotEmpty())
+        }, Modifier.fillMaxWidth().padding(top = 6.dp), enabled = d.days.isNotEmpty() && d.fieldsOk)
     }
 }

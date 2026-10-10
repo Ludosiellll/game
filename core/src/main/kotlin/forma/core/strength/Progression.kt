@@ -165,7 +165,8 @@ object Progression {
         if (ex.load == LoadKind.TIMED) {
             return Prescription(null, state.reps, setsFor(spec, phase), rir, calibrate = false, phase = phase)
         }
-        var weight = state.weight
+        // On the exercise's own steps: a step changed for this gym (5 kg plates only) applies to the stored weight too.
+        var weight = state.weight?.let { floorTo(it, ex.stepAt(it)) }
         var calibrate = false
         if (weight == null) {
             if (e1rm != null && e1rm > 0) {
@@ -180,14 +181,12 @@ object Progression {
             val factor = layoffFactor(daysSinceLast)
             if (factor < 1.0) {
                 val load = effectiveLoad(ex, weight, bodyWeight)
-                val raw = toWeight(ex, load * factor, bodyWeight)
-                weight = floorTo(raw, ex.stepAt(raw)).coerceAtLeast(minWeight(ex, bodyWeight))
+                weight = down(ex, weight, toWeight(ex, load * factor, bodyWeight), bodyWeight)
             }
         }
         val deload = phase == Phase.DELOAD
         if (deload && weight != null) {
-            val raw = toWeight(ex, effectiveLoad(ex, weight, bodyWeight) * 0.9, bodyWeight)
-            weight = floorTo(raw, ex.stepAt(raw)).coerceAtLeast(minWeight(ex, bodyWeight))
+            weight = down(ex, weight, toWeight(ex, effectiveLoad(ex, weight, bodyWeight) * 0.9, bodyWeight), bodyWeight)
         }
         val sets = setsFor(spec, phase)
         val top = !deload && !calibrate && sets >= 2
@@ -203,7 +202,22 @@ object Progression {
     fun minWeight(ex: Exercise, bodyWeight: Double): Double = when {
         ex.assisted -> -maxAssist(ex, bodyWeight)
         ex.load == LoadKind.EXTERNAL && ex.bar != null -> ex.bar
+        // A machine, cable or dumbbell is never 0 kg: its lightest is one step (the lightest plate or dumbbell).
+        ex.load == LoadKind.EXTERNAL -> ex.fineStep ?: ex.step
         else -> 0.0
+    }
+
+    /**
+     * [raw] (lighter than [w]) on the exercise's steps: the step below, unless that cuts far more than meant — then the
+     * nearest step, never above [w]. A coarse step keeps the weight rather than cutting it by half (10 % of a 5 kg leg
+     * extension is not 5 kg); the lighter week then comes from fewer sets and more reps in reserve. Never below the
+     * lightest load.
+     */
+    private fun down(ex: Exercise, w: Double, raw: Double, bodyWeight: Double): Double {
+        val st = ex.stepAt(raw)
+        val floor = floorTo(raw, st)
+        val to = if (raw - floor > 0.05 * abs(w)) min(w, roundTo(raw, st)) else floor
+        return to.coerceAtLeast(minWeight(ex, bodyWeight))
     }
 
     /** 10 % lighter in total load (for body-weight exercises the body counts too). */
@@ -429,6 +443,11 @@ object Progression {
         if (near) {
             if (stalls >= 3) {
                 val to = floored(max(minWeight(ex, bodyWeight), floorTo(lighter(ex, w, bodyWeight), step)))
+                // Already the lightest load: it cannot step back, the target stays.
+                if (to >= w - 1e-9) {
+                    return Evaluation(SlotState(w, target, stalls, 0, sessions, state.linear, cutFrom = state.cutFrom, cutReps = state.cutReps),
+                        Outcome.Hold(w, target, HoldReason.NEAR_MISS), e1rm)
+                }
                 return Evaluation(SlotState(to, spec.repMin, 0, 0, sessions, false, cutFrom = w, cutReps = first), Outcome.Reset(w, to, spec.repMin), e1rm)
             }
             return Evaluation(SlotState(w, target, stalls, 0, sessions, state.linear, cutFrom = state.cutFrom, cutReps = state.cutReps),

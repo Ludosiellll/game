@@ -84,6 +84,6 @@ fun LiftDoneScreen(workoutId: Long) {
             }
         }
         Text("Нагрузка тренировки: ${summary.load.roundToInt()} (оценка × минуты). Она идёт в график формы и усталости.", style = T.secondary(13.sp))
-        PrimaryButton("Готово", { nav.tab(Screen.Today) }, Modifier.fillMaxWidth())
+        NextToday { nav.tab(Screen.Today) }
     }
 }

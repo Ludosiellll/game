@@ -134,9 +134,13 @@ fun RunGoalPicker(d: ProfileDraft) {
                 goal == null -> "Не похоже на время: впиши минуты и секунды, например ${goalExample(meters)}."
                 else -> buildString {
                     append("Темп ${Ru.pace(goal.pace)} на км")
-                    if (lap != null) append(", круг $lap м — за ${Ru.lap(Track.lapSec(goal.pace, lap))}")
+                    if (lap != null) append(", " + Ru.nobreak("круг $lap м — за ${Ru.lap(Track.lapSec(goal.pace, lap))}"))
                     append(". ")
-                    if (goal.middleDistance) append("Каждая вторая тяжёлая пробежка — отрезки в этом темпе, раз в 5 недель — контрольный забег на эту дистанцию.")
+                    if (goal.middleDistance) {
+                        // "Endurance" for 1500 m is built by race pace and intervals: the goal plans the running.
+                        if (d.run != RunFocus.SPEED) append("С такой целью бег строится от неё: выносливость на ${goalDistance(meters)} растёт от отрезков и интервалов, а не от длинных пробежек. ")
+                        append("Каждая вторая тяжёлая пробежка — отрезки в этом темпе, контрольный забег на эту дистанцию — после первых пробежек и дальше раз в 5 недель.")
+                    }
                     else append("Темпы пробежек — по текущей форме; прогноз к цели — в «Прогрессе».")
                 }
             },

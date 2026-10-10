@@ -3,6 +3,8 @@ package forma.app.run
 import forma.core.run.Cue
 import forma.core.run.Lap
 import forma.core.run.RunEvent
+import forma.core.run.RunPlan
+import forma.core.run.RunTimeline
 import forma.core.run.RunType
 import forma.core.run.RunWorkout
 import forma.core.run.Segment
@@ -66,7 +68,9 @@ object CoachText {
                 }
             }
             is Cue.Halfway -> "Половина отрезка."
-            is Cue.MinuteLeft -> "Осталась минута."
+            is Cue.MinuteLeft ->
+                if (RunTimeline.startOnLine(w) == c.index + 1) "Через минуту ${startWhat(w)}. Закончи круг и подходи к старту." else "Осталась минута."
+            is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)} и нажми «Круг», когда побежишь: ${startWhat(w)} начнётся с нажатия."
             is Cue.Countdown, is Cue.LapMark -> null
             is Cue.Finished ->
                 if (w.continuable) "План выполнен. Можно закончить или бежать дальше — время идёт, лишнее засчитается."
@@ -91,6 +95,18 @@ object CoachText {
             else -> "$time."
         }
     }
+
+    /** What waits on the line: the time trial or the reps. */
+    private fun startWhat(w: RunWorkout): String = if (w.testMeters != null) "забег" else "отрезки"
+
+    /** Where the rep [index] starts: on the line, or part of a lap before it ("Встань на старт с середины круга"). */
+    fun startWhere(w: RunWorkout, index: Int): String {
+        val frac = w.segments.getOrNull(index)?.laps?.let { it % 1.0 }?.takeIf { it > 0.01 }
+        return if (frac != null) "Встань на старт ${RunPlan.startWords(frac)}" else "Встань на линию"
+    }
+
+    /** Said every minute while the plan waits for the start press. */
+    fun waitingReminder(w: RunWorkout): String = "Жду старта: нажми «Круг», когда побежишь."
 
     /** "5 минут 12 секунд" for a pace of 312 s/km. */
     fun paceWords(secPerKm: Int): String = Ru.durationWords(secPerKm)

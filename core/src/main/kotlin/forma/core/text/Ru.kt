@@ -76,6 +76,9 @@ object Ru {
         if (x % 1.0 == 0.0) "${x.toInt()} ${plural(x.toInt(), "круг", "круга", "кругов")}"
         else String.format(Locale.ROOT, "%.2f", x).trimEnd('0').trimEnd('.').replace('.', ',') + " круга"
 
+    /** The same words kept on one line: "круг 230 м — 51 с" never leaves "с" alone on the next one. */
+    fun nobreak(s: String): String = s.replace(' ', '\u00A0')
+
     /** A lap time: "52 с" under a minute, "1:44" from a minute up. */
     fun lap(sec: Double): String {
         val s = sec.roundToInt()

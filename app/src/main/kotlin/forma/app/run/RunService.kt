@@ -87,6 +87,9 @@ class RunService : Service() {
     /** Five-minute marks past the plan already announced. */
     private var overMark = 0
 
+    /** When the coach last asked to press "lap" at the start while the plan waits on the line. */
+    private var waitSaidAt = 0L
+
     private fun control(action: (RunTracker) -> Unit) {
         val t = RunSession.tracker ?: return
         action(t)
@@ -152,9 +155,19 @@ class RunService : Service() {
         RunSession.save(now())
         ticker = scope.launch {
             while (isActive) {
-                val tr = RunSession.tracker ?: break
+                // The run was cleared from elsewhere (the cloud replaced the data): nothing to keep in the foreground.
+                val tr = RunSession.tracker ?: run {
+                    leave()
+                    break
+                }
                 val events = tr.tick(now())
                 handle(events)
+                if (events.any { (it as? RunEvent.Timeline)?.cue is Cue.ToLine }) waitSaidAt = now()
+                // Waiting on the line: a reminder every minute, in case the first one was missed.
+                if (tr.state == RunTracker.State.RUNNING && tr.waiting(now()) && now() - waitSaidAt > 60_000) {
+                    waitSaidAt = now()
+                    coach?.speak(CoachText.waitingReminder(tr.workout))
+                }
                 RunSession.publish(now())
                 val idx = tr.timeline(now()).index
                 if (idx != lastNotifiedIndex || now() - lastNotifyAt > 10_000) notifyNow()
@@ -209,7 +222,7 @@ class RunService : Service() {
                     is Cue.Countdown -> c.countdown(cue.left)
                     is Cue.LapMark -> c.lapMark()
                     is Cue.SegmentStart -> if (cue.index > 0) c.segmentChange()
-                    is Cue.Finished -> c.segmentChange()
+                    is Cue.ToLine, is Cue.Finished -> c.segmentChange()
                     else -> Unit
                 }
             }
@@ -304,22 +317,30 @@ class RunService : Service() {
         if (t == null) return b.setContentTitle("Пробежка").build()
         val nowMs = now()
         val tl = t.timeline(nowMs)
-        val title = if (t.workout.isOpenEnded) t.workout.title else if (tl.finished) "Готово" else CoachText.segmentName(t.workout, tl.index)
+        val waiting = t.waiting(nowMs)
+        val title = when {
+            t.workout.isOpenEnded -> t.workout.title
+            tl.finished -> "Готово"
+            waiting -> "Жду старта: жми «Круг» на линии"
+            else -> CoachText.segmentName(t.workout, tl.index)
+        }
         val parts = mutableListOf<String>()
         if (t.distanceM > 0) parts += Ru.distance(t.distanceM)
         t.currentPace()?.let { parts += "${Ru.pace(it)} /км" }
         if (!t.workout.isOpenEnded) parts += "всего ${Ru.clock(t.activeSec(nowMs))}, план ${Ru.clock(t.workout.totalSeconds)}"
         b.setContentTitle(title).setContentText(parts.joinToString(" · "))
         if (t.state == RunTracker.State.RUNNING) {
-            if (!t.workout.isOpenEnded && !tl.finished) {
+            if (waiting) {
+                b.setUsesChronometer(true).setWhen(System.currentTimeMillis() - t.activeMs(nowMs))
+            } else if (!t.workout.isOpenEnded && !tl.finished) {
                 b.setUsesChronometer(true).setChronometerCountDown(true)
                     .setWhen(System.currentTimeMillis() + tl.segmentRemaining * 1000L)
             } else {
                 b.setUsesChronometer(true).setWhen(System.currentTimeMillis() - t.activeMs(nowMs))
             }
-            // On a stadium the lap button is on the lock screen too.
+            // On a stadium the lap button is on the lock screen too, alone: "pause" next to it gets pressed by mistake.
             if (t.workout.lapMeters != null) b.addAction(0, "Круг", action(ACTION_LAP))
-            b.addAction(0, "Пауза", action(ACTION_PAUSE))
+            else b.addAction(0, "Пауза", action(ACTION_PAUSE))
         } else if (t.state == RunTracker.State.PAUSED) {
             b.addAction(0, "Продолжить", action(ACTION_RESUME))
         }

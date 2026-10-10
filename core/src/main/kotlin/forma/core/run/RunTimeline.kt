@@ -23,10 +23,22 @@ sealed interface Cue {
     data class MinuteLeft(override val at: Int, val index: Int) : Cue
     /** On a track: the moment a lap of a rep should be done (a pacer beep); [lap] of [of]. */
     data class LapMark(override val at: Int, val index: Int, val lap: Int, val of: Int) : Cue
+    /** The warm-up is over: the rep [index] waits for the runner's start press on the line (see [RunTimeline.startOnLine]). */
+    data class ToLine(override val at: Int, val index: Int) : Cue
     data class Finished(override val at: Int) : Cue
 }
 
 object RunTimeline {
+    /**
+     * On a stadium the first rep (and the time trial) waits for the runner on the line: after the warm-up the plan stands
+     * still until the lap button is pressed at the start, wherever on the track the warm-up ended. Its index, or null.
+     */
+    fun startOnLine(workout: RunWorkout): Int? {
+        if (workout.lapMeters == null) return null
+        val i = workout.segments.indexOfFirst { it.kind == SegmentKind.WORK }
+        return i.takeIf { it > 0 && workout.segments[it].laps != null }
+    }
+
     fun at(workout: RunWorkout, elapsed: Int): TimelineState {
         val total = workout.totalSeconds
         if (workout.isOpenEnded) return TimelineState(0, null, elapsed, 0, elapsed, 0, false)
@@ -46,6 +58,7 @@ object RunTimeline {
         val out = ArrayList<Cue>()
         var start = 0
         val segs = workout.segments
+        val waits = startOnLine(workout)
         segs.forEachIndexed { i, s ->
             val end = start + s.seconds
             out += Cue.SegmentStart(start, i, s, segs.getOrNull(i + 1))
@@ -69,7 +82,9 @@ object RunTimeline {
                 if (s.seconds >= 6 * 60) out += Cue.Halfway(start + s.seconds / 2, i)
                 if (s.seconds >= 3 * 60) out += Cue.MinuteLeft(end - 60, i)
             }
-            if (s.seconds >= 10) for (left in 3 downTo 1) out += Cue.Countdown(end - left, i, left)
+            // Before a rep that waits on the line no countdown: the runner starts it, the app asks to go to the line.
+            if (waits == i + 1) out += Cue.ToLine(end - 1, i + 1)
+            else if (s.seconds >= 10) for (left in 3 downTo 1) out += Cue.Countdown(end - left, i, left)
             start = end
         }
         if (segs.isNotEmpty()) out += Cue.Finished(start)

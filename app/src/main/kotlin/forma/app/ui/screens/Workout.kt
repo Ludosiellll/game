@@ -71,6 +71,8 @@ import forma.app.ui.components.PrimaryButton
 import forma.app.ui.components.Ring
 import forma.app.ui.components.SectionLabel
 import forma.app.ui.components.Stepper
+import forma.app.ui.components.StepperGroup
+import forma.app.ui.components.StepperSlot
 import forma.app.ui.components.TopBar
 import forma.app.ui.components.NumText
 import forma.app.ui.theme.F
@@ -94,7 +96,8 @@ import kotlin.math.max
 private fun stepOf(ex: forma.core.model.Exercise, item: forma.app.data.LiftItem, w: Double): Double =
     if (item.step != ex.step) item.step else ex.stepAt(w)
 
-private class SetInput(weight: Double, reps: Int) {
+/** [exerciseId]: the exercise the values were typed for (a swap puts another one at the same position). */
+private class SetInput(val exerciseId: String, weight: Double, reps: Int) {
     var weight by mutableStateOf(weight)
     var reps by mutableIntStateOf(reps)
     var rir by mutableStateOf<Int?>(null)
@@ -102,10 +105,12 @@ private class SetInput(weight: Double, reps: Int) {
 
 /** Typed values per exercise, kept while another screen is on top and through rotation. */
 private val InputsSaver = listSaver<SnapshotStateMap<Int, SetInput>, Any>(
-    save = { m -> m.flatMap { (k, v) -> listOf(k, v.weight, v.reps, v.rir ?: -1) } },
+    save = { m -> m.flatMap { (k, v) -> listOf(k, v.exerciseId, v.weight, v.reps, v.rir ?: -1) } },
     restore = { l ->
         mutableStateMapOf<Int, SetInput>().apply {
-            l.chunked(4).forEach { (k, w, r, rir) -> put(k as Int, SetInput(w as Double, r as Int).also { it.rir = (rir as Int).takeIf { x -> x >= 0 } }) }
+            l.chunked(5).forEach { (k, id, w, r, rir) ->
+                put(k as Int, SetInput(id as String, w as Double, r as Int).also { it.rir = (rir as Int).takeIf { x -> x >= 0 } })
+            }
         }
     },
 )
@@ -142,11 +147,16 @@ fun WorkoutScreen(workoutId: Long) {
     }
 
     val inputs = rememberSaveable(saver = InputsSaver) { mutableStateMapOf() }
-    fun input(item: LiftItem): SetInput = inputs.getOrPut(item.position) {
+    val adjustments = rememberSaveable(saver = AdjustmentsSaver) { mutableStateMapOf() }
+    fun input(item: LiftItem): SetInput {
+        inputs[item.position]?.takeIf { it.exerciseId == item.exerciseId }?.let { return it }
+        // Another exercise at this position (swapped in, or added after one was taken out): its own numbers and hints,
+        // never the weight typed for the one before.
+        adjustments.remove(item.position)
         val p = item.prescription
         val ex = Catalog[item.exerciseId]
         val start = p.weight ?: p.startHint ?: if (ex.load == LoadKind.EXTERNAL) (ex.bar ?: item.step * 4) else 0.0
-        SetInput(start, p.reps)
+        return SetInput(item.exerciseId, start, p.reps).also { inputs[item.position] = it }
     }
     val doneBy = sets.groupBy { it.position }
     var current by rememberSaveable { mutableIntStateOf(-1) }
@@ -156,7 +166,6 @@ fun WorkoutScreen(workoutId: Long) {
     val item = plan.items.firstOrNull { it.position == current } ?: plan.items.first()
     val ex = Catalog[item.exerciseId]
     val inp = input(item)
-    val adjustments = rememberSaveable(saver = AdjustmentsSaver) { mutableStateMapOf() }
 
     // The rest goes on (and beeps) while the library or another screen is open on top.
     val restState by forma.app.ui.RestTimer.rest.collectAsState()
@@ -172,6 +181,7 @@ fun WorkoutScreen(workoutId: Long) {
     LaunchedEffect(Unit) { while (true) { tick = System.currentTimeMillis(); delay(1000) } }
 
     var finishing by remember { mutableStateOf(false) }
+    var lastLogAt by remember { mutableLongStateOf(0L) }
     var removing by remember { mutableStateOf<Int?>(null) }
     var editing by remember { mutableStateOf<SetEntity?>(null) }
     var typing by remember { mutableStateOf(false) }
@@ -317,34 +327,47 @@ fun WorkoutScreen(workoutId: Long) {
                         style = T.secondary(13.sp),
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (ex.load != LoadKind.TIMED) {
-                        // Assisted pull-ups and dips go below zero: negative weight is help from a machine or band.
-                        val lowest = if (ex.assisted) -Progression.maxAssist(ex, bw) else 0.0
-                        val assist = inp.weight < 0
+                val timed = ex.load == LoadKind.TIMED
+                val repsText = inp.reps.toString()
+                val repsUnit = if (timed) "сек" else "повт"
+                val repsSlot = StepperSlot(maxOf(repsText, "00", compareBy { it.length }), repsUnit) { m ->
+                    Stepper(
+                        repsText, repsUnit,
+                        { inp.reps = max(1, inp.reps - if (timed) 5 else 1) },
+                        { inp.reps += if (timed) 5 else 1 }, m, "Меньше повторов", "Больше повторов",
+                    )
+                }
+                if (timed) {
+                    StepperGroup(listOf(repsSlot))
+                } else {
+                    // Assisted pull-ups and dips go below zero: negative weight is help from a machine or band.
+                    val lowest = if (ex.assisted) -Progression.maxAssist(ex, bw) else 0.0
+                    val weightText = Ru.kg(kotlin.math.abs(inp.weight))
+                    val weightUnit = when {
+                        inp.weight < 0 -> "помощь, кг"
+                        ex.load == LoadKind.BODYWEIGHT_PLUS -> "доп. кг"
+                        ex.perHand -> "кг × 2"
+                        else -> "кг"
+                    }
+                    // Sized for "102,5" and the longest unit this exercise can show, not for today's number.
+                    val weightSlot = StepperSlot(maxOf(weightText, "000,0", compareBy { it.length }), if (ex.assisted) "помощь, кг" else weightUnit) { m ->
                         Stepper(
-                            Ru.kg(kotlin.math.abs(inp.weight)),
-                            when {
-                                assist -> "помощь, кг"
-                                ex.load == LoadKind.BODYWEIGHT_PLUS -> "доп. кг"
-                                ex.perHand -> "кг × 2"
-                                else -> "кг"
-                            },
-                            { inp.weight = max(lowest, inp.weight - stepOf(ex, item, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, item, inp.weight) }, Modifier.weight(1f),
+                            weightText, weightUnit,
+                            { inp.weight = max(lowest, inp.weight - stepOf(ex, item, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, item, inp.weight) }, m,
                             "Меньше вес", "Больше вес", onLongValue = { typing = true },
                         )
                     }
-                    Stepper(
-                        inp.reps.toString(), if (ex.load == LoadKind.TIMED) "сек" else "повт",
-                        { inp.reps = max(1, inp.reps - if (ex.load == LoadKind.TIMED) 5 else 1) },
-                        { inp.reps += if (ex.load == LoadKind.TIMED) 5 else 1 }, Modifier.weight(1f), "Меньше повторов", "Больше повторов",
-                    )
+                    StepperGroup(listOf(weightSlot, repsSlot))
                 }
                 if (ex.load != LoadKind.TIMED) {
                     Text("Сколько ещё повторов мог сделать?", style = T.secondary(13.sp))
                     RirChips(inp.rir) { inp.rir = it }
                 }
                 PrimaryButton("Подход сделан", {
+                    // A double tap of a sweaty finger is one set, not two.
+                    val tap = android.os.SystemClock.elapsedRealtime()
+                    if (tap - lastLogAt < 1500) return@PrimaryButton
+                    lastLogAt = tap
                     val doneSet = DoneSet(inp.weight, inp.reps, inp.rir)
                     scope.launch {
                         repo.logSet(workoutId, item, inp.weight, inp.reps, inp.rir)

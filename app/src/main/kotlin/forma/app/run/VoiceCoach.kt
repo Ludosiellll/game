@@ -18,6 +18,27 @@ import java.util.Locale
  * Lines said before the speech engine is up (the first segment of a run) wait for it.
  */
 class VoiceCoach(context: Context, var voice: Boolean, var beeps: Boolean, var vibration: Boolean) {
+    companion object {
+        /**
+         * Whether the phone can speak Russian (a speech engine with a Russian voice): without one the coach is silent,
+         * and the runner must know before the start, not on the track.
+         */
+        fun checkRussian(context: Context, onResult: (Boolean) -> Unit) {
+            val main = android.os.Handler(android.os.Looper.getMainLooper())
+            var engine: TextToSpeech? = null
+            engine = runCatching {
+                TextToSpeech(context.applicationContext) { status ->
+                    main.post {
+                        val e = engine
+                        val lang = if (status == TextToSpeech.SUCCESS && e != null) runCatching { e.isLanguageAvailable(Locale.forLanguageTag("ru-RU")) }.getOrNull() else null
+                        onResult(lang != null && lang != TextToSpeech.LANG_MISSING_DATA && lang != TextToSpeech.LANG_NOT_SUPPORTED)
+                        e?.shutdown()
+                    }
+                }
+            }.getOrNull()
+        }
+    }
+
     private val app = context.applicationContext
     private val audio = app.getSystemService(AudioManager::class.java)
     private var tts: TextToSpeech? = null

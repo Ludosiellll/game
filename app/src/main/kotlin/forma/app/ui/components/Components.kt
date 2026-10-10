@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -35,8 +36,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -179,6 +182,9 @@ fun StatTile(label: String, value: String, sub: String?, color: Color, modifier:
     }
 }
 
+/** Room the − and + buttons and the padding take in a [Stepper]; the rest is the number's. */
+private val StepperChrome = 44.dp * 2 + 8.dp
+
 /** Value with − and + buttons around it; big targets for gym fingers. */
 @Composable
 fun Stepper(
@@ -194,10 +200,43 @@ fun Stepper(
     val shape = RoundedCornerShape(F.shape.radiusSmall + 2.dp)
     var m = modifier.clip(shape).background(F.c.surface2)
     if (F.shape.border > 0.dp) m = m.border(F.shape.border, F.c.line, shape)
-    Row(m.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(m.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
         StepButton(Ic.minus, minusLabel, onMinus)
         ValueBox(value, unit, Modifier.weight(1f), onLongValue)
         StepButton(Ic.plus, plusLabel, onPlus)
+    }
+}
+
+/** One stepper of a [StepperGroup]: the widest value and unit it will show, and the stepper drawn with the given modifier. */
+class StepperSlot(val widest: String, val widestUnit: String, val content: @Composable (Modifier) -> Unit)
+
+/**
+ * Steppers side by side when every number fits beside its buttons at a readable size, one under the other when not:
+ * on a 360 dp phone or with a large system font "47,5" must never be cut to "47,". [StepperSlot.widest] keeps the
+ * choice steady while the value changes, so a button never jumps away from the finger pressing it.
+ */
+@Composable
+fun StepperGroup(slots: List<StepperSlot>, modifier: Modifier = Modifier) {
+    val measurer = rememberTextMeasurer()
+    val number = T.number(16.sp)
+    val label = T.label()
+    val units = slots.map { labelText(it.widestUnit) }
+    val gap = 8.dp
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val density = LocalDensity.current
+        val needs = slots.mapIndexed { i, s ->
+            val text = maxOf(measurer.measure(s.widest, number, maxLines = 1).size.width, measurer.measure(units[i], label, maxLines = 1).size.width)
+            with(density) { text.toDp() } + StepperChrome
+        }
+        if (needs.fold(gap * (slots.size - 1)) { a, b -> a + b } <= maxWidth) {
+            Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                slots.forEachIndexed { i, s -> s.content(Modifier.weight(needs[i].value)) }
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                slots.forEach { it.content(Modifier.fillMaxWidth()) }
+            }
+        }
     }
 }
 
@@ -212,7 +251,8 @@ private fun ValueBox(value: String, unit: String, modifier: Modifier, onLong: ((
             value, style = T.number(26.sp), maxLines = 1,
             autoSize = TextAutoSize.StepBased(minFontSize = 14.sp, maxFontSize = 26.sp, stepSize = 1.sp),
         )
-        Text(labelText(unit), style = T.label())
+        // "повт" on one line, never "пов / т".
+        BasicText(labelText(unit), style = T.label(), maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 11.sp, stepSize = 0.5.sp))
     }
 }
 
@@ -220,7 +260,7 @@ private fun ValueBox(value: String, unit: String, modifier: Modifier, onLong: ((
 private fun StepButton(icon: ImageVector, label: String, onClick: () -> Unit) {
     val shape = if (F.shape.pill) RoundedCornerShape(12.dp) else RoundedCornerShape(F.shape.radiusSmall)
     Box(
-        Modifier.size(48.dp).clip(shape).background(if (F.c.dark) F.c.line else F.c.surface)
+        Modifier.size(width = 44.dp, height = 48.dp).clip(shape).background(if (F.c.dark) F.c.line else F.c.surface)
             .clickable(role = Role.Button, onClickLabel = label, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, label, tint = F.c.text, modifier = Modifier.size(20.dp)) }
@@ -255,9 +295,11 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
                     .selectable(selected = sel, role = Role.Tab, onClick = { onSelect(i) }),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    labelText(o), style = T.body(13.sp, if (sel) FontWeight.ExtraBold else FontWeight.SemiBold)
-                        .copy(color = if (sel) F.c.onAccent else F.c.text2), maxLines = 1,
+                // "Нагрузка" in a quarter of a narrow phone with a large font: smaller, not cut.
+                BasicText(
+                    labelText(o), Modifier.padding(horizontal = 4.dp),
+                    style = T.body(13.sp, if (sel) FontWeight.ExtraBold else FontWeight.SemiBold).copy(color = if (sel) F.c.onAccent else F.c.text2),
+                    maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 13.sp, stepSize = 0.5.sp),
                 )
             }
         }

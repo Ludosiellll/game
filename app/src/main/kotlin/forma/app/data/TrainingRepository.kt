@@ -68,28 +68,51 @@ class TrainingRepository(
     suspend fun completeOnboarding(profile: Profile) {
         store.setProfile(profile)
         store.setProgram(ProgramGenerator.generate(profile, today()))
-        store.setRunState(ProgramGenerator.initialRunState(profile))
+        store.setRunState(typedRace(ProgramGenerator.initialRunState(profile), profile))
         db.state().upsertBodyWeight(BodyWeightEntity(today().toEpochDay(), profile.bodyWeightKg))
         onChange()
     }
+
+    /**
+     * A race typed in the profile is a test as of today: the next one comes on the usual cadence. With a race of up to
+     * 3 km as the goal the first test is that race itself, after the first two runs.
+     */
+    private fun typedRace(st: forma.core.run.RunState, profile: Profile): forma.core.run.RunState =
+        if (st.vdot != null && profile.runGoal?.middleDistance != true) st.copy(lastTestDay = today().toEpochDay()) else st
 
     /** Saves the profile and rebuilds the plan. Lifting progress is kept per exercise and rep range. */
     suspend fun updateProfile(profile: Profile) {
         val old = store.profileNow()
         store.setProfile(profile)
-        store.setProgram(ProgramGenerator.generate(profile, today()))
-        val runChanged = old == null || old.runLevel != profile.runLevel ||
-            old.raceMeters != profile.raceMeters || old.raceSeconds != profile.raceSeconds
-        if (runChanged) {
+        val fresh = ProgramGenerator.generate(profile, today())
+        val prev = store.programNow()
+        // The block goes on: a saved profile changes the week, not where the lifter is in the cycle (a lighter week
+        // stays where it was due, a vacation shift stays). Another experience level has another block and starts over.
+        store.setProgram(
+            if (prev != null && prev.experience == fresh.experience) fresh.copy(startEpochDay = prev.startEpochDay, createdEpochDay = prev.createdEpochDay)
+            else fresh,
+        )
+        val raceChanged = old == null || old.raceMeters != profile.raceMeters || old.raceSeconds != profile.raceSeconds
+        if (raceChanged || old.runLevel != profile.runLevel) {
             val init = ProgramGenerator.initialRunState(profile)
             val cur = store.runStateNow()
-            store.setRunState(
-                if (old?.runLevel != profile.runLevel) init.copy(vdot = init.vdot ?: cur.vdot)
-                else cur.copy(vdot = init.vdot ?: cur.vdot),
-            )
+            // A test run since says more than a race typed long ago; a race typed now says more than the old fitness.
+            val vdot = if (raceChanged) init.vdot ?: cur.vdot else cur.vdot ?: init.vdot
+            val next = if (old?.runLevel != profile.runLevel) {
+                // Another level: its starting lengths and steps, but what running has shown stays.
+                init.copy(
+                    vdot = vdot, runs = cur.runs, recent = cur.recent, lastRunDay = cur.lastRunDay, lastTestDay = cur.lastTestDay,
+                    lastVdotUpDay = cur.lastVdotUpDay, goalStage = cur.goalStage, qualityCount = cur.qualityCount,
+                )
+            } else cur.copy(vdot = vdot)
+            store.setRunState(if (raceChanged && init.vdot != null) typedRace(next, profile) else next)
         }
-        // A new race goal (another distance or time) starts its race-pace ladder from the first step.
-        if (old != null && old.runGoal != profile.runGoal) {
+        // A new race goal starts its race-pace ladder from the first step; a time a few seconds off (5:35 → 5:30) is the
+        // same goal, and the steps done stay.
+        val og = old?.runGoal
+        val ng = profile.runGoal
+        val sameGoal = og == ng || og != null && ng != null && og.meters == ng.meters && kotlin.math.abs(ng.seconds - og.seconds) <= og.seconds * 0.05
+        if (old != null && !sameGoal) {
             store.setRunState(store.runStateNow().copy(goalStage = 0, goalFails = 0, testSoon = false))
         }
         if (old?.bodyWeightKg != profile.bodyWeightKg) logBodyWeight(profile.bodyWeightKg)
@@ -154,7 +177,7 @@ class TrainingRepository(
 
     /** The plan's slot with the exercise the user put in its place for good, if any. */
     private fun swapped(spec: SlotSpec, settings: Settings): SlotSpec {
-        val id = settings.swaps[spec.exerciseId]?.takeIf { Catalog.find(it)?.archived == false } ?: return spec
+        val id = settings.swaps[spec.exerciseId]?.let { Catalog.moved[it] ?: it }?.takeIf { Catalog.find(it)?.archived == false } ?: return spec
         return spec.copy(exerciseId = id, increment = null)
     }
 
@@ -206,7 +229,9 @@ class TrainingRepository(
         val old = plan.items.firstOrNull { it.position == position } ?: return false
         if (db.sets().forWorkout(workoutId).any { it.position == position }) return false
         val original = store.programNow()?.templates?.firstOrNull { it.id == plan.templateId }?.slots?.getOrNull(position)
-        val base = original ?: old.slot
+        // The plan's slot with the sets set for it for good (the swap is today's choice, the sets stay).
+        val sets = original?.let { store.settingsNow().sets[it.exerciseId] }?.coerceIn(1, MAX_SETS)
+        val base = original?.let { if (sets != null) it.copy(sets = sets) else it } ?: old.slot
         val spec = if (newId == base.exerciseId) base else base.copy(exerciseId = newId, increment = null)
         val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload)
         replacePlan(workoutId, plan.copy(items = plan.items.map { if (it.position == position) item else it }))
@@ -224,7 +249,10 @@ class TrainingRepository(
             ex.compound -> SlotSpec(ex.id, 3, 6, 10, 2, 120, SlotRole.SECONDARY)
             else -> SlotSpec(ex.id, 3, 10, 15, 2, 75, SlotRole.ACCESSORY)
         }
-        val position = (plan.items.maxOfOrNull { it.position } ?: -1) + 1
+        // Past every position of the plan: an added exercise must never pass for a plan slot (a plan exercise taken out
+        // today leaves its position free, and "for good" acts on the plan's exercise at a position).
+        val planSize = store.programNow()?.templates?.firstOrNull { it.id == plan.templateId }?.slots?.size ?: 0
+        val position = maxOf(planSize, (plan.items.maxOfOrNull { it.position } ?: -1) + 1)
         val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload)
         replacePlan(workoutId, plan.copy(items = plan.items + item))
         return true
@@ -249,6 +277,13 @@ class TrainingRepository(
         val s = store.settingsNow()
         val n = sets?.coerceIn(1, MAX_SETS)
         store.setSettings(s.copy(sets = if (n == null || n == planned) s.sets - planId else s.sets + (planId to n)))
+        onChange()
+    }
+
+    /** The weight step of [exerciseId] in this gym from now on; its own step ([default]) clears the override. */
+    suspend fun setStep(exerciseId: String, step: Double, default: Double) {
+        val s = store.settingsNow()
+        store.setSettings(s.copy(steps = if (step == default) s.steps - exerciseId else s.steps + (exerciseId to step)))
         onChange()
     }
 
@@ -362,12 +397,16 @@ class TrainingRepository(
         val bw = profile.bodyWeightKg
         val reports = mutableListOf<SlotReport>()
         var volume = 0.0
+        // One exercise twice in a session (added again with "+", or swapped to one already there) has one progress:
+        // the first one decides it, the extra sets are volume — tired back-off sets must not cut the working weight.
+        val evaluated = mutableSetOf<String>()
         for (item in plan.items) {
             val ex = exercise(item.exerciseId, settings)
             val mine = sets.filter { it.position == item.position }
             for (s in mine) if (ex.load != LoadKind.TIMED) {
                 volume += Progression.effectiveLoad(ex, s.weight, bw) * s.reps * (if (ex.perHand) 2 else 1)
             }
+            if (mine.isNotEmpty() && !evaluated.add(item.slot.key)) continue
             val done = mine.map { DoneSet(it.weight, it.reps, it.rir) }
             val st = db.state().slot(item.slot.key)?.toState() ?: SlotState.fresh(item.slot)
             val ev = Progression.evaluate(
@@ -570,8 +609,12 @@ class TrainingRepository(
      */
     suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false): RunWorkout {
         val saved = store.runStateNow()
-        val st = RunPlan.withBreak(saved, date.toEpochDay())
         val program = store.programNow()
+        // The caps of the plan as it is now: after a switch to less running, runs are no longer than it allows.
+        val caps = program?.runCaps
+        val st = RunPlan.withBreak(saved, date.toEpochDay()).let {
+            if (caps == null) it else it.copy(easyMinutes = minOf(it.easyMinutes, caps.easyMax), longMinutes = minOf(it.longMinutes, caps.longMax))
+        }
         val profile = store.profileNow()
         val goal = profile?.runGoal
         val lap = profile?.lapMeters
@@ -602,8 +645,10 @@ class TrainingRepository(
      */
     private fun needsTest(st: RunState, date: LocalDate, goal: forma.core.model.RunGoal?): Boolean {
         if (st.runs < 2 || st.returnEasy > 0) return false
+        if (st.lastTrialTryDay?.let { date.toEpochDay() - it < 14 } == true) return false
         if (st.testSoon) return true
-        val last = st.lastTestDay ?: return st.vdot == null
+        // With a race of up to 3 km as the goal the first test is that race, whatever fitness was typed in.
+        val last = st.lastTestDay ?: return st.vdot == null || goal?.middleDistance == true
         return date.toEpochDay() - last >= if (goal?.middleDistance == true) 35 else 56
     }
 
@@ -628,6 +673,8 @@ class TrainingRepository(
         val after = RunPlan.after(st, workout, result, caps, date.toEpochDay(), goal = store.profileNow()?.runGoal)
         var next = after.state
         if (workout.type == RunType.TEST && after.outcomes.any { it is RunOutcome.VdotChanged }) next = next.copy(lastTestDay = date.toEpochDay())
+        // A test run but not counted (no time, a doubtful one): the next waits two weeks, not until the next hard day.
+        else if (workout.type == RunType.TEST) next = next.copy(lastTrialTryDay = date.toEpochDay())
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
         val summary = RunSummary(after.outcomes, minutes, load, result.laps.orEmpty())
