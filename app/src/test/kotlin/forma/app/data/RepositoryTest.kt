@@ -49,7 +49,9 @@ class RepositoryTest {
         repo.completeOnboarding(profile)
         val program = repo.store.programNow()!!
         val tpl = program.templates.first().id
-        val day = LocalDate.of(2026, 10, 12)
+        // Weeks 1–3 of the program: no deload week in between.
+        val day = LocalDate.ofEpochDay(program.startEpochDay)
+        assertTrue(program.blockWeeks == 0 || program.blockWeeks > 3)
 
         // First session: calibration from what was lifted.
         val id = repo.startLift(tpl, day)
@@ -63,15 +65,25 @@ class RepositoryTest {
         assertIs<Outcome.Calibrated>(rep.outcome)
         assertEquals(50 * 7.0, summary.load)
 
-        // Second session uses the calibrated weight; doing every rep adds a rep.
+        // Second session uses the calibrated weight. A novice who does every rep and one more on the "+" set adds weight.
         val id2 = repo.startLift(tpl, day.plusDays(7))
         val sq2 = repo.planOf(db.workouts().get(id2)!!)!!.items.first { it.exerciseId == "squat" }
-        val w = assertNotNull(sq2.prescription.weight)
-        repeat(sq2.prescription.sets) { repo.logSet(id2, sq2, w, sq2.prescription.reps, null) }
+        val p2 = sq2.prescription
+        val w = assertNotNull(p2.weight)
+        assertTrue(p2.top)
+        repeat(p2.sets - 1) { repo.logSet(id2, sq2, w, p2.reps, null) }
+        repo.logSet(id2, sq2, w, p2.reps + 1, null)
         val rep2 = repo.finishLift(id2, 7).reports.first { it.exerciseId == "squat" }
-        assertIs<Outcome.AddReps>(rep2.outcome)
+        assertIs<Outcome.AddWeight>(rep2.outcome)
         val sq3 = repo.liftPlan(tpl, day.plusDays(14)).items.first { it.exerciseId == "squat" }
-        assertEquals(sq2.prescription.reps + 1, sq3.prescription.reps)
+        assertEquals(w + 2.5, sq3.prescription.weight)
+
+        // Third session: exactly the target with nothing to spare consolidates instead of adding.
+        val id3 = repo.startLift(tpl, day.plusDays(14))
+        val sq3s = repo.planOf(db.workouts().get(id3)!!)!!.items.first { it.exerciseId == "squat" }
+        repeat(sq3s.prescription.sets) { repo.logSet(id3, sq3s, sq3s.prescription.weight!!, sq3s.prescription.reps, null) }
+        val rep3 = repo.finishLift(id3, 7).reports.first { it.exerciseId == "squat" }
+        assertEquals(Outcome.Hold(w + 2.5, sq3s.prescription.reps, forma.core.strength.HoldReason.CONSOLIDATE), rep3.outcome)
 
         val week = repo.weekFlow(day.plusDays(7).with(java.time.DayOfWeek.MONDAY)).first()
         assertTrue(week.any { d -> d.done.isNotEmpty() })

@@ -67,7 +67,7 @@ import kotlin.math.roundToInt
 class ScreensShotTest {
     @get:Rule val compose = createComposeRule()
 
-    private var clock = 0L
+    private var clock = System.currentTimeMillis()
     private val zone = ZoneId.systemDefault()
     private fun at(d: LocalDate, hour: Int) = d.atTime(hour, 0).atZone(zone).toInstant().toEpochMilli()
 

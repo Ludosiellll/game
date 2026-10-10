@@ -84,6 +84,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 
 /** Values being edited for the next set of one exercise. */
+/** Weight step around [w]: the user's own step if set in settings, else the exercise's (finer for light dumbbells). */
+private fun stepOf(ex: forma.core.model.Exercise, item: forma.app.data.LiftItem, w: Double): Double =
+    if (item.step != ex.step) item.step else ex.stepAt(w)
+
 private class SetInput(weight: Double, reps: Int) {
     var weight by mutableStateOf(weight)
     var reps by mutableIntStateOf(reps)
@@ -256,7 +260,7 @@ fun WorkoutScreen(workoutId: Long) {
                     if (ex.load != LoadKind.TIMED) {
                         Stepper(
                             Ru.kg(inp.weight), if (ex.load == LoadKind.BODYWEIGHT_PLUS) "доп. кг" else if (ex.perHand) "кг × 2" else "кг",
-                            { inp.weight = max(0.0, inp.weight - item.step) }, { inp.weight += item.step }, Modifier.weight(1f),
+                            { inp.weight = max(0.0, inp.weight - stepOf(ex, item, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, item, inp.weight) }, Modifier.weight(1f),
                             "Меньше вес", "Больше вес", onLongValue = { typing = true },
                         )
                     }
@@ -278,7 +282,7 @@ fun WorkoutScreen(workoutId: Long) {
                     val doneSet = DoneSet(inp.weight, inp.reps, inp.rir)
                     scope.launch {
                         repo.logSet(workoutId, item, inp.weight, inp.reps, inp.rir)
-                        val adj = Progression.adjustAfterSet(ex, item.prescription, doneSet, bw)
+                        val adj = Progression.adjustAfterSet(ex, item.prescription, doneSet, bw, index = n)
                         if (adj != null) adjustments[item.position] = adj else adjustments.remove(item.position)
                         inp.rir = null
                         if (settings.autoRest) {

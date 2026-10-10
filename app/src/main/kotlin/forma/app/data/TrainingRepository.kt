@@ -42,7 +42,8 @@ class TrainingRepository(
     /** Called after anything worth copying to the cloud has been saved. */
     private val onChange: () -> Unit = {},
 ) {
-    fun today(): LocalDate = LocalDate.now(zone)
+    /** Today by the repository's clock (tests and simulations move it). */
+    fun today(): LocalDate = java.time.Instant.ofEpochMilli(now()).atZone(zone).toLocalDate()
 
     // ---------- profile and program ----------
 
@@ -81,13 +82,23 @@ class TrainingRepository(
 
     private fun exercise(id: String, settings: Settings): Exercise {
         val ex = Catalog[id]
-        return settings.steps[id]?.let { ex.copy(step = it) } ?: ex
+        return settings.steps[id]?.let { ex.copy(step = it, fineStep = null) } ?: ex
     }
 
-    private fun SlotStateEntity.toState() = SlotState(weight, reps, stalls, misses, sessions)
+    private fun SlotStateEntity.toState() = SlotState(weight, reps, stalls, misses, sessions, linear, steady, cutFrom, cutReps)
 
     private fun SlotState.toEntity(spec: SlotSpec) =
-        SlotStateEntity(spec.key, spec.exerciseId, weight, reps, stalls, misses, sessions, now())
+        SlotStateEntity(spec.key, spec.exerciseId, weight, reps, stalls, misses, sessions, now(), linear, steady, cutFrom, cutReps)
+
+    /** Best session estimate of [exerciseId] over the 8 weeks before [day] (the floor for reductions). */
+    private suspend fun recentBest(exerciseId: String, day: Long, exclude: Long): Double? =
+        db.workouts().allDone().asSequence()
+            .filter { it.kind == Kind.LIFT && it.id != exclude && it.epochDay in (day - 56)..day }
+            .mapNotNull { w -> w.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() } }
+            .flatMap { it.reports.asSequence() }
+            .filter { it.exerciseId == exerciseId }
+            .mapNotNull { it.e1rm }
+            .maxOrNull()
 
     // ---------- lifting ----------
 
@@ -177,7 +188,10 @@ class TrainingRepository(
             }
             val done = mine.map { DoneSet(it.weight, it.reps, it.rir) }
             val st = db.state().slot(item.slot.key)?.toState() ?: SlotState.fresh(item.slot)
-            val ev = Progression.evaluate(ex, item.slot, st, item.prescription, done, bw)
+            val ev = Progression.evaluate(
+                ex, item.slot, st, item.prescription, done, bw,
+                novice = profile.experience == Experience.NOVICE, recentBest = recentBest(ex.id, w.epochDay, workoutId),
+            )
             if (ev.outcome !is Outcome.NotDone) db.state().upsertSlot(ev.state.toEntity(item.slot))
             var record = false
             ev.e1rm?.let { obs ->
@@ -225,8 +239,10 @@ class TrainingRepository(
             }.distinct()
         val nextMonday = day.with(java.time.temporal.TemporalAdjusters.next(java.time.DayOfWeek.MONDAY))
         val plannedSoon = ProgramGenerator.isDeloadWeek(program, nextMonday) || ProgramGenerator.isDeloadWeek(program, day)
-        val active = state.reactiveDeloadStart?.let { day.toEpochDay() < it + 7 } == true
-        if (setbacks.size >= 2 && !plannedSoon && !active) {
+        // At most one lighter week in six: a run of bad days is not a reason to deload again and again.
+        val recent = state.reactiveDeloadStart?.let { day.toEpochDay() < it + 42 } == true ||
+            (1L..3L).any { ProgramGenerator.isDeloadWeek(program, day.minusWeeks(it)) }
+        if (setbacks.size >= 2 && !plannedSoon && !recent) {
             store.setLiftState(state.copy(reactiveDeloadStart = nextMonday.toEpochDay()))
         }
     }

@@ -10,7 +10,11 @@ import forma.core.text.Ru
 /** Short Russian sentences that explain what the app changed and why. */
 object Texts {
     fun weight(ex: Exercise?, w: Double): String = when (ex?.load) {
-        LoadKind.BODYWEIGHT_PLUS -> if (w > 0) "+${Ru.kg(w)} кг" else "свой вес"
+        LoadKind.BODYWEIGHT_PLUS -> when {
+            w > 0 -> "+${Ru.kg(w)} кг"
+            w < 0 -> "помощь ${Ru.kg(-w)} кг"
+            else -> "свой вес"
+        }
         LoadKind.TIMED -> ""
         else -> "${Ru.kg(w)} кг"
     }
@@ -23,12 +27,16 @@ object Texts {
         is Outcome.AddReps ->
             if (ex?.load == LoadKind.TIMED) "Всё выдержал — в следующий раз ${o.to} с."
             else "Все повторы сделаны — в следующий раз ${target(ex, o.weight, o.to)}."
-        is Outcome.AddWeight -> "Верх диапазона пройден — прибавляем ${Ru.kg(o.to - o.from)} кг: ${target(ex, o.to, o.reps)}."
-        is Outcome.Jump -> "Было заметно легче плана — сразу ${target(ex, o.to, o.reps)} (+${Ru.kg(o.to - o.from)} кг)."
+        is Outcome.LowerReps -> "Повторов не хватило — цель ${o.to} вместо ${o.from}, вес прежний: ${target(ex, o.weight, o.to)}."
+        is Outcome.AddWeight -> "Все повторы сделаны — прибавляем ${Ru.kg(o.to - o.from)} кг: ${target(ex, o.to, o.reps)}."
+        is Outcome.Jump -> "Запас был большой — сразу ${target(ex, o.to, o.reps)} (+${Ru.kg(o.to - o.from)} кг)."
         is Outcome.Hold -> when (o.reason) {
             HoldReason.NEAR_MISS -> "Почти получилось — повторяем ${target(ex, o.weight, o.reps)}."
             HoldReason.FIRST_MISS -> "Не добрал повторы — повторяем ${target(ex, o.weight, o.reps)}. Один неудачный день ничего не значит."
             HoldReason.FEWER_SETS -> "Сделаны не все подходы — цель прежняя: ${target(ex, o.weight, o.reps)}."
+            HoldReason.LIGHTER -> "Подходы были легче плана — цель прежняя: ${target(ex, o.weight, o.reps)}."
+            HoldReason.CONSOLIDATE -> "Всё сделано, но без запаса — закрепляем ${target(ex, o.weight, o.reps)}."
+            HoldReason.NOT_THE_WEIGHT -> "Вес уже снижали, а повторов не прибавилось — дело не в весе. Оставляем его, цель ${target(ex, o.weight, o.reps)}."
         }
         is Outcome.Reduce -> "Вес оказался тяжёлым — ${target(ex, o.to, o.reps)} (−${Ru.kg(o.from - o.to)} кг). С этого веса снова растём."
         is Outcome.Reset -> "Три тренировки без роста — шаг назад до ${target(ex, o.to, o.reps)}, чтобы снова пойти вверх."
@@ -39,7 +47,7 @@ object Texts {
     /** Positive, neutral or negative tone for colouring. */
     fun tone(o: Outcome): Int = when (o) {
         is Outcome.AddReps, is Outcome.AddWeight, is Outcome.Jump, is Outcome.Calibrated -> 1
-        is Outcome.Reduce, is Outcome.Reset -> -1
+        is Outcome.Reduce, is Outcome.Reset, is Outcome.LowerReps -> -1
         else -> 0
     }
 

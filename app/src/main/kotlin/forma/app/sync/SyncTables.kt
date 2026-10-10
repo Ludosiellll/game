@@ -218,10 +218,16 @@ internal class SyncTables(db: FormaDatabase, private val store: SettingsStore) {
             put("misses", row.misses)
             put("sessions", row.sessions)
             put("changed_at", ts(row.updatedAt))
+            put("linear", row.linear)
+            put("steady", row.steady)
+            put("cut_from", row.cutFrom)
+            put("cut_reps", row.cutReps)
         }
         override fun decode(json: JsonObject) = SlotStateEntity(
             json.str("slot_key"), json.str("exercise_id"), json.dblOrNull("weight"), json.integer("reps"),
             json.integer("stalls"), json.integer("misses"), json.integer("sessions"), msOf(json["changed_at"]) ?: 0L,
+            json["linear"]?.jsonPrimitive?.booleanOrNull ?: true, json.intOrNull("steady") ?: 0,
+            json.dblOrNull("cut_from"), json.intOrNull("cut_reps"),
         )
         override suspend fun write(row: SlotStateEntity): Write { dao.putSlot(row); return Write.OK }
         override suspend fun delete(key: String) = dao.deleteSlot(key)

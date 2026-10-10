@@ -31,8 +31,18 @@ data class Exercise(
     val startRatio: Double = 0.3,
     /** Bar weight to show plates for, if this is a barbell lift. */
     val bar: Double? = null,
+    /** Finer step below [fineBelow] kg (light dumbbells usually go 1 kg at a time). */
+    val fineStep: Double? = null,
+    val fineBelow: Double = 0.0,
+    /** Body-weight exercises: share of body weight that is moved (push-ups ≈ 0.65, pull-ups ≈ 1). */
+    val bodyShare: Double = 1.0,
+    /** Body-weight exercises that can be made easier with an assisted machine or a band (negative extra weight). */
+    val assisted: Boolean = false,
 ) {
     val perHand: Boolean get() = equipment == Equipment.DUMBBELL
+
+    /** The smallest practical change of the load around [weight]. */
+    fun stepAt(weight: Double): Double = if (fineStep != null && weight < fineBelow - 1e-9) fineStep else step
 }
 
 object Catalog {
@@ -40,13 +50,15 @@ object Catalog {
         Exercise(id, name, Equipment.BARBELL, p, s, 2.5, LoadKind.EXTERNAL, lower, true, ratio, 20.0)
 
     private fun db(id: String, name: String, p: List<Muscle>, s: List<Muscle> = emptyList(), lower: Boolean = false, compound: Boolean = false, ratio: Double) =
-        Exercise(id, name, Equipment.DUMBBELL, p, s, 2.0, LoadKind.EXTERNAL, lower, compound, ratio)
+        Exercise(id, name, Equipment.DUMBBELL, p, s, 2.0, LoadKind.EXTERNAL, lower, compound, ratio, fineStep = 1.0, fineBelow = 10.0)
 
     private fun mc(id: String, name: String, eq: Equipment, p: List<Muscle>, s: List<Muscle> = emptyList(), step: Double = 5.0, lower: Boolean = false, compound: Boolean = false, ratio: Double) =
         Exercise(id, name, eq, p, s, step, LoadKind.EXTERNAL, lower, compound, ratio)
 
-    private fun bw(id: String, name: String, p: List<Muscle>, s: List<Muscle> = emptyList(), kind: LoadKind = LoadKind.BODYWEIGHT_PLUS, lower: Boolean = false, compound: Boolean = true) =
-        Exercise(id, name, Equipment.BODYWEIGHT, p, s, 2.5, kind, lower, compound, 0.0)
+    private fun bw(
+        id: String, name: String, p: List<Muscle>, s: List<Muscle> = emptyList(), kind: LoadKind = LoadKind.BODYWEIGHT_PLUS,
+        lower: Boolean = false, compound: Boolean = true, share: Double = 1.0, assisted: Boolean = false,
+    ) = Exercise(id, name, Equipment.BODYWEIGHT, p, s, 2.5, kind, lower, compound, 0.0, bodyShare = share, assisted = assisted)
 
     val all: List<Exercise> = listOf(
         bb("squat", "Приседания со штангой", listOf(Muscle.QUADS, Muscle.GLUTES), listOf(Muscle.HAMSTRINGS, Muscle.CORE), true, 0.5),
@@ -84,11 +96,13 @@ object Catalog {
         mc("face_pull", "Тяга каната к лицу", Equipment.CABLE, listOf(Muscle.SHOULDERS, Muscle.BACK), step = 2.5, ratio = 0.15),
         mc("cable_curl", "Сгибание рук на блоке", Equipment.CABLE, listOf(Muscle.BICEPS), step = 2.5, ratio = 0.15),
 
-        bw("pullup", "Подтягивания", listOf(Muscle.BACK), listOf(Muscle.BICEPS)),
-        bw("dip", "Отжимания на брусьях", listOf(Muscle.CHEST, Muscle.TRICEPS), listOf(Muscle.SHOULDERS)),
-        bw("pushup", "Отжимания от пола", listOf(Muscle.CHEST), listOf(Muscle.TRICEPS, Muscle.SHOULDERS)),
-        bw("back_ext", "Гиперэкстензия", listOf(Muscle.HAMSTRINGS, Muscle.GLUTES), listOf(Muscle.BACK), lower = true),
-        bw("leg_raise", "Подъём ног в висе", listOf(Muscle.CORE), compound = false),
+        // Shares of body weight: pull-ups and dips move nearly all of it, push-ups about 65 % (Suprak et al. 2011),
+        // back extensions the upper body, hanging leg raises the legs.
+        bw("pullup", "Подтягивания", listOf(Muscle.BACK), listOf(Muscle.BICEPS), share = 1.0, assisted = true),
+        bw("dip", "Отжимания на брусьях", listOf(Muscle.CHEST, Muscle.TRICEPS), listOf(Muscle.SHOULDERS), share = 0.95, assisted = true),
+        bw("pushup", "Отжимания от пола", listOf(Muscle.CHEST), listOf(Muscle.TRICEPS, Muscle.SHOULDERS), share = 0.65),
+        bw("back_ext", "Гиперэкстензия", listOf(Muscle.HAMSTRINGS, Muscle.GLUTES), listOf(Muscle.BACK), lower = true, share = 0.5),
+        bw("leg_raise", "Подъём ног в висе", listOf(Muscle.CORE), compound = false, share = 0.33),
         bw("plank", "Планка", listOf(Muscle.CORE), kind = LoadKind.TIMED, compound = false),
     )
 

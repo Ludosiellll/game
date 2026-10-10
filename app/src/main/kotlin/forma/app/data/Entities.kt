@@ -101,6 +101,13 @@ data class SlotStateEntity(
     val misses: Int,
     val sessions: Int,
     val updatedAt: Long,
+    /** Novice linear phase still on for this slot. */
+    val linear: Boolean = true,
+    /** Successful sessions in a row with nothing to spare. */
+    val steady: Int = 0,
+    /** Weight before the last cut and the reps that led to it. */
+    val cutFrom: Double? = null,
+    val cutReps: Int? = null,
 )
 
 @Entity(tableName = "exercise_stat")
