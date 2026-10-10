@@ -49,6 +49,7 @@ fun ProfileScreen() {
                 Chip(name, day in d.days, { d.days = if (day in d.days) d.days - day else d.days + day }, Modifier.weight(1f), minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.TOGGLE)
             }
         }
+        DoubleDaysToggle(d)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(45, 60, 75, 90).forEach { m -> Chip("$m мин", d.minutes == m, { d.minutes = m }, Modifier.weight(1f)) }
         }
@@ -70,6 +71,7 @@ fun ProfileScreen() {
             }
         }
         if (d.raceKm != null) NumberField(d.raceTime, { d.raceTime = it }, "Время недавнего забега", "мм:сс", keyboard = KeyboardType.Text, placeholder = "25:30")
+        RunGoalPicker(d)
         SectionLabel("О себе")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip("Мужчина", d.sex == Sex.MALE, { d.sex = Sex.MALE }, Modifier.weight(1f))

@@ -88,6 +88,10 @@ class TrainingRepository(
                 else cur.copy(vdot = init.vdot ?: cur.vdot),
             )
         }
+        // A new race goal (another distance or time) starts its race-pace ladder from the first step.
+        if (old != null && old.runGoal != profile.runGoal) {
+            store.setRunState(store.runStateNow().copy(goalStage = 0, goalFails = 0, testSoon = false))
+        }
         if (old?.bodyWeightKg != profile.bodyWeightKg) logBodyWeight(profile.bodyWeightKg)
         onChange()
     }
@@ -476,7 +480,7 @@ class TrainingRepository(
     private fun asSession(w: WorkoutEntity): PlannedSession = when {
         w.kind == Kind.LIFT -> PlannedSession(SessionKind.LIFT, w.templateId)
         w.templateId == RunType.LONG.name -> PlannedSession(SessionKind.RUN_LONG)
-        w.templateId in setOf(RunType.INTERVALS.name, RunType.TEMPO.name, RunType.TEST.name) -> PlannedSession(SessionKind.RUN_QUALITY)
+        w.templateId in setOf(RunType.INTERVALS.name, RunType.TEMPO.name, RunType.TEST.name, RunType.GOAL_PACE.name) -> PlannedSession(SessionKind.RUN_QUALITY)
         else -> PlannedSession(SessionKind.RUN_EASY)
     }
 
@@ -514,33 +518,52 @@ class TrainingRepository(
 
     // ---------- running ----------
 
+    /**
+     * The run for [kind] on [date]: the ladders' next step, a test when due, lighter on a bad day; on a stadium in laps.
+     * With a race goal of up to 3 km the test is the race distance itself.
+     */
     suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false): RunWorkout {
         val saved = store.runStateNow()
         val st = RunPlan.withBreak(saved, date.toEpochDay())
         val program = store.programNow()
+        val profile = store.profileNow()
+        val goal = profile?.runGoal
+        val lap = profile?.lapMeters
         val cutback = program != null && ProgramGenerator.isRunCutbackWeek(program, date)
         val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when (kind) {
             SessionKind.RUN_LONG -> RunPlan.long(st, cutback, date.toEpochDay())
-            SessionKind.RUN_QUALITY -> if (needsTest(st, date)) RunPlan.test(st) else RunPlan.quality(st, cutback)
+            SessionKind.RUN_QUALITY -> when {
+                !needsTest(st, date, goal) -> RunPlan.quality(st, cutback, goal, lap)
+                goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
+                else -> RunPlan.test(st)
+            }
             else -> {
-                // On a lifting day the easy run comes after the gym: keep it short.
+                // On a lifting day the easy run comes after the gym: short, unless the plan was built for shared days.
                 val liftDay = program?.week?.on(date.dayOfWeek.value)?.any { it.kind == SessionKind.LIFT } == true
-                RunPlan.easy(if (liftDay) st.copy(easyMinutes = minOf(st.easyMinutes, 30)) else st, cutback, date.toEpochDay())
+                val short = liftDay && profile?.doubleDays != true
+                RunPlan.easy(if (short) st.copy(easyMinutes = minOf(st.easyMinutes, 30)) else st, cutback, date.toEpochDay())
             }
         }
-        val planned = if (light) RunPlan.lighter(st, w) else w
+        fun track(x: RunWorkout) = if (lap != null) RunPlan.onTrack(x, lap) else x
+        val planned = track(if (light) RunPlan.lighter(st, track(w)) else w)
         val comeback = RunPlan.comebackNote(saved, date.toEpochDay()) ?: return planned
         return planned.copy(note = "$comeback ${planned.note}")
     }
 
-    /** A 12-minute test calibrates paces when they are unknown, and again every 8 weeks (not while coming back). */
-    private fun needsTest(st: RunState, date: LocalDate): Boolean {
+    /**
+     * A test calibrates paces when they are unknown, and again every 8 weeks — every 5 with a race goal, and right after
+     * the race-pace ladder is done (not while coming back from a break).
+     */
+    private fun needsTest(st: RunState, date: LocalDate, goal: forma.core.model.RunGoal?): Boolean {
         if (st.runs < 2 || st.returnEasy > 0) return false
+        if (st.testSoon) return true
         val last = st.lastTestDay ?: return st.vdot == null
-        return date.toEpochDay() - last >= 56
+        return date.toEpochDay() - last >= if (goal?.middleDistance == true) 35 else 56
     }
 
-    fun freeRun(): RunWorkout = RunWorkout(RunType.FREE, "Свободный бег", emptyList(), "Секундомер, дистанция и темп.", targetRpe = 5)
+    /** A stopwatch run; on a stadium of [lapMeters] with the lap button. */
+    fun freeRun(lapMeters: Int? = null): RunWorkout =
+        RunWorkout(RunType.FREE, "Свободный бег", emptyList(), "Секундомер, дистанция и темп.", targetRpe = 5, lapMeters = lapMeters)
 
     /**
      * Saves a finished run: the workout, its numbers and track in one transaction, then the running progress.
@@ -556,12 +579,12 @@ class TrainingRepository(
         val program = store.programNow()
         val caps = program?.runCaps ?: forma.core.run.RunCaps(45, 90)
         val st = store.runStateNow()
-        val after = RunPlan.after(st, workout, result, caps, date.toEpochDay())
+        val after = RunPlan.after(st, workout, result, caps, date.toEpochDay(), goal = store.profileNow()?.runGoal)
         var next = after.state
         if (workout.type == RunType.TEST && after.outcomes.any { it is RunOutcome.VdotChanged }) next = next.copy(lastTestDay = date.toEpochDay())
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
-        val summary = RunSummary(after.outcomes, minutes, load)
+        val summary = RunSummary(after.outcomes, minutes, load, result.laps.orEmpty())
         val avgPace = result.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
         val id = db.withTransaction {
             val id = db.workouts().insert(

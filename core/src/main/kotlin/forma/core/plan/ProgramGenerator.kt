@@ -18,8 +18,11 @@ object ProgramGenerator {
     fun generate(profile: Profile, today: LocalDate): Program {
         val aim = profile.aim.normalized()
         val days = profile.trainingDays.filter { it in 1..7 }.toSet().ifEmpty { setOf(1, 3, 5) }
-        val mix = Scheduler.mix(aim, days.size, profile.experience, profile.runLevel)
-        val templates = Templates.forWeek(aim, profile.experience, mix.lifts)
+        val mix = Scheduler.mix(
+            aim, days.size, profile.experience, profile.runLevel, profile.doubleDays,
+            middleGoal = profile.runGoal?.middleDistance == true && aim.run != RunFocus.NONE,
+        )
+        val templates = Templates.forWeek(aim, profile.experience, mix.lifts, shared = profile.doubleDays)
             .map { Templates.fit(it, profile.sessionMinutes) }
         val week = Scheduler.schedule(days, mix, templates, aim)
         val block = when (profile.experience) {

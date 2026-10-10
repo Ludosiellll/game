@@ -62,8 +62,8 @@ private fun monthLabels(points: List<Point>): List<String> {
 }
 
 @Composable
-fun ProgressScreen() {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+fun ProgressScreen(initialTab: Int = 0) {
+    var tab by rememberSaveable { mutableIntStateOf(initialTab) }
     ScrollScreen {
         Text(if (F.type.capsTitles) "ПРОГРЕСС" else "Прогресс", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         Segmented(listOf("Сила", "Бег", "Нагрузка", "Тело"), tab, { tab = it })
@@ -135,6 +135,35 @@ private fun StrengthTab() {
 
 private fun Modifier.clickableRow(onClick: () -> Unit) = this.clickable(onClick = onClick)
 
+/** The race goal: its pace (and lap time on a stadium), the forecast from the current form, the race-pace ladder. */
+@Composable
+private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState?, lap: Int?) {
+    val now = st?.vdot?.let { Vdot.predictSeconds(it, goal.meters.toDouble()) }
+    FCard(gap = 6.dp) {
+        Text("Цель", style = T.secondary(13.sp))
+        Text("${goalDistance(goal.meters)} за ${Ru.clock(goal.seconds)}", style = T.title(26.sp).copy(color = F.c.endurance))
+        Text(
+            "Темп ${Ru.pace(goal.pace)} /км" + (lap?.let { " · круг $it м — ${Ru.lap(forma.core.run.Track.lapSec(goal.pace, it))}" } ?: ""),
+            style = T.body(15.sp, FontWeight.SemiBold),
+        )
+        when {
+            now == null -> Text("Прогноз появится после контрольного забега — он встанет в план после пары пробежек.", style = T.secondary(13.sp))
+            now <= goal.seconds + 0.5 -> Text(
+                "Прогноз сейчас: ${Ru.clock(now.roundToInt())} — цель по силам. Подтверди её на контрольном забеге.",
+                style = T.body(14.sp).copy(color = F.c.good),
+            )
+            else -> Text("Прогноз сейчас: ${Ru.clock(now.roundToInt())}, до цели ${Ru.clock((now - goal.seconds).roundToInt())}.", style = T.body(14.sp))
+        }
+        if (goal.middleDistance && st != null && st.canRunContinuously) {
+            Text(
+                "Отрезки в темпе цели: шаг ${st.goalStage + 1} из ${RunPlan.goalLadderSize}" +
+                    if (st.testSoon) ". Следующая тяжёлая пробежка — контрольный забег." else ".",
+                style = T.secondary(13.sp),
+            )
+        }
+    }
+}
+
 @Composable
 private fun RunTab() {
     val repo = LocalRepo.current
@@ -144,6 +173,8 @@ private fun RunTab() {
     val today = forma.app.ui.rememberToday(repo)
     val st = runState?.let { RunPlan.withBreak(it, today.toEpochDay()) }
     val vdot = st?.vdot
+    val profile by repo.store.profile.collectAsState(initial = null)
+    profile?.runGoal?.let { GoalCard(it, st, profile?.lapMeters) }
     if (vdot != null) {
         FCard(gap = 6.dp) {
             Text("VDOT — беговая форма", style = T.secondary(13.sp))

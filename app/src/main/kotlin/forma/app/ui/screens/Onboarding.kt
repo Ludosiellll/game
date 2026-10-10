@@ -38,11 +38,13 @@ import forma.core.model.Experience
 import forma.core.model.LiftFocus
 import forma.core.model.Profile
 import forma.core.model.RunFocus
+import forma.core.model.RunGoal
 import forma.core.model.RunLevel
 import forma.core.model.Sex
 import forma.core.plan.ProgramGenerator
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import kotlin.math.roundToInt
 
 /** Profile editor shared by the first launch and the profile screen. */
 /** The answers as plain values, so a half-done questionnaire survives rotation and the like. */
@@ -51,6 +53,8 @@ private data class DraftState(
     val lift: LiftFocus, val run: RunFocus, val emphasis: forma.core.model.Emphasis, val experience: Experience,
     val runLevel: RunLevel, val days: Set<Int>, val minutes: Int, val sex: Sex, val birthYear: String, val weight: String,
     val height: String, val restingHr: String, val raceKm: Double?, val raceTime: String,
+    val goalMeters: Int? = null, val goalTime: String = "", val stadium: Boolean = false, val lapMeters: String = "400",
+    val doubleDays: Boolean = false,
 )
 
 class ProfileDraft(p: Profile) {
@@ -61,7 +65,7 @@ class ProfileDraft(p: Profile) {
                     DraftState.serializer(),
                     DraftState(
                         d.lift, d.run, d.emphasis, d.experience, d.runLevel, d.days, d.minutes, d.sex, d.birthYear, d.weight,
-                        d.height, d.restingHr, d.raceKm, d.raceTime,
+                        d.height, d.restingHr, d.raceKm, d.raceTime, d.goalMeters, d.goalTime, d.stadium, d.lapMeters, d.doubleDays,
                     ),
                 )
             },
@@ -71,6 +75,7 @@ class ProfileDraft(p: Profile) {
                         lift = s.lift; run = s.run; emphasis = s.emphasis; experience = s.experience; runLevel = s.runLevel
                         days = s.days; minutes = s.minutes; sex = s.sex; birthYear = s.birthYear; weight = s.weight
                         height = s.height; restingHr = s.restingHr; raceKm = s.raceKm; raceTime = s.raceTime
+                        goalMeters = s.goalMeters; goalTime = s.goalTime; stadium = s.stadium; lapMeters = s.lapMeters; doubleDays = s.doubleDays
                     }
                 }
             },
@@ -91,8 +96,23 @@ class ProfileDraft(p: Profile) {
     var restingHr by mutableStateOf(p.restingHr?.toString() ?: "")
     var raceKm by mutableStateOf(p.raceMeters?.let { it / 1000.0 })
     var raceTime by mutableStateOf(p.raceSeconds?.let { forma.core.text.Ru.clock(it.toInt()) } ?: "")
+    var goalMeters by mutableStateOf(p.runGoal?.meters)
+    var goalTime by mutableStateOf(p.runGoal?.let { forma.core.text.Ru.clock(it.seconds) } ?: "")
+    var stadium by mutableStateOf(p.lapMeters != null)
+    var lapMeters by mutableStateOf((p.lapMeters ?: 400).toString())
+    var doubleDays by mutableStateOf(p.doubleDays)
 
     val aim: Aim get() = Aim(lift, run, emphasis).normalized()
+
+    /** The stadium lap, if running on one and the length makes sense. */
+    val lapOrNull: Int? get() = if (stadium) lapMeters.toIntOrNull()?.takeIf { it in 100..1000 } else null
+
+    /** The race goal, if a distance is picked and its time is a believable one (2:10–15:00 a km). */
+    val runGoal: RunGoal? get() {
+        val m = goalMeters ?: return null
+        val sec = parseClock(goalTime)?.roundToInt()?.takeIf { it > 0 } ?: return null
+        return RunGoal(m, sec).takeIf { it.pace in 130.0..900.0 }
+    }
 
     fun toProfile(base: Profile): Profile {
         val race = raceKm?.let { km -> parseClock(raceTime)?.takeIf { it > 0 }?.let { km * 1000 to it } }
@@ -105,6 +125,7 @@ class ProfileDraft(p: Profile) {
             heightCm = if (height.isBlank()) null else height.toIntOrNull()?.takeIf { it in 120..230 } ?: base.heightCm,
             restingHr = restingHr.toIntOrNull()?.takeIf { it in 30..110 },
             raceMeters = race?.first, raceSeconds = race?.second,
+            runGoal = if (aim.runs) runGoal else null, lapMeters = lapOrNull, doubleDays = doubleDays && aim.lifts && aim.runs,
         )
     }
 }
@@ -174,6 +195,7 @@ private fun Option(title: String, text: String?, selected: Boolean, onClick: () 
 private fun GoalStep(d: ProfileDraft) {
     StepTitle("Цель", "Выбери, зачем тебе зал и зачем бег — неделя соберётся под это сочетание: сколько чего и в какие дни.")
     AimPicker(d)
+    RunGoalPicker(d)
 }
 
 @Composable
@@ -211,6 +233,7 @@ private fun DaysStep(d: ProfileDraft) {
         }
     }
     Text("Выбрано дней: ${d.days.size}", style = T.secondary(14.sp))
+    DoubleDaysToggle(d)
     SectionLabel("Сколько времени на одну тренировку", Modifier.padding(top = 6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(45, 60, 75, 90).forEach { m -> Chip("$m мин", d.minutes == m, { d.minutes = m }, Modifier.weight(1f)) }

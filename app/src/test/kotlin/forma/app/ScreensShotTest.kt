@@ -4,6 +4,8 @@ import android.os.Looper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -231,6 +233,103 @@ class ScreensShotTest {
                 compose.onRoot().captureRoboImage("build/shots/${l.id}-$name.png")
             }
         }
+    }
+
+    /**
+     * On a stadium with a race goal (1500 m in 5:35, 230 m lap, the gym and a run on Tue, Thu, Sat): the session in laps,
+     * the lap button mid-session, the laps after it, the goal in the profile and the forecast.
+     */
+    @Test fun stadium() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = SettingsStore(ctx, "shots-stadium")
+        val repo = TrainingRepository(FormaDatabase.create(ctx, inMemory = true), store, now = { clock })
+        val profile = Profile(
+            name = "Денис", aim = forma.core.model.Aim(forma.core.model.LiftFocus.MUSCLE, forma.core.model.RunFocus.SPEED, forma.core.model.Emphasis.BALANCED),
+            experience = Experience.INTERMEDIATE, runLevel = RunLevel.BASE, trainingDays = setOf(2, 4, 6), bodyWeightKg = 80.0,
+            birthYear = 1996, doubleDays = true, runGoal = forma.core.model.RunGoal(1500, 335), lapMeters = 230,
+        )
+        val pace = runBlocking {
+            store.clear()
+            repo.completeOnboarding(profile)
+            store.setRunState(store.runStateNow().copy(vdot = 43.5, runs = 4, goalStage = 2, qualityCount = 2, lastTestDay = repo.today().toEpochDay() - 10))
+            repo.runFor(SessionKind.RUN_QUALITY, repo.today())
+        }
+        // Third rep of 8 × 1 lap: the second was a bit fast.
+        val tracker = RunTracker(pace)
+        tracker.start(0)
+        val warm = 12 * 60 * 1000L
+        val work = pace.segments.first { it.kind == SegmentKind.WORK }.seconds
+        val rest = pace.segments.first { it.kind == SegmentKind.RECOVERY }.seconds
+        tracker.lap(warm + (work + 1) * 1000L)
+        val rep2 = warm + (work + rest) * 1000L
+        tracker.lap(rep2 + (work - 3) * 1000L)
+        val now = rep2 + (work - 3 + rest + 20) * 1000L
+        RunSession.tracker = tracker
+        RunSession.gpsEnabled = false
+        RunSession.publish(now)
+
+        var screen by mutableStateOf<@Composable () -> Unit>({})
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) {
+                    Box(Modifier.fillMaxSize().background(F.c.bg)) { screen() }
+                }
+            }
+        }
+        fun shot(name: String, s: @Composable () -> Unit) {
+            screen = s
+            settle()
+            compose.onRoot().captureRoboImage("build/shots/carbon-stadium-$name.png")
+        }
+        shot("setup") { RunSetupScreen(pace, SessionKind.RUN_QUALITY) }
+        shot("run") { RunActiveScreen() }
+        // The other six reps pressed on the line (one fast, one slow), then the run is over.
+        val desired = listOf(51.5, 52.0, 49.0, 51.0, 54.0, 51.5)
+        var t = now
+        var k = 0
+        var repIdx = -1
+        var repStart = 0L
+        while (k < desired.size && t < now + 3_600_000) {
+            val tl = tracker.timeline(t)
+            if (tl.segment?.kind == SegmentKind.WORK && tl.index != repIdx) {
+                repIdx = tl.index
+                repStart = t - tl.segmentElapsed * 1000L
+            }
+            if (repIdx >= 0 && t >= repStart + (desired[k] * 1000).toLong()) {
+                tracker.lap(t)
+                k++
+                repIdx = -2
+            }
+            t += 250
+        }
+        tracker.finish(t + 60_000)
+        RunSession.publish(t + 60_000)
+        shot("done") { forma.app.ui.screens.RunDoneScreen(0) }
+        shot("goal") {
+            val d = forma.app.ui.screens.ProfileDraft(profile)
+            androidx.compose.foundation.layout.Column(
+                Modifier.padding(20.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+            ) {
+                forma.app.ui.screens.RunGoalPicker(d)
+                forma.app.ui.screens.DoubleDaysToggle(d)
+            }
+        }
+        shot("progress") { ProgressScreen(initialTab = 1) }
+        // The 1500 m time trial: half a lap, then six laps, the time from the lap button.
+        RunSession.clear()
+        val trial = runBlocking { forma.core.run.RunPlan.goalTest(store.runStateNow(), profile.runGoal!!, 230) }
+        val tt = RunTracker(trial)
+        tt.start(0)
+        val go = 12 * 60 * 1000L
+        var at = go + 27_000L
+        tt.lap(at)
+        listOf(53, 54, 54, 55, 56, 52).forEach { at += it * 1000L; tt.lap(at) }
+        tt.finish(at + 5 * 60_000)
+        RunSession.tracker = tt
+        RunSession.gpsEnabled = false
+        RunSession.publish(at + 5 * 60_000)
+        shot("trial") { forma.app.ui.screens.RunDoneScreen(0) }
+        RunSession.clear()
     }
 
     /** The very first session of a new user: every working weight is being found. */

@@ -31,7 +31,13 @@ data class SlotReport(val exerciseId: String, val name: String, val outcome: Out
 data class LiftSummary(val reports: List<SlotReport>, val volumeKg: Double, val sets: Int, val minutes: Int, val load: Double)
 
 @Serializable
-data class RunSummary(val outcomes: List<RunOutcome>, val minutes: Int, val load: Double)
+data class RunSummary(
+    val outcomes: List<RunOutcome>,
+    val minutes: Int,
+    val load: Double,
+    /** Laps from the lap button on a stadium. */
+    val laps: List<forma.core.run.Lap> = emptyList(),
+)
 
 /** A day of the week with the plan and what was actually done. */
 data class DayItem(val date: LocalDate, val planned: List<PlannedSession>, val done: List<WorkoutEntity>) {

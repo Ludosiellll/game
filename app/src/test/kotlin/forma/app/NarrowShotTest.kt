@@ -118,6 +118,18 @@ class NarrowShotTest {
                 compose.onRoot().captureRoboImage("build/shots/narrow-$l-$name.png")
             }
         }
+        // A free run on a stadium: the lap button, the laps, the lap being run.
+        RunSession.clear()
+        val laps = RunTracker(RunWorkout(RunType.FREE, "Свободный бег", emptyList(), lapMeters = 230))
+        laps.start(0)
+        listOf(78_000L, 158_000L, 236_000L).forEach { laps.lap(it) }
+        RunSession.tracker = laps
+        RunSession.gpsEnabled = false
+        RunSession.publish(251_000)
+        look = "carbon"
+        screen = { RunActiveScreen() }
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/narrow-carbon-runtrack.png")
         RunSession.clear()
     }
 }

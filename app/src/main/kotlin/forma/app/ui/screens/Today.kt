@@ -79,6 +79,8 @@ fun TodayScreen() {
     val monday = remember(today) { today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) }
     val program by repo.store.program.collectAsState(initial = null)
     val runState by repo.store.runState.collectAsState(initial = null)
+    val me = repo.store.profile.collectAsState(initial = null).value
+    val runGoal = me?.runGoal
     val liftState by repo.store.liftState.collectAsState(initial = LiftState())
     val week by remember(monday) { repo.weekFlow(monday) }.collectAsState(initial = emptyList())
     val active by remember { repo.db.workouts().observeActive() }.collectAsState(initial = null)
@@ -157,7 +159,7 @@ fun TodayScreen() {
                 restarts = settings.pauseUntil!! - (settings.pauseFrom ?: settings.pauseUntil!!) + 1 >= 7,
             ) { scope.launch { repo.resume(today) } }
             todays.isEmpty() -> RestCard(
-                week, today, p, catchUp, onFree = { nav.push(Screen.RunSetup(repo.freeRun(), null)) }, onOther = { pickTemplate = true },
+                week, today, p, catchUp, onFree = { nav.push(Screen.RunSetup(repo.freeRun(me?.lapMeters), null)) }, onOther = { pickTemplate = true },
                 onCatchUp = { s ->
                     scope.launch {
                         if (s.kind == SessionKind.LIFT) startLift(s.templateId!!)
@@ -211,6 +213,8 @@ fun TodayScreen() {
                     else -> "—"
                 },
                 when {
+                    vdot != null && runGoal != null ->
+                        "${goalDistance(runGoal.meters)} ≈ ${Ru.clock(Vdot.predictSeconds(vdot, runGoal.meters.toDouble()).roundToInt())}"
                     vdot != null -> "5 км ≈ ${Ru.clock(Vdot.predictSeconds(vdot, 5000.0).roundToInt())}"
                     rs != null && !rs.canRunContinuously -> "неделя бега с ходьбой"
                     else -> "после теста"
@@ -220,7 +224,7 @@ fun TodayScreen() {
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GhostButton("Свободный бег", { nav.push(Screen.RunSetup(repo.freeRun(), null)) }, Modifier.weight(1f))
+            GhostButton("Свободный бег", { nav.push(Screen.RunSetup(repo.freeRun(me?.lapMeters), null)) }, Modifier.weight(1f))
             GhostButton("Другая силовая", { pickTemplate = true }, Modifier.weight(1f))
         }
     }

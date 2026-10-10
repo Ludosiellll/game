@@ -84,6 +84,12 @@ class VoiceCoach(context: Context, var voice: Boolean, var beeps: Boolean, var v
         if (vibration && left == 1) vibrate(longArrayOf(0, 60))
     }
 
+    /** Pacer: the moment a lap should be done. */
+    fun lapMark() {
+        if (beeps) tones?.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+        if (vibration) vibrate(longArrayOf(0, 80))
+    }
+
     fun segmentChange() {
         if (beeps) tones?.startTone(ToneGenerator.TONE_PROP_ACK, 300)
         if (vibration) vibrate(longArrayOf(0, 350, 150, 350))

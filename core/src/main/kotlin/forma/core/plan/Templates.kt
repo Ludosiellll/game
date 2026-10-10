@@ -61,10 +61,19 @@ object Templates {
     private fun build(aim: Aim, exp: Experience, id: String, title: String, focus: Focus, vararg parts: Pair<String, SlotRole>) =
         Template(id, title, focus, parts.map { (ex, role) -> slot(aim, exp, ex, role) })
 
+    /** Upper-body sessions among [lifts] when runs share days with the gym (hard runs may go after them). */
+    fun upperDays(lifts: Int): Int = when {
+        lifts <= 1 -> 0
+        lifts == 2 -> 1
+        else -> 2
+    }
+
     /**
      * Workout templates for [lifts] sessions a week. 2–3: full body A/B/C; 4+: upper/lower, a fifth day is full body C.
+     * [shared]: runs go after the gym on the same days, so hard runs need upper-body days — two lifts are full body and
+     * upper, three are upper / lower / upper (legs once a week, heavy; the running trains them too).
      */
-    fun forWeek(aim: Aim, exp: Experience, lifts: Int): List<Template> {
+    fun forWeek(aim: Aim, exp: Experience, lifts: Int, shared: Boolean = false): List<Template> {
         @Suppress("NAME_SHADOWING") val aim = aim.normalized()
         val novice = exp == Experience.NOVICE
         val M = SlotRole.MAIN
@@ -94,6 +103,12 @@ object Templates {
             (if (novice) "leg_press" else "deadlift") to M, (if (novice) "goblet_squat" else "front_squat") to S, "hip_thrust" to S,
             "leg_ext" to A, "calf_raise" to A, "leg_raise" to A)
 
+        if (shared && aim.runs && aim.lifts) {
+            when (lifts) {
+                2 -> return listOf(fullA, upperA.copy(title = "Верх"))
+                3 -> return listOf(upperA, lowerA.copy(title = "Низ"), upperB)
+            }
+        }
         return when {
             lifts <= 0 -> emptyList()
             lifts == 1 -> listOf(fullA)

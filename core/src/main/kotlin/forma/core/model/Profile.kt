@@ -69,6 +69,18 @@ fun Goal.aim(): Aim = when (this) {
 @Serializable
 enum class Experience { NOVICE, INTERMEDIATE, ADVANCED }
 
+/**
+ * A race to train for: [meters] in [seconds] (1500 m in 5:35 is `RunGoal(1500, 335)`). Middle distances (up to 3 km)
+ * get race-pace sessions and are tested over the distance itself.
+ */
+@Serializable
+data class RunGoal(val meters: Int, val seconds: Int) {
+    val middleDistance: Boolean get() = meters <= 3000
+
+    /** Race pace, seconds per km. */
+    val pace: Double get() = seconds / (meters / 1000.0)
+}
+
 /** Running background: NONE — can't run 20 minutes in a row yet; BASE — can; TRAINED — runs regularly. */
 @Serializable
 enum class RunLevel { NONE, BASE, TRAINED }
@@ -93,6 +105,12 @@ data class Profile(
     val maxHr: Int? = null,
     /** What the plan is built for; profiles saved before it existed get the one of their goal. */
     val aim: Aim = goal.aim(),
+    /** The race to train for, if any. */
+    val runGoal: RunGoal? = null,
+    /** Stadium lap in metres when running on a track: sessions in laps, lap times, a lap button. Null — outside, GPS. */
+    val lapMeters: Int? = null,
+    /** The gym and a run may share a day (the run after the gym): three days then hold three of each. */
+    val doubleDays: Boolean = false,
 ) {
     fun age(year: Int): Int = (year - birthYear).coerceIn(10, 100)
     val days: Set<DayOfWeek> get() = trainingDays.map { DayOfWeek.of(it) }.toSet()

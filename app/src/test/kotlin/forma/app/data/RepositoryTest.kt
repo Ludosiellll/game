@@ -214,6 +214,56 @@ class RepositoryTest {
         assertEquals(1, repo.store.runStateNow().walkStage)
     }
 
+    @Test fun aRaceGoalOnAStadiumIsPlannedInLapsAndTested() = runBlocking {
+        // Tue, Thu, Sat with a run after the gym each day; 1500 m in 5:35 on a 230 m lap.
+        repo.completeOnboarding(
+            profile.copy(
+                aim = forma.core.model.Aim(forma.core.model.LiftFocus.MUSCLE, forma.core.model.RunFocus.SPEED, forma.core.model.Emphasis.BALANCED),
+                experience = Experience.INTERMEDIATE, trainingDays = setOf(2, 4, 6), doubleDays = true,
+                runGoal = forma.core.model.RunGoal(1500, 335), lapMeters = 230,
+            ),
+        )
+        val program = repo.store.programNow()!!
+        val tue = LocalDate.ofEpochDay(program.startEpochDay).with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.TUESDAY))
+        // Tuesday: race pace, a lap at a time, 51–52 s.
+        val pace = repo.runFor(SessionKind.RUN_QUALITY, tue)
+        assertEquals(RunType.GOAL_PACE, pace.type)
+        assertEquals(230, pace.lapMeters)
+        assertEquals(1.0, pace.segments.first { it.kind == forma.core.run.SegmentKind.WORK }.laps)
+        val laps = List(6) { forma.core.run.Lap(51.0 + it % 2, 50.7, 52.1, 1, 1, it + 1) }
+        val (id, summary) = repo.saveRun(pace, RunResult(1.0, 7, 35 * 60, workPace = 225.0, laps = laps, reps = 6), clock, emptyList(), tue)
+        assertEquals(1, repo.store.runStateNow().goalStage)
+        // The laps are kept with the run.
+        val stored = AppJson.decodeFromString(RunSummary.serializer(), db.workouts().get(id)!!.summaryJson!!)
+        assertEquals(laps, stored.laps)
+        assertEquals(laps, summary.laps)
+        // Thursday: an easy run after the legs, not cut to 30 minutes (the plan was built for shared days; the longest run
+        // of 35 minutes allows 38), in laps.
+        val thu = tue.plusDays(2)
+        repo.store.setRunState(repo.store.runStateNow().copy(easyMinutes = 36))
+        val easy = repo.runFor(SessionKind.RUN_EASY, thu)
+        assertEquals(RunType.EASY, easy.type)
+        assertEquals(230, easy.lapMeters)
+        assertEquals(36 * 60, easy.workSeconds)
+        clock += 1000
+        repo.saveRun(easy, RunResult(1.0, 4, easy.totalSeconds + 6 * 60), clock, emptyList(), thu)
+        // Saturday: two runs done and no fitness known yet — the 1500 m time trial, 6.5 laps.
+        val sat = tue.plusDays(4)
+        val trial = repo.runFor(SessionKind.RUN_QUALITY, sat)
+        assertEquals(RunType.TEST, trial.type)
+        assertEquals(1495, trial.testMeters)
+        clock += 1000
+        val (_, result) = repo.saveRun(trial, RunResult(1.0, 9, 25 * 60, testSeconds = 370), clock, emptyList(), sat)
+        assertTrue(result.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
+        val st = repo.store.runStateNow()
+        assertNotNull(st.vdot)
+        assertEquals(sat.toEpochDay(), st.lastTestDay)
+        // Next Tuesday: intervals, in whole laps at the new paces.
+        val next = repo.runFor(SessionKind.RUN_QUALITY, tue.plusDays(7))
+        assertEquals(RunType.INTERVALS, next.type)
+        assertTrue(next.segments.filter { it.kind == forma.core.run.SegmentKind.WORK }.all { it.laps != null && it.lapSec != null })
+    }
+
     @Test fun aSessionIsStartedAndFinishedOnce() = runBlocking {
         repo.completeOnboarding(profile)
         val program = repo.store.programNow()!!

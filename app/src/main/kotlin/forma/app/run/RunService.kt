@@ -73,6 +73,7 @@ class RunService : Service() {
             ACTION_PAUSE -> control { it.pause(now()) }
             ACTION_RESUME -> if (attach()) control { it.resume(now()) }
             ACTION_SKIP -> control { it.skipSegment(now()) }
+            ACTION_LAP -> lap()
             ACTION_STOP -> stopRun()
         }
         // A control sent to a run that is not going in this service (a restored, paused one) needs no service.
@@ -87,6 +88,16 @@ class RunService : Service() {
         action(t)
         RunSession.publish(now())
         RunSession.save(now())
+        if (ticker != null) notifyNow()
+    }
+
+    /** The runner crossed the line: the lap's time is said and judged against the target. */
+    private fun lap() {
+        val t = RunSession.tracker ?: return
+        val l = t.lap(now()) ?: return
+        RunSession.publish(now())
+        RunSession.save(now())
+        coach?.speak(CoachText.lap(t.workout, l, l.rep?.let { t.repTimes().getOrNull(it - 1) }))
         if (ticker != null) notifyNow()
     }
 
@@ -139,7 +150,8 @@ class RunService : Service() {
                     lastSavedAt = now()
                     RunSession.save(now())
                 }
-                if (tr.state == RunTracker.State.RUNNING && tr.timeline(now()).finished && !tr.workout.isOpenEnded) {
+                // Easy and long runs go on past the plan if the runner wants to (more counts); the rest finish.
+                if (tr.state == RunTracker.State.RUNNING && tr.timeline(now()).finished && !tr.workout.isOpenEnded && !tr.workout.continuable) {
                     tr.finish(now())
                     RunSession.publish(now())
                     RunSession.save(now())
@@ -173,6 +185,7 @@ class RunService : Service() {
             if (e is RunEvent.Timeline) {
                 when (val cue = e.cue) {
                     is Cue.Countdown -> c.countdown(cue.left)
+                    is Cue.LapMark -> c.lapMark()
                     is Cue.SegmentStart -> if (cue.index > 0) c.segmentChange()
                     is Cue.Finished -> c.segmentChange()
                     else -> Unit
@@ -282,6 +295,8 @@ class RunService : Service() {
             } else {
                 b.setUsesChronometer(true).setWhen(System.currentTimeMillis() - t.activeMs(nowMs))
             }
+            // On a stadium the lap button is on the lock screen too.
+            if (t.workout.lapMeters != null) b.addAction(0, "Круг", action(ACTION_LAP))
             b.addAction(0, "Пауза", action(ACTION_PAUSE))
         } else if (t.state == RunTracker.State.PAUSED) {
             b.addAction(0, "Продолжить", action(ACTION_RESUME))
@@ -299,6 +314,7 @@ class RunService : Service() {
         const val ACTION_RESUME = "forma.run.RESUME"
         const val ACTION_STOP = "forma.run.STOP"
         const val ACTION_SKIP = "forma.run.SKIP"
+        const val ACTION_LAP = "forma.run.LAP"
         const val EXTRA_WORKOUT = "workout"
         const val EXTRA_GPS = "gps"
         const val EXTRA_VOICE = "voice"

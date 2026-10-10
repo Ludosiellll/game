@@ -26,6 +26,12 @@ data class RunUi(
     val startedAt: Long,
     /** Brought back after the system closed the app mid-run: paused where it was last saved. */
     val restored: Boolean = false,
+    /** The last lap pressed on a track, how many so far, and seconds into the lap being run (null off a track). */
+    val lastLap: forma.core.run.Lap? = null,
+    val laps: Int = 0,
+    val lapClock: Int? = null,
+    /** An easy or long run kept going past its plan: seconds beyond it. */
+    val overSec: Int = 0,
 )
 
 /** A run on disk, enough to carry on after the process was killed. */
@@ -159,7 +165,9 @@ object RunSession {
         val t = tracker ?: return
         _ui.value = RunUi(
             t.workout, t.state, t.activeSec(nowMs), t.timeline(nowMs), t.distanceM, t.currentPace(), t.averagePace(nowMs),
-            gpsEnabled, t.lastAccuracy, startedAtWall, restored,
+            gpsEnabled, t.lastAccuracy, startedAtWall, restored, t.laps.lastOrNull(), t.laps.size,
+            if (t.workout.lapMeters != null) t.lapClockSec(nowMs) else null,
+            if (t.workout.isOpenEnded) 0 else ((t.timelineMs(nowMs) / 1000).toInt() - t.workout.totalSeconds).coerceAtLeast(0),
         )
     }
 

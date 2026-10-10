@@ -30,8 +30,12 @@ object Scheduler {
      * running and lifting grows with how often and how long one runs (Wilson et al. 2012), while on average it costs
      * neither muscle nor maximal strength (Schumann et al. 2022) — so the gym-first plans keep running to 1–2 sessions
      * and the balanced ones get both in full, kept apart by the layout below.
+     *
+     * [shared]: the gym and a run may share a day (the run after the gym), so few days still hold a full week of both:
+     * three days give three lifts and three runs, the hard runs on upper-body days. [middleGoal]: training for a race
+     * of up to 3 km — two quality sessions (race pace and intervals or tempo) before any long run.
      */
-    fun mix(aim: Aim, days: Int, exp: Experience, runLevel: RunLevel): Mix {
+    fun mix(aim: Aim, days: Int, exp: Experience, runLevel: RunLevel, shared: Boolean = false, middleGoal: Boolean = false): Mix {
         val a = aim.normalized()
         val n = days.coerceIn(1, 7)
         val maxLifts = when {
@@ -42,6 +46,10 @@ object Scheduler {
         val (lifts, runs) = when {
             !a.runs -> min(n, maxLifts) to 0
             !a.lifts -> 0 to min(n, 6)
+            shared -> min(n, maxLifts) to when (a.emphasis) {
+                Emphasis.GYM -> min(n, 2)
+                else -> min(if (n == 7) 6 else n, 6)
+            }
             a.emphasis == Emphasis.GYM -> min(n, maxLifts) to when (n) { 1 -> 0; 2, 3, 4 -> 1; else -> 2 }
             a.emphasis == Emphasis.BALANCED -> intArrayOf(1, 2, 2, 2, 3, 3, 3)[n - 1] to intArrayOf(1, 2, 2, 3, 3, 3, 3)[n - 1]
             else -> intArrayOf(0, 1, 1, 2, 2, 2, 2)[n - 1] to intArrayOf(1, 2, 3, 4, 4, 5, 6)[n - 1]
@@ -59,18 +67,22 @@ object Scheduler {
                 5 -> Triple(3, 1, 1)
                 else -> Triple(runs - 3, 2, 1)
             }
-            RunFocus.SPEED -> when (runs) {
-                0 -> Triple(0, 0, 0)
-                1 -> Triple(0, 1, 0)
-                2 -> Triple(1, 1, 0)
-                3 -> Triple(1, 1, 1)
+            RunFocus.SPEED -> when {
+                runs == 0 -> Triple(0, 0, 0)
+                runs == 1 -> Triple(0, 1, 0)
+                runs == 2 -> Triple(1, 1, 0)
+                // 1500 m is mostly aerobic but specific: race pace once a week, intervals or tempo once, the rest easy.
+                middleGoal && runs <= 4 -> Triple(runs - 2, 2, 0)
+                middleGoal -> Triple(runs - 3, 2, 1)
+                runs == 3 -> Triple(1, 1, 1)
                 else -> Triple(runs - 3, 2, 1)
             }
         }
         // Intervals and long runs need a day without lifting (never heavy legs and a hard run together): when the
         // days run out they become easy runs — the speed plan keeps its intervals, the endurance plan its long run.
         var (e, q, l) = Triple(easy, quality, long)
-        val free = (if (n == 7) 6 else n) - lifts
+        // Shared days: hard runs may also go after an upper-body session (see Templates.forWeek).
+        val free = (if (n == 7) 6 else n) - lifts + if (shared) Templates.upperDays(lifts) else 0
         while (q + l > maxOf(0, free)) {
             if (a.run == RunFocus.SPEED) { if (l > 0) l-- else q-- } else { if (q > 0) q-- else l-- }
             e++
@@ -126,7 +138,10 @@ object Scheduler {
         val chosen = best!!
         val runFirst = aim.normalized().emphasis == Emphasis.RUN
         val plan = chosen.filter { it.lift != null || it.run != null }.map { s ->
-            val list = if (runFirst) listOfNotNull(s.run, s.lift) else listOfNotNull(s.lift, s.run)
+            // A hard run goes before an upper-body session: the legs are fresh, and a run before lifting tires only the
+            // muscles it used (Sporer & Wenger 2003). Legs go before an easy run.
+            val first = runFirst || s.run?.isHardRun == true && s.lift != null && !legs(s.lift, templates)
+            val list = if (first) listOfNotNull(s.run, s.lift) else listOfNotNull(s.lift, s.run)
             DayPlan(s.day, list)
         }
         return WeekPlan(plan, notes(chosen, templates, aim.normalized()))
@@ -222,11 +237,18 @@ object Scheduler {
         if (aim.seriousRunning && aim.lift != LiftFocus.GENERAL && hard.isNotEmpty() && slots.any { it.lift != null }) {
             out += "Бег почти не мешает росту мышц и силы, если тяжёлые ноги и тяжёлый бег разнесены хотя бы на 6 часов, лучше на сутки."
         }
+        val hardWithLift = slots.filter { it.lift != null && it.run?.isHardRun == true }
+        if (hardWithLift.isNotEmpty() && hardWithLift.none { legs(it.lift, templates) }) {
+            out += "Тяжёлый бег — в дни верха: руки и спина ему не мешают. Ноги — в день лёгкого бега."
+        }
         if (slots.any { it.lift != null && it.run != null }) {
-            out += if (aim.emphasis == Emphasis.RUN) {
-                "В дни «бег + силовая» сначала бег. Если получится, разнеси их на 6+ часов."
-            } else {
-                "В дни «силовая + лёгкий бег» за один заход — сначала силовая. Если можешь разнести, бег утром, зал через 6+ часов."
+            val hardUpper = slots.any { it.lift != null && it.run?.isHardRun == true && !legs(it.lift, templates) }
+            val easyAfter = slots.any { it.lift != null && it.run != null && !it.run.isHardRun }
+            out += when {
+                aim.emphasis == Emphasis.RUN -> "В дни «бег + силовая» сначала бег. Если получится, разнеси их на 6+ часов."
+                hardUpper -> "В день верха тяжёлый бег — первым: ноги свежие, а верху бег почти не мешает." +
+                    if (easyAfter) " В день ног — сначала зал, потом лёгкий бег." else ""
+                else -> "В дни «силовая + лёгкий бег» за один заход — сначала силовая. Если можешь разнести, бег утром, зал через 6+ часов."
             }
         }
         val rest = slots.count { it.lift == null && it.run == null }

@@ -21,6 +21,8 @@ sealed interface Cue {
     data class Countdown(override val at: Int, val index: Int, val left: Int) : Cue
     data class Halfway(override val at: Int, val index: Int) : Cue
     data class MinuteLeft(override val at: Int, val index: Int) : Cue
+    /** On a track: the moment a lap of a rep should be done (a pacer beep); [lap] of [of]. */
+    data class LapMark(override val at: Int, val index: Int, val lap: Int, val of: Int) : Cue
     data class Finished(override val at: Int) : Cue
 }
 
@@ -47,8 +49,26 @@ object RunTimeline {
         segs.forEachIndexed { i, s ->
             val end = start + s.seconds
             out += Cue.SegmentStart(start, i, s, segs.getOrNull(i + 1))
-            if (s.seconds >= 6 * 60) out += Cue.Halfway(start + s.seconds / 2, i)
-            if (s.seconds >= 3 * 60) out += Cue.MinuteLeft(end - 60, i)
+            val laps = s.laps
+            val lapSec = s.lapSec
+            if (s.kind == SegmentKind.WORK && laps != null && lapSec != null && laps > 1) {
+                // Pacer: a beep when each lap should be done (the rep's end has the countdown). A rep of 6.5 laps
+                // starts half a lap before the line, so its first beep comes after half a lap.
+                val first = if (laps % 1.0 != 0.0) laps % 1.0 else 1.0
+                val of = kotlin.math.ceil(laps).toInt()
+                var k = 0
+                var at = first
+                while (at < laps - 0.01) {
+                    out += Cue.LapMark(start + kotlin.math.round(at * lapSec).toInt(), i, k + 1, of)
+                    k++
+                    at += 1.0
+                }
+                // A rep with room past its target (a time trial): a beep at the target finish too.
+                if (s.seconds > laps * lapSec + 2) out += Cue.LapMark(start + kotlin.math.round(laps * lapSec).toInt(), i, of, of)
+            } else {
+                if (s.seconds >= 6 * 60) out += Cue.Halfway(start + s.seconds / 2, i)
+                if (s.seconds >= 3 * 60) out += Cue.MinuteLeft(end - 60, i)
+            }
             if (s.seconds >= 10) for (left in 3 downTo 1) out += Cue.Countdown(end - left, i, left)
             start = end
         }
