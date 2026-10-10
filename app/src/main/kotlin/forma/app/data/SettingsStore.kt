@@ -32,6 +32,13 @@ data class Settings(
     val steps: Map<String, Double> = emptyMap(),
 )
 
+/** Lifting state that is not per exercise. */
+@Serializable
+data class LiftState(
+    /** Monday (epoch day) of a lighter week the app scheduled itself after repeated setbacks. */
+    val reactiveDeloadStart: Long? = null,
+)
+
 private val Context.store by preferencesDataStore("forma")
 
 class SettingsStore(private val context: Context) {
@@ -40,6 +47,7 @@ class SettingsStore(private val context: Context) {
         val program = stringPreferencesKey("program")
         val runState = stringPreferencesKey("run_state")
         val settings = stringPreferencesKey("settings")
+        val lift = stringPreferencesKey("lift_state")
     }
 
     private fun <T> read(key: Preferences.Key<String>, s: KSerializer<T>): Flow<T?> =
@@ -53,11 +61,14 @@ class SettingsStore(private val context: Context) {
     val program: Flow<Program?> = read(Keys.program, Program.serializer())
     val runState: Flow<RunState?> = read(Keys.runState, RunState.serializer())
     val settings: Flow<Settings> = read(Keys.settings, Settings.serializer()).map { it ?: Settings() }
+    val liftState: Flow<LiftState> = read(Keys.lift, LiftState.serializer()).map { it ?: LiftState() }
 
     suspend fun profileNow() = profile.first()
     suspend fun programNow() = program.first()
     suspend fun runStateNow() = runState.first() ?: RunState()
     suspend fun settingsNow() = settings.first()
+    suspend fun liftStateNow() = liftState.first()
+    suspend fun setLiftState(l: LiftState) = write(Keys.lift, LiftState.serializer(), l)
 
     suspend fun setProfile(p: Profile) = write(Keys.profile, Profile.serializer(), p)
     suspend fun setProgram(p: Program) = write(Keys.program, Program.serializer(), p)

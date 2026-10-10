@@ -91,7 +91,9 @@ class TrainingRepository(
         val profile = store.profileNow() ?: error("no profile")
         val settings = store.settingsNow()
         val t = program.template(templateId)
-        val deload = forceDeload || ProgramGenerator.isDeloadWeek(program, date)
+        val reactive = store.liftStateNow().reactiveDeloadStart
+        val deload = forceDeload || ProgramGenerator.isDeloadWeek(program, date) ||
+            (reactive != null && date.toEpochDay() in reactive until reactive + 7)
         val rirOffset = if (deload) 0 else ProgramGenerator.rirOffset(program, date)
         val slots = db.state().slots().associateBy { it.slotKey }
         val stats = db.state().stats().associateBy { it.exerciseId }
@@ -102,11 +104,14 @@ class TrainingRepository(
         }
         val items = t.slots.mapIndexed { i, spec ->
             val ex = exercise(spec.exerciseId, settings)
-            val st = slots[spec.key]?.toState() ?: SlotState.fresh(spec)
+            val slotRow = slots[spec.key]
+            val st = slotRow?.toState() ?: SlotState.fresh(spec)
             val hint = Progression.startHint(ex, profile.bodyWeightKg, profile.sex == Sex.FEMALE, trained)
+            val lastDay = slotRow?.updatedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate().toEpochDay() }
             val p = Progression.prescribe(
                 ex, spec, st, if (deload) Phase.DELOAD else Phase.NORMAL, rirOffset,
                 stats[ex.id]?.e1rm, profile.bodyWeightKg, hint,
+                daysSinceLast = lastDay?.let { date.toEpochDay() - it },
             )
             val warm = if (spec.role == SlotRole.MAIN && p.weight != null && ex.load == LoadKind.EXTERNAL && !deload) {
                 WarmUp.sets(p.weight!!, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
@@ -174,7 +179,10 @@ class TrainingRepository(
                 val old = db.state().stat(ex.id)
                 record = old != null && obs > old.best + 0.05
                 db.state().upsertStat(
-                    ExerciseStatEntity(ex.id, Progression.smoothE1rm(old?.e1rm, obs), max(old?.best ?: 0.0, obs), now()),
+                    ExerciseStatEntity(
+                        ex.id, Progression.smoothE1rm(old?.e1rm, obs, profile.experience == Experience.NOVICE),
+                        max(old?.best ?: 0.0, obs), now(),
+                    ),
                 )
             }
             if (ev.outcome !is Outcome.NotDone) reports += SlotReport(ex.id, ex.name, ev.outcome, ev.e1rm, record)
@@ -188,18 +196,44 @@ class TrainingRepository(
                 summaryJson = AppJson.encodeToString(LiftSummary.serializer(), summary),
             ),
         )
+        checkReactiveDeload(LocalDate.ofEpochDay(w.epochDay))
         return summary
+    }
+
+    /**
+     * Two or more main lifts stepping back within two weeks means fatigue is winning:
+     * the next week becomes a lighter one (half the sets, −10 %, more reps in reserve).
+     */
+    private suspend fun checkReactiveDeload(day: LocalDate) {
+        val program = store.programNow() ?: return
+        val state = store.liftStateNow()
+        val from = day.toEpochDay() - 13
+        val setbacks = db.workouts().allDone().filter { it.kind == Kind.LIFT && it.epochDay in from..day.toEpochDay() && !it.deload }
+            .flatMap { w ->
+                val plan = planOf(w)
+                val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
+                summary?.reports.orEmpty().filter { r ->
+                    (r.outcome is Outcome.Reduce || r.outcome is Outcome.Reset) &&
+                        plan?.items?.firstOrNull { it.exerciseId == r.exerciseId }?.slot?.role == SlotRole.MAIN
+                }.map { it.exerciseId }
+            }.distinct()
+        val nextMonday = day.with(java.time.temporal.TemporalAdjusters.next(java.time.DayOfWeek.MONDAY))
+        val plannedSoon = ProgramGenerator.isDeloadWeek(program, nextMonday) || ProgramGenerator.isDeloadWeek(program, day)
+        val active = state.reactiveDeloadStart?.let { day.toEpochDay() < it + 7 } == true
+        if (setbacks.size >= 2 && !plannedSoon && !active) {
+            store.setLiftState(state.copy(reactiveDeloadStart = nextMonday.toEpochDay()))
+        }
     }
 
     // ---------- running ----------
 
     suspend fun runFor(kind: SessionKind, date: LocalDate = today()): RunWorkout {
-        val st = store.runStateNow()
+        val st = RunPlan.withBreak(store.runStateNow(), date.toEpochDay())
         val program = store.programNow()
         val cutback = program != null && ProgramGenerator.isRunCutbackWeek(program, date)
         if (!st.canRunContinuously) return RunPlan.runWalk(st)
         return when (kind) {
-            SessionKind.RUN_LONG -> RunPlan.long(st, cutback)
+            SessionKind.RUN_LONG -> RunPlan.long(st, cutback, date.toEpochDay())
             SessionKind.RUN_QUALITY -> if (needsTest(st, date)) RunPlan.test(st) else RunPlan.quality(st, cutback)
             else -> RunPlan.easy(st, cutback)
         }
@@ -220,7 +254,7 @@ class TrainingRepository(
         val program = store.programNow()
         val caps = program?.runCaps ?: forma.core.run.RunCaps(45, 90)
         val st = store.runStateNow()
-        val after = RunPlan.after(st, workout, result, caps)
+        val after = RunPlan.after(st, workout, result, caps, date.toEpochDay())
         var next = after.state
         if (workout.type == RunType.TEST && after.outcomes.any { it is RunOutcome.VdotChanged }) next = next.copy(lastTestDay = date.toEpochDay())
         store.setRunState(next)

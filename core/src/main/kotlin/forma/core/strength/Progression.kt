@@ -23,6 +23,8 @@ data class SlotSpec(
     val rir: Int,
     val restSec: Int,
     val role: SlotRole,
+    /** Load jump when the top of the range is reached; null — the exercise's own step. */
+    val increment: Double? = null,
 ) {
     val key: String get() = "$exerciseId@$repMin-$repMax"
 }
@@ -95,8 +97,10 @@ data class Adjustment(val weight: Double, val reps: Int, val heavier: Boolean)
  * - Every set updates an estimate of the one-rep max from weight, reps and reps in reserve.
  * - All sets at the top of the range → more weight; all sets at target → one more rep next time.
  * - Far above target → jump straight to the weight the shown strength supports.
- * - Slightly short → repeat. Clearly short twice (or once by 3+ reps) → lower the weight to what was shown.
- * - Three sessions in a row without progress → step back 10 % and build up again.
+ * - Slightly short → repeat. Clearly short twice in a row → −5 %. Three or more reps short on the first set →
+ *   straight down to what was shown (at most −10 %).
+ * - Three sessions in a row without progress → step back 10 % and build up again (Starting Strength reset).
+ * - First session after 2+ weeks off starts 5–15 % lighter.
  */
 object Progression {
     /** Total load in kg that the muscles move, used for e1RM. */
@@ -122,6 +126,7 @@ object Progression {
         e1rm: Double? = null,
         bodyWeight: Double = 75.0,
         hint: Double? = null,
+        daysSinceLast: Long? = null,
     ): Prescription {
         val rir = (spec.rir + rirOffset).coerceIn(0, 5)
         if (ex.load == LoadKind.TIMED) {
@@ -131,13 +136,25 @@ object Progression {
         var calibrate = false
         if (weight == null) {
             if (e1rm != null && e1rm > 0) {
-                weight = roundTo(toWeight(ex, OneRm.loadFor(e1rm, state.reps, rir), bodyWeight), ex.step)
+                weight = floorTo(toWeight(ex, OneRm.loadFor(e1rm, state.reps, rir), bodyWeight), ex.step)
             } else {
                 calibrate = true
             }
+        } else {
+            // Back after a break: strength holds for about three weeks, then fades.
+            val factor = layoffFactor(daysSinceLast)
+            if (factor < 1.0) weight = floorTo(effectiveLoad(ex, weight, bodyWeight) * factor - (effectiveLoad(ex, weight, bodyWeight) - weight), ex.step).coerceAtLeast(0.0)
         }
         if (phase == Phase.DELOAD && weight != null) weight = floorTo(weight * 0.9, ex.step)
         return Prescription(weight, state.reps, setsFor(spec, phase), if (phase == Phase.DELOAD) rir + 2 else rir, calibrate, if (calibrate) hint else null, phase)
+    }
+
+    /** Load multiplier for the first session after [days] without this exercise. */
+    fun layoffFactor(days: Long?): Double = when {
+        days == null || days <= 14 -> 1.0
+        days <= 28 -> 0.95
+        days <= 56 -> 0.90
+        else -> 0.85
     }
 
     private fun setsFor(spec: SlotSpec, phase: Phase) =
@@ -147,15 +164,26 @@ object Progression {
     private fun rirOf(set: DoneSet, target: Int, plannedRir: Int): Int =
         set.rir ?: if (set.reps >= target) plannedRir else 0
 
-    fun e1rmOf(ex: Exercise, sets: List<DoneSet>, target: Int, plannedRir: Int, bodyWeight: Double): Double? =
-        sets.filter { it.reps > 0 }
-            .maxOfOrNull { OneRm.estimate(effectiveLoad(ex, it.weight, bodyWeight), it.reps, rirOf(it, target, plannedRir)) }
+    /**
+     * Best e1RM of the session. Only sets of 1–12 reps with at most 4 in reserve count (estimates from longer
+     * or easier sets are unreliable); if there are none, every set counts.
+     */
+    fun e1rmOf(ex: Exercise, sets: List<DoneSet>, target: Int, plannedRir: Int, bodyWeight: Double): Double? {
+        val done = sets.filter { it.reps > 0 }
+        val good = done.filter { it.reps <= 12 && rirOf(it, target, plannedRir) <= 4 }.ifEmpty { done }
+        return good.maxOfOrNull { OneRm.estimate(effectiveLoad(ex, it.weight, bodyWeight), it.reps, rirOf(it, target, plannedRir)) }
+    }
 
-    /** Gains are accepted quickly, drops slowly: one bad day should not erase weeks of work. */
-    fun smoothE1rm(old: Double?, observed: Double): Double = when {
-        old == null || old <= 0 -> observed
-        observed >= old -> old + 0.7 * (observed - old)
-        else -> old + 0.35 * (observed - old)
+    /**
+     * Working e1RM after a session. Within ±10 % of the current value it moves half way up or 30 % down;
+     * outliers move it only 15 %. One session changes it by at most +5 % (+7.5 % for novices) or −7.5 %.
+     */
+    fun smoothE1rm(old: Double?, observed: Double, novice: Boolean = false): Double {
+        if (old == null || old <= 0) return observed
+        val ratio = observed / old
+        val alpha = if (ratio in 0.90..1.10) (if (observed > old) 0.5 else 0.3) else 0.15
+        val next = old + alpha * (observed - old)
+        return next.coerceIn(old * 0.925, old * (if (novice) 1.075 else 1.05))
     }
 
     fun evaluate(
@@ -213,7 +241,7 @@ object Progression {
             }
         }
         if (minReps >= spec.repMax) {
-            val to = w + step
+            val to = w + (spec.increment ?: step)
             val expected = OneRm.rtfAt(e1rm, effectiveLoad(ex, to, bodyWeight)) - p.rir
             val r = expected.toInt().coerceIn(spec.repMin, max(spec.repMin, min(spec.repMax - 1, minReps)))
             return Evaluation(SlotState(to, r, 0, 0, sessions), Outcome.AddWeight(w, to, r), e1rm)
@@ -228,11 +256,15 @@ object Progression {
         if (nearMiss) return stallCheck(ex, spec, SlotState(w, target, stalls, 0, sessions), Outcome.Hold(w, target, HoldReason.NEAR_MISS), e1rm)
 
         val misses = state.misses + 1
-        val bigMiss = first <= target - 3
-        if (bigMiss || misses >= 2) {
+        // Far below target on the first set: the weight was simply too heavy — go to what was shown (≤ −10 %).
+        if (first <= target - 3) {
             val shown = roundTo(toWeight(ex, OneRm.loadFor(e1rm, target, p.rir), bodyWeight), step)
-            val floor = floorTo(w * 0.85, step)
-            val to = max(0.0, min(w - step, max(shown, floor)))
+            val to = max(0.0, min(w - step, max(shown, floorTo(w * 0.9, step))))
+            return Evaluation(SlotState(to, target, 0, 0, sessions), Outcome.Reduce(w, to, target), e1rm)
+        }
+        // Two sessions in a row short of target: −5 %.
+        if (misses >= 2) {
+            val to = max(0.0, min(w - step, floorTo(w * 0.95, step)))
             return Evaluation(SlotState(to, target, 0, 0, sessions), Outcome.Reduce(w, to, target), e1rm)
         }
         return stallCheck(ex, spec, SlotState(w, target, stalls, misses, sessions), Outcome.Hold(w, target, HoldReason.FIRST_MISS), e1rm)
@@ -257,31 +289,34 @@ object Progression {
     }
 
     /**
-     * After a set: should the next sets use another weight? Calibration always answers;
-     * otherwise only clear misses (3+ reps short) or clear surpluses (4+ reps over, or 3+ more in reserve) do.
+     * After a set: should the next sets use another weight? On the first session the app always answers from
+     * what was lifted. Otherwise it follows the Helms et al. (2018) rule: each rep of difference from the plan
+     * (missed reps, or reps in reserve above/below the target) changes the load by 4 %, at most ±10 %; it only
+     * speaks up when the set was off by 2 or more.
      */
     fun adjustAfterSet(ex: Exercise, p: Prescription, last: DoneSet, bodyWeight: Double = 75.0): Adjustment? {
         if (ex.load == LoadKind.TIMED || last.reps <= 0) return null
         val step = ex.step
-        val rir = last.rir ?: if (last.reps >= p.reps) p.rir else 0
-        val e1rm = OneRm.estimate(effectiveLoad(ex, last.weight, bodyWeight), last.reps, rir)
-        val ideal = toWeight(ex, OneRm.loadFor(e1rm, p.reps, p.rir), bodyWeight)
         if (p.calibrate) {
-            val w = max(0.0, roundTo(ideal, step))
+            val rir = last.rir ?: if (last.reps >= p.reps) p.rir else 0
+            val e1rm = OneRm.estimate(effectiveLoad(ex, last.weight, bodyWeight), last.reps, rir)
+            val w = max(0.0, roundTo(toWeight(ex, OneRm.loadFor(e1rm, p.reps, p.rir), bodyWeight), step))
             return if (kotlin.math.abs(w - last.weight) < step / 2) null else Adjustment(w, p.reps, w > last.weight)
         }
-        val short = last.reps <= p.reps - 3 || (last.rir == 0 && last.reps < p.reps - 1)
-        val over = last.reps >= p.reps + 4 || (last.rir != null && last.rir >= p.rir + 3)
+        // Reps in reserve as actually done: missed reps count as negative reserve, extra reps as extra reserve.
+        val actual = when {
+            last.reps < p.reps -> (last.rir ?: 0) - (p.reps - last.reps)
+            else -> last.rir ?: (p.rir + (last.reps - p.reps))
+        }
+        val delta = p.rir - actual
+        if (kotlin.math.abs(delta) < 2) return null
+        val factor = (1 - 0.04 * delta).coerceIn(0.90, 1.10)
+        val load = effectiveLoad(ex, last.weight, bodyWeight)
+        val target = toWeight(ex, load * factor, bodyWeight)
+        val w = max(0.0, if (delta > 0) floorTo(target, step) else floorTo(target, step))
         return when {
-            short -> {
-                val w = max(0.0, floorTo(ideal, step))
-                if (w <= last.weight - step + 1e-9) Adjustment(w, p.reps, false) else null
-            }
-            over -> {
-                val cap = floorTo(last.weight + (effectiveLoad(ex, last.weight, bodyWeight)) * 0.15, step)
-                val w = min(floorTo(ideal, step), cap)
-                if (w >= last.weight + step - 1e-9) Adjustment(w, p.reps, true) else null
-            }
+            delta > 0 && w <= last.weight - step + 1e-9 -> Adjustment(w, p.reps, false)
+            delta < 0 && w >= last.weight + step - 1e-9 -> Adjustment(w, p.reps, true)
             else -> null
         }
     }

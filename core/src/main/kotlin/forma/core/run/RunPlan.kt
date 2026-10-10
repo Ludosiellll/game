@@ -47,9 +47,25 @@ data class RunState(
     val runs: Int = 0,
     /** Epoch day of the last 12-minute test. */
     val lastTestDay: Long? = null,
+    /** Quality sessions in a row run on pace; three of them lift VDOT by 1. */
+    val qualityOnPace: Int = 0,
+    /** Quality sessions in a row that were not completed as planned. */
+    val qualityFails: Int = 0,
+    /** Run/walk sessions in a row that were not completed comfortably. */
+    val walkFails: Int = 0,
+    val lastVdotUpDay: Long? = null,
+    val lastRunDay: Long? = null,
+    /** Runs of the last 30 days: the long-run cap is based on them. */
+    val recent: List<RunLog> = emptyList(),
 ) {
     val canRunContinuously: Boolean get() = walkStage < 0
+
+    /** Longest run in the 30 days before [day], minutes; null if there was none. */
+    fun longestRecent(day: Long): Int? = recent.filter { it.day in (day - 30) until day }.maxOfOrNull { it.minutes }
 }
+
+@Serializable
+data class RunLog(val day: Long, val minutes: Int)
 
 @Serializable
 data class RunResult(
@@ -88,23 +104,41 @@ object RunPlan {
 
     private data class WalkStep(val blocks: List<Pair<Int, Int>>)
 
-    /** Run/walk ladder: (run seconds, walk seconds) blocks; ends with 30 minutes non-stop. */
-    private val WALK_LADDER: List<WalkStep> = listOf(
-        WalkStep(List(8) { 60 to 90 }),
-        WalkStep(List(6) { 90 to 120 }),
-        WalkStep(List(5) { 120 to 90 }),
-        WalkStep(List(4) { 180 to 90 }),
-        WalkStep(List(3) { 300 to 150 }),
-        WalkStep(List(2) { 480 to 180 }),
-        WalkStep(List(2) { 600 to 120 }),
-        WalkStep(listOf(720 to 120, 480 to 0)),
-        WalkStep(listOf(900 to 120, 420 to 0)),
-        WalkStep(listOf(1200 to 0)),
-        WalkStep(listOf(1320 to 0)),
-        WalkStep(listOf(1500 to 0)),
-        WalkStep(listOf(1680 to 0)),
-        WalkStep(listOf(1800 to 0)),
-    )
+    private fun alternate(times: Int, run: Int, walk: Int, lastRun: Int? = null): WalkStep {
+        val b = MutableList(times) { run to walk }
+        if (lastRun != null) b += lastRun to 0 else b[b.lastIndex] = run to 0
+        return WalkStep(b)
+    }
+
+    private fun seq(vararg minutes: Double): WalkStep {
+        // run, walk, run, walk, … in minutes
+        val b = mutableListOf<Pair<Int, Int>>()
+        var i = 0
+        while (i < minutes.size) {
+            val run = (minutes[i] * 60).roundToInt()
+            val walk = if (i + 1 < minutes.size) (minutes[i + 1] * 60).roundToInt() else 0
+            b += run to walk
+            i += 2
+        }
+        return WalkStep(b)
+    }
+
+    /**
+     * Run/walk ladder modelled on the NHS Couch to 5K plan: nine weeks, three runs a week, each with a 5-minute
+     * walk before and after. One stage = one run; the last stage is 30 minutes non-stop.
+     */
+    private val WALK_LADDER: List<WalkStep> = buildList {
+        repeat(3) { add(alternate(7, 60, 90, lastRun = 60)) }
+        repeat(3) { add(alternate(5, 90, 120, lastRun = 90)) }
+        repeat(3) { add(seq(1.5, 1.5, 3.0, 3.0, 1.5, 1.5, 3.0)) }
+        repeat(3) { add(seq(3.0, 1.5, 5.0, 2.5, 3.0, 1.5, 5.0)) }
+        add(seq(5.0, 3.0, 5.0, 3.0, 5.0)); add(seq(8.0, 5.0, 8.0)); add(seq(20.0))
+        add(seq(5.0, 3.0, 8.0, 3.0, 5.0)); add(seq(10.0, 3.0, 10.0)); add(seq(25.0))
+        repeat(3) { add(seq(25.0)) }
+        repeat(3) { add(seq(28.0)) }
+        repeat(3) { add(seq(30.0)) }
+    }
+
     val walkLadderSize: Int get() = WALK_LADDER.size
 
     /** Interval ladder: (repeats, work seconds, recovery seconds) at interval pace. */
@@ -130,7 +164,8 @@ object RunPlan {
         }
         segs += Segment(SegmentKind.COOLDOWN, WALK_WARM)
         val note = "Бег в разговорном темпе, ходьба быстрым шагом. Разминка и заминка — ходьба."
-        return RunWorkout(RunType.RUN_WALK, "Бег с ходьбой · шаг ${stage + 1} из ${WALK_LADDER.size}", segs, note, targetRpe = 6, stage = stage)
+        val title = "Бег с ходьбой · неделя ${stage / 3 + 1}, тренировка ${stage % 3 + 1}"
+        return RunWorkout(RunType.RUN_WALK, title, segs, note, targetRpe = 6, stage = stage)
     }
 
     fun easy(state: RunState, cutback: Boolean = false): RunWorkout {
@@ -142,8 +177,19 @@ object RunPlan {
         )
     }
 
-    fun long(state: RunState, cutback: Boolean = false): RunWorkout {
-        val min = scaled(state.longMinutes, cutback)
+    /**
+     * Upper limit for any single run: 110 % of the longest run in the previous 30 days
+     * (Frandsen et al., BJSM 2025: bigger single-session spikes raise overuse injury risk).
+     */
+    fun singleRunCap(state: RunState, day: Long?): Int? {
+        if (day == null) return null
+        val longest = state.longestRecent(day) ?: return state.easyMinutes + 10
+        return (longest * 1.10).toInt()
+    }
+
+    fun long(state: RunState, cutback: Boolean = false, day: Long? = null): RunWorkout {
+        val cap = singleRunCap(state, day)
+        val min = scaled(state.longMinutes, cutback).let { if (cap != null) minOf(it, maxOf(15, cap)) else it }
         return RunWorkout(
             RunType.LONG, "Длинная пробежка · $min мин",
             listOf(Segment(SegmentKind.RUN, min * 60, paces(state)?.easy)),
@@ -202,15 +248,30 @@ object RunPlan {
 
     private fun scaled(min: Int, cutback: Boolean) = if (cutback) max(15, (min * 0.75 / 5).roundToInt() * 5) else min
 
-    fun after(state: RunState, w: RunWorkout, r: RunResult, caps: RunCaps): RunAfter {
+    /** VDOT drops by 1 for every 2 weeks without running (at most 5): fitness fades. */
+    fun withBreak(state: RunState, day: Long): RunState {
+        val last = state.lastRunDay ?: return state
+        val v = state.vdot ?: return state
+        val drop = minOf(5, ((day - last) / 14).toInt())
+        return if (drop <= 0) state else state.copy(vdot = v - drop, lastRunDay = day - (day - last) % 14)
+    }
+
+    fun after(state: RunState, w: RunWorkout, r: RunResult, caps: RunCaps, day: Long = 0): RunAfter {
         val out = mutableListOf<RunOutcome>()
-        var s = state.copy(runs = state.runs + 1)
+        val minutes = (r.durationSec / 60.0).roundToInt()
+        val before = withBreak(state, day)
+        if (before.vdot != state.vdot && before.vdot != null) out += RunOutcome.VdotChanged(state.vdot, before.vdot)
+        var s = before.copy(
+            runs = state.runs + 1,
+            lastRunDay = day,
+            recent = (state.recent + RunLog(day, minutes)).filter { it.day > day - 31 }.takeLast(40),
+        )
         val done = r.completed >= 0.95
         when (w.type) {
             RunType.RUN_WALK -> {
                 val stage = state.walkStage.coerceAtLeast(0)
                 s = when {
-                    done && r.rpe <= 7 -> {
+                    done && r.rpe <= 6 -> {
                         val next = stage + 1
                         if (next >= WALK_LADDER.size) {
                             out += RunOutcome.Graduated
@@ -220,13 +281,15 @@ object RunPlan {
                             s.copy(walkStage = next)
                         }
                     }
-                    r.completed < 0.8 || r.rpe >= 10 -> {
-                        val back = max(0, stage - 1)
+                    state.walkFails >= 1 -> {
+                        // Second miss in a row: back one week of the plan.
+                        val back = max(0, stage - 3)
                         out += RunOutcome.StageDown("walk", back)
-                        s.copy(walkStage = back)
+                        s.copy(walkStage = back, walkFails = 0)
                     }
-                    else -> { out += RunOutcome.StageRepeat("walk"); s }
+                    else -> { out += RunOutcome.StageRepeat("walk"); s.copy(walkFails = 1) }
                 }
+                if (done && r.rpe <= 6) s = s.copy(walkFails = 0)
             }
             RunType.EASY -> {
                 s = when {
@@ -237,12 +300,13 @@ object RunPlan {
                 }
             }
             RunType.LONG -> {
-                // Grow the long run by at most ~10 % at a time: single-session spikes raise injury risk.
-                val step = max(5, (state.longMinutes * 0.1 / 5).roundToInt() * 5)
+                // Grow the long run, but never past 110 % of the longest run of the last 30 days.
+                val longest = maxOf(minutes, state.longestRecent(day) ?: 0)
+                val next = minOf(caps.longMax, state.longMinutes + 5, (longest * 1.10).toInt())
                 s = when {
                     r.rpe >= 8 || !done -> s.copy(longMinutes = max(30, state.longMinutes - 5)).also { out += RunOutcome.Shorter(it.longMinutes) }
-                    r.rpe <= 6 && state.longMinutes < caps.longMax ->
-                        s.copy(longMinutes = min(caps.longMax, state.longMinutes + step)).also { out += RunOutcome.Longer(it.longMinutes) }
+                    r.rpe <= 6 && next > state.longMinutes ->
+                        s.copy(longMinutes = next).also { out += RunOutcome.Longer(it.longMinutes) }
                     else -> s.also { out += RunOutcome.Same(state.longMinutes) }
                 }
             }
@@ -250,23 +314,38 @@ object RunPlan {
                 val ladder = if (w.type == RunType.INTERVALS) "intervals" else "tempo"
                 val size = if (w.type == RunType.INTERVALS) INTERVALS.size else TEMPO.size
                 val cur = if (w.type == RunType.INTERVALS) state.intervalStage else state.tempoStage
-                val next = when {
-                    done && r.rpe <= w.targetRpe -> min(size - 1, cur + 1).also { out += RunOutcome.StageUp(ladder, it) }
-                    !done && (r.rpe >= 10 || r.completed < 0.7) -> max(0, cur - 1).also { out += RunOutcome.StageDown(ladder, it) }
-                    else -> cur.also { out += RunOutcome.StageRepeat(ladder) }
-                }
-                s = if (w.type == RunType.INTERVALS) s.copy(intervalStage = next) else s.copy(tempoStage = next)
-                s = s.copy(qualityCount = state.qualityCount + 1)
-                val v = state.vdot
-                val target = paces(state)?.let { if (w.type == RunType.INTERVALS) it.interval else it.threshold }
-                if (v != null && target != null && r.workPace != null && r.workPace > 0) {
-                    val faster = (target - r.workPace) / target
-                    val nv = when {
-                        done && faster > 0.02 && r.rpe <= w.targetRpe -> v + 0.5
-                        faster < -0.03 && r.rpe >= 9 -> v - 0.5
-                        else -> v
+                val target = paces(s)?.let { if (w.type == RunType.INTERVALS) it.interval else it.threshold }
+                val success = done && r.rpe <= w.targetRpe
+                // On pace: work pace measured and no more than 2 % slower than the target.
+                val onPace = success && target != null && r.workPace != null && r.workPace <= target * 1.02
+                var stage = cur
+                var fails = state.qualityFails
+                var streak = state.qualityOnPace
+                if (success) {
+                    stage = min(size - 1, cur + 1)
+                    out += RunOutcome.StageUp(ladder, stage)
+                    fails = 0
+                    streak = if (onPace) streak + 1 else streak
+                } else {
+                    fails += 1
+                    streak = 0
+                    if (fails >= 2) {
+                        stage = max(0, cur - 1)
+                        out += RunOutcome.StageDown(ladder, stage)
+                    } else {
+                        out += RunOutcome.StageRepeat(ladder)
                     }
-                    if (nv != v) { out += RunOutcome.VdotChanged(v, nv); s = s.copy(vdot = nv) }
+                }
+                s = if (w.type == RunType.INTERVALS) s.copy(intervalStage = stage) else s.copy(tempoStage = stage)
+                s = s.copy(qualityCount = state.qualityCount + 1, qualityFails = fails, qualityOnPace = streak)
+                val v = s.vdot
+                if (v != null && streak >= 3 && (state.lastVdotUpDay == null || day - state.lastVdotUpDay >= 21)) {
+                    out += RunOutcome.VdotChanged(v, v + 1)
+                    s = s.copy(vdot = v + 1, qualityOnPace = 0, lastVdotUpDay = day)
+                }
+                if (v != null && fails >= 3) {
+                    out += RunOutcome.VdotChanged(v, v - 1)
+                    s = s.copy(vdot = v - 1, qualityFails = 0)
                 }
             }
             RunType.TEST -> {

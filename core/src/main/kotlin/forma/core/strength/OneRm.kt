@@ -1,5 +1,7 @@
 package forma.core.strength
 
+import kotlin.math.exp
+
 /**
  * One-repetition maximum estimates.
  *
@@ -18,13 +20,14 @@ object OneRm {
 
     /**
      * Share of 1RM that can be lifted for [rtf] reps to failure.
-     * Values for 1..12 follow the widely used RPE-10 column of the Tuchscherer / Helms RPE chart;
-     * beyond 12 the Epley curve takes over, scaled to join the chart at 12 (estimates there are rough).
+     * Values for 1..13 follow the RTS (Tuchscherer) RPE chart, read as reps to failure, with linear
+     * interpolation (which reproduces the chart's half steps). Beyond 13 the chart's own slope continues as
+     * exp(−0.035 per rep); estimates from such high-rep sets are rough and tend to overestimate.
      */
     fun fractionForRtf(rtf: Double): Double {
         if (rtf <= 1.0) return 1.0
         val last = RPE_TABLE.size
-        if (rtf >= last) return RPE_TABLE[last - 1] * (1 + last / 30.0) / (1 + rtf / 30.0)
+        if (rtf >= last) return RPE_TABLE[last - 1] * exp(-0.035 * (rtf - last))
         val lo = rtf.toInt()
         val t = rtf - lo
         val a = RPE_TABLE[lo - 1]
@@ -56,8 +59,8 @@ object OneRm {
         return (lo + hi) / 2
     }
 
-    /** RPE-10 column, RTF = 1..12 (index 0 → 1 rep). */
+    /** RTS chart by reps to failure, RTF = 1..13 (index 0 → 1 rep). */
     internal val RPE_TABLE = doubleArrayOf(
-        1.000, 0.955, 0.922, 0.892, 0.863, 0.837, 0.811, 0.786, 0.762, 0.739, 0.707, 0.680,
+        1.000, 0.955, 0.922, 0.892, 0.863, 0.837, 0.811, 0.786, 0.762, 0.739, 0.707, 0.680, 0.653,
     )
 }

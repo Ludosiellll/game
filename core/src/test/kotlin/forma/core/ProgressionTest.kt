@@ -79,7 +79,8 @@ class ProgressionTest {
 
     @Test fun bigMissReducesAtOnce() {
         val ev = run(SlotState(60.0, 8), 4, 4, 3)
-        assertEquals(Outcome.Reduce(60.0, 50.0, 8), ev.outcome)
+        // Straight down to what was shown, but no more than −10 %.
+        assertEquals(Outcome.Reduce(60.0, 52.5, 8), ev.outcome)
     }
 
     @Test fun threeStallsResetTenPercent() {
@@ -127,10 +128,35 @@ class ProgressionTest {
         assertTrue(out.reps in 5..9)
     }
 
-    @Test fun e1rmSmoothingFavoursGains() {
-        assertEquals(107.0, Progression.smoothE1rm(100.0, 110.0), 1e-9)
-        assertEquals(96.5, Progression.smoothE1rm(100.0, 90.0), 1e-9)
+    @Test fun e1rmSmoothingFavoursGainsAndDampsOutliers() {
+        assertEquals(104.0, Progression.smoothE1rm(100.0, 108.0), 1e-9)
+        assertEquals(97.0, Progression.smoothE1rm(100.0, 90.0), 1e-9)
+        // Outlier: only 15 % of the way, and never more than +5 % in one session.
+        assertEquals(104.5, Progression.smoothE1rm(100.0, 130.0), 1e-9)
+        assertEquals(105.0, Progression.smoothE1rm(100.0, 140.0), 1e-9)
+        assertEquals(107.5, Progression.smoothE1rm(100.0, 160.0, novice = true), 1e-9)
         assertEquals(90.0, Progression.smoothE1rm(null, 90.0))
+    }
+
+    @Test fun layoffStartsLighter() {
+        val st = SlotState(60.0, 8)
+        assertEquals(60.0, Progression.prescribe(squat, spec, st, daysSinceLast = 10).weight)
+        assertEquals(55.0, Progression.prescribe(squat, spec, st, daysSinceLast = 20).weight)
+        assertEquals(52.5, Progression.prescribe(squat, spec, st, daysSinceLast = 40).weight)
+        assertEquals(50.0, Progression.prescribe(squat, spec, st, daysSinceLast = 90).weight)
+    }
+
+    @Test fun highRepSetsDoNotDriveTheEstimate() {
+        // 15 easy reps would claim a far higher 1RM than the 5-rep set; only the 5-rep set counts.
+        val e = Progression.e1rmOf(squat, listOf(DoneSet(100.0, 5, 1), DoneSet(70.0, 15, 3)), 5, 2, 80.0)!!
+        assertEquals(forma.core.strength.OneRm.estimate(100.0, 5, 1), e, 1e-9)
+    }
+
+    @Test fun noviceLegsJumpFiveKilos() {
+        val s = spec.copy(increment = 5.0)
+        val st = SlotState(60.0, 8)
+        val ev = Progression.evaluate(squat, s, st, Progression.prescribe(squat, s, st), List(3) { DoneSet(60.0, 8) })
+        assertEquals(65.0, assertIs<Outcome.AddWeight>(ev.outcome).to)
     }
 
     @Test fun startHintRespectsBarAndStep() {

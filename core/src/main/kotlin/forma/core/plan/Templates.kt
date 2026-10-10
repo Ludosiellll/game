@@ -1,5 +1,7 @@
 package forma.core.plan
 
+import forma.core.model.Catalog
+import forma.core.model.Equipment
 import forma.core.model.Experience
 import forma.core.model.Goal
 import forma.core.strength.SlotRole
@@ -43,7 +45,10 @@ object Templates {
         // Novices keep a bit more in reserve and fewer sets on main lifts while learning technique.
         val rir = if (exp == Experience.NOVICE) maxOf(s.rir, 2) else s.rir
         val sets = if (exp == Experience.NOVICE && role == SlotRole.MAIN) minOf(s.sets, 3) else s.sets
-        return SlotSpec(id, sets, s.min, s.max, rir, s.rest, role)
+        // Novices add 5 kg on barbell leg lifts when the range is done (NSCA: 2–4 kg upper, 4–7 kg lower).
+        val ex = Catalog.find(id)
+        val inc = if (exp == Experience.NOVICE && ex != null && ex.equipment == Equipment.BARBELL && ex.lowerBody) 5.0 else null
+        return SlotSpec(id, sets, s.min, s.max, rir, s.rest, role, inc)
     }
 
     private fun build(goal: Goal, exp: Experience, id: String, title: String, focus: Focus, vararg parts: Pair<String, SlotRole>) =

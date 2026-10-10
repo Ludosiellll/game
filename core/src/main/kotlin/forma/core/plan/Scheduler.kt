@@ -139,13 +139,11 @@ object Scheduler {
                     else -> 8.0
                 }
             }
-            // Heavy legs the day before intervals blunt them; before an easy-paced long run it matters less.
-            if (legDay && next.run?.kind == SessionKind.RUN_QUALITY) p += 8.0
-            if (legDay && next.run?.kind == SessionKind.RUN_LONG) p += 4.0
-            // A hard run the day before heavy legs blunts the lift.
-            if (legs(next.lift, templates)) {
-                if (s.run?.kind == SessionKind.RUN_QUALITY) p += 4.0
-                if (s.run?.kind == SessionKind.RUN_LONG) p += 3.0
+            // No intervals or long run within 24 h after heavy legs (running is impaired up to a day later).
+            if (legDay && next.run?.isHardRun == true) p += 8.0
+            // A hard run the day before heavy legs blunts the lift; it matters most when strength is the goal.
+            if (legs(next.lift, templates) && s.run?.isHardRun == true) {
+                p += if (goal == Goal.STRENGTH || goal == Goal.MUSCLE) 8.0 else 4.0
             }
             // Lifting the same muscles on consecutive days.
             if (s.lift != null && next.lift != null) {
@@ -162,6 +160,9 @@ object Scheduler {
             // Long run prefers the weekend.
             if (s.run?.kind == SessionKind.RUN_LONG && s.day < 6) p += 4.0
         }
+        // No three hard days in a row (heavy legs, intervals or the long run).
+        val hard = slots.map { legs(it.lift, templates) || it.run?.isHardRun == true }
+        for (start in 0 until 7) if (hard[start] && hard[(start + 1) % 7] && hard[(start + 2) % 7]) p += 6.0
         // Streaks of training days without a break.
         val busy = slots.map { it.lift != null || it.run != null }
         if (busy.all { it }) p += 20.0
@@ -207,7 +208,7 @@ object Scheduler {
             out += if (goal == Goal.ENDURANCE) {
                 "В дни «бег + силовая» сначала бег. Если получится, разнеси их на 6+ часов."
             } else {
-                "В дни «силовая + бег» сначала силовая, потом лёгкий бег — так он меньше мешает росту силы."
+                "В дни «силовая + лёгкий бег» за один заход — сначала силовая. Если можешь разнести, бег утром, зал через 6+ часов."
             }
         }
         val rest = slots.count { it.lift == null && it.run == null }
