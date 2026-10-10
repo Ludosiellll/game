@@ -25,7 +25,12 @@ object CoachText {
             SegmentKind.WORK -> {
                 val works = w.segments.withIndex().filter { it.value.kind == SegmentKind.WORK }
                 val n = works.indexOfFirst { it.index == index } + 1
-                if (w.type == RunType.TEST) "Контрольный отрезок" else if (works.size > 1) "Ускорение $n из ${works.size}" else "Темповый отрезок"
+                when {
+                    w.type == RunType.TEST -> "Контрольный отрезок"
+                    w.type == RunType.TEMPO -> if (works.size > 1) "Темповый отрезок $n из ${works.size}" else "Темповый отрезок"
+                    works.size > 1 -> "Ускорение $n из ${works.size}"
+                    else -> "Ускорение"
+                }
             }
         }
     }

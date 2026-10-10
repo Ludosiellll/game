@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -61,6 +62,9 @@ data class CloudState(
     val busy: Boolean = false,
     val lastSyncAt: Long? = null,
     val lastError: String? = null,
+    /** The phone's data belongs to another account ([previousEmail]): the sync waits for a decision. */
+    val otherAccount: Boolean = false,
+    val previousEmail: String? = null,
 )
 
 class NotSignedInException : IllegalStateException("not signed in")
@@ -144,19 +148,25 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         onSignedIn()
     }
 
-    /** The next sync will be the account's first on this phone: download first, then upload. */
+    /**
+     * Whether this is the account's first sync on this phone is decided by the sync itself (it remembers the account
+     * the data belongs to): signing in again to the same account simply carries on.
+     */
     private fun onSignedIn() {
-        prefs.edit().putBoolean(KEY_SIGNED_IN, true).remove(KEY_SYNCED_USER).apply()
+        prefs.edit().putBoolean(KEY_SIGNED_IN, true).apply()
+        _state.update { it.copy(otherAccount = false) }
         schedulePeriodic()
     }
 
-    /** Signs out on this phone. Data on the phone and in the cloud stays. */
+    /**
+     * Signs out on this phone. Data on the phone and in the cloud stays, and so does what the cloud has seen:
+     * signing in again continues where it was instead of taking the older cloud copy over newer work.
+     */
     suspend fun signOut() {
         val c = client ?: return
         runCatching { c.auth.signOut() }.onFailure { c.auth.clearSession() }
-        repo.db.sync().reset()
-        prefs.edit().clear().apply()
-        _state.update { it.copy(email = null, lastSyncAt = null, lastError = null) }
+        prefs.edit().remove(KEY_SIGNED_IN).remove(KEY_LAST_SYNC).remove(KEY_LAST_ERROR).apply()
+        _state.update { it.copy(email = null, lastSyncAt = null, lastError = null, otherAccount = false) }
         runCatching {
             WorkManager.getInstance(context).run {
                 cancelUniqueWork(WORK_SOON)
@@ -172,17 +182,19 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         _state.update { it.copy(busy = true) }
         return try {
             val user = currentUser(c) ?: throw NotSignedInException()
-            val first = prefs.getString(KEY_SYNCED_USER, null) != user.id
-            val result = withContext(Dispatchers.IO) { engine.run(user.id, first) }
+            val result = withContext(Dispatchers.IO) { engine.run(user.id) }
             // Own exercises may have come from another phone.
             repo.refreshCustom()
             val now = System.currentTimeMillis()
-            prefs.edit().putString(KEY_SYNCED_USER, user.id).putBoolean(KEY_SIGNED_IN, true)
+            prefs.edit().putString(KEY_LAST_EMAIL, user.email).putBoolean(KEY_SIGNED_IN, true)
                 .putLong(KEY_LAST_SYNC, now).remove(KEY_LAST_ERROR).apply()
-            _state.update { it.copy(lastSyncAt = now, lastError = null) }
+            _state.update { it.copy(lastSyncAt = now, lastError = null, otherAccount = false) }
             Result.success(result)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: AccountMismatchException) {
+            _state.update { it.copy(otherAccount = true, previousEmail = prefs.getString(KEY_LAST_EMAIL, null)) }
+            Result.failure(e)
         } catch (e: Exception) {
             if (e !is NotSignedInException) {
                 val message = describe(e)
@@ -193,6 +205,17 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         } finally {
             _state.update { it.copy(busy = false) }
         }
+    }
+
+    /**
+     * The phone holds another account's data: it is removed from the phone (that account's cloud copy stays), and
+     * this account's copy comes down instead.
+     */
+    suspend fun replaceWithThisAccount(): Result<SyncResult> {
+        forma.app.data.DataLock.mutex.withLock { repo.clearPhone() }
+        forma.app.run.RunSession.clear()
+        _state.update { it.copy(otherAccount = false) }
+        return syncNow()
     }
 
     /** The signed-in user with a fresh access token, or null. */
@@ -219,7 +242,8 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
             .setInitialDelay(5, TimeUnit.SECONDS)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        runCatching { WorkManager.getInstance(context).enqueueUniqueWork(WORK_SOON, ExistingWorkPolicy.KEEP, request) }
+        // Appended, not dropped, while a sync runs: a change made during it must go up too.
+        runCatching { WorkManager.getInstance(context).enqueueUniqueWork(WORK_SOON, ExistingWorkPolicy.APPEND_OR_REPLACE, request) }
     }
 
     /** A sync twice a day in the background, so other phones' changes arrive and the project stays awake. */
@@ -234,7 +258,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
     companion object {
         private const val PREFS = "forma_sync"
         private const val KEY_SIGNED_IN = "signed_in"
-        private const val KEY_SYNCED_USER = "synced_user"
+        private const val KEY_LAST_EMAIL = "last_email"
         private const val KEY_LAST_SYNC = "last_sync"
         private const val KEY_LAST_ERROR = "last_error"
         private const val WORK_SOON = "forma-sync-soon"
@@ -243,6 +267,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         /** Human text for a failed sync. */
         fun describe(e: Throwable): String = when (e) {
             is NotSignedInException -> "Нужно войти заново."
+        is AccountMismatchException -> "На телефоне данные другого аккаунта — синхронизация остановлена."
             is HttpRequestException, is HttpRequestTimeoutException, is IOException -> "Нет связи с сервером. Синхронизация повторится сама, когда появится интернет."
             is RestException -> when {
                 e.statusCode == 401 || e.statusCode == 403 -> "Сервер не принял вход. Выйди и войди снова."
@@ -312,11 +337,22 @@ private class SupabaseApi(private val client: SupabaseClient) : CloudApi {
         }
     }
 
-    override suspend fun changes(table: String, keyColumn: String, since: String?, offset: Int, limit: Int): List<JsonObject> =
+    override suspend fun changes(table: String, keyColumn: String, since: String?, after: Pair<String, String>?, limit: Int): List<JsonObject> =
         client.from(table).select {
-            if (since != null) filter { gt("updated_at", since) }
+            filter {
+                if (after != null) {
+                    // (updated_at, key) > (t, k): the next rows in order, whatever changed on the earlier pages.
+                    gte("updated_at", after.first)
+                    or {
+                        gt("updated_at", after.first)
+                        gt(keyColumn, after.second)
+                    }
+                } else if (since != null) {
+                    gt("updated_at", since)
+                }
+            }
             order("updated_at", Order.ASCENDING)
             order(keyColumn, Order.ASCENDING)
-            range(offset.toLong(), (offset + limit - 1).toLong())
+            range(0L, (limit - 1).toLong())
         }.decodeAs<JsonArray>().map { it.jsonObject }
 }

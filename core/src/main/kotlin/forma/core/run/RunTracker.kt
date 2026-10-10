@@ -1,7 +1,25 @@
 package forma.core.run
 
+import kotlinx.serialization.Serializable
+import kotlin.math.max
+
 /** A GPS fix. */
 data class Fix(val timeMs: Long, val lat: Double, val lon: Double, val accuracy: Float)
+
+/** Everything a run needs to carry on after the app process was killed (GPS points are kept apart). */
+@Serializable
+data class TrackerSnapshot(
+    val workout: RunWorkout,
+    val state: RunTracker.State,
+    val activeMs: Long,
+    val skipMs: Long = 0,
+    val skippedWorkSec: Int = 0,
+    val distanceM: Double = 0.0,
+    val workDistanceM: Double = 0.0,
+    val nextKm: Int = 1,
+    val lastKmSec: Int = 0,
+    val fixes: Int = 0,
+)
 
 /** Events produced while running that the coach announces. */
 sealed interface RunEvent {
@@ -11,7 +29,8 @@ sealed interface RunEvent {
 
 /**
  * Keeps time, distance and pace for one run. Time is "active" time: pauses don't count.
- * GPS fixes worse than [maxAccuracy] metres or implying more than [maxSpeed] m/s are dropped.
+ * GPS fixes worse than [maxAccuracy] metres or implying more than [maxSpeed] m/s are dropped. Distance is counted
+ * from an anchor fix once the move is bigger than the fixes' own uncertainty, so standing still adds nothing.
  */
 class RunTracker(
     val workout: RunWorkout,
@@ -28,6 +47,7 @@ class RunTracker(
     private var lastTickSec = -1
     private var lastFix: Fix? = null
     private var lastFixActiveMs = 0L
+    private var speedRejects = 0
 
     var distanceM = 0.0
         private set
@@ -104,15 +124,29 @@ class RunTracker(
         if (state != State.RUNNING || fix.accuracy > maxAccuracy) return emptyList()
         val active = activeMs(nowMs)
         val prev = lastFix
-        lastFix = fix
-        val prevActive = lastFixActiveMs
-        lastFixActiveMs = active
         fixes++
-        if (prev == null) return emptyList()
-        val dt = (active - prevActive) / 1000.0
+        if (prev == null) {
+            lastFix = fix
+            lastFixActiveMs = active
+            return emptyList()
+        }
+        val dt = (active - lastFixActiveMs) / 1000.0
         if (dt <= 0) return emptyList()
         val d = Geo.haversine(prev.lat, prev.lon, fix.lat, fix.lon)
-        if (d / dt > maxSpeed) return emptyList()
+        if (d / dt > maxSpeed) {
+            // A jump: drop this fix and keep the anchor — unless the anchor itself was the bad one (three jumps in a row).
+            if (++speedRejects >= 3) {
+                lastFix = fix
+                lastFixActiveMs = active
+                speedRejects = 0
+            }
+            return emptyList()
+        }
+        speedRejects = 0
+        // Within the fixes' uncertainty: no movement yet; the anchor stays until the move is clear.
+        if (d < max(3.0, 0.5 * (prev.accuracy + fix.accuracy))) return emptyList()
+        lastFix = fix
+        lastFixActiveMs = active
         distanceM += d
         val seg = RunTimeline.at(workout, ((active + skipMs) / 1000).toInt()).segment
         if (seg != null && (seg.kind == SegmentKind.WORK || seg.kind == SegmentKind.RUN)) workDistanceM += d
@@ -165,16 +199,53 @@ class RunTracker(
         return (sum - skippedWorkSec).coerceAtLeast(0)
     }
 
+    /** Completion is the share of the planned running done: a skipped cool-down or warm-up does not count against it. */
+    fun snapshot(nowMs: Long) = TrackerSnapshot(
+        workout, state, activeMs(nowMs), skipMs, skippedWorkSec, distanceM, workDistanceM, nextKm, lastKmSec, fixes,
+    )
+
     fun result(nowMs: Long, rpe: Int): RunResult {
         val sec = activeSec(nowMs)
-        val planned = (timelineMs(nowMs) / 1000).toInt() - skippedWorkSec
-        val completed = if (workout.isOpenEnded) 1.0 else (planned.toDouble() / workout.totalSeconds).coerceIn(0.0, 1.0)
         val work = workSec(nowMs)
+        val completed = when {
+            workout.isOpenEnded -> 1.0
+            workout.workSeconds > 0 -> work.toDouble() / workout.workSeconds
+            else -> ((timelineMs(nowMs) / 1000).toDouble() / workout.totalSeconds)
+        }.coerceIn(0.0, 1.0)
         val workPace = if (workDistanceM > 100 && work > 0) work / (workDistanceM / 1000.0) else null
         return RunResult(
             completed = completed, rpe = rpe, durationSec = sec,
             distanceM = distanceM.takeIf { it > 0 }, workPace = workPace,
-            workDistanceM = workDistanceM.takeIf { it > 0 },
+            workDistanceM = workDistanceM.takeIf { it > 0 }, workSec = if (workout.isOpenEnded) null else work,
         )
+    }
+
+    companion object {
+        /**
+         * The run as it was at [s]. A run that was going is paused at that point: what happened after it was not tracked,
+         * so it does not count; the runner resumes or finishes. A finished run stays finished.
+         */
+        fun restore(s: TrackerSnapshot, nowMs: Long): RunTracker = RunTracker(s.workout).apply {
+            distanceM = s.distanceM
+            workDistanceM = s.workDistanceM
+            skipMs = s.skipMs
+            skippedWorkSec = s.skippedWorkSec
+            nextKm = s.nextKm
+            lastKmSec = s.lastKmSec
+            fixes = s.fixes
+            when (s.state) {
+                State.READY -> Unit
+                State.FINISHED -> {
+                    finishedActiveMs = s.activeMs
+                    state = State.FINISHED
+                }
+                State.RUNNING, State.PAUSED -> {
+                    startedAt = nowMs - s.activeMs
+                    pauseStart = nowMs
+                    state = State.PAUSED
+                }
+            }
+            lastTickSec = ((s.activeMs + s.skipMs) / 1000).toInt()
+        }
     }
 }

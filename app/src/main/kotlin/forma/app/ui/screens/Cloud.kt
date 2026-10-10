@@ -41,12 +41,25 @@ import java.time.ZoneId
 @Composable
 fun CloudScreen() {
     val cloud = LocalCloud.current
+    val repo = LocalRepo.current
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val state = cloud?.state?.collectAsState()?.value ?: CloudState(configured = false, ready = true)
     var message by remember { mutableStateOf<String?>(null) }
     CloudContent(
         state, message,
+        onReplace = {
+            scope.launch {
+                message = null
+                val r = cloud?.replaceWithThisAccount() ?: return@launch
+                if (r.isSuccess) {
+                    // The phone now holds this account's data: start from it (or from the profile if it has none).
+                    nav.replaceAll(if (repo.isOnboarded()) Screen.Today else Screen.Onboarding)
+                } else {
+                    message = r.exceptionOrNull()?.let { Cloud.describe(it) }
+                }
+            }
+        },
         onSignIn = { nav.push(Screen.CloudSignIn(restore = false)) },
         onSync = {
             scope.launch {
@@ -68,6 +81,7 @@ fun CloudScreen() {
 fun CloudContent(
     state: CloudState,
     message: String?,
+    onReplace: () -> Unit,
     onSignIn: () -> Unit,
     onSync: () -> Unit,
     onSignOut: () -> Unit,
@@ -90,13 +104,27 @@ fun CloudContent(
                     )
                 }
                 PrimaryButton("Подключить облако", onSignIn, Modifier.fillMaxWidth(), icon = Ic.cloud)
-                Text("Нужны почта и пароль. Подтверждать почту не придётся.", style = T.secondary(13.sp))
+                Text("Нужны почта и пароль не короче 8 символов.", style = T.secondary(13.sp))
             }
             else -> {
                 FCard(gap = 0.dp, padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
                     ListRow("Аккаунт", state.email, icon = Ic.user, iconTint = F.c.accent)
                     Hairline()
                     ListRow("Последняя синхронизация", lastSyncText(state.lastSyncAt), icon = Ic.cloud, iconTint = F.c.accent)
+                }
+                if (state.otherAccount) {
+                    FCard {
+                        Text("На телефоне данные другого аккаунта", style = T.title(20.sp))
+                        Text(
+                            "Тренировки на этом телефоне синхронизировались с " + (state.previousEmail ?: "другим аккаунтом") + ". " +
+                                "Чтобы чужая история не попала в этот аккаунт, синхронизация остановлена. " +
+                                "Можно убрать их с телефона и загрузить данные этого аккаунта — в облаке прежнего аккаунта они останутся.",
+                            style = T.secondary(14.sp),
+                        )
+                    }
+                    PrimaryButton(if (state.busy) "Загружаю…" else "Заменить данными этого аккаунта", onReplace, Modifier.fillMaxWidth(), enabled = !state.busy)
+                    GhostButton("Выйти, оставить как есть", onSignOut, Modifier.fillMaxWidth(), height = 50.dp)
+                    return@ScrollScreen
                 }
                 state.lastError?.let { Banner(it, F.c.warn) }
                 PrimaryButton(
@@ -145,6 +173,8 @@ fun CloudSignInScreen(restore: Boolean) {
                     val sync = c.syncNow()
                     progress = null
                     when {
+                        // The phone holds another account's data: the cloud screen explains and offers the choice.
+                        sync.exceptionOrNull() is forma.app.sync.AccountMismatchException -> { nav.replaceTop(Screen.Cloud); return@launch }
                         restore && repo.isOnboarded() -> { nav.replaceAll(Screen.Today); return@launch }
                         !restore && sync.isSuccess -> { nav.back(); return@launch }
                         else -> result = sync.fold(

@@ -15,6 +15,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.Bundle
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
@@ -42,7 +43,8 @@ import kotlinx.coroutines.launch
 
 /**
  * Keeps a run going with the screen off: a foreground service (health type, plus location when GPS is allowed),
- * a partial wake lock for the timer, GPS fixes and the voice coach.
+ * a partial wake lock for the timer, GPS fixes and the voice coach. The run is written to disk every few seconds,
+ * so a run the system kills together with the app comes back paused (see [RunSession.init]).
  */
 class RunService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -52,68 +54,116 @@ class RunService : Service() {
     private var locationManager: LocationManager? = null
     private var lastNotifiedIndex = -1
     private var lastNotifyAt = 0L
-    private var stopped = false
+    private var lastSavedAt = 0L
 
-    private val listener = LocationListener { loc: Location -> onLocation(loc) }
+    // An object, not a lambda: before Android 11 the provider callbacks have no default bodies.
+    private val listener = object : LocationListener {
+        override fun onLocationChanged(location: Location) = onLocation(location)
+        override fun onProviderEnabled(provider: String) {}
+        override fun onProviderDisabled(provider: String) {}
+        @Deprecated("Deprecated in Java")
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> start(intent)
-            ACTION_PAUSE -> RunSession.tracker?.let { it.pause(now()); RunSession.publish(now()); notifyNow() }
-            ACTION_RESUME -> RunSession.tracker?.let { it.resume(now()); RunSession.publish(now()); notifyNow() }
-            ACTION_SKIP -> RunSession.tracker?.let { it.skipSegment(now()); RunSession.publish(now()); notifyNow() }
+            ACTION_PAUSE -> control { it.pause(now()) }
+            ACTION_RESUME -> if (attach()) control { it.resume(now()) }
+            ACTION_SKIP -> control { it.skipSegment(now()) }
             ACTION_STOP -> stopRun()
         }
+        // A control sent to a run that is not going in this service (a restored, paused one) needs no service.
+        if (ticker == null) stopSelf(startId)
         return START_NOT_STICKY
     }
 
     private fun now() = SystemClock.elapsedRealtime()
 
+    private fun control(action: (RunTracker) -> Unit) {
+        val t = RunSession.tracker ?: return
+        action(t)
+        RunSession.publish(now())
+        RunSession.save(now())
+        if (ticker != null) notifyNow()
+    }
+
     private fun start(intent: Intent) {
-        if (RunSession.tracker != null) return
-        val json = intent.getStringExtra(EXTRA_WORKOUT) ?: return
-        val workout = AppJson.decodeFromString(RunWorkout.serializer(), json)
-        val wantGps = intent.getBooleanExtra(EXTRA_GPS, true) && hasLocation()
-        coach = VoiceCoach(
-            this, intent.getBooleanExtra(EXTRA_VOICE, true), intent.getBooleanExtra(EXTRA_BEEPS, true),
-            intent.getBooleanExtra(EXTRA_VIBRATION, true),
-        )
-        createChannel()
-        var type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH else 0
-        if (wantGps && Build.VERSION.SDK_INT >= 29) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-        val tracker = RunTracker(workout)
-        RunSession.tracker = tracker
-        RunSession.gpsEnabled = wantGps
-        RunSession.startedAtWall = System.currentTimeMillis()
-        RunSession.points.clear()
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
+        val fresh = RunSession.tracker == null
+        val gps = hasLocation() && if (fresh) intent.getBooleanExtra(EXTRA_GPS, true) else RunSession.gpsEnabled
+        // Started with startForegroundService(): in the foreground first, whatever happens next, or the system
+        // kills the app a few seconds later.
+        if (!foreground(gps)) return
+        if (ticker != null) return
+        if (fresh) {
+            val workout = intent.getStringExtra(EXTRA_WORKOUT)
+                ?.let { runCatching { AppJson.decodeFromString(RunWorkout.serializer(), it) }.getOrNull() }
+            if (workout != null) {
+                val tracker = RunTracker(workout)
+                RunSession.begin(
+                    tracker, gps, intent.getBooleanExtra(EXTRA_VOICE, true),
+                    intent.getBooleanExtra(EXTRA_BEEPS, true), intent.getBooleanExtra(EXTRA_VIBRATION, true),
+                )
+                tracker.start(now())
+            }
+        }
+        // A finished run waits to be saved on its screen; a new one cannot start over it.
+        if (RunSession.tracker?.state == RunTracker.State.FINISHED || !attach()) leave()
+    }
+
+    /** Puts the current run in the foreground: notification, wake lock, GPS, voice and the ticker. */
+    private fun attach(): Boolean {
+        val t = RunSession.tracker ?: return false
+        if (ticker != null) return true
+        if (t.state == RunTracker.State.FINISHED) return false
+        val gps = RunSession.gpsEnabled && hasLocation()
+        if (!foreground(gps)) return false
+        RunSession.attached()
+        coach = VoiceCoach(this, RunSession.voice, RunSession.beeps, RunSession.vibration)
         wake = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "forma:run").apply { acquire(6 * 60 * 60 * 1000L) }
-        if (wantGps) startGps()
-        tracker.start(now())
+        if (gps) startGps()
         RunSession.publish(now())
+        RunSession.save(now())
         ticker = scope.launch {
             while (isActive) {
-                val t = RunSession.tracker ?: break
-                val events = t.tick(now())
+                val tr = RunSession.tracker ?: break
+                val events = tr.tick(now())
                 handle(events)
                 RunSession.publish(now())
-                val idx = t.timeline(now()).index
+                val idx = tr.timeline(now()).index
                 if (idx != lastNotifiedIndex || now() - lastNotifyAt > 10_000) notifyNow()
-                if (t.timeline(now()).finished && !t.workout.isOpenEnded) {
-                    t.finish(now())
+                if (now() - lastSavedAt > 5_000) {
+                    lastSavedAt = now()
+                    RunSession.save(now())
+                }
+                if (tr.state == RunTracker.State.RUNNING && tr.timeline(now()).finished && !tr.workout.isOpenEnded) {
+                    tr.finish(now())
                     RunSession.publish(now())
+                    RunSession.save(now())
                     notifyNow()
                     // Let the coach finish the last sentence, then leave the foreground.
                     delay(4000)
-                    stopRun()
+                    leave()
                     break
                 }
                 delay(250)
             }
         }
+        return true
+    }
+
+    /** startForeground with location when GPS is used; falls back to the health type alone if that is refused. */
+    private fun foreground(gps: Boolean): Boolean {
+        createChannel()
+        val base = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH else 0
+        val type = if (gps && Build.VERSION.SDK_INT >= 29) base or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else base
+        val ok = runCatching { ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type) }.isSuccess ||
+            (type != base && runCatching { ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), base) }.isSuccess)
+        if (!ok) stopSelf()
+        return ok
     }
 
     private fun handle(events: List<RunEvent>) {
@@ -150,14 +200,24 @@ class RunService : Service() {
         handle(events)
     }
 
+    /** "Stop" held on the run screen: the run is finished and waits on its screen to be saved. */
     private fun stopRun() {
-        if (stopped) return
-        stopped = true
-        RunSession.tracker?.finish(now())
-        RunSession.publish(now())
+        RunSession.tracker?.let {
+            it.finish(now())
+            RunSession.publish(now())
+            RunSession.save(now())
+        }
+        leave()
+    }
+
+    /** Out of the foreground and gone; the run itself stays in [RunSession]. */
+    private fun leave() {
         ticker?.cancel()
+        ticker = null
         locationManager?.removeUpdates(listener)
+        locationManager = null
         wake?.let { if (it.isHeld) it.release() }
+        wake = null
         coach?.release()
         coach = null
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -165,6 +225,7 @@ class RunService : Service() {
     }
 
     override fun onDestroy() {
+        RunSession.tracker?.let { RunSession.save(now()) }
         locationManager?.removeUpdates(listener)
         wake?.let { if (it.isHeld) it.release() }
         coach?.release()

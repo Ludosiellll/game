@@ -14,6 +14,7 @@ import forma.core.plan.SessionKind
 import forma.core.run.RunResult
 import forma.core.run.RunType
 import forma.core.strength.Outcome
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -113,7 +114,7 @@ class RepositoryTest {
         assertTrue(long.totalSeconds < before.longMinutes * 60, "${long.totalSeconds}")
 
         // The break is taken once: the next day plans from the run done on the way back.
-        repo.saveRun(easyBack, RunResult(1.0, 4, easyBack.totalSeconds), clock, emptyList(), back)
+        repo.saveRun(easyBack, RunResult(1.0, 4, easyBack.totalSeconds), clock + 42L * 86_400_000, emptyList(), back)
         val next = repo.runFor(SessionKind.RUN_EASY, back.plusDays(2))
         assertTrue(!next.note.startsWith("Перерыв"), next.note)
         assertTrue(repo.store.runStateNow().vdot!! < before.vdot!!)
@@ -206,5 +207,46 @@ class RepositoryTest {
         assertEquals(1, repo.store.runStateNow().walkStage)
         val saved = db.runs().get(id)!!
         assertTrue(saved.avgPace!! > 0)
+        // Saving the same run again (a double tap, a retry) changes nothing.
+        val again = repo.saveRun(w, RunResult(1.0, 6, w.totalSeconds, distanceM = 3200.0), clock, emptyList())
+        assertEquals(id, again.first)
+        assertEquals(1, db.workouts().allDone().count { it.kind == Kind.RUN })
+        assertEquals(1, repo.store.runStateNow().walkStage)
+    }
+
+    @Test fun aSessionIsStartedAndFinishedOnce() = runBlocking {
+        repo.completeOnboarding(profile)
+        val program = repo.store.programNow()!!
+        val day = LocalDate.ofEpochDay(program.startEpochDay)
+        // Two taps at once: one session.
+        val ids = kotlinx.coroutines.coroutineScope {
+            listOf(async { repo.startLift(program.templates[0].id, day) }, async { repo.startLift(program.templates[1].id, day) }).map { it.await() }
+        }
+        assertEquals(1, ids.toSet().size)
+        val id = ids.first()
+        val plan = repo.planOf(db.workouts().get(id)!!)!!
+        val item = plan.items.first()
+        repeat(item.prescription.sets) { repo.logSet(id, item, item.prescription.weight ?: 40.0, item.prescription.reps, 2) }
+        val first = repo.finishLift(id, 7)
+        val slot = db.state().slot(item.slot.key)
+        // Finishing again (a double tap, a retry after the screen closed) evaluates nothing twice.
+        val second = repo.finishLift(id, 7)
+        assertEquals(first, second)
+        assertEquals(slot, db.state().slot(item.slot.key))
+    }
+
+    @Test fun aBrokenProgramFromAFriendIsRefused() = runBlocking {
+        repo.completeOnboarding(profile)
+        val mine = repo.store.programNow()!!
+        val other = forma.core.plan.ProgramGenerator.generate(profile.copy(goal = Goal.MUSCLE), LocalDate.of(2026, 10, 5))
+        // The week names a session that does not exist: starting it would crash every time.
+        val broken = other.copy(templates = other.templates.drop(1))
+        assertTrue(!repo.copyProgram(broken, "Иван"))
+        assertEquals(mine, repo.store.programNow())
+        // Absurd numbers are brought back to sane ones; unknown exercises are left out.
+        val wild = other.copy(templates = other.templates.map { t -> t.copy(slots = t.slots.map { it.copy(sets = 500, rir = 40) } + t.slots.first().copy(exerciseId = "nope")) })
+        assertTrue(repo.copyProgram(wild, "Иван"))
+        val taken = repo.store.programNow()!!
+        assertTrue(taken.templates.all { t -> t.slots.all { it.sets <= 10 && it.rir <= 5 && it.exerciseId != "nope" } })
     }
 }

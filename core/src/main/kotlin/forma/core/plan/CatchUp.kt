@@ -6,8 +6,8 @@ import forma.core.model.Emphasis
  * A session missed earlier this week that can be done today instead of resting.
  *
  * Only on a free day, and only when it breaks none of the layout rules against what was done yesterday and what is
- * planned tomorrow: no heavy legs on consecutive days or the day before a hard run, no two hard runs in a row,
- * no hard run the day before heavy legs.
+ * planned tomorrow (on Sunday: next Monday): no heavy legs on consecutive days, no two hard runs in a row, no hard
+ * run and heavy legs on consecutive days in either order.
  */
 object CatchUp {
     /** One day of this week: what was planned and what was actually done (as sessions). */
@@ -31,11 +31,11 @@ object CatchUp {
         if (missed.isEmpty()) return null
 
         val yesterday = week.firstOrNull { it.day == today - 1 }?.done.orEmpty()
-        val tomorrow = week.firstOrNull { it.day == today + 1 }?.planned.orEmpty()
+        val tomorrow = if (today == 7) program.week.on(1) else week.firstOrNull { it.day == today + 1 }?.planned.orEmpty()
         fun legs(s: PlannedSession) = s.kind == SessionKind.LIFT && (program.templates.firstOrNull { it.id == s.templateId }?.legs ?: true)
         fun fits(s: PlannedSession): Boolean = when {
-            legs(s) -> yesterday.none(::legs) && tomorrow.none { legs(it) || it.isHardRun }
-            s.isHardRun -> yesterday.none { it.isHardRun } && tomorrow.none { it.isHardRun || legs(it) }
+            legs(s) -> (yesterday + tomorrow).none { legs(it) || it.isHardRun }
+            s.isHardRun -> (yesterday + tomorrow).none { it.isHardRun || legs(it) }
             else -> true
         }
         val emphasis = program.aim.normalized().emphasis

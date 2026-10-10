@@ -227,7 +227,75 @@ class ProgressionTest {
         val st = SlotState(null, 30)
         val p = Progression.prescribe(plank, s, st)
         assertEquals(Outcome.AddReps(0.0, 30, 35), Progression.evaluate(plank, s, st, p, sets(0.0, 30, 30, 30)).outcome)
-        assertIs<Outcome.Hold>(Progression.evaluate(plank, s, st, p, sets(0.0, 30, 25, 20)).outcome)
+        // Held longer than asked: from what the weakest set held, in 5 s steps.
+        assertEquals(Outcome.AddReps(0.0, 30, 50), Progression.evaluate(plank, s, st, p, sets(0.0, 47, 49, 52)).outcome)
+        val miss = Progression.evaluate(plank, s, st, p, sets(0.0, 30, 25, 20))
+        assertIs<Outcome.Hold>(miss.outcome)
+        // Short twice in a row: the target comes down to what was held.
+        val second = Progression.evaluate(plank, s, miss.state, p, sets(0.0, 28, 25, 22))
+        assertEquals(Outcome.LowerReps(0.0, 30, 20), second.outcome)
+        assertEquals(20, second.state.reps)
+    }
+
+    @Test fun holdsStayAtTheTopAndRestInADeload() {
+        val plank = Catalog["plank"]
+        val s = SlotSpec("plank", 3, 20, 60, 1, 60, SlotRole.ACCESSORY)
+        val top = SlotState(null, 60)
+        val atTop = Progression.evaluate(plank, s, top, Progression.prescribe(plank, s, top), sets(0.0, 60, 60, 65))
+        assertEquals(Outcome.Hold(0.0, 60, HoldReason.AT_TOP), atTop.outcome)
+        assertEquals(60, atTop.state.reps)
+        val st = SlotState(null, 30)
+        val deload = Progression.evaluate(plank, s, st, Progression.prescribe(plank, s, st, phase = Phase.DELOAD), sets(0.0, 40, 40))
+        assertEquals(Outcome.Deload, deload.outcome)
+        assertEquals(30, deload.state.reps)
+    }
+
+    // ---------- the lightest load ----------
+
+    @Test fun barbellsNeverGoBelowTheEmptyBar() {
+        val st = SlotState(20.0, 5)
+        assertEquals(20.0, Progression.prescribe(bench, benchSpec, st, phase = Phase.DELOAD).weight)
+        assertEquals(20.0, Progression.prescribe(bench, benchSpec, SlotState(22.5, 5), daysSinceLast = 90).weight)
+        assertEquals(20.0, Progression.prescribe(bench, benchSpec, SlotState.fresh(benchSpec), e1rm = 15.0).weight)
+        // A weak first session: the working weight is the empty bar, not 17.5 kg.
+        val fresh = SlotState.fresh(benchSpec)
+        val cal = eval(fresh, listOf(DoneSet(20.0, 3)), s = benchSpec, ex = bench, p = Progression.prescribe(bench, benchSpec, fresh))
+        assertEquals(20.0, cal.state.weight)
+        val cut = eval(SlotState(22.5, 5), sets(22.5, 2, 2, 1), s = benchSpec, ex = bench)
+        assertTrue(cut.state.weight!! >= 20.0)
+    }
+
+    @Test fun atTheLightestLoadTheRepsGoBelowTheRange() {
+        // The empty bar is too heavy for 5: the target becomes what was done, then climbs back.
+        val bar = eval(SlotState(20.0, 5), sets(20.0, 3, 3, 2), s = benchSpec, ex = bench)
+        assertEquals(Outcome.LowerReps(20.0, 5, 2), bar.outcome)
+        val back = eval(bar.state, sets(20.0, 3, 3, 6), s = benchSpec, ex = bench)
+        assertEquals(Outcome.AddReps(20.0, 2, 5), back.outcome)
+
+        val push = Catalog["pushup"]
+        val s = SlotSpec("pushup", 3, 8, 15, 2, 90, SlotRole.SECONDARY)
+        // A near miss holds first, like any near miss.
+        assertEquals(HoldReason.NEAR_MISS, (Progression.evaluate(push, s, SlotState(0.0, 8), Progression.prescribe(push, s, SlotState(0.0, 8)), sets(0.0, 8, 8, 7), 80.0).outcome as Outcome.Hold).reason)
+        val low = Progression.evaluate(push, s, SlotState(0.0, 8), Progression.prescribe(push, s, SlotState(0.0, 8)), sets(0.0, 5, 4, 4), 80.0)
+        assertEquals(Outcome.LowerReps(0.0, 8, 4), low.outcome)
+        // A big "+" set below the range: the reps climb faster, but the weight is not touched before the range is reached.
+        val up = Progression.evaluate(push, s, low.state, Progression.prescribe(push, s, low.state), sets(0.0, 4, 4, 9), 80.0)
+        assertEquals(Outcome.AddReps(0.0, 4, 7), up.outcome)
+    }
+
+    @Test fun theFloorForAssistedLiftsMeansMoreHelp() {
+        val pull = Catalog["pullup"]
+        val s = SlotSpec("pullup", 3, 5, 10, 2, 120, SlotRole.MAIN)
+        val st = SlotState(-15.0, 5)
+        // Far short with 15 kg of help: more help, and the floor of recent strength (25 kg of help) does not stop it.
+        val ev = Progression.evaluate(pull, s, st, Progression.prescribe(pull, s, st, bodyWeight = 80.0), sets(-15.0, 2, 2, 1), 80.0, recentBest = 80.0)
+        assertEquals(Outcome.Reduce(-15.0, -22.5, 5), ev.outcome)
+    }
+
+    @Test fun aNewRepRangeFromTheEstimateIsLighterAfterABreak() {
+        val fresh = SlotState.fresh(spec)
+        assertEquals(80.0, Progression.prescribe(squat, spec, fresh, e1rm = 100.0).weight)
+        assertEquals(72.5, Progression.prescribe(squat, spec, fresh, e1rm = 100.0, daysSinceLast = 40).weight)
     }
 
     // ---------- estimates ----------

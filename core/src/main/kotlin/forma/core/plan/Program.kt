@@ -53,4 +53,29 @@ data class Program(
     val copiedFrom: String? = null,
 ) {
     fun template(id: String): Template = templates.first { it.id == id }
+
+    /**
+     * The program made safe to use when it comes from someone else: exercises this phone does not know ([known] says
+     * which it does) are dropped, numbers are kept within sane bounds, and every planned lift must name a template with
+     * exercises left. Null when nothing usable remains.
+     */
+    fun checked(known: (String) -> Boolean): Program? {
+        val clean = templates.map { t ->
+            t.copy(
+                title = t.title.take(60),
+                slots = t.slots.filter { known(it.exerciseId) }.take(12).map { s ->
+                    val lo = s.repMin.coerceIn(1, 100)
+                    s.copy(
+                        sets = s.sets.coerceIn(1, 10), repMin = lo, repMax = s.repMax.coerceIn(lo, 100), rir = s.rir.coerceIn(0, 5),
+                        restSec = s.restSec.coerceIn(0, 600), increment = s.increment?.takeIf { it > 0 && it <= 20 },
+                    )
+                },
+            )
+        }.filter { it.slots.isNotEmpty() }.distinctBy { it.id }
+        val ids = clean.map { it.id }.toSet()
+        val days = week.days.filter { it.day in 1..7 }.distinctBy { it.day }
+        if (days.any { d -> d.sessions.any { it.kind == SessionKind.LIFT && it.templateId !in ids } }) return null
+        if (days.all { it.sessions.isEmpty() }) return null
+        return copy(templates = clean, week = week.copy(days = days.map { it.copy(sessions = it.sessions.take(3)) }))
+    }
 }

@@ -82,6 +82,8 @@ data class RunResult(
     val workPace: Double? = null,
     /** Distance covered during WORK segments, for tests. */
     val workDistanceM: Double? = null,
+    /** Seconds actually spent in WORK and RUN segments; null for results saved before it was recorded. */
+    val workSec: Int? = null,
 )
 
 @Serializable
@@ -171,8 +173,9 @@ object RunPlan {
         return RunWorkout(RunType.RUN_WALK, title, segs, note, targetRpe = 6, stage = stage)
     }
 
-    fun easy(state: RunState, cutback: Boolean = false): RunWorkout {
-        val min = scaled(state.easyMinutes, cutback)
+    fun easy(state: RunState, cutback: Boolean = false, day: Long? = null): RunWorkout {
+        val cap = singleRunCap(state, day)
+        val min = scaled(state.easyMinutes, cutback).let { if (cap != null) minOf(it, maxOf(15, cap)) else it }
         return RunWorkout(
             RunType.EASY, "Лёгкий бег · $min мин",
             listOf(Segment(SegmentKind.RUN, min * 60, paces(state)?.easy)),
@@ -234,10 +237,14 @@ object RunPlan {
 
     /**
      * The same day when the body says no: an easy run of at most the usual easy length and 3/4 of the planned running
-     * time. Run/walk stays as it is — walking more is already the lighter version.
+     * time; for run/walk, last week's session. Either way the plan does not move.
      */
     fun lighter(state: RunState, w: RunWorkout): RunWorkout {
-        if (w.type == RunType.RUN_WALK || w.type == RunType.FREE) return w
+        if (w.type == RunType.FREE) return w
+        if (w.type == RunType.RUN_WALK) {
+            val r = runWalk(state.copy(walkStage = max(0, state.walkStage - 3)))
+            return r.copy(note = "Самочувствие так себе — сегодня тренировка прошлой недели, план не сдвигается. " + r.note, light = true)
+        }
         val minutes = max(15, min(state.easyMinutes, (w.workSeconds * 0.75 / 60 / 5).toInt() * 5))
         val e = easy(state.copy(easyMinutes = minutes))
         return e.copy(note = "Самочувствие так себе — сегодня только лёгкий бег, план не сдвигается. " + e.note, light = true)
@@ -366,9 +373,12 @@ object RunPlan {
                 if (done && r.rpe <= 6) s = s.copy(walkFails = 0)
             }
             RunType.EASY -> {
+                // Only a run of the full usual length says it can grow: one kept short (after the gym, a cutback
+                // week, the 30-day cap) proves nothing about a longer one.
+                val full = w.workSeconds >= state.easyMinutes * 60
                 s = when {
                     r.rpe >= 7 -> s.copy(easyMinutes = max(20, state.easyMinutes - 5)).also { out += RunOutcome.Shorter(it.easyMinutes) }
-                    done && r.rpe <= 5 && state.easyMinutes < caps.easyMax ->
+                    done && full && r.rpe <= 5 && state.easyMinutes < caps.easyMax ->
                         s.copy(easyMinutes = min(caps.easyMax, state.easyMinutes + 3)).also { out += RunOutcome.Longer(it.easyMinutes) }
                     else -> s.also { out += RunOutcome.Same(state.easyMinutes) }
                 }
@@ -423,9 +433,12 @@ object RunPlan {
                 }
             }
             RunType.TEST -> {
+                // Only a test run to the end counts: a shortened one would overrate the runner (short efforts are
+                // faster) and block the next test for eight weeks.
                 val d = r.workDistanceM
-                if (d != null && d > 500) {
-                    val nv = (Vdot.fromRace(d, 12 * 60.0) * 2).roundToInt() / 2.0
+                val sec = r.workSec ?: w.workSeconds
+                if (done && d != null && d > 500 && sec > 0) {
+                    val nv = (Vdot.fromRace(d, sec.toDouble()) * 2).roundToInt() / 2.0
                     out += RunOutcome.VdotChanged(state.vdot, nv)
                     s = s.copy(vdot = nv)
                 }

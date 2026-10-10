@@ -56,7 +56,7 @@ fun SettingsScreen() {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var message by remember { mutableStateOf<String?>(null) }
-    fun save(f: (Settings) -> Settings) = scope.launch { repo.store.setSettings(f(repo.store.settingsNow())) }
+    fun save(f: (Settings) -> Settings) = scope.launch { repo.updateSettings(f) }
     val backup = remember { BackupManager(repo) }
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) scope.launch {

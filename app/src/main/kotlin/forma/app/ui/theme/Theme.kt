@@ -96,8 +96,9 @@ fun titleText(s: String): String = if (F.type.capsTitles) s.uppercase() else s
  */
 @Composable @ReadOnlyComposable
 fun numText(s: String, base: TextStyle): AnnotatedString {
-    val unit = SpanStyle(fontFamily = F.type.text, fontWeight = FontWeight.SemiBold, fontSize = base.fontSize * 0.62)
-    val sep = SpanStyle(fontFamily = F.type.text, fontWeight = FontWeight.Medium, fontSize = base.fontSize * 0.8)
+    // Relative sizes, so text that shrinks to fit (auto-size) keeps its proportions.
+    val unit = SpanStyle(fontFamily = F.type.text, fontWeight = FontWeight.SemiBold, fontSize = 0.62.em)
+    val sep = SpanStyle(fontFamily = F.type.text, fontWeight = FontWeight.Medium, fontSize = 0.8.em)
     // Words without numbers ("Без зала", "вес подбираем") are plain text at full size.
     if (s.none { it.isDigit() }) return buildAnnotatedString { withStyle(SpanStyle(fontFamily = F.type.text)) { append(s) } }
     return buildAnnotatedString {

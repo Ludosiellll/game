@@ -129,8 +129,11 @@ private fun addText(r: AddResult) = when (r) {
 /** Starts today's session as the friend did it; returns a line for the screen when it cannot. */
 private suspend fun copyWorkout(api: FriendsApi?, repo: TrainingRepository, nav: Navigator, item: FeedItem): String? {
     val plan = item.liftPlan() ?: return "Эту тренировку нельзя повторить: в ней нет плана."
+    if (repo.db.workouts().active() != null) return "Сначала закончи начатую тренировку."
     val own = runCatching { api?.progress(item.userId)?.customExercises() }.getOrNull().orEmpty()
-    val id = repo.startCopiedLift(plan, item.name, own) ?: return "Сначала закончи начатую тренировку."
+    val id = repo.startCopiedLift(plan, item.name, own)
+        ?: return if (repo.db.workouts().active() != null) "Сначала закончи начатую тренировку."
+        else "Упражнений из этой тренировки нет на телефоне — повторить её не получится."
     nav.push(Screen.Workout(id))
     return null
 }
@@ -312,9 +315,13 @@ fun FriendScreen(userId: String, name: String) {
         name, progress, items, error, message,
         onCopyProgram = { p ->
             scope.launch {
-                val program = p.program() ?: return@launch
-                repo.copyProgram(program, p.name, p.customExercises())
-                nav.tab(Screen.Plan)
+                val program = p.program()
+                when {
+                    program == null -> message = "Программа друга не читается: пусть друг обновит приложение."
+                    !repo.copyProgram(program, p.name, p.customExercises()) ->
+                        message = "Эту программу не получилось взять: в ней нет упражнений, которые знает этот телефон."
+                    else -> nav.tab(Screen.Plan)
+                }
             }
         },
         onCopy = { item -> scope.launch { message = copyWorkout(api, repo, nav, item) } },

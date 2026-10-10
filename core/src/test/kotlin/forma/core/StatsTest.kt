@@ -1,5 +1,6 @@
 package forma.core
 
+import forma.core.analytics.Point
 import forma.core.analytics.SetRow
 import forma.core.analytics.Stats
 import forma.core.model.Catalog
@@ -7,6 +8,7 @@ import forma.core.model.Muscle
 import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class StatsTest {
@@ -32,6 +34,17 @@ class StatsTest {
         val today = LocalDate.ofEpochDay(day0 + 2)
         val t = Stats.weeklyTonnage(listOf(row(1, 1, "db_bench", 20.0, 10)), today, 1) { 80.0 }
         assertEquals(listOf(400.0), t)
+    }
+
+    @Test fun sessionsWithNoLoadDoNotBreakTheNumbers() {
+        // A dumbbell exercise done without dumbbells (0 kg) has no estimate: no NaN, no division by zero.
+        val rows = (0 until 3).flatMap { i -> listOf(row(i.toLong(), i * 7L, "bulgarian", 0.0, 10), row(i.toLong(), i * 7L, "squat", 60.0 + 2.5 * i, 8)) }
+        assertTrue(Stats.e1rmSeries(rows, Catalog["bulgarian"]) { 80.0 }.isEmpty())
+        val idx = Stats.strengthIndex(rows) { 80.0 }
+        assertTrue(idx.isNotEmpty() && idx.all { it.value.isFinite() })
+        assertTrue(Stats.changePct(idx)!!.isFinite())
+        assertTrue(Stats.strengthIndex(rows.filter { it.exerciseId == "bulgarian" }) { 80.0 }.isEmpty())
+        assertNull(Stats.changePct(listOf(Point(0, 0.0), Point(7, 10.0))))
     }
 
     @Test fun strengthIndexStartsAtHundredAndGrows() {

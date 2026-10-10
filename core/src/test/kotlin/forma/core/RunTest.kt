@@ -3,6 +3,7 @@ package forma.core
 import forma.core.run.Cue
 import forma.core.run.PaceTable
 import forma.core.run.RunCaps
+import forma.core.run.RunLog
 import forma.core.run.RunOutcome
 import forma.core.run.RunPlan
 import forma.core.run.RunResult
@@ -179,6 +180,32 @@ class RunTest {
         val st = RunState(walkStage = -1)
         val after = RunPlan.after(st, RunPlan.test(st), RunResult(1.0, 9, 1800, workDistanceM = 3000.0), caps)
         assertEquals(48.0, after.state.vdot)
+    }
+
+    @Test fun aShortenedTimeTrialChangesNothing() {
+        val st = RunState(walkStage = -1, vdot = 45.0)
+        // Stopped after 6 of the 12 minutes: a short effort would overrate the runner and block the next test.
+        val short = RunPlan.after(st, RunPlan.test(st), RunResult(0.5, 9, 1200, workDistanceM = 1700.0, workSec = 360), caps)
+        assertEquals(45.0, short.state.vdot)
+        assertTrue(short.outcomes.none { it is RunOutcome.VdotChanged })
+        // To the end: the time actually run counts.
+        val full = RunPlan.after(st, RunPlan.test(st), RunResult(1.0, 9, 1800, workDistanceM = 3000.0, workSec = 720), caps)
+        assertEquals(48.0, full.state.vdot)
+    }
+
+    @Test fun easyRunsGrowOnlyFromRunsOfTheFullLength() {
+        val st = RunState(walkStage = -1, easyMinutes = 40)
+        // Kept to 30 minutes after the gym: it proves nothing about 43.
+        val short = RunPlan.easy(st.copy(easyMinutes = 30))
+        assertEquals(40, RunPlan.after(st, short, RunResult(1.0, 4, 1800), caps, day = 50).state.easyMinutes)
+        assertEquals(43, RunPlan.after(st, RunPlan.easy(st), RunResult(1.0, 4, 2400), caps, day = 50).state.easyMinutes)
+    }
+
+    @Test fun easyRunsKeepToTheThirtyDayCap() {
+        // Only 20-minute runs in the last month: an easy run is 22 minutes at most.
+        val st = RunState(walkStage = -1, easyMinutes = 40, recent = listOf(RunLog(40, 20), RunLog(45, 20)))
+        assertEquals(22 * 60, RunPlan.easy(st, day = 50).totalSeconds)
+        assertEquals(40 * 60, RunPlan.easy(st).totalSeconds)
     }
 
     @Test fun timelineWalksThroughSegments() {

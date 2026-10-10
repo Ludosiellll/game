@@ -27,7 +27,9 @@ object Texts {
         is Outcome.AddReps ->
             if (ex?.load == LoadKind.TIMED) "Всё выдержал — в следующий раз ${o.to} с."
             else "Все повторы сделаны — в следующий раз ${target(ex, o.weight, o.to)}."
-        is Outcome.LowerReps -> "Повторов не хватило — цель ${o.to} вместо ${o.from}, вес прежний: ${target(ex, o.weight, o.to)}."
+        is Outcome.LowerReps ->
+            if (ex?.load == LoadKind.TIMED) "Два раза подряд не удалось удержать ${o.from} с — цель ${o.to} с, от неё снова растём."
+            else "Повторов не хватило — цель ${o.to} вместо ${o.from}, вес прежний: ${target(ex, o.weight, o.to)}."
         is Outcome.AddWeight -> "Все повторы сделаны — прибавляем ${Ru.kg(o.to - o.from)} кг: ${target(ex, o.to, o.reps)}."
         is Outcome.Jump -> "Запас был большой — сразу ${target(ex, o.to, o.reps)} (+${Ru.kg(o.to - o.from)} кг)."
         is Outcome.Hold -> when (o.reason) {
@@ -37,6 +39,7 @@ object Texts {
             HoldReason.LIGHTER -> "Подходы были легче плана — цель прежняя: ${target(ex, o.weight, o.reps)}."
             HoldReason.CONSOLIDATE -> "Всё сделано, но без запаса — закрепляем ${target(ex, o.weight, o.reps)}."
             HoldReason.NOT_THE_WEIGHT -> "Вес уже снижали, а повторов не прибавилось — дело не в весе. Оставляем его, цель ${target(ex, o.weight, o.reps)}."
+            HoldReason.AT_TOP -> "Это верх диапазона — держим ${target(ex, o.weight, o.reps)}. Хочешь дальше — замени на вариант сложнее."
         }
         is Outcome.Reduce -> "Вес оказался тяжёлым — ${target(ex, o.to, o.reps)} (−${Ru.kg(o.from - o.to)} кг). С этого веса снова растём."
         is Outcome.Reset -> "Три тренировки без роста — шаг назад до ${target(ex, o.to, o.reps)}, чтобы снова пойти вверх."

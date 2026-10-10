@@ -46,6 +46,9 @@ internal abstract class SyncTable<T>(val name: String, val keyColumn: String, va
     /** Rows per upload request and per download page (GPS tracks make run rows large). */
     open val batch: Int = 200
 
+    /** Rows that two phones change in turn (progress per exercise): the newer change wins, so they come down first. */
+    open val newestWins: Boolean = false
+
     abstract fun key(row: T): String
     abstract suspend fun local(): List<T>
 
@@ -96,9 +99,9 @@ internal abstract class SyncTable<T>(val name: String, val keyColumn: String, va
         var newest = cursor
         var applied = 0
         var parentRefreshed = false
-        var offset = 0
+        var after: Pair<String, String>? = null
         while (true) {
-            val page = api.changes(name, keyColumn, since, offset, batch)
+            val page = api.changes(name, keyColumn, since, after, batch)
             for (json in page) {
                 val key = keyOf(json)
                 if (json["deleted"]?.jsonPrimitive?.booleanOrNull == true) {
@@ -126,7 +129,8 @@ internal abstract class SyncTable<T>(val name: String, val keyColumn: String, va
                 if (at != null && (newest == null || at > newest)) newest = at
             }
             if (page.size < batch) break
-            offset += page.size
+            val last = page.last()
+            after = (serverTime(last) ?: break).toString() to keyOf(last)
         }
         newest?.let { dao.putCursor(SyncCursorEntity(name, it.toString())) }
         return applied
@@ -162,8 +166,20 @@ private fun JsonObject.dblOrNull(k: String): Double? = get(k)?.jsonPrimitive?.do
 private fun JsonObject.integer(k: String): Int = getValue(k).jsonPrimitive.int
 private fun JsonObject.intOrNull(k: String): Int? = get(k)?.jsonPrimitive?.intOrNull
 
-/** A document from the settings store: profile, program, run_state, settings, lift_state. */
+/** A document from the settings store: profile, program, run_state, settings, lift_state, custom_exercises. */
 internal data class Doc(val key: String, val value: JsonElement)
+
+internal const val CUSTOM_DOC = "custom_exercises"
+
+/** Both lists of own exercises, by id; for an exercise in both, the [incoming] one. */
+internal fun mergeCustom(local: String?, incoming: String): String {
+    val serializer = kotlinx.serialization.builtins.ListSerializer(forma.core.model.Exercise.serializer())
+    val mine = local?.let { runCatching { forma.app.data.AppJson.decodeFromString(serializer, it) }.getOrNull() }.orEmpty()
+    val theirs = runCatching { forma.app.data.AppJson.decodeFromString(serializer, incoming) }.getOrNull() ?: return incoming
+    val ids = theirs.mapTo(HashSet()) { it.id }
+    val extra = mine.filter { it.id !in ids }
+    return if (extra.isEmpty()) incoming else forma.app.data.AppJson.encodeToString(serializer, theirs + extra)
+}
 
 /** A finished run with the global id of its workout. The track is loaded only for uploads. */
 internal data class RunRow(
@@ -189,7 +205,9 @@ internal class SyncTables(db: FormaDatabase, private val store: SettingsStore) {
         override fun decode(json: JsonObject) = Doc(json.str("key"), json.getValue("value"))
         override suspend fun write(row: Doc): Write {
             val text = textOf(row.value) ?: return Write.SKIP
-            return if (store.putSyncDoc(row.key, text)) Write.OK else Write.SKIP
+            // Own exercises made on two phones: both lists together (the cloud's version of the same one wins).
+            val merged = if (row.key == CUSTOM_DOC) mergeCustom(store.syncDocs()[CUSTOM_DOC], text) else text
+            return if (store.putSyncDoc(row.key, merged)) Write.OK else Write.SKIP
         }
         override suspend fun delete(key: String) = store.removeSyncDoc(key)
     }
@@ -229,7 +247,13 @@ internal class SyncTables(db: FormaDatabase, private val store: SettingsStore) {
             json["linear"]?.jsonPrimitive?.booleanOrNull ?: true, json.intOrNull("steady") ?: 0,
             json.dblOrNull("cut_from"), json.intOrNull("cut_reps"),
         )
-        override suspend fun write(row: SlotStateEntity): Write { dao.putSlot(row); return Write.OK }
+        override val newestWins = true
+        override suspend fun write(row: SlotStateEntity): Write {
+            val local = dao.slot(row.slotKey)
+            if (local != null && local.updatedAt > row.updatedAt) return Write.SKIP
+            dao.putSlot(row)
+            return Write.OK
+        }
         override suspend fun delete(key: String) = dao.deleteSlot(key)
     }
 
@@ -244,7 +268,13 @@ internal class SyncTables(db: FormaDatabase, private val store: SettingsStore) {
         }
         override fun decode(json: JsonObject) =
             ExerciseStatEntity(json.str("exercise_id"), json.dbl("e1rm"), json.dbl("best"), msOf(json["changed_at"]) ?: 0L)
-        override suspend fun write(row: ExerciseStatEntity): Write { dao.putStat(row); return Write.OK }
+        override val newestWins = true
+        override suspend fun write(row: ExerciseStatEntity): Write {
+            val local = dao.stat(row.exerciseId)
+            if (local != null && local.updatedAt > row.updatedAt) return Write.SKIP
+            dao.putStat(row)
+            return Write.OK
+        }
         override suspend fun delete(key: String) = dao.deleteStat(key)
     }
 
@@ -284,7 +314,11 @@ internal class SyncTables(db: FormaDatabase, private val store: SettingsStore) {
 
     val sets = object : SyncTable<SetWithWorkout>("sets", "id", parent = workouts) {
         override fun key(row: SetWithWorkout) = row.set.uid
-        override suspend fun local() = dao.doneSets()
+        // Only sets of workouts the cloud has: one finished during this sync goes up with the next.
+        override suspend fun local(): List<SetWithWorkout> {
+            val inCloud = dao.rows(workouts.name).mapTo(HashSet()) { it.key }
+            return dao.doneSets().filter { it.workoutUid in inCloud }
+        }
         override suspend fun encode(row: SetWithWorkout) = buildJsonObject {
             val s = row.set
             put("id", s.uid)
@@ -322,7 +356,10 @@ internal class SyncTables(db: FormaDatabase, private val store: SettingsStore) {
         override val batch = 10
 
         override fun key(row: RunRow) = row.workoutUid
-        override suspend fun local() = dao.doneRuns().map { RunRow(it.run, it.workoutUid, it.points, it.firstT, it.lastT) }
+        override suspend fun local(): List<RunRow> {
+            val inCloud = dao.rows(workouts.name).mapTo(HashSet()) { it.key }
+            return dao.doneRuns().filter { it.workoutUid in inCloud }.map { RunRow(it.run, it.workoutUid, it.points, it.firstT, it.lastT) }
+        }
 
         private fun base(row: RunRow) = buildJsonObject {
             val r = row.run

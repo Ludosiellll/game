@@ -153,9 +153,10 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier, color: Color = F.c
 @Composable
 fun StatTile(label: String, value: String, sub: String?, color: Color, modifier: Modifier = Modifier) {
     FCard(modifier, padding = PaddingValues(12.dp), gap = 2.dp, fill = F.c.surface) {
-        Text(label, style = T.secondary(12.sp), maxLines = 1)
+        Text(label, style = T.secondary(12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         val st = T.number(24.sp).copy(color = color)
-        Text(numText(value, st), style = st, maxLines = 1)
+        // "1:45:30" in a third of a narrow screen: smaller, not cut.
+        BasicText(numText(value, st), style = st, maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = 24.sp, stepSize = 1.sp))
         if (sub != null) Text(sub, style = T.secondary(11.sp).copy(color = F.c.text3), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -293,6 +294,15 @@ fun NumText(
     textAlign: TextAlign? = null,
     maxLines: Int = Int.MAX_VALUE,
     overflow: TextOverflow = TextOverflow.Clip,
+    /** Shrink to fit the width instead of being cut. */
+    autoSize: TextAutoSize? = null,
 ) {
-    Text(numText(text, style), style = style, modifier = modifier, textAlign = textAlign, maxLines = maxLines, overflow = overflow)
+    if (autoSize == null) {
+        Text(numText(text, style), style = style, modifier = modifier, textAlign = textAlign, maxLines = maxLines, overflow = overflow)
+    } else {
+        BasicText(
+            numText(text, style), modifier, style = if (textAlign != null) style.copy(textAlign = textAlign) else style,
+            overflow = overflow, maxLines = maxLines, autoSize = autoSize,
+        )
+    }
 }

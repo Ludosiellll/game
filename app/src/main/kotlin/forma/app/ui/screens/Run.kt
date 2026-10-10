@@ -9,6 +9,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -128,8 +130,18 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
     var gps by remember { mutableStateOf(settings.gps) }
     var voice by remember { mutableStateOf(settings.voice) }
     fun start() {
-        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        RunService.start(context, workout, gps && granted, voice, settings.beeps, settings.vibration)
+        // One run at a time: an unfinished or unsaved one is shown instead of starting another over it.
+        val current = RunSession.tracker
+        if (current != null) {
+            nav.replaceTop(if (current.state == RunTracker.State.FINISHED) Screen.RunDone(0) else Screen.RunActive)
+            return
+        }
+        fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
+        val fine = granted(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (gps && !fine && granted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            android.widget.Toast.makeText(context, "С примерной геопозицией дистанцию не посчитать — бег по времени. Нужна точная.", android.widget.Toast.LENGTH_LONG).show()
+        }
+        RunService.start(context, workout, gps && fine, voice, settings.beeps, settings.vibration)
         nav.replaceTop(Screen.RunActive)
     }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { start() }
@@ -172,10 +184,17 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
         }
         PrimaryButton("Старт", {
             val need = buildList {
-                if (gps) add(Manifest.permission.ACCESS_FINE_LOCATION)
+                // Android 12+ ignores a request for precise location that does not ask for approximate too.
+                if (gps && RunSession.tracker == null) {
+                    add(Manifest.permission.ACCESS_FINE_LOCATION)
+                    add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                }
                 if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-            }.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
-            if (need.isEmpty()) start() else launcher.launch(need.toTypedArray())
+            }
+            val missing = need.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
+            if (missing.isEmpty() || ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
+                missing.all { it == Manifest.permission.ACCESS_COARSE_LOCATION }
+            ) start() else launcher.launch(need.toTypedArray())
         }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, icon = Ic.play, height = 60.dp)
     }
 }
@@ -226,10 +245,11 @@ fun RunActiveScreen() {
     val nav = LocalNav.current
     val context = LocalContext.current
     val ui by RunSession.ui.collectAsState()
+    val settings = LocalSettings.current
     var locked by remember { mutableStateOf(false) }
     val view = LocalView.current
-    DisposableEffect(Unit) {
-        view.keepScreenOn = true
+    DisposableEffect(settings.keepScreenOn) {
+        view.keepScreenOn = settings.keepScreenOn
         onDispose { view.keepScreenOn = false }
     }
     val u = ui
@@ -267,11 +287,17 @@ fun RunActiveScreen() {
                 style = T.body(14.sp, FontWeight.ExtraBold).copy(color = F.c.endurance, letterSpacing = if (F.type.capsLabels) 2.sp else 0.sp),
             )
             val big = if (w.isOpenEnded) u.elapsedSec else tl.segmentRemaining
+            val size = 112 * F.type.bigNumberScale
+            // "25:04" or "1:05:09" must fit a narrow phone: the timer shrinks instead of being cut.
             NumText(
-                Ru.clock(big), style = T.number((112 * F.type.bigNumberScale).sp).copy(lineHeight = (120 * F.type.bigNumberScale).sp),
-                textAlign = TextAlign.Center, maxLines = 1,
+                Ru.clock(big), style = T.number(size.sp).copy(lineHeight = (size * 1.07f).sp, textAlign = TextAlign.Center),
+                modifier = Modifier.fillMaxWidth(), maxLines = 1,
+                autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 40.sp, maxFontSize = size.sp, stepSize = 4.sp),
             )
             Text(if (w.isOpenEnded) "с начала" else "осталось в отрезке", style = T.secondary(13.sp))
+        }
+        if (u.restored && u.state == RunTracker.State.PAUSED) {
+            Banner("Телефон закрыл приложение во время пробежки. Время и дистанция до этого момента сохранены: ▶ — продолжить, «Стоп» — закончить.", F.c.warn)
         }
 
         val target = seg?.pace
@@ -323,7 +349,8 @@ fun RunActiveScreen() {
             Box(
                 Modifier.size(96.dp).clip(if (F.shape.pill) CircleShape else RoundedCornerShape(F.shape.radius))
                     .background(if (locked) F.c.surface2 else F.c.endurance)
-                    .combinedClickable(enabled = !locked, role = Role.Button, onClickLabel = if (paused) "Продолжить" else "Пауза", onClick = {
+                    .semantics { contentDescription = if (paused) "Продолжить" else "Пауза" }
+                    .combinedClickable(enabled = !locked, role = Role.Button, onClick = {
                         RunService.send(context, if (paused) RunService.ACTION_RESUME else RunService.ACTION_PAUSE)
                     }),
                 contentAlignment = Alignment.Center,
@@ -332,9 +359,11 @@ fun RunActiveScreen() {
                 Box(
                     Modifier.size(width = 104.dp, height = 52.dp).clip(RoundedCornerShape(if (F.shape.pill) 26.dp else F.shape.radiusSmall))
                         .border(if (F.shape.border > 0.dp) F.shape.border else 1.5.dp, if (locked) F.c.line else F.c.bad, RoundedCornerShape(if (F.shape.pill) 26.dp else F.shape.radiusSmall))
-                        .combinedClickable(enabled = !locked, role = Role.Button, onClickLabel = "Закончить", onClick = {}, onLongClick = {
-                            RunService.send(context, RunService.ACTION_STOP)
-                        }),
+                        .semantics { contentDescription = "Стоп" }
+                        .combinedClickable(
+                            enabled = !locked, role = Role.Button, onClickLabel = "Удерживай, чтобы закончить", onClick = {},
+                            onLongClickLabel = "Закончить пробежку", onLongClick = { RunService.send(context, RunService.ACTION_STOP) },
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text("Стоп\nудерживай", style = T.body(12.sp, FontWeight.Bold).copy(color = if (locked) F.c.text3 else F.c.bad, lineHeight = 14.sp), textAlign = TextAlign.Center)
@@ -362,12 +391,39 @@ fun RunDoneScreen(workoutId: Long) {
     val tracker = remember { RunSession.tracker }
     var rpe by remember { mutableIntStateOf(tracker?.workout?.targetRpe ?: 5) }
     var saved by remember { mutableStateOf<Pair<Long, RunSummary>?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    var confirmDiscard by remember { mutableStateOf(false) }
     var testKm by remember { mutableStateOf("") }
 
-    if (workoutId != 0L || (tracker == null && saved == null)) {
-        // Opened from history or after process restart: show a saved run.
+    if (workoutId != 0L) {
+        // Opened from history: a saved run.
         HistoryItemScreen(workoutId)
         return
+    }
+    if (tracker == null && saved == null) {
+        // Saved or thrown away already (another screen, another try).
+        ScrollScreen(bottomInset = true) {
+            TopBar("Пробежка", onBack = { nav.tab(Screen.Today) })
+            Text("Эта пробежка уже сохранена или удалена — она в истории, если была сохранена.", style = T.body(15.sp))
+            PrimaryButton("На главную", { nav.tab(Screen.Today) }, Modifier.fillMaxWidth())
+        }
+        return
+    }
+    // Back keeps the run: it waits on the main screen until it is saved or thrown away.
+    androidx.activity.compose.BackHandler(enabled = saved == null) { nav.tab(Screen.Today) }
+    if (confirmDiscard) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("Не сохранять пробежку?") },
+            text = { Text("Время, дистанция и маршрут пропадут, план бега не изменится.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton({ confirmDiscard = false; RunSession.clear(); nav.tab(Screen.Today) }) {
+                    Text("Удалить", color = F.c.bad)
+                }
+            },
+            dismissButton = { androidx.compose.material3.TextButton({ confirmDiscard = false }) { Text("Отмена") } },
+            containerColor = F.c.surface, titleContentColor = F.c.text, textContentColor = F.c.text2,
+        )
     }
     val nowMs = android.os.SystemClock.elapsedRealtime()
     ScrollScreen(bottomInset = true) {
@@ -387,18 +443,27 @@ fun RunDoneScreen(workoutId: Long) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { (1..5).forEach { v -> Chip("$v", rpe == v, { rpe = v }, Modifier.weight(1f), minWidth = 0.dp) } }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { (6..10).forEach { v -> Chip("$v", rpe == v, { rpe = v }, Modifier.weight(1f), minWidth = 0.dp) } }
             Text(Texts.RPE.first { it.first == rpe }.second + " · по этой оценке приложение решит, усложнять ли следующий бег", style = T.secondary(14.sp))
-            PrimaryButton("Сохранить", {
+            PrimaryButton(if (saving) "Сохраняю…" else "Сохранить", {
+                if (saving) return@PrimaryButton
+                saving = true
                 scope.launch {
-                    var r = tracker.result(android.os.SystemClock.elapsedRealtime(), rpe)
-                    parseNum(testKm)?.let { km -> if (r.workDistanceM == null) r = r.copy(workDistanceM = km * 1000) }
-                    val points = RunSession.points.map { TrackPointEntity(0, it.timeMs, it.lat, it.lon, it.accuracy) }
-                    saved = repo.saveRun(tracker.workout, r, RunSession.startedAtWall, points)
-                    RunSession.clear()
+                    try {
+                        var r = tracker.result(android.os.SystemClock.elapsedRealtime(), rpe)
+                        parseNum(testKm)?.let { km -> if (r.workDistanceM == null) r = r.copy(workDistanceM = km * 1000) }
+                        val points = RunSession.points.map { TrackPointEntity(0, it.timeMs, it.lat, it.lon, it.accuracy) }
+                        saved = repo.saveRun(tracker.workout, r, RunSession.startedAtWall, points)
+                        RunSession.clear()
+                    } finally {
+                        saving = false
+                    }
                 }
-            }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData)
-            Text("Не сохранять", style = T.secondary(14.sp), modifier = Modifier.align(Alignment.CenterHorizontally).padding(8.dp).then(
-                Modifier.combinedClickableCompat { RunSession.clear(); nav.tab(Screen.Today) },
-            ))
+            }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, enabled = !saving)
+            Box(
+                Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp).clip(RoundedCornerShape(F.shape.radiusSmall))
+                    .clickable(enabled = !saving, role = Role.Button, onClick = { confirmDiscard = true })
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text("Не сохранять", style = T.secondary(14.sp)) }
         } else if (s != null) {
             Text("Сохранено", style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
             SectionLabel("Что дальше")
@@ -415,5 +480,4 @@ fun RunDoneScreen(workoutId: Long) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-private fun Modifier.combinedClickableCompat(onClick: () -> Unit): Modifier = this.combinedClickable(onClick = onClick)
+

@@ -109,7 +109,14 @@ fun TodayScreen() {
         val a = active
         if (a != null) Banner("Тренировка «${a.title}» не закончена — продолжить", F.c.strength, icon = Ic.dumbbell) { nav.push(Screen.Workout(a.id)) }
         val r = run
-        if (r != null && r.state != RunTracker.State.FINISHED) Banner("Идёт пробежка · ${Ru.clock(r.elapsedSec)}", F.c.endurance, icon = Ic.run) { nav.push(Screen.RunActive) }
+        when {
+            r == null -> Unit
+            r.state == RunTracker.State.FINISHED ->
+                Banner("Пробежка не сохранена · ${Ru.clock(r.elapsedSec)} — сохранить", F.c.endurance, icon = Ic.run) { nav.push(Screen.RunDone(0)) }
+            r.restored ->
+                Banner("Пробежка прервалась на ${Ru.clock(r.elapsedSec)} — продолжить или закончить", F.c.warn, icon = Ic.run) { nav.push(Screen.RunActive) }
+            else -> Banner("Идёт пробежка · ${Ru.clock(r.elapsedSec)}", F.c.endurance, icon = Ic.run) { nav.push(Screen.RunActive) }
+        }
         if (deload) Banner("Разгрузочная неделя: вдвое меньше подходов и вес −10 %. Восстановление — тоже тренировка.", F.c.warn)
 
         WeekStrip(week, today, p)

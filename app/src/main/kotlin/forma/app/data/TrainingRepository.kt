@@ -28,10 +28,13 @@ import forma.core.strength.SlotRole
 import forma.core.strength.SlotSpec
 import forma.core.strength.SlotState
 import forma.core.strength.WarmUp
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.max
@@ -44,12 +47,18 @@ class TrainingRepository(
     val db: FormaDatabase,
     val store: SettingsStore,
     private val now: () -> Long = System::currentTimeMillis,
-    private val zone: ZoneId = ZoneId.systemDefault(),
+    /** Fixed in tests and simulations; otherwise the phone's current zone, read each time (people travel). */
+    private val zone: ZoneId? = null,
     /** Called after anything worth copying to the cloud has been saved. */
     private val onChange: () -> Unit = {},
 ) {
+    private fun zone(): ZoneId = zone ?: ZoneId.systemDefault()
+
+    /** Starting, finishing and saving sessions one at a time: a double tap must not make two of anything. */
+    private val sessionLock = Mutex()
+
     /** Today by the repository's clock (tests and simulations move it). */
-    fun today(): LocalDate = java.time.Instant.ofEpochMilli(now()).atZone(zone).toLocalDate()
+    fun today(): LocalDate = java.time.Instant.ofEpochMilli(now()).atZone(zone()).toLocalDate()
 
     // ---------- profile and program ----------
 
@@ -144,10 +153,13 @@ class TrainingRepository(
         val slotRow = db.state().slot(spec.key)
         val st = slotRow?.toState() ?: SlotState.fresh(spec)
         val hint = Progression.startHint(ex, profile.bodyWeightKg, profile.sex == Sex.FEMALE, trained)
-        val lastDay = slotRow?.updatedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate().toEpochDay() }
+        val stat = db.state().stat(ex.id)
+        // The last time the exercise was done in any rep range (a new range starts from the estimate).
+        val lastMs = listOfNotNull(slotRow?.updatedAt, stat?.updatedAt).maxOrNull()
+        val lastDay = lastMs?.let { java.time.Instant.ofEpochMilli(it).atZone(zone()).toLocalDate().toEpochDay() }
         val p = Progression.prescribe(
             ex, spec, st, if (deload) Phase.DELOAD else Phase.NORMAL, rirOffset,
-            db.state().stat(ex.id)?.e1rm, profile.bodyWeightKg, hint,
+            stat?.e1rm, profile.bodyWeightKg, hint,
             daysSinceLast = lastDay?.let { date.toEpochDay() - it },
         )
         val warm = if (spec.role == SlotRole.MAIN && p.weight != null && ex.load == LoadKind.EXTERNAL && !deload) {
@@ -199,6 +211,12 @@ class TrainingRepository(
     }
 
     /** Replaces [planId] by [newId] in every session from now on; the same id (or null) brings the original back. */
+    /** Settings changed on their screen; they travel to other phones with the next sync. */
+    suspend fun updateSettings(f: (Settings) -> Settings) {
+        store.setSettings(f(store.settingsNow()))
+        onChange()
+    }
+
     suspend fun setSwap(planId: String, newId: String?) {
         val s = store.settingsNow()
         val swaps = if (newId == null || newId == planId) s.swaps - planId else s.swaps + (planId to newId)
@@ -227,10 +245,10 @@ class TrainingRepository(
     }
 
     /** Starts (or returns the already running) lifting session. */
-    suspend fun startLift(templateId: String, date: LocalDate = today(), forceDeload: Boolean = false): Long {
-        db.workouts().active()?.let { return it.id }
+    suspend fun startLift(templateId: String, date: LocalDate = today(), forceDeload: Boolean = false): Long = sessionLock.withLock {
+        db.workouts().active()?.let { return@withLock it.id }
         val plan = liftPlan(templateId, date, forceDeload)
-        return db.workouts().insert(
+        db.workouts().insert(
             WorkoutEntity(
                 epochDay = date.toEpochDay(), kind = Kind.LIFT, templateId = templateId, title = plan.title,
                 startedAt = now(), status = Status.ACTIVE, deload = plan.deload,
@@ -260,7 +278,29 @@ class TrainingRepository(
 
     suspend fun cancelWorkout(id: Long) = db.workouts().delete(id)
 
-    suspend fun finishLift(workoutId: Long, rpe: Int): LiftSummary {
+    /** Deletes a finished workout; the cloud copy (and friends' feeds) lose it on the next sync. */
+    suspend fun deleteWorkout(id: Long) {
+        db.workouts().delete(id)
+        onChange()
+    }
+
+    private fun liftSummaryOf(w: WorkoutEntity): LiftSummary? =
+        w.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
+
+    /**
+     * Evaluates every exercise and closes the session, all in one database transaction. A session finished already
+     * (a second tap, a retry after the screen was closed half way) returns its result without evaluating again.
+     */
+    suspend fun finishLift(workoutId: Long, rpe: Int): LiftSummary = sessionLock.withLock {
+        val first = db.workouts().get(workoutId) ?: error("no workout")
+        if (first.status == Status.DONE) return@withLock liftSummaryOf(first) ?: LiftSummary(emptyList(), 0.0, 0, 0, 0.0)
+        val summary = db.withTransaction { evaluateLift(workoutId, rpe) }
+        checkReactiveDeload(LocalDate.ofEpochDay(first.epochDay))
+        onChange()
+        summary
+    }
+
+    private suspend fun evaluateLift(workoutId: Long, rpe: Int): LiftSummary {
         val w = db.workouts().get(workoutId) ?: error("no workout")
         val plan = planOf(w) ?: error("no plan")
         val profile = store.profileNow() ?: error("no profile")
@@ -283,7 +323,8 @@ class TrainingRepository(
             )
             if (ev.outcome !is Outcome.NotDone) db.state().upsertSlot(ev.state.toEntity(item.slot))
             var record = false
-            ev.e1rm?.let { obs ->
+            // No estimate from sets without load (a weighted exercise done at 0 kg).
+            ev.e1rm?.takeIf { it > 0 }?.let { obs ->
                 val old = db.state().stat(ex.id)
                 record = old != null && obs > old.best + 0.05
                 db.state().upsertStat(
@@ -304,8 +345,6 @@ class TrainingRepository(
                 summaryJson = AppJson.encodeToString(LiftSummary.serializer(), summary),
             ),
         )
-        checkReactiveDeload(LocalDate.ofEpochDay(w.epochDay))
-        onChange()
         return summary
     }
 
@@ -352,14 +391,16 @@ class TrainingRepository(
      * Starts a session with a friend's exercises, sets and rep ranges; the weights are this user's own (progress,
      * estimate or the first-time search). Exercises this phone cannot know are left out. Null while another session runs.
      */
-    suspend fun startCopiedLift(plan: LiftPlan, from: String, exercises: List<Exercise> = emptyList(), date: LocalDate = today()): Long? {
-        if (db.workouts().active() != null) return null
+    suspend fun startCopiedLift(plan: LiftPlan, from: String, exercises: List<Exercise> = emptyList(), date: LocalDate = today()): Long? = sessionLock.withLock {
+        if (db.workouts().active() != null) return@withLock null
         importExercises(exercises)
         val specs = plan.items.map { it.slot }.filter { Catalog.find(it.exerciseId)?.archived == false }
-        if (specs.isEmpty()) return null
+            .map { it.copy(sets = it.sets.coerceIn(1, 10), repMin = it.repMin.coerceIn(1, 100), repMax = it.repMax.coerceIn(it.repMin.coerceIn(1, 100), 100), rir = it.rir.coerceIn(0, 5), restSec = it.restSec.coerceIn(0, 600)) }
+            .take(12)
+        if (specs.isEmpty()) return@withLock null
         val items = specs.mapIndexed { i, spec -> buildItem(i, spec.copy(increment = null), date, deload = false) }
-        val copy = LiftPlan(COPIED_TEMPLATE, "${plan.title} · как у $from", items, deload = false)
-        return db.workouts().insert(
+        val copy = LiftPlan(COPIED_TEMPLATE, "${plan.title.take(60)} · как у $from", items, deload = false)
+        db.workouts().insert(
             WorkoutEntity(
                 epochDay = date.toEpochDay(), kind = Kind.LIFT, templateId = COPIED_TEMPLATE, title = copy.title,
                 startedAt = now(), status = Status.ACTIVE, deload = false, planJson = AppJson.encodeToString(LiftPlan.serializer(), copy),
@@ -371,20 +412,23 @@ class TrainingRepository(
      * Takes a friend's program as one's own: the same days, sessions and exercises; this user's weights, block length
      * and progress per exercise. The profile follows (aim and days); changing the profile later builds one's own again.
      */
-    suspend fun copyProgram(program: Program, from: String, exercises: List<Exercise> = emptyList()) {
+    suspend fun copyProgram(program: Program, from: String, exercises: List<Exercise> = emptyList()): Boolean {
         importExercises(exercises)
-        val profile = store.profileNow() ?: return
-        val days = program.week.days.filter { it.sessions.isNotEmpty() }.map { it.day }.toSet().ifEmpty { profile.trainingDays }
-        val updated = profile.copy(aim = program.aim, goal = program.aim.nearestGoal(), trainingDays = days)
+        val profile = store.profileNow() ?: return false
+        // Whatever the friend's phone stored, only a program that works here is taken.
+        val safe = program.checked { id -> Catalog.find(id)?.archived == false } ?: return false
+        val days = safe.week.days.filter { it.sessions.isNotEmpty() }.map { it.day }.toSet().ifEmpty { profile.trainingDays }
+        val updated = profile.copy(aim = safe.aim, goal = safe.aim.nearestGoal(), trainingDays = days)
         val own = ProgramGenerator.generate(updated, today())
         store.setProfile(updated)
         store.setProgram(
-            program.copy(
+            safe.copy(
                 experience = profile.experience, blockWeeks = own.blockWeeks, startEpochDay = own.startEpochDay,
-                createdEpochDay = today().toEpochDay(), copiedFrom = from,
+                createdEpochDay = today().toEpochDay(), copiedFrom = from.take(40), runCaps = own.runCaps,
             ),
         )
         onChange()
+        return true
     }
 
     // ---------- daily life: pause, missed sessions, energy ----------
@@ -478,7 +522,7 @@ class TrainingRepository(
             else -> {
                 // On a lifting day the easy run comes after the gym: keep it short.
                 val liftDay = program?.week?.on(date.dayOfWeek.value)?.any { it.kind == SessionKind.LIFT } == true
-                RunPlan.easy(if (liftDay) st.copy(easyMinutes = minOf(st.easyMinutes, 30)) else st, cutback)
+                RunPlan.easy(if (liftDay) st.copy(easyMinutes = minOf(st.easyMinutes, 30)) else st, cutback, date.toEpochDay())
             }
         }
         val planned = if (light) RunPlan.lighter(st, w) else w
@@ -495,37 +539,50 @@ class TrainingRepository(
 
     fun freeRun(): RunWorkout = RunWorkout(RunType.FREE, "Свободный бег", emptyList(), "Секундомер, дистанция и темп.", targetRpe = 5)
 
+    /**
+     * Saves a finished run: the workout, its numbers and track in one transaction, then the running progress.
+     * A run saved already (same start; a second tap, a retry) is returned as it is, not saved twice.
+     */
     suspend fun saveRun(
         workout: RunWorkout, result: RunResult, startedAt: Long, points: List<TrackPointEntity>, date: LocalDate = today(),
-    ): Pair<Long, RunSummary> {
+    ): Pair<Long, RunSummary> = sessionLock.withLock {
+        db.workouts().runStartedAt(startedAt)?.let { w ->
+            val s = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
+            return@withLock w.id to (s ?: RunSummary(emptyList(), max(1, (w.durationSec ?: 60) / 60), w.load ?: 0.0))
+        }
         val program = store.programNow()
         val caps = program?.runCaps ?: forma.core.run.RunCaps(45, 90)
         val st = store.runStateNow()
         val after = RunPlan.after(st, workout, result, caps, date.toEpochDay())
         var next = after.state
         if (workout.type == RunType.TEST && after.outcomes.any { it is RunOutcome.VdotChanged }) next = next.copy(lastTestDay = date.toEpochDay())
-        store.setRunState(next)
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
         val summary = RunSummary(after.outcomes, minutes, load)
-        val id = db.workouts().insert(
-            WorkoutEntity(
-                epochDay = date.toEpochDay(), kind = Kind.RUN, templateId = workout.type.name, title = workout.title,
-                startedAt = startedAt, finishedAt = now(), status = Status.DONE, rpe = result.rpe,
-                durationSec = result.durationSec, load = load,
-                summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary),
-            ),
-        )
         val avgPace = result.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
-        db.runs().insert(
-            RunEntity(
-                id, workout.type.name, AppJson.encodeToString(RunWorkout.serializer(), workout), result.completed,
-                result.durationSec, result.distanceM, avgPace, result.workDistanceM, result.workPace, next.vdot,
-            ),
-        )
-        if (points.isNotEmpty()) db.runs().insertPoints(points.map { it.copy(workoutId = id) })
+        val id = db.withTransaction {
+            val id = db.workouts().insert(
+                WorkoutEntity(
+                    epochDay = date.toEpochDay(), kind = Kind.RUN, templateId = workout.type.name, title = workout.title,
+                    startedAt = startedAt, finishedAt = now(), status = Status.DONE, rpe = result.rpe,
+                    durationSec = result.durationSec, load = load,
+                    summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary),
+                ),
+            )
+            db.runs().insert(
+                RunEntity(
+                    id, workout.type.name, AppJson.encodeToString(RunWorkout.serializer(), workout), result.completed,
+                    result.durationSec, result.distanceM, avgPace, result.workDistanceM, result.workPace, next.vdot,
+                ),
+            )
+            // One point per moment: a doubled GPS callback must not fail the save.
+            if (points.isNotEmpty()) db.runs().insertPoints(points.distinctBy { it.t }.map { it.copy(workoutId = id) })
+            id
+        }
+        // The progress moves only once the run is safely stored.
+        store.setRunState(next)
         onChange()
-        return id to summary
+        id to summary
     }
 
     // ---------- views ----------
@@ -569,6 +626,19 @@ class TrainingRepository(
         val report = w?.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
             ?.reports?.firstOrNull { it.exerciseId == exerciseId }
         return sets to report
+    }
+
+    /**
+     * Everything off the phone (before it takes another account's data): workouts, progress, the plan, the profile
+     * and settings. The caller holds [DataLock].
+     */
+    suspend fun clearPhone() {
+        db.withTransaction {
+            val b = db.backup()
+            b.clearWorkouts(); b.clearSlots(); b.clearStats(); b.clearBodyWeights(); b.clearSyncRows(); b.clearSyncCursors()
+        }
+        store.clear()
+        refreshCustom()
     }
 
     /** Data changed outside the usual paths (a restored backup file). */

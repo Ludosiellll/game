@@ -23,6 +23,7 @@ interface WorkoutDao {
     @Query("SELECT * FROM workout WHERE status = 'DONE' ORDER BY startedAt") suspend fun allDone(): List<WorkoutEntity>
     @Query("DELETE FROM workout WHERE id = :id") suspend fun delete(id: Long)
     @Query("SELECT COUNT(*) FROM workout WHERE status = 'DONE'") fun observeDoneCount(): Flow<Int>
+    @Query("SELECT * FROM workout WHERE kind = 'RUN' AND startedAt = :startedAt LIMIT 1") suspend fun runStartedAt(startedAt: Long): WorkoutEntity?
 }
 
 @Dao
@@ -88,6 +89,8 @@ interface BackupDao {
     @Query("DELETE FROM slot_state") suspend fun clearSlots()
     @Query("DELETE FROM exercise_stat") suspend fun clearStats()
     @Query("DELETE FROM body_weight") suspend fun clearBodyWeights()
+    @Query("DELETE FROM sync_row") suspend fun clearSyncRows()
+    @Query("DELETE FROM sync_cursor") suspend fun clearSyncCursors()
 
     @Insert suspend fun insertWorkouts(x: List<WorkoutEntity>)
     @Insert suspend fun insertSets(x: List<SetEntity>)
@@ -97,12 +100,16 @@ interface BackupDao {
     @Insert suspend fun insertStats(x: List<ExerciseStatEntity>)
     @Insert suspend fun insertBodyWeights(x: List<BodyWeightEntity>)
 
+    /**
+     * The file's rows instead of the phone's, in one transaction. What the cloud has seen is forgotten in the same
+     * transaction: the next sync merges the cloud copy in first and never takes the file's gaps for deletions.
+     */
     @Transaction
     suspend fun replaceAll(
         workouts: List<WorkoutEntity>, sets: List<SetEntity>, runs: List<RunEntity>, points: List<TrackPointEntity>,
         slots: List<SlotStateEntity>, stats: List<ExerciseStatEntity>, bodyWeights: List<BodyWeightEntity>,
     ) {
-        clearWorkouts(); clearSlots(); clearStats(); clearBodyWeights()
+        clearWorkouts(); clearSlots(); clearStats(); clearBodyWeights(); clearSyncRows(); clearSyncCursors()
         insertWorkouts(workouts); insertSets(sets); insertRuns(runs); insertPoints(points)
         insertSlots(slots); insertStats(stats); insertBodyWeights(bodyWeights)
     }

@@ -84,6 +84,8 @@ interface SyncDao {
     @Query("SELECT * FROM slot_state") suspend fun slots(): List<SlotStateEntity>
     @Upsert suspend fun putSlot(s: SlotStateEntity)
     @Query("DELETE FROM slot_state WHERE slotKey = :key") suspend fun deleteSlot(key: String)
+    @Query("SELECT * FROM slot_state WHERE slotKey = :key") suspend fun slot(key: String): SlotStateEntity?
+    @Query("SELECT * FROM exercise_stat WHERE exerciseId = :id") suspend fun stat(id: String): ExerciseStatEntity?
     @Query("SELECT * FROM exercise_stat") suspend fun stats(): List<ExerciseStatEntity>
     @Upsert suspend fun putStat(s: ExerciseStatEntity)
     @Query("DELETE FROM exercise_stat WHERE exerciseId = :id") suspend fun deleteStat(id: String)

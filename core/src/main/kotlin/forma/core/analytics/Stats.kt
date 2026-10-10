@@ -30,7 +30,7 @@ data class Records(val bestE1rm: Double, val heaviest: Double, val mostReps: Int
 object Stats {
     private fun rirOf(r: SetRow, plannedRir: Int = 2) = r.rir ?: if (r.targetReps != null && r.reps >= r.targetReps) plannedRir else 0
 
-    /** Best e1RM of each session for one exercise. */
+    /** Best e1RM of each session for one exercise. Sessions with no load (a weighted exercise done at 0 kg) have none. */
     fun e1rmSeries(rows: List<SetRow>, ex: Exercise, bodyWeight: (Long) -> Double): List<Point> =
         rows.filter { it.exerciseId == ex.id && it.reps > 0 && ex.load != LoadKind.TIMED }
             .groupBy { it.workoutId }
@@ -38,6 +38,7 @@ object Stats {
                 val day = sets.first().epochDay
                 Point(day, sets.maxOf { OneRm.estimate(Progression.effectiveLoad(ex, it.weight, bodyWeight(day)), it.reps, rirOf(it)) })
             }
+            .filter { it.value > 0 && it.value.isFinite() }
             .sortedBy { it.epochDay }
 
     fun records(rows: List<SetRow>, ex: Exercise, bodyWeight: (Long) -> Double): Records? {
@@ -113,7 +114,8 @@ object Stats {
         return out
     }
 
-    /** Change of the last value against the first, in percent. */
+    /** Change of the last value against the first, in percent; null when there is nothing to compare. */
     fun changePct(series: List<Point>): Double? =
-        if (series.size < 2 || series.first().value == 0.0) null else (series.last().value / series.first().value - 1) * 100
+        if (series.size < 2 || series.first().value <= 0.0) null
+        else ((series.last().value / series.first().value - 1) * 100).takeIf { it.isFinite() }
 }

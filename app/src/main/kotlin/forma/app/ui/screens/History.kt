@@ -143,7 +143,7 @@ fun HistoryItemScreen(workoutId: Long) {
             onDismissRequest = { confirm = false }, containerColor = F.c.surface,
             title = { Text("Удалить тренировку?", style = T.title(20.sp)) },
             text = { Text("Она исчезнет из истории и графиков. Уже пересчитанные цели не откатятся.", style = T.secondary(14.sp)) },
-            confirmButton = { TextButton({ confirm = false; scope.launch { repo.db.workouts().delete(workoutId); nav.back() } }) { Text("Удалить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.bad)) } },
+            confirmButton = { TextButton({ confirm = false; scope.launch { repo.deleteWorkout(workoutId); nav.back() } }) { Text("Удалить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.bad)) } },
             dismissButton = { TextButton({ confirm = false }) { Text("Отмена", style = T.body(15.sp)) } },
         )
     }

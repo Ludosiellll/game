@@ -96,7 +96,7 @@ sealed interface Outcome {
 }
 
 @Serializable
-enum class HoldReason { NEAR_MISS, FIRST_MISS, FEWER_SETS, LIGHTER, CONSOLIDATE, NOT_THE_WEIGHT }
+enum class HoldReason { NEAR_MISS, FIRST_MISS, FEWER_SETS, LIGHTER, CONSOLIDATE, NOT_THE_WEIGHT, AT_TOP }
 
 data class Evaluation(val state: SlotState, val outcome: Outcome, val e1rm: Double?)
 
@@ -169,8 +169,9 @@ object Progression {
         var calibrate = false
         if (weight == null) {
             if (e1rm != null && e1rm > 0) {
-                val raw = toWeight(ex, OneRm.loadFor(e1rm, state.reps, rir), bodyWeight)
-                weight = floorTo(raw, ex.stepAt(raw))
+                // A new rep range of a known exercise: from the estimate, lighter after a break like any weight.
+                val raw = toWeight(ex, OneRm.loadFor(e1rm, state.reps, rir) * layoffFactor(daysSinceLast), bodyWeight)
+                weight = floorTo(raw, ex.stepAt(raw)).coerceAtLeast(minWeight(ex, bodyWeight))
             } else {
                 calibrate = true
             }
@@ -198,8 +199,12 @@ object Progression {
         return Prescription(weight, state.reps, sets, plannedRir, calibrate, if (calibrate) hint else null, phase, top)
     }
 
-    /** Lowest weight the exercise allows: 0, or the most assistance for assisted body-weight exercises. */
-    private fun minWeight(ex: Exercise, bodyWeight: Double) = if (ex.assisted) -maxAssist(ex, bodyWeight) else 0.0
+    /** Lowest weight the exercise allows: the most assistance for assisted body-weight exercises, the empty bar, or 0. */
+    fun minWeight(ex: Exercise, bodyWeight: Double): Double = when {
+        ex.assisted -> -maxAssist(ex, bodyWeight)
+        ex.load == LoadKind.EXTERNAL && ex.bar != null -> ex.bar
+        else -> 0.0
+    }
 
     /** 10 % lighter in total load (for body-weight exercises the body counts too). */
     private fun lighter(ex: Exercise, w: Double, bodyWeight: Double) = toWeight(ex, effectiveLoad(ex, w, bodyWeight) * 0.9, bodyWeight)
@@ -274,10 +279,13 @@ object Progression {
     ): Evaluation {
         val work = done.filter { it.reps > 0 }
         if (work.isEmpty()) return Evaluation(state, Outcome.NotDone, null)
-        if (ex.load == LoadKind.TIMED) return evaluateTimed(spec, state, p, work)
+        val sessions = state.sessions + 1
+        if (ex.load == LoadKind.TIMED) {
+            if (p.phase == Phase.DELOAD) return Evaluation(state.copy(sessions = sessions), Outcome.Deload, null)
+            return evaluateTimed(spec, state, p, work)
+        }
 
         val e1rm = e1rmOf(ex, done, p, bodyWeight)!!
-        val sessions = state.sessions + 1
         if (p.phase == Phase.DELOAD) return Evaluation(state.copy(sessions = sessions), Outcome.Deload, e1rm)
 
         fun supported(e: Double, reps: Int, rir: Int) = toWeight(ex, OneRm.loadFor(e, reps, rir), bodyWeight)
@@ -298,7 +306,8 @@ object Progression {
         val w = p.weight
         val step = ex.stepAt(w)
         val inc = spec.increment ?: step
-        val floor = recentBest?.let { floorTo(supported(it, target, p.rir) * FLOOR, step) }
+        // 85 % of the total load (for assisted exercises that means more help, not 85 % of it).
+        val floor = recentBest?.let { floorTo(toWeight(ex, OneRm.loadFor(it, target, p.rir) * FLOOR, bodyWeight), step) }
         fun floored(x: Double) = if (floor != null) max(x, min(floor, w)) else x
 
         // The planned sets in the order done (the index tells which one was the "+" set). Sets done lighter than
@@ -329,7 +338,9 @@ object Progression {
             val linear = linearPhase(ex, spec, state, novice, w, inc)
             // One step of this exercise is a big share of the weight (light dumbbells): progress through reps first.
             val coarse = w > 0 && step / w > 0.10
-            if (spare != null && spare >= 4 || reportedEasy) {
+            // Below the range at the lightest load (see the short branch below): reps, not weight, come first.
+            val belowAtMin = target < spec.repMin && w <= minWeight(ex, bodyWeight) + 1e-9
+            if ((spare != null && spare >= 4 || reportedEasy) && !belowAtMin) {
                 if (coarse) {
                     // A big step to the next weight: take it if the estimate says enough reps are there,
                     // otherwise a few more reps with this weight.
@@ -357,6 +368,14 @@ object Progression {
                     Outcome.Hold(w, target, HoldReason.CONSOLIDATE), e1rm)
             }
             val plenty = spare != null && spare >= 2
+            if (belowAtMin) {
+                val r = min(spec.repMax, target + when {
+                    spare != null && spare >= 4 -> 3
+                    plenty -> 2
+                    else -> 1
+                })
+                return Evaluation(SlotState(w, r, 0, 0, sessions, state.linear), Outcome.AddReps(w, target, r), e1rm)
+            }
             if (linear && !(stuck && rated)) {
                 val to = min(w + inc * (if (plenty) 2 else 1), max(w + inc, floorTo(w * 1.10, step)))
                 return Evaluation(SlotState(to, target, 0, 0, sessions, true), Outcome.AddWeight(w, to, target), e1rm)
@@ -397,6 +416,16 @@ object Progression {
             val r = max(spec.repMin, min(target - 1, doneAtW.minOrNull() ?: spec.repMin))
             return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
         }
+        if (w <= minWeight(ex, bodyWeight) + 1e-9 && !(near && stalls < 2)) {
+            // Already at the lightest load (own body weight, the most help, the empty bar): the weight cannot come
+            // down, so the rep target goes below the range to what was done and climbs from there.
+            val doneAtW = planned.filter { it.weight >= w - 1e-9 }.map { it.reps }
+            val r = max(1, min(target - 1, doneAtW.minOrNull() ?: 1))
+            if (r < target) {
+                return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps),
+                    Outcome.LowerReps(w, target, r), e1rm)
+            }
+        }
         if (near) {
             if (stalls >= 3) {
                 val to = floored(max(minWeight(ex, bodyWeight), floorTo(lighter(ex, w, bodyWeight), step)))
@@ -418,15 +447,29 @@ object Progression {
         return Evaluation(SlotState(to, target, 0, 0, sessions, false, cutFrom = w, cutReps = first), Outcome.Reduce(w, to, target), e1rm)
     }
 
+    /**
+     * Holds (plank): every set held → +5 s (more if the holds were longer), up to the top of the range, where the
+     * target stays. Short twice in a row → the target comes down to what the weakest set held (5 s steps, 10 s at least).
+     */
     private fun evaluateTimed(spec: SlotSpec, state: SlotState, p: Prescription, work: List<DoneSet>): Evaluation {
         val secs = work.take(p.sets).map { it.reps }
         val minS = secs.min()
-        return if (secs.size >= p.sets && minS >= p.reps) {
-            val to = min(spec.repMax, max(p.reps + 5, minS + 5))
-            Evaluation(state.copy(reps = to, stalls = 0, sessions = state.sessions + 1), Outcome.AddReps(0.0, p.reps, to), null)
-        } else {
-            Evaluation(state.copy(stalls = state.stalls + 1, sessions = state.sessions + 1), Outcome.Hold(0.0, p.reps, HoldReason.NEAR_MISS), null)
+        val sessions = state.sessions + 1
+        if (secs.size >= p.sets && minS >= p.reps) {
+            if (p.reps >= spec.repMax) {
+                return Evaluation(state.copy(stalls = 0, misses = 0, sessions = sessions), Outcome.Hold(0.0, p.reps, HoldReason.AT_TOP), null)
+            }
+            val to = min(spec.repMax, max(p.reps + 5, minS / 5 * 5 + 5))
+            return Evaluation(state.copy(reps = to, stalls = 0, misses = 0, sessions = sessions), Outcome.AddReps(0.0, p.reps, to), null)
         }
+        val misses = state.misses + 1
+        if (misses >= 2) {
+            val to = max(10, min(p.reps - 5, minS / 5 * 5))
+            if (to < p.reps) {
+                return Evaluation(state.copy(reps = to, stalls = 0, misses = 0, sessions = sessions), Outcome.LowerReps(0.0, p.reps, to), null)
+            }
+        }
+        return Evaluation(state.copy(stalls = state.stalls + 1, misses = misses, sessions = sessions), Outcome.Hold(0.0, p.reps, HoldReason.NEAR_MISS), null)
     }
 
     /**

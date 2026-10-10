@@ -13,12 +13,18 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
 
-/** Speaks cues in Russian, beeps the countdown and vibrates on segment changes. Music is ducked while speaking. */
+/**
+ * Speaks cues in Russian, beeps the countdown and vibrates on segment changes. Music is ducked while speaking.
+ * Lines said before the speech engine is up (the first segment of a run) wait for it.
+ */
 class VoiceCoach(context: Context, var voice: Boolean, var beeps: Boolean, var vibration: Boolean) {
     private val app = context.applicationContext
     private val audio = app.getSystemService(AudioManager::class.java)
     private var tts: TextToSpeech? = null
     private var ready = false
+    private var failed = false
+    private val waiting = mutableListOf<String>()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val tones = runCatching { ToneGenerator(AudioManager.STREAM_MUSIC, 90) }.getOrNull()
     private val attrs = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
@@ -34,26 +40,41 @@ class VoiceCoach(context: Context, var voice: Boolean, var beeps: Boolean, var v
 
     init {
         tts = TextToSpeech(app) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                val t = tts ?: return@TextToSpeech
-                val ru = Locale.forLanguageTag("ru-RU")
-                val res = t.setLanguage(ru)
-                ready = res != TextToSpeech.LANG_MISSING_DATA && res != TextToSpeech.LANG_NOT_SUPPORTED
-                t.setAudioAttributes(attrs)
-                t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) {}
-                    override fun onDone(id: String?) { audio?.abandonAudioFocusRequest(focus) }
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(id: String?) { audio?.abandonAudioFocusRequest(focus) }
-                })
+            // The callback may come on another thread: the coach is used on the main one.
+            main.post {
+                val t = tts ?: return@post
+                if (status == TextToSpeech.SUCCESS) {
+                    val res = t.setLanguage(Locale.forLanguageTag("ru-RU"))
+                    ready = res != TextToSpeech.LANG_MISSING_DATA && res != TextToSpeech.LANG_NOT_SUPPORTED
+                    t.setAudioAttributes(attrs)
+                    t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                        override fun onStart(id: String?) {}
+                        override fun onDone(id: String?) { if (!t.isSpeaking) audio?.abandonAudioFocusRequest(focus) }
+                        override fun onStop(id: String?, interrupted: Boolean) { audio?.abandonAudioFocusRequest(focus) }
+                        @Deprecated("Deprecated in Java")
+                        override fun onError(id: String?) { audio?.abandonAudioFocusRequest(focus) }
+                    })
+                }
+                failed = !ready
+                if (ready) waiting.forEach { say(t, it) }
+                waiting.clear()
             }
         }
     }
 
     fun speak(text: String) {
-        if (!voice) return
+        if (!voice || failed) return
         val t = tts ?: return
-        if (!ready) return
+        if (!ready) {
+            // Only the latest few matter: a minute-old "half way" is noise.
+            waiting += text
+            while (waiting.size > 3) waiting.removeAt(0)
+            return
+        }
+        say(t, text)
+    }
+
+    private fun say(t: TextToSpeech, text: String) {
         audio?.requestAudioFocus(focus)
         t.speak(text, TextToSpeech.QUEUE_ADD, null, "c" + System.nanoTime())
     }
@@ -78,8 +99,11 @@ class VoiceCoach(context: Context, var voice: Boolean, var beeps: Boolean, var v
     }
 
     fun release() {
+        waiting.clear()
+        tts?.stop()
         tts?.shutdown()
         tts = null
+        audio?.abandonAudioFocusRequest(focus)
         tones?.release()
     }
 }

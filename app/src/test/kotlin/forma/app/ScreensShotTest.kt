@@ -204,10 +204,16 @@ class ScreensShotTest {
             "cloud" to {
                 forma.app.ui.screens.CloudContent(
                     forma.app.sync.CloudState(configured = true, ready = true, email = "denis@example.com", lastSyncAt = System.currentTimeMillis() - 2 * 3_600_000),
-                    null, {}, {}, {}, {},
+                    null, {}, {}, {}, {}, {},
                 )
             },
-            "cloudoff" to { forma.app.ui.screens.CloudContent(forma.app.sync.CloudState(configured = true, ready = true), null, {}, {}, {}, {}) },
+            "cloudother" to {
+                forma.app.ui.screens.CloudContent(
+                    forma.app.sync.CloudState(configured = true, ready = true, email = "anna@example.com", otherAccount = true, previousEmail = "denis@example.com"),
+                    null, {}, {}, {}, {}, {},
+                )
+            },
+            "cloudoff" to { forma.app.ui.screens.CloudContent(forma.app.sync.CloudState(configured = true, ready = true), null, {}, {}, {}, {}, {}) },
             "cloudin" to {
                 forma.app.ui.screens.CloudSignInContent(
                     restore = false, configured = true, mode = forma.app.ui.screens.SignInMode.SIGN_UP, email = "denis@example.com",

@@ -83,9 +83,13 @@ class DailyLifeTest {
         // The long run becomes three quarters of it at most, never longer than an easy run.
         assertEquals(40 * 60, RunPlan.lighter(st, RunPlan.long(st)).totalSeconds)
         assertEquals(15 * 60, RunPlan.lighter(st.copy(easyMinutes = 20), RunPlan.easy(st.copy(easyMinutes = 20))).totalSeconds)
-        // Run/walk stays: walking more is the lighter version already.
+        // Run/walk: last week's session, and the ladder does not move either way.
         val walk = RunState(walkStage = 4)
-        assertEquals(RunPlan.runWalk(walk), RunPlan.lighter(walk, RunPlan.runWalk(walk)))
+        val easier = RunPlan.lighter(walk, RunPlan.runWalk(walk))
+        assertTrue(easier.light)
+        assertEquals(1, easier.stage)
+        assertEquals(4, RunPlan.after(walk, easier, RunResult(1.0, 4, easier.totalSeconds), caps, day = 10).state.walkStage)
+        assertEquals(0, RunPlan.lighter(RunState(walkStage = 1), RunPlan.runWalk(RunState(walkStage = 1))).stage)
     }
 
     // ---------- missed sessions ----------
@@ -109,12 +113,12 @@ class DailyLifeTest {
     private val hybrid = Aim(LiftFocus.MUSCLE, RunFocus.ENDURANCE, Emphasis.BALANCED)
 
     @Test fun aMissedLiftCanBeDoneOnAFreeDay() {
-        val p = program(hybrid, 1 to listOf(lift), 3 to listOf(quality), 6 to listOf(long))
-        // Monday's lift was skipped, Wednesday done; Thursday is free and Friday is free too.
-        val s = CatchUp.suggest(p, 4, week(p, mapOf(3 to listOf(quality))))
+        val p = program(hybrid, 1 to listOf(lift), 2 to listOf(quality), 6 to listOf(long))
+        // Monday's lift was skipped, Tuesday done; Thursday is free and Friday is free too.
+        val s = CatchUp.suggest(p, 4, week(p, mapOf(2 to listOf(quality))))
         assertEquals(CatchUp.Suggestion(lift, 1), s)
         // But not on Friday: heavy legs the day before the long run.
-        assertNull(CatchUp.suggest(p, 5, week(p, mapOf(3 to listOf(quality)))))
+        assertNull(CatchUp.suggest(p, 5, week(p, mapOf(2 to listOf(quality)))))
     }
 
     @Test fun aSessionDoneOnAnotherDayIsNotMissed() {
@@ -135,6 +139,26 @@ class DailyLifeTest {
         // An upper-body day fits anywhere, an easy run too.
         val q = program(hybrid, 1 to listOf(liftUpper, easy), 4 to listOf(lift), 6 to listOf(long))
         assertEquals(CatchUp.Suggestion(liftUpper, 1), CatchUp.suggest(q, 3, week(q, emptyMap())))
+    }
+
+    @Test fun noHeavyLegsRightAfterAHardRunAndNoHardRunRightAfterLegs() {
+        // Missed: Monday's lift. Tuesday the intervals were done; Wednesday is free.
+        val p = program(hybrid, 1 to listOf(lift), 2 to listOf(quality), 6 to listOf(long))
+        assertNull(CatchUp.suggest(p, 3, week(p, mapOf(2 to listOf(quality)))))
+        // Missed: Tuesday's intervals. Wednesday was a (catch-up) leg day; Thursday is free.
+        val q = program(hybrid, 2 to listOf(quality), 6 to listOf(long))
+        assertNull(CatchUp.suggest(q, 4, week(q, mapOf(3 to listOf(lift)))))
+        // Without the leg day the intervals fit on Thursday.
+        assertEquals(CatchUp.Suggestion(quality, 2), CatchUp.suggest(q, 4, week(q, emptyMap())))
+    }
+
+    @Test fun onSundayNextMondayCounts() {
+        // Missed: Friday's lift; next Monday is a leg day again.
+        val p = program(hybrid, 1 to listOf(lift), 5 to listOf(lift))
+        assertNull(CatchUp.suggest(p, 7, week(p, mapOf(1 to listOf(lift)))))
+        // With an upper-body Monday it fits.
+        val q = program(hybrid, 1 to listOf(liftUpper), 5 to listOf(lift))
+        assertEquals(CatchUp.Suggestion(lift, 5), CatchUp.suggest(q, 7, week(q, mapOf(1 to listOf(liftUpper)))))
     }
 
     @Test fun thePriorityPicksBetweenTwoMissedSessions() {

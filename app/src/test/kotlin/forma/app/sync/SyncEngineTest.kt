@@ -72,11 +72,11 @@ class SyncEngineTest {
         a.run(withTrack = true)
         a.repo.logBodyWeight(79.4)
 
-        val up = a.sync(first = true)
+        val up = a.sync()
         assertTrue(up.uploaded > 10, "uploaded ${up.uploaded}")
         assertEquals(0, up.removed)
 
-        val down = b.sync(first = true)
+        val down = b.sync()
         assertTrue(down.downloaded >= up.uploaded, "downloaded ${down.downloaded} of ${up.uploaded}")
         val view = b.view()
         assertEquals(a.view(), view)
@@ -98,8 +98,8 @@ class SyncEngineTest {
     @Test fun secondSyncFindsNothingToDo() = runBlocking {
         a.liftSession(LocalDate.of(2026, 10, 5))
         a.run(withTrack = true)
-        a.sync(first = true)
-        b.sync(first = true)
+        a.sync()
+        b.sync()
         // Postgres formats rows differently from the phone; fingerprints must still match.
         assertEquals(SyncResult(0, 0, 0), a.sync())
         assertEquals(SyncResult(0, 0, 0), b.sync())
@@ -107,8 +107,8 @@ class SyncEngineTest {
 
     @Test fun changesTravelBothWays() = runBlocking {
         a.liftSession(LocalDate.of(2026, 10, 5))
-        a.sync(first = true)
-        b.sync(first = true)
+        a.sync()
+        b.sync()
 
         b.clock += 86_400_000
         b.liftSession(LocalDate.of(2026, 10, 7))
@@ -128,8 +128,8 @@ class SyncEngineTest {
     @Test fun deletedWorkoutDisappearsEverywhere() = runBlocking {
         a.liftSession(LocalDate.of(2026, 10, 5))
         val runId = a.run(withTrack = true)
-        a.sync(first = true)
-        b.sync(first = true)
+        a.sync()
+        b.sync()
         val uid = a.db.workouts().get(runId)!!.uid
 
         a.db.workouts().delete(runId)
@@ -143,7 +143,7 @@ class SyncEngineTest {
 
     @Test fun restoringAnOldFileDoesNotDeleteFromTheCloud() = runBlocking {
         a.liftSession(LocalDate.of(2026, 10, 5))
-        a.sync(first = true)
+        a.sync()
         val old = BackupManager(a.repo).snapshot()
 
         a.clock += 86_400_000
@@ -161,12 +161,12 @@ class SyncEngineTest {
 
     @Test fun firstSyncTakesTheCloudCopyAndKeepsLocalExtras() = runBlocking {
         a.liftSession(LocalDate.of(2026, 10, 5))
-        a.sync(first = true)
+        a.sync()
 
         // A new phone set up from scratch before signing in, with a weigh-in the cloud does not have.
         b.repo.completeOnboarding(profile.copy(goal = Goal.STRENGTH, bodyWeightKg = 90.0))
         b.db.state().upsertBodyWeight(forma.app.data.BodyWeightEntity(LocalDate.of(2026, 9, 1).toEpochDay(), 89.0))
-        b.sync(first = true)
+        b.sync()
 
         assertEquals(Goal.HYBRID, b.store.profileNow()!!.goal) // the account's profile wins
         assertEquals(1, b.db.workouts().allDone().size)
@@ -176,11 +176,118 @@ class SyncEngineTest {
         assertEquals(b.view(), a.view())
     }
 
+    @Test fun aFirstSyncAgainKeepsNewerProgress() = runBlocking {
+        a.liftSession(LocalDate.of(2026, 10, 5))
+        a.sync()
+        a.clock += 2 * 86_400_000
+        a.liftSession(LocalDate.of(2026, 10, 7))
+        val progress = a.db.state().slots().associate { it.slotKey to it.sessions }
+        // The phone forgets what the cloud has seen (a restored file, a sign-out in an older version): a first sync again.
+        a.db.sync().reset()
+        a.sync()
+        assertEquals(progress, a.db.state().slots().associate { it.slotKey to it.sessions })
+        b.sync()
+        assertEquals(progress, b.db.state().slots().associate { it.slotKey to it.sessions })
+        assertEquals(2, b.db.workouts().allDone().size)
+    }
+
+    @Test fun anOlderChangeMadeOfflineDoesNotOverwriteANewerOne() = runBlocking {
+        a.liftSession(LocalDate.of(2026, 10, 5))
+        a.sync()
+        b.sync()
+        // Monday: A trains offline. Tuesday: B trains and syncs. Wednesday: A is online again.
+        a.clock += 7 * 86_400_000
+        a.liftSession(LocalDate.of(2026, 10, 12))
+        b.clock += 8 * 86_400_000
+        b.liftSession(LocalDate.of(2026, 10, 13))
+        b.sync()
+        val newer = b.db.state().slots().associate { it.slotKey to it.updatedAt }
+        a.sync()
+        b.sync()
+        assertEquals(newer, a.db.state().slots().associate { it.slotKey to it.updatedAt })
+        assertEquals(newer, b.db.state().slots().associate { it.slotKey to it.updatedAt })
+        // Both sessions stay in the history on both phones.
+        assertEquals(3, a.db.workouts().allDone().size)
+        assertEquals(a.view(), b.view())
+    }
+
+    @Test fun rowsChangedWhilePagingAreNotSkipped() = runBlocking {
+        repeat(14) {
+            a.clock += 3_600_000
+            a.run(withTrack = false)
+        }
+        a.sync()
+        // While B downloads the runs (10 per page), another phone saves one of the first page again.
+        var touched = false
+        cloud.afterPage = { table, page ->
+            if (table == "runs" && !touched && page.size > 3) {
+                touched = true
+                cloud.touch("runs", "workout_id", page[3])
+            }
+        }
+        b.sync()
+        assertTrue(touched)
+        assertEquals(14, b.db.sync().doneRuns().size)
+    }
+
+    @Test fun restoringAnOldFileRollsNothingBack() = runBlocking {
+        a.liftSession(LocalDate.of(2026, 10, 5))
+        a.sync()
+        b.sync()
+        val old = BackupManager(a.repo).snapshot()
+        // Later on B: one more session, and the first one deleted.
+        b.clock += 2 * 86_400_000
+        b.liftSession(LocalDate.of(2026, 10, 7))
+        val firstId = b.db.workouts().allDone().minBy { it.startedAt }.id
+        b.repo.deleteWorkout(firstId)
+        b.sync()
+        val progress = b.db.state().slots().associate { it.slotKey to it.sessions }
+
+        BackupManager(a.repo).restore(old)
+        a.sync()
+        assertEquals(progress, a.db.state().slots().associate { it.slotKey to it.sessions })
+        assertEquals(1, a.db.workouts().allDone().size)
+        b.sync()
+        assertEquals(progress, b.db.state().slots().associate { it.slotKey to it.sessions })
+        assertEquals(a.view(), b.view())
+        assertEquals(1, cloud.live("workouts"))
+    }
+
+    @Test fun oneAccountsDataNeverGoesToAnother() = runBlocking {
+        a.liftSession(LocalDate.of(2026, 10, 5))
+        a.sync()
+        val other = FakeCloud("4b2d9c1e-0000-4000-8000-000000000002")
+        val engine = SyncEngine(other, a.db, a.store)
+        assertFailsWith<AccountMismatchException> { engine.run("4b2d9c1e-0000-4000-8000-000000000002") }
+        assertEquals(0, other.live("workouts"))
+        // Cleared for the other account, the phone takes that account's copy and uploads nothing of the first one.
+        a.repo.clearPhone()
+        engine.run("4b2d9c1e-0000-4000-8000-000000000002")
+        assertEquals(0, other.live("workouts"))
+        assertEquals(0, a.db.workouts().allDone().size)
+        assertNull(a.store.profileNow())
+    }
+
+    @Test fun aWorkoutFinishedDuringASyncGoesUpWithTheNext() = runBlocking {
+        a.liftSession(LocalDate.of(2026, 10, 5))
+        val t = SyncTables(a.db, a.store)
+        t.workouts.push(cloud, a.db.sync(), user)
+        // Finished after the workouts went up and before the sets do: its sets wait instead of breaking the sync.
+        a.clock += 86_400_000
+        a.liftSession(LocalDate.of(2026, 10, 7))
+        t.sets.push(cloud, a.db.sync(), user)
+        t.runs.push(cloud, a.db.sync(), user)
+        a.sync()
+        b.sync()
+        assertEquals(a.view(), b.view())
+        assertEquals(2, b.db.workouts().allDone().size)
+    }
+
     @Test fun setsWaitForTheirWorkout() = runBlocking {
         val tb = SyncTables(b.db, b.store)
         tb.workouts.pull(cloud, b.db.sync()) // nothing yet
         a.liftSession(LocalDate.of(2026, 10, 5))
-        a.sync(first = true)
+        a.sync()
         // B downloads sets before it has seen their workout: it fetches the workout and retries.
         val applied = tb.sets.pull(cloud, b.db.sync())
         assertTrue(applied > 0)
@@ -215,7 +322,7 @@ class SyncEngineTest {
         val repo = TrainingRepository(db, store, now = { clock })
         private val engine = SyncEngine(cloud, db, store)
 
-        suspend fun sync(first: Boolean = false) = engine.run(user, first)
+        suspend fun sync() = engine.run(user)
 
         suspend fun liftSession(day: LocalDate) {
             if (!repo.isOnboarded()) repo.completeOnboarding(profile)
@@ -257,6 +364,16 @@ class FakeCloud(private val user: String) : CloudApi {
     private val tables = mutableMapOf<String, LinkedHashMap<String, JsonObject>>()
     private var clock = Instant.parse("2026-10-10T10:00:00Z")
 
+    /** Called after each page is served: lets a test change rows while a phone is still paging. */
+    var afterPage: ((table: String, page: List<JsonObject>) -> Unit)? = null
+
+    /** Another phone saves [row] again: same content, a new updated_at (it moves to the end of the order). */
+    fun touch(table: String, keyColumn: String, row: JsonObject) {
+        val t = tables.getValue(table)
+        val key = row.getValue(keyColumn).jsonPrimitive.content
+        t[key] = JsonObject(t.getValue(key) + ("updated_at" to JsonPrimitive(tick())))
+    }
+
     private fun tick(): String {
         clock = clock.plusNanos(1_000)
         return clock.atOffset(ZoneOffset.UTC).format(PG_TIME)
@@ -267,6 +384,8 @@ class FakeCloud(private val user: String) : CloudApi {
     override suspend fun upsert(table: String, conflict: String, rows: List<JsonObject>) {
         val keyColumn = conflict.removePrefix("user_id,")
         val t = tables.getOrPut(table) { LinkedHashMap() }
+        // Like Postgres now(): one time for the whole request.
+        val at = tick()
         for (row in rows) {
             check(row["user_id"]?.jsonPrimitive?.content == user) { "row level security" }
             if (table == "sets" || table == "runs") {
@@ -275,25 +394,33 @@ class FakeCloud(private val user: String) : CloudApi {
             }
             val key = row.getValue(keyColumn).jsonPrimitive.content
             val stored = (t[key] ?: JsonObject(emptyMap())) + row.mapValues { (_, v) -> asPostgres(v) } +
-                ("updated_at" to JsonPrimitive(tick()))
+                ("updated_at" to JsonPrimitive(at))
             t[key] = JsonObject(stored)
         }
     }
 
     override suspend fun markDeleted(table: String, keyColumn: String, keys: List<String>) {
         val t = tables[table] ?: return
+        val at = tick()
         for (k in keys) {
             val row = t[k] ?: continue
-            t[k] = JsonObject(row + mapOf("deleted" to JsonPrimitive(true), "updated_at" to JsonPrimitive(tick())))
+            t[k] = JsonObject(row + mapOf("deleted" to JsonPrimitive(true), "updated_at" to JsonPrimitive(at)))
         }
     }
 
-    override suspend fun changes(table: String, keyColumn: String, since: String?, offset: Int, limit: Int): List<JsonObject> {
-        val after = since?.let(Instant::parse)
-        return tables[table].orEmpty().values
-            .filter { after == null || time(it) > after }
-            .sortedWith(compareBy<JsonObject>({ time(it) }, { it.getValue(keyColumn).jsonPrimitive.content }))
-            .drop(offset).take(limit)
+    override suspend fun changes(table: String, keyColumn: String, since: String?, after: Pair<String, String>?, limit: Int): List<JsonObject> {
+        val from = since?.let(Instant::parse)
+        val afterTime = after?.first?.let(Instant::parse)
+        fun key(r: JsonObject) = r.getValue(keyColumn).jsonPrimitive.content
+        val page = tables[table].orEmpty().values
+            .filter { r ->
+                if (afterTime != null) time(r) > afterTime || (time(r) == afterTime && key(r) > after.second)
+                else from == null || time(r) > from
+            }
+            .sortedWith(compareBy<JsonObject>({ time(it) }, { key(it) }))
+            .take(limit)
+        afterPage?.invoke(table, page)
+        return page
     }
 
     private fun time(row: JsonObject) = OffsetDateTime.parse(row.getValue("updated_at").jsonPrimitive.content).toInstant()
