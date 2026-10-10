@@ -137,7 +137,7 @@ private fun Modifier.clickableRow(onClick: () -> Unit) = this.clickable(onClick 
 
 /** The race goal: its pace (and lap time on a stadium), the forecast from the current form, the race-pace ladder. */
 @Composable
-private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState?, lap: Int?) {
+private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState?, lap: Int?, hard: Boolean) {
     val now = st?.vdot?.let { Vdot.predictSeconds(it, goal.meters.toDouble()) }
     FCard(gap = 6.dp) {
         Text("Цель", style = T.secondary(13.sp))
@@ -147,6 +147,10 @@ private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState
             style = T.body(15.sp, FontWeight.SemiBold),
         )
         when {
+            !hard -> Text(
+                "В неделе нет тяжёлых пробежек — без них к забегу не подготовиться. Добавь день или выбери бег «Скорость».",
+                style = T.body(14.sp).copy(color = F.c.warn),
+            )
             now == null -> Text("Прогноз появится после контрольного забега — он встанет в план после пары пробежек.", style = T.secondary(13.sp))
             now <= goal.seconds + 0.5 -> Text(
                 "Прогноз сейчас: ${Ru.clock(now.roundToInt())} — цель по силам. Подтверди её на контрольном забеге.",
@@ -174,7 +178,9 @@ private fun RunTab() {
     val st = runState?.let { RunPlan.withBreak(it, today.toEpochDay()) }
     val vdot = st?.vdot
     val profile by repo.store.profile.collectAsState(initial = null)
-    profile?.runGoal?.let { GoalCard(it, st, profile?.lapMeters) }
+    val program by repo.store.program.collectAsState(initial = null)
+    val hard = program?.week?.days?.any { d -> d.sessions.any { it.kind == forma.core.plan.SessionKind.RUN_QUALITY } } != false
+    profile?.runGoal?.let { GoalCard(it, st, profile?.lapMeters, hard) }
     if (vdot != null) {
         FCard(gap = 6.dp) {
             Text("VDOT — беговая форма", style = T.secondary(13.sp))

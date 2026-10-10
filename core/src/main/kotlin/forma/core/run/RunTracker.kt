@@ -23,9 +23,22 @@ data class TrackerSnapshot(
     /** Timeline moments (ms) of the lap button, and the laps they closed. */
     val taps: List<Long> = emptyList(),
     val laps: List<Lap> = emptyList(),
-    /** WORK segments skipped before half of them was run. */
+    /** WORK segments skipped for more than a quarter of them. */
     val skippedReps: List<Int> = emptyList(),
+    /** Segments the runner started by pressing on the line (timeline ms), by index; −1 is an open-ended run. */
+    val starts: Map<Int, Long> = emptyMap(),
 )
+
+/** What a press of the lap button was. */
+sealed interface Press {
+    /** A second press within seconds of the last one, or the run is not going. */
+    data object Ignored : Press
+
+    /** A press on the line as a segment began: the runner's own start, not a lap. */
+    data object Start : Press
+
+    data class Done(val lap: Lap) : Press
+}
 
 /**
  * A lap as the runner pressed it: its time, and what it should have been ([fast]..[slow], seconds) in a rep or a paced
@@ -97,8 +110,14 @@ class RunTracker(
     private val lapList = mutableListOf<Lap>()
     val laps: List<Lap> get() = lapList
 
-    /** WORK segments skipped before half of them was run: not done. */
+    /** WORK segments skipped for more than a quarter of them: not done. */
     private val skippedReps = mutableSetOf<Int>()
+
+    /** Segments the runner started by pressing on the line (timeline ms), by index; −1 is an open-ended run. */
+    private val starts = mutableMapOf<Int, Long>()
+
+    /** Active time of the last press: a double tap is judged on the clock, not on the plan's timeline (which jumps). */
+    private var lastPressMs: Long? = null
 
     fun start(nowMs: Long) {
         if (state != State.READY) return
@@ -142,7 +161,7 @@ class RunTracker(
         val tl = RunTimeline.at(workout, (timelineMs(nowMs) / 1000).toInt())
         val seg = tl.segment ?: return
         if (seg.kind == SegmentKind.WORK || seg.kind == SegmentKind.RUN) skippedWorkSec += tl.segmentRemaining
-        if (seg.kind == SegmentKind.WORK && tl.segmentRemaining * 2 > seg.seconds) skippedReps += tl.index
+        if (seg.kind == SegmentKind.WORK && tl.segmentRemaining * 4 > seg.seconds) skippedReps += tl.index
         skipMs += tl.segmentRemaining * 1000L
         lastTickSec = (timelineMs(nowMs) / 1000).toInt() - 1
     }
@@ -242,7 +261,7 @@ class RunTracker(
     /** Completion is the share of the planned running done: a skipped cool-down or warm-up does not count against it. */
     fun snapshot(nowMs: Long) = TrackerSnapshot(
         workout, state, activeMs(nowMs), skipMs, skippedWorkSec, distanceM, workDistanceM, nextKm, lastKmSec, fixes,
-        taps.toList(), lapList.toList(), skippedReps.sorted(),
+        taps.toList(), lapList.toList(), skippedReps.sorted(), starts.toMap(),
     )
 
     /** Start and end of every segment on the timeline, ms. */
@@ -253,12 +272,12 @@ class RunTracker(
 
     /**
      * The WORK segment a press at timeline [t] belongs to: the one running, or one that ended a moment ago (a rep finished
-     * a little slower than the beep: up to 40 % of the rep, at most half of what follows).
+     * a little slower than the beep: up to 40 % of the rep, at most half of what follows). A skipped rep gets no laps.
      */
     private fun repAt(t: Long): Int? {
         val segs = workout.segments
         for (i in segs.indices) {
-            if (segs[i].kind != SegmentKind.WORK) continue
+            if (segs[i].kind != SegmentKind.WORK || i in skippedReps) continue
             val b = bounds[i]
             val after = segs.getOrNull(i + 1)?.seconds ?: 0
             val grace = minOf(after * 500L, maxOf(20_000L, segs[i].seconds * 400L))
@@ -267,30 +286,51 @@ class RunTracker(
         return null
     }
 
+    /** The segment running at timeline [t] (the last one past the plan); −1 for an open-ended run. */
+    private fun segmentAt(t: Long): Int =
+        if (workout.isOpenEnded) -1 else RunTimeline.at(workout, (t / 1000).toInt()).index.coerceAtMost(workout.segments.lastIndex)
+
+    /** Where the laps of segment [i] are counted from: the runner's own start press, or the planned start. */
+    private fun startOf(i: Int): Long = starts[i] ?: if (i < 0) 0L else bounds[i].first
+
+    /** The runner crossed the line. Returns the lap just finished, or null when the press was not a lap (see [press]). */
+    fun lap(nowMs: Long): Lap? = (press(nowMs) as? Press.Done)?.lap
+
     /**
-     * The runner crossed the line. Returns the lap just finished; null when the run is not going or for a second press
-     * within seconds of the last one (a double tap). The press that closes a rep's last lap before its planned end
-     * finishes the rep: the recovery starts at once.
+     * The lap button. A second press within seconds of the last one is a double tap; a press on the line as a segment
+     * begins is the runner's own start (laps count from it); anything else closes a lap. The press that closes a rep's
+     * last lap before its planned end finishes the rep: the recovery starts at once.
      */
-    fun lap(nowMs: Long): Lap? {
-        if (state != State.RUNNING) return null
+    fun press(nowMs: Long): Press {
+        if (state != State.RUNNING) return Press.Ignored
+        val active = activeMs(nowMs)
+        val last = lastPressMs
+        if (last != null && active - last < MIN_LAP_MS) return Press.Ignored
+        lastPressMs = active
         val t = timelineMs(nowMs)
-        val prev = taps.lastOrNull()
-        if (prev != null && t - prev < MIN_LAP_MS) return null
         val lapM = workout.lapMeters
         // The rep this press belongs to, unless all of its laps are pressed already.
         val rep = repAt(t)?.takeIf { i ->
             val laps = workout.segments[i].laps
             laps == null || taps.count { it >= bounds[i].first } < kotlin.math.ceil(laps).toInt()
         }
-        val result = if (rep != null) {
-            val seg = workout.segments[rep]
-            val start = bounds[rep].first
-            val before = taps.count { it >= start }
-            val from = if (prev != null && prev >= start) prev else start
-            val laps = seg.laps
-            // A rep of 6.5 laps starts half a lap before the line: its first "lap" is the half.
-            val part = if (before == 0 && laps != null && laps % 1.0 != 0.0) laps % 1.0 else 1.0
+        val i = rep ?: segmentAt(t)
+        val planned = if (i < 0) 0L else bounds[i].first
+        val before = taps.count { it >= planned }
+        val seg = workout.segments.getOrNull(i)
+        val laps = if (rep != null) seg?.laps else null
+        // A rep of 6.5 laps starts half a lap before the line: its first "lap" is the half.
+        val part = if (before == 0 && laps != null && laps % 1.0 != 0.0) laps % 1.0 else 1.0
+        // On the line as the segment begins (well under its first lap): the start, not a lap.
+        val firstLapMs = (seg?.lapSec ?: 0.0) * part * 1000
+        if (before == 0 && i !in starts && t - planned < maxOf(MIN_LAP_MS.toDouble(), 0.4 * firstLapMs)) {
+            starts[i] = t
+            return Press.Start
+        }
+        val prev = taps.lastOrNull()
+        val start = startOf(i)
+        val from = if (prev != null && prev >= start) prev else start
+        val result = if (rep != null && seg != null) {
             val target = seg.lapSec?.times(part)
             val range = seg.pace?.let { p -> lapM?.let { Track.lapSec(p.fast.toDouble(), it) * part to Track.lapSec(p.slow.toDouble(), it) * part } }
             val number = workout.segments.take(rep + 1).count { it.kind == SegmentKind.WORK }
@@ -299,13 +339,10 @@ class RunTracker(
             val free = workout.testMeters != null && of != null && (before + 1) * 2 > of
             Lap((t - from) / 1000.0, if (free) null else range?.first ?: target, range?.second ?: target, before + 1, of, number)
         } else {
-            val i = RunTimeline.at(workout, (t / 1000).toInt()).index.coerceAtMost(workout.segments.lastIndex)
-            val start = if (workout.isOpenEnded || i < 0) 0L else bounds[i].first
-            val from = if (prev != null && prev >= start) prev else start
             // An easy pace has only a fast limit: slower is fine.
-            val pace = workout.segments.getOrNull(i)?.pace?.takeIf { workout.segments[i].kind != SegmentKind.WORK }
+            val pace = seg?.pace?.takeIf { seg.kind != SegmentKind.WORK }
             val fast = pace?.let { p -> lapM?.let { Track.lapSec(p.fast.toDouble(), it) } }
-            Lap((t - from) / 1000.0, fast, null, taps.count { it >= start } + 1, null)
+            Lap((t - from) / 1000.0, fast, null, before + 1, null)
         }
         taps += t
         lapList += result
@@ -317,7 +354,7 @@ class RunTracker(
                 lastTickSec = (end / 1000).toInt() - 1
             }
         }
-        return result
+        return Press.Done(result)
     }
 
     /** Time of each WORK rep from the lap button: from its start to the press that closes its last lap (null if none). */
@@ -327,17 +364,16 @@ class RunTracker(
             val laps = workout.segments[i].laps ?: return@mapIndexed null
             val need = kotlin.math.ceil(laps).toInt()
             val at = lapList.indexOfFirst { it.rep == k + 1 && it.number == need }
-            if (at < 0) null else (taps[at] - bounds[i].first) / 1000.0
+            if (at < 0) null else (taps[at] - startOf(i)) / 1000.0
         }
     }
 
     /** Seconds into the lap being run: since the last press, or since the current segment began if it came later. */
     fun lapClockSec(nowMs: Long): Int {
         val t = timelineMs(nowMs)
-        val i = RunTimeline.at(workout, (t / 1000).toInt()).index.coerceAtMost(workout.segments.lastIndex)
-        val start = if (workout.isOpenEnded || i < 0) 0L else bounds[i].first
+        val start = startOf(segmentAt(t))
         val prev = taps.lastOrNull()
-        return ((t - if (prev != null && prev >= start) prev else start) / 1000).toInt()
+        return ((t - if (prev != null && prev >= start) prev else start) / 1000).toInt().coerceAtLeast(0)
     }
 
     /** Reps whose time has passed and that were not skipped: what the runner most likely did. */
@@ -395,6 +431,7 @@ class RunTracker(
                 lapList += s.laps
             }
             skippedReps += s.skippedReps
+            starts += s.starts
             when (s.state) {
                 State.READY -> Unit
                 State.FINISHED -> {

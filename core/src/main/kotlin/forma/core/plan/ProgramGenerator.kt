@@ -22,7 +22,9 @@ object ProgramGenerator {
             aim, days.size, profile.experience, profile.runLevel, profile.doubleDays,
             middleGoal = profile.runGoal?.middleDistance == true && aim.run != RunFocus.NONE,
         )
-        val templates = Templates.forWeek(aim, profile.experience, mix.lifts, shared = profile.doubleDays)
+        // Upper / lower / upper only when there are hard runs to put after the upper body; with easy runs alone the
+        // full-body sessions (legs three times a week) stay.
+        val templates = Templates.forWeek(aim, profile.experience, mix.lifts, shared = profile.doubleDays && mix.quality + mix.long > 0)
             .map { Templates.fit(it, profile.sessionMinutes) }
         val week = Scheduler.schedule(days, mix, templates, aim)
         val block = when (profile.experience) {

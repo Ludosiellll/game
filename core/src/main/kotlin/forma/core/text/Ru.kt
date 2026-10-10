@@ -71,9 +71,10 @@ object Ru {
     /** Kilometres with two decimals and no unit: "3,90". */
     fun km2(meters: Double): String = String.format(Locale.ROOT, "%.2f", meters / 1000).replace('.', ',')
 
-    /** "1 круг", "3 круга", "6,5 круга" (a fraction takes the genitive singular). */
+    /** "1 круг", "3 круга", "6,5 круга", "3,75 круга" (a fraction takes the genitive singular). */
     fun laps(x: Double): String =
-        if (x % 1.0 == 0.0) "${x.toInt()} ${plural(x.toInt(), "круг", "круга", "кругов")}" else "${one(x)} круга"
+        if (x % 1.0 == 0.0) "${x.toInt()} ${plural(x.toInt(), "круг", "круга", "кругов")}"
+        else String.format(Locale.ROOT, "%.2f", x).trimEnd('0').trimEnd('.').replace('.', ',') + " круга"
 
     /** A lap time: "52 с" under a minute, "1:44" from a minute up. */
     fun lap(sec: Double): String {

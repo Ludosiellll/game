@@ -491,6 +491,13 @@ fun RunActiveScreen() {
     }
 }
 
+/** A typed time-trial time ("5:52") over [meters], or null when it is not one: no colon, or a pace no one runs. */
+private fun trialSeconds(text: String, meters: Int): Int? {
+    if (':' !in text) return null
+    val t = parseClock(text)?.roundToInt() ?: return null
+    return t.takeIf { it > 0 && it / (meters / 1000.0) in forma.core.run.RunPlan.PLAUSIBLE_PACE }
+}
+
 /** "в темпе", "быстро", "медленно" for a lap with a target; empty without one. */
 private fun lapVerdict(l: Lap): String = when (l.verdict) {
     0 -> "в темпе"
@@ -583,18 +590,23 @@ fun RunDoneScreen(workoutId: Long) {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val tracker = remember { RunSession.tracker }
-    var rpe by remember { mutableIntStateOf(tracker?.workout?.targetRpe ?: 5) }
+    // What the runner enters survives a turn of the phone.
+    var rpe by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(tracker?.workout?.targetRpe ?: 5) }
     var saved by remember { mutableStateOf<Pair<Long, RunSummary>?>(null) }
     var saving by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
-    var testKm by remember { mutableStateOf("") }
+    var testKm by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     // Reps as the runner did them (more than planned counts), prefilled with what the timer saw.
     val repsKind = tracker?.workout?.type.let { it == RunType.INTERVALS || it == RunType.TEMPO || it == RunType.GOAL_PACE }
-    var reps by remember { mutableIntStateOf(tracker?.repsDone(android.os.SystemClock.elapsedRealtime()) ?: 0) }
+    var reps by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableIntStateOf(tracker?.repsDone(android.os.SystemClock.elapsedRealtime()) ?: 0)
+    }
     // A time trial over a distance: its time, prefilled from the lap button.
-    var testTime by remember {
+    var testTime by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(tracker?.takeIf { it.workout.testMeters != null }?.result(android.os.SystemClock.elapsedRealtime(), 5)?.testSeconds?.let { Ru.clock(it) } ?: "")
     }
+    // An easy or long run kept going past its plan: the extra counts unless the runner says it was not running.
+    var countExtra by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
 
     if (workoutId != 0L) {
         // Opened from history: a saved run.
@@ -651,13 +663,29 @@ fun RunDoneScreen(workoutId: Long) {
                 val lapM = w.lapMeters
                 NumberField(
                     testTime, { testTime = it },
-                    "Время забега, ${lapM?.let { "${Ru.laps(Track.laps(testM.toDouble(), it))} — " } ?: ""}$testM м",
+                    "Время забега, ${lapM?.let { "${Ru.laps(testM.toDouble() / it)} — " } ?: ""}$testM м",
                     "мм:сс", keyboard = KeyboardType.Text, placeholder = "5:45",
                 )
+                val typed = trialSeconds(testTime, testM)
                 Text(
-                    if (result.testSeconds != null) "По кнопке «Круг». Если засекал сам — поправь." else "Впиши время с секундомера: без него забег не засчитается.",
-                    style = T.secondary(13.sp),
+                    when {
+                        testTime.isNotBlank() && typed == null -> "Не похоже на время забега — впиши минуты и секунды через двоеточие, например 5:52."
+                        result.testSeconds != null -> "По кнопке «Круг». Если засекал сам — поправь."
+                        else -> "Впиши время с секундомера: без него забег не засчитается."
+                    },
+                    style = T.secondary(13.sp).copy(color = if (testTime.isNotBlank() && typed == null) F.c.warn else F.c.text2),
                 )
+            }
+            // Past the plan of an easy or long run: the extra minutes grow the next one, so they must be real.
+            val over = if (w.continuable) ((tracker.timelineMs(nowMs) / 1000).toInt() - w.totalSeconds).coerceAtLeast(0) else 0
+            if (over >= 60) {
+                FCard(gap = 4.dp) {
+                    Toggle(
+                        "Сверх плана +${Ru.clock(over)}",
+                        if (countExtra) "Засчитать: следующая пробежка станет длиннее" else "Не считать: например, телефон просто остался включённым",
+                        countExtra,
+                    ) { countExtra = it }
+                }
             } else if (w.type == RunType.TEST && result.workDistanceM == null) {
                 NumberField(testKm, { testKm = it }, "Сколько пробежал за 12 минут (если без GPS)", "км")
             }
@@ -688,8 +716,12 @@ fun RunDoneScreen(workoutId: Long) {
                     try {
                         var r = tracker.result(android.os.SystemClock.elapsedRealtime(), rpe)
                         parseNum(testKm)?.let { km -> if (r.workDistanceM == null) r = r.copy(workDistanceM = km * 1000) }
-                        if (tracker.workout.testMeters != null) r = r.copy(testSeconds = parseClock(testTime)?.roundToInt()?.takeIf { it > 0 })
+                        tracker.workout.testMeters?.let { m -> r = r.copy(testSeconds = trialSeconds(testTime, m)) }
                         if (repsKind) r = r.copy(reps = reps)
+                        if (!countExtra && tracker.workout.continuable) {
+                            val extra = ((tracker.timelineMs(android.os.SystemClock.elapsedRealtime()) / 1000).toInt() - tracker.workout.totalSeconds).coerceAtLeast(0)
+                            r = r.copy(durationSec = (r.durationSec - extra).coerceAtLeast(1))
+                        }
                         val points = RunSession.points.map { TrackPointEntity(0, it.timeMs, it.lat, it.lon, it.accuracy) }
                         // The day it was run: a run brought back after the app was closed may be saved days later.
                         saved = repo.saveRun(tracker.workout, r, RunSession.startedAtWall, points, repo.dayOf(RunSession.startedAtWall))

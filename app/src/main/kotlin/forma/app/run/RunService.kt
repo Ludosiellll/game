@@ -28,6 +28,7 @@ import forma.app.R
 import forma.app.data.AppJson
 import forma.core.run.Cue
 import forma.core.run.Fix
+import forma.core.run.Press
 import forma.core.run.RunEvent
 import forma.core.run.RunTracker
 import forma.core.run.RunWorkout
@@ -83,6 +84,9 @@ class RunService : Service() {
 
     private fun now() = SystemClock.elapsedRealtime()
 
+    /** Five-minute marks past the plan already announced. */
+    private var overMark = 0
+
     private fun control(action: (RunTracker) -> Unit) {
         val t = RunSession.tracker ?: return
         action(t)
@@ -91,13 +95,19 @@ class RunService : Service() {
         if (ticker != null) notifyNow()
     }
 
-    /** The runner crossed the line: the lap's time is said and judged against the target. */
+    /** The runner crossed the line: the lap's time is said and judged against the target; on the start line — "Старт". */
     private fun lap() {
         val t = RunSession.tracker ?: return
-        val l = t.lap(now()) ?: return
+        when (val p = t.press(now())) {
+            Press.Ignored -> return
+            Press.Start -> coach?.speak("Старт.")
+            is Press.Done -> {
+                val l = p.lap
+                coach?.speak(CoachText.lap(t.workout, l, l.rep?.let { t.repTimes().getOrNull(it - 1) }))
+            }
+        }
         RunSession.publish(now())
         RunSession.save(now())
-        coach?.speak(CoachText.lap(t.workout, l, l.rep?.let { t.repTimes().getOrNull(it - 1) }))
         if (ticker != null) notifyNow()
     }
 
@@ -132,6 +142,8 @@ class RunService : Service() {
         val gps = RunSession.gpsEnabled && hasLocation()
         if (!foreground(gps)) return false
         RunSession.attached()
+        // Marks past the plan already behind (a run brought back after the app was closed) are not said again.
+        overMark = ((t.timelineMs(now()) / 1000).toInt() - t.workout.totalSeconds).coerceAtLeast(0) / 300
         coach = VoiceCoach(this, RunSession.voice, RunSession.beeps, RunSession.vibration)
         wake = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "forma:run").apply { acquire(6 * 60 * 60 * 1000L) }
@@ -150,8 +162,18 @@ class RunService : Service() {
                     lastSavedAt = now()
                     RunSession.save(now())
                 }
-                // Easy and long runs go on past the plan if the runner wants to (more counts); the rest finish.
-                if (tr.state == RunTracker.State.RUNNING && tr.timeline(now()).finished && !tr.workout.isOpenEnded && !tr.workout.continuable) {
+                // Easy and long runs go on past the plan if the runner wants to (more counts): every five minutes the
+                // coach says so, and an hour past the plan the run ends (a phone forgotten in a pocket).
+                if (tr.state == RunTracker.State.RUNNING && tr.workout.continuable && tr.timeline(now()).finished) {
+                    val over = (tr.timelineMs(now()) / 1000).toInt() - tr.workout.totalSeconds
+                    val mark = over / 300
+                    if (mark > overMark) {
+                        overMark = mark
+                        coach?.speak("Сверх плана ${Ru.minutes(mark * 5)}. «Стоп», когда хватит.")
+                    }
+                }
+                val overLimit = tr.workout.continuable && (tr.timelineMs(now()) / 1000).toInt() - tr.workout.totalSeconds >= 3600
+                if (tr.state == RunTracker.State.RUNNING && tr.timeline(now()).finished && !tr.workout.isOpenEnded && (!tr.workout.continuable || overLimit)) {
                     tr.finish(now())
                     RunSession.publish(now())
                     RunSession.save(now())

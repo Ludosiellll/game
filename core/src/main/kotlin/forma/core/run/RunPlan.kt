@@ -3,6 +3,7 @@ package forma.core.run
 import forma.core.model.RunGoal
 import forma.core.text.Ru
 import kotlinx.serialization.Serializable
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -115,6 +116,8 @@ sealed interface RunOutcome {
     @Serializable data object TestNext : RunOutcome
     /** The time trial was as fast as the goal or faster. */
     @Serializable data object GoalReached : RunOutcome
+    /** The top of the race-pace ladder went well, but the last time trial was less than three weeks ago. */
+    @Serializable data object TrialLater : RunOutcome
 }
 
 data class RunAfter(val state: RunState, val outcomes: List<RunOutcome>)
@@ -171,6 +174,13 @@ object RunPlan {
         Triple(4, 240, 180), Triple(5, 240, 180), Triple(4, 300, 180), Triple(5, 300, 180),
     )
 
+    /** Where a rep of a fractional lap count starts: "с середины круга", "за четверть круга до линии". */
+    private fun startWords(fraction: Double): String = when {
+        abs(fraction - 0.5) < 0.01 -> "с середины круга"
+        abs(fraction - 0.25) < 0.01 -> "за четверть круга до линии"
+        else -> "за три четверти круга до линии"
+    }
+
     /** One step of the race-pace ladder: rep lengths in metres (for 1500 m) and the recovery between them. */
     private data class GoalStep(val reps: List<Int>, val rest: Int)
 
@@ -192,6 +202,9 @@ object RunPlan {
     )
 
     val goalLadderSize: Int get() = GOAL.size
+
+    /** Paces (s/km) a time trial can believably be run at: faster than 2:10 or slower than 15:00 is a typo. */
+    val PLAUSIBLE_PACE = 130.0..900.0
 
     /** Tempo ladder: (repeats, work seconds, recovery seconds) at threshold pace. */
     private val TEMPO = listOf(
@@ -308,14 +321,20 @@ object RunPlan {
         val lapSec = lapMeters?.let { Track.lapSec(pace, it) }
         val p = paces(state)
         val segs = mutableListOf(Segment(SegmentKind.WARMUP, 12 * 60, p?.easy))
-        // The race in two parts on a track: whole laps first, then the rest of the race distance (from mid-lap).
-        val firstPart = lapMeters?.let { Track.wholeLaps(reps.first(), it) }
+        // On a track: whole laps where they fit, else half laps (started half a lap before the line); a rep no lap count
+        // fits stays timed. The race in two parts: the rest of the race distance after the first part — or the race in
+        // one go when the rest would be under half a lap.
+        var laps: List<Double?> = reps.map { m -> lapMeters?.let { Track.repLaps(m, it) } }
+        if (last && lapMeters != null) {
+            val race = Track.raceLaps(goal.meters.toDouble(), lapMeters)
+            val first = laps.first() ?: race
+            laps = if (race - first >= 0.5) listOf(first, race - first) else listOf(race)
+            reps = laps.map { it!! * lapMeters }
+        }
         reps.forEachIndexed { i, m ->
-            val laps = lapMeters?.let {
-                if (last && i == reps.lastIndex) Track.laps(goal.meters.toDouble(), it) - firstPart!! else Track.wholeLaps(m, it).toDouble()
-            }
-            val meters = if (laps != null) laps * lapMeters else (m / 50).roundToInt() * 50.0
-            segs += Segment(SegmentKind.WORK, (meters / 1000 * pace).roundToInt(), range, laps, lapSec)
+            val l = laps[i]
+            val meters = if (l != null) l * lapMeters!! else (m / 50).roundToInt() * 50.0
+            segs += Segment(SegmentKind.WORK, (meters / 1000 * pace).roundToInt(), range, l, if (l != null) lapSec else null)
             if (i < reps.lastIndex) segs += Segment(SegmentKind.RECOVERY, step.rest)
         }
         segs += Segment(SegmentKind.COOLDOWN, 8 * 60, p?.easy)
@@ -329,7 +348,7 @@ object RunPlan {
             "Каждый круг — $lapRange: на ${lapSec.roundToInt()}-й секунде пискнет, в этот момент ты должен быть на линии. " +
                 "Быстрее не надо: ровный темп — главный навык этой дистанции. Между отрезками $rest шагом или трусцой. " +
                 "Нажимай «Круг» на линии — по кругам приложение решит, что дальше." +
-                if (last) " Второй отрезок начни с середины круга." else ""
+                (work.lastOrNull()?.laps?.takeIf { it % 1.0 != 0.0 }?.let { " Отрезок в ${Ru.laps(it)} начни ${startWords(it % 1.0)}." } ?: "")
         } else {
             "Отрезки в темпе цели, ${Ru.pace(pace)} на км: ровно, не быстрее. Между ними $rest шагом или трусцой."
         }
@@ -344,7 +363,7 @@ object RunPlan {
         val p = paces(state)
         val predicted = state.vdot?.let { Vdot.predictSeconds(it, goal.meters.toDouble()) } ?: goal.seconds * 1.08
         val pace = predicted / (goal.meters / 1000.0)
-        val laps = lapMeters?.let { Track.laps(goal.meters.toDouble(), it) }
+        val laps = lapMeters?.let { Track.raceLaps(goal.meters.toDouble(), it) }
         val meters = if (laps != null) laps * lapMeters else goal.meters.toDouble()
         val lapSec = lapMeters?.let { Track.lapSec(pace, it) }
         // The race has room for a slower finish (15 %): the cool-down starts at the last lap press, not over the runner.
@@ -361,7 +380,7 @@ object RunPlan {
             append("Контрольный: $distance в полную силу, но ровно. ")
             if (lapSec != null) {
                 append("Первые круги — по ${Ru.lap(lapSec)} (пищит на каждом), со второй половины — быстрее, если силы есть. ")
-                if (laps != null && laps % 1.0 != 0.0) append("Старт — с середины круга. ")
+                if (laps != null && laps % 1.0 != 0.0) append("Старт — ${startWords(laps % 1.0)}. ")
                 append("Нажимай «Круг» на каждой линии: время забега — по последнему нажатию.")
             } else {
                 append("Первая половина — по ${Ru.pace(pace)} на км, дальше — сколько осталось.")
@@ -382,12 +401,9 @@ object RunPlan {
         val segs = w.segments.map { s ->
             val pace = s.pace ?: return@map s
             val lap = s.lapSec ?: Track.lapSec((pace.fast + pace.slow) / 2.0, lapMeters)
-            if (s.kind == SegmentKind.WORK && s.laps == null) {
-                val laps = max(1, (s.seconds / lap).roundToInt())
-                s.copy(seconds = (laps * lap).roundToInt(), laps = laps.toDouble(), lapSec = lap)
-            } else {
-                s.copy(lapSec = lap)
-            }
+            // A timed rep becomes the laps that cover about as much ground (a rep no lap count fits stays timed).
+            val laps = if (s.kind == SegmentKind.WORK && s.laps == null) Track.repLaps(s.seconds / lap * lapMeters, lapMeters) else null
+            if (laps != null) s.copy(seconds = (laps * lap).roundToInt(), laps = laps, lapSec = lap) else s.copy(lapSec = lap)
         }
         val work = segs.filter { it.kind == SegmentKind.WORK && it.laps != null }
         val title = when {
@@ -476,6 +492,10 @@ object RunPlan {
             longMinutes = cut(state.longMinutes, 30),
             intervalStage = max(0, state.intervalStage - back),
             tempoStage = max(0, state.tempoStage - back),
+            // The race-pace ladder steps back like the others; a trial due before a month off is not run cold.
+            goalStage = max(0, state.goalStage - back),
+            goalFails = 0,
+            testSoon = state.testSoon && off < 28,
             qualityOnPace = 0,
             qualityFails = 0,
             walkFails = 0,
@@ -569,8 +589,10 @@ object RunPlan {
                 val size = if (w.type == RunType.INTERVALS) INTERVALS.size else TEMPO.size
                 val cur = if (w.type == RunType.INTERVALS) state.intervalStage else state.tempoStage
                 val target = paces(s)?.let { if (w.type == RunType.INTERVALS) it.interval else it.threshold }
+                // Reps as the runner reported them count, but only for a session run (almost) through: reps cut short
+                // by skipping are not reps done.
                 val repsDone = r.reps ?: w.reps
-                val success = (done || repsDone >= w.reps) && r.rpe <= w.targetRpe
+                val success = r.rpe <= w.targetRpe && (r.reps?.let { it >= w.reps && r.completed >= 0.9 } ?: done)
                 // On pace: work pace measured and no more than 2 % slower than the target.
                 val onPace = success && target != null && r.workPace != null && r.workPace <= target * 1.02
                 var stage = cur
@@ -607,14 +629,20 @@ object RunPlan {
             RunType.TEST -> {
                 val tm = w.testMeters
                 if (tm != null) {
-                    // A time trial over the race distance: its time is the fitness. Faster than 10 m/s is a typo.
+                    // A time trial over the race distance: its time is the fitness. A pace outside 2:10–15:00 a km is
+                    // a typo ("552" for 5:52), not a result.
                     val t = r.testSeconds
-                    if (t != null && t > tm / 10.0) {
-                        val nv = (Vdot.fromRace(tm.toDouble(), t.toDouble()) * 2).roundToInt() / 2.0
+                    if (t != null && t / (tm / 1000.0) in PLAUSIBLE_PACE) {
+                        val raw = Vdot.fromRace(tm.toDouble(), t.toDouble())
+                        val nv = (raw * 2).roundToInt() / 2.0
                         out += RunOutcome.TestTime(tm, t)
                         out += RunOutcome.VdotChanged(state.vdot, nv)
                         s = s.copy(vdot = nv, testSoon = false)
-                        if (goal != null && nv >= Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble()) - 0.05) out += RunOutcome.GoalReached
+                        // Judged on the unrounded fitness: 1495 m in 5:33 is faster than 1500 m in 5:35.
+                        val reached = goal != null && raw >= Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble())
+                        if (reached) out += RunOutcome.GoalReached
+                        // Not there yet after the whole ladder: back down three steps to build up to it again.
+                        if (goal != null && !reached && state.goalStage >= GOAL.lastIndex) s = s.copy(goalStage = GOAL.lastIndex - 3, goalFails = 0)
                     }
                 } else {
                     // Only a test run to the end counts: a shortened one would overrate the runner (short efforts are
@@ -624,12 +652,14 @@ object RunPlan {
                     if (done && d != null && d > 500 && sec > 0) {
                         val nv = (Vdot.fromRace(d, sec.toDouble()) * 2).roundToInt() / 2.0
                         out += RunOutcome.VdotChanged(state.vdot, nv)
-                        s = s.copy(vdot = nv)
+                        s = s.copy(vdot = nv, testSoon = false)
                     }
                 }
             }
             RunType.GOAL_PACE -> {
                 val planned = w.reps
+                // Reported reps count for a session run (almost) through; without them the timer decides.
+                val enough = r.reps?.let { it >= planned && r.completed >= 0.9 } ?: done
                 val repsDone = r.reps ?: if (done) planned else (r.completed * planned).toInt()
                 val target = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.pace?.let { (it.fast + it.slow) / 2.0 }
                 val pace = r.workPace
@@ -638,13 +668,18 @@ object RunPlan {
                 val slow = target != null && pace != null && pace > target * 1.03
                 val fast = target != null && pace != null && pace < target * 0.98
                 val cur = state.goalStage.coerceIn(0, GOAL.lastIndex)
-                if (repsDone >= planned && r.rpe <= 8 && !slow) {
+                if (enough && r.rpe <= 8 && !slow) {
                     val big = repsDone > planned || fast && r.rpe <= 7
                     val next = min(GOAL.lastIndex, cur + if (big) 2 else 1)
-                    if (cur == GOAL.lastIndex) {
+                    // A time trial at most every three weeks, however often the top of the ladder goes well.
+                    val trialRecently = state.lastTestDay?.let { day - it < 21 } == true
+                    if (cur == GOAL.lastIndex && !trialRecently) {
                         // The race in two parts at goal pace: time to run it in one go.
                         out += RunOutcome.TestNext
                         s = s.copy(goalStage = cur, goalFails = 0, testSoon = true)
+                    } else if (cur == GOAL.lastIndex) {
+                        out += RunOutcome.TrialLater
+                        s = s.copy(goalFails = 0)
                     } else {
                         out += RunOutcome.StageUp("goal", next)
                         s = s.copy(goalStage = next, goalFails = 0)

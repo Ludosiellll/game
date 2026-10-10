@@ -116,12 +116,15 @@ private fun goalExample(meters: Int): String = when (meters) {
 @Composable
 fun RunGoalPicker(d: ProfileDraft) {
     if (d.run == RunFocus.NONE) return
-    SectionLabel("Забег-цель (необязательно)", Modifier.padding(top = 6.dp))
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        GOAL_DISTANCES.forEach { (m, label) -> Chip(label, d.goalMeters == m, { d.goalMeters = if (d.goalMeters == m) null else m }) }
+    // Racing needs hard runs: a goal is for the speed and endurance focus (running for health has only easy runs).
+    if (d.racing) {
+        SectionLabel("Забег-цель (необязательно)", Modifier.padding(top = 6.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            GOAL_DISTANCES.forEach { (m, label) -> Chip(label, d.goalMeters == m, { d.goalMeters = if (d.goalMeters == m) null else m }) }
+        }
     }
     val meters = d.goalMeters
-    if (meters != null) {
+    if (meters != null && d.racing) {
         NumberField(d.goalTime, { d.goalTime = it }, "За какое время", "мм:сс", keyboard = KeyboardType.Text, placeholder = goalExample(meters))
         val goal = d.runGoal
         val lap = d.lapOrNull

@@ -31,9 +31,10 @@ object Scheduler {
      * neither muscle nor maximal strength (Schumann et al. 2022) — so the gym-first plans keep running to 1–2 sessions
      * and the balanced ones get both in full, kept apart by the layout below.
      *
-     * [shared]: the gym and a run may share a day (the run after the gym), so few days still hold a full week of both:
-     * three days give three lifts and three runs, the hard runs on upper-body days. [middleGoal]: training for a race
-     * of up to 3 km — two quality sessions (race pace and intervals or tempo) before any long run.
+     * [shared]: the gym and a run may share a day, so few days still hold the full week of the priority (what seven days
+     * would): three balanced days give three lifts and three runs, the hard runs on upper-body days; a run-first week
+     * keeps its one or two lifts. [middleGoal]: training for a race of up to 3 km — two quality sessions (race pace and
+     * intervals or tempo) before any long run.
      */
     fun mix(aim: Aim, days: Int, exp: Experience, runLevel: RunLevel, shared: Boolean = false, middleGoal: Boolean = false): Mix {
         val a = aim.normalized()
@@ -46,10 +47,7 @@ object Scheduler {
         val (lifts, runs) = when {
             !a.runs -> min(n, maxLifts) to 0
             !a.lifts -> 0 to min(n, 6)
-            shared -> min(n, maxLifts) to when (a.emphasis) {
-                Emphasis.GYM -> min(n, 2)
-                else -> min(if (n == 7) 6 else n, 6)
-            }
+            shared -> mix(a, 7, exp, runLevel, middleGoal = middleGoal).let { full -> min(n, full.lifts) to min(n, full.runs) }
             a.emphasis == Emphasis.GYM -> min(n, maxLifts) to when (n) { 1 -> 0; 2, 3, 4 -> 1; else -> 2 }
             a.emphasis == Emphasis.BALANCED -> intArrayOf(1, 2, 2, 2, 3, 3, 3)[n - 1] to intArrayOf(1, 2, 2, 3, 3, 3, 3)[n - 1]
             else -> intArrayOf(0, 1, 1, 2, 2, 2, 2)[n - 1] to intArrayOf(1, 2, 3, 4, 4, 5, 6)[n - 1]

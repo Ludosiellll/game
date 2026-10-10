@@ -104,6 +104,9 @@ class ProfileDraft(p: Profile) {
 
     val aim: Aim get() = Aim(lift, run, emphasis).normalized()
 
+    /** A race goal needs hard runs: the speed or endurance focus. */
+    val racing: Boolean get() = run == RunFocus.SPEED || run == RunFocus.ENDURANCE
+
     /** The stadium lap, if running on one and the length makes sense. */
     val lapOrNull: Int? get() = if (stadium) lapMeters.toIntOrNull()?.takeIf { it in 100..1000 } else null
 
@@ -125,7 +128,7 @@ class ProfileDraft(p: Profile) {
             heightCm = if (height.isBlank()) null else height.toIntOrNull()?.takeIf { it in 120..230 } ?: base.heightCm,
             restingHr = restingHr.toIntOrNull()?.takeIf { it in 30..110 },
             raceMeters = race?.first, raceSeconds = race?.second,
-            runGoal = if (aim.runs) runGoal else null, lapMeters = lapOrNull, doubleDays = doubleDays && aim.lifts && aim.runs,
+            runGoal = if (racing) runGoal else null, lapMeters = lapOrNull, doubleDays = doubleDays && aim.lifts && aim.runs,
         )
     }
 }
