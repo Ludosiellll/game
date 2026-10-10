@@ -45,6 +45,8 @@ data class RunState(
     val qualityCount: Int = 0,
     val week: Int = 0,
     val runs: Int = 0,
+    /** Epoch day of the last 12-minute test. */
+    val lastTestDay: Long? = null,
 ) {
     val canRunContinuously: Boolean get() = walkStage < 0
 }

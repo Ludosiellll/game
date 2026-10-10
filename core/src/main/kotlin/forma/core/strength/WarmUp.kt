@@ -2,7 +2,9 @@ package forma.core.strength
 
 import forma.core.floorTo
 import forma.core.roundTo
+import kotlinx.serialization.Serializable
 
+@Serializable
 data class WarmUpSet(val weight: Double, val reps: Int)
 
 /**
