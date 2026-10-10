@@ -78,22 +78,40 @@ object ExerciseSearch {
     }
 
     /** 0 — no match; higher — better. Every typed word has to match something. */
-    fun score(ex: Exercise, query: String): Int = score(fields(ex), normalize(query), emptySet())
+    fun score(ex: Exercise, query: String): Int = score(fields(ex), normalize(query), emptySet(), false)
 
-    /** Like [score], but the [optional] words only add to it when they match; the rest have to. */
-    /** The whole of [q] as a name or a synonym: an exact synonym ("присед") beats a name that merely starts so. */
-    private fun whole(f: Fields, q: String): Int = maxOf(
-        if (f.nameText == q) 200 else 0,
-        if (f.aliasTexts.any { it == q }) 150 else 0,
-        if (f.nameText.startsWith(q)) 120 else 0,
-        if (f.aliasTexts.any { it.startsWith(q) }) 90 else 0,
-    )
+    /**
+     * The whole of [q] as a name or a synonym: an exact synonym ("присед") beats a name that merely starts so. With
+     * [typo] (no exercise has the query as typed) a near miss ("приседаня", "присидания") counts too, so the exercise
+     * people mean comes first and not the shortest name with a similar word ("Сплит-приседания").
+     */
+    private fun whole(f: Fields, q: String, typo: Boolean = false): Int {
+        // One word in another form ("выпад" for the synonym "выпады") is the same synonym.
+        val one = ' ' !in q
+        val exact = maxOf(
+            if (f.nameText == q) 200 else 0,
+            if (f.aliasTexts.any { it == q || one && ' ' !in it && stem(it) == stem(q) }) 150 else 0,
+            if (f.nameText.startsWith(q)) 120 else 0,
+            if (f.aliasTexts.any { it.startsWith(q) }) 90 else 0,
+        )
+        if (exact > 0 || !typo || q.length < 5) return exact
+        val allowed = if (q.length >= 7) 2 else 1
+        return maxOf(
+            if (f.aliasTexts.any { distance(q, it) <= allowed }) 110 else 0,
+            if (startsNear(q, f.nameText, allowed)) 100 else 0,
+            if (f.aliasTexts.any { startsNear(q, it, allowed) }) 80 else 0,
+        )
+    }
 
-    private fun score(f: Fields, q: String, optional: Set<String>): Int {
+    /** [text] starts with [q] give or take [allowed] typos (a letter missed or added near the end too). */
+    private fun startsNear(q: String, text: String, allowed: Int): Boolean =
+        (q.length - 1..q.length + 1).any { n -> n in 1..text.length && distance(q, text.take(n)) <= allowed }
+
+    private fun score(f: Fields, q: String, optional: Set<String>, typo: Boolean): Int {
         if (q.isEmpty()) return 1
         // The query as typed, or its words that matter ("отжимания с весом" is "отжимания").
         val core = q.split(' ').filter { it !in optional }.joinToString(" ")
-        var total = maxOf(whole(f, q), if (core.isNotEmpty()) whole(f, core) else 0)
+        var total = maxOf(whole(f, q, typo), if (core.isNotEmpty()) whole(f, core, typo) else 0)
         var matched = false
         for (t in q.split(' ')) {
             // Little words ("в", "на", "со") help no exercise more than another: they never add to the score.
@@ -143,7 +161,13 @@ object ExerciseSearch {
         val all = pool.associateWith(::fields)
         // What is optional is judged on the whole pool: a real exercise word with a filter that rules it out finds nothing.
         var queries = listOf(query, fromLatinLayout(query)).map(::normalize).distinct().map { it to optionalWords(it, all.values.toList()) }
-        fun find() = candidates.mapNotNull { ex -> queries.maxOf { (q, opt) -> score(all.getValue(ex), q, opt) }.takeIf { it > 0 }?.let { ex to it } }
+        // A typo: no exercise has the query as typed, not even as a word ("трицепс" is a word, not a typo of "бицепс").
+        val typo = queries.associate { (q, _) ->
+            q to all.values.none { f -> whole(f, q) > 0 || q.split(' ').all { t -> t in f.name || t in f.aliases || t in f.tags || t in f.helpers } }
+        }
+        fun find() = candidates.mapNotNull { ex ->
+            queries.maxOf { (q, opt) -> score(all.getValue(ex), q, opt, typo.getValue(q)) }.takeIf { it > 0 }?.let { ex to it }
+        }
         var found = find()
         // No exercise has every word ("подтягивания с гантелей"): the first words say which exercise, the last ones how —
         // let go of the last word, then the one before, while one is left.

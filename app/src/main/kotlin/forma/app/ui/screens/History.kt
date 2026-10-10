@@ -126,6 +126,7 @@ fun HistoryItemScreen(workoutId: Long) {
                 if (r.vdotAfter != null) Text("VDOT после пробежки: ${Ru.one(r.vdotAfter)}", style = T.secondary(14.sp))
             }
             val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
+            summary?.cadence?.let { Text("Каденс: $it шагов в минуту", style = T.secondary(14.sp)) }
             if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
             if (summary != null && summary.outcomes.isNotEmpty()) {
                 SectionLabel("Что изменилось после")

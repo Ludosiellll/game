@@ -361,6 +361,10 @@ class ScreensShotTest {
             val t = store.programNow()!!.templates.first { it.slots.any { s -> s.exerciseId == "plank" } }
             repo.setRemoved("plank", true)
             repo.setPlanSets(t.slots.first().exerciseId, 4, t.slots.first().sets)
+            // Its own range and rest, and an exercise added to this day for good.
+            val second = t.slots[1]
+            repo.tunePlan(second.exerciseId, second, second.sets, 8 to 12, 90)
+            repo.addToPlan(t.id, "db_curl")
             t
         }
         compose.setContent {
@@ -375,9 +379,67 @@ class ScreensShotTest {
         compose.onAllNodesWithText(first)[0].performScrollTo()
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-planrows.png")
-        compose.onAllNodesWithText(first)[0].performClick()
+        compose.onAllNodesWithText("Добавлено тобой", substring = true)[0].performScrollTo()
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-planadded.png")
+        compose.onAllNodesWithText(first)[0].performScrollTo().performClick()
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-plandialog.png")
+    }
+
+    /** The way to 1500 m on a 230 m stadium: three trials and five sessions of reps at the goal pace. */
+    @Test fun goalPath() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = SettingsStore(ctx, "shots-goal")
+        val repo = TrainingRepository(FormaDatabase.create(ctx, inMemory = true), store, now = { clock })
+        runBlocking {
+            store.clear()
+            repo.completeOnboarding(
+                Profile(
+                    name = "Денис", aim = forma.core.model.Aim(forma.core.model.LiftFocus.MUSCLE, forma.core.model.RunFocus.SPEED, forma.core.model.Emphasis.BALANCED),
+                    experience = Experience.INTERMEDIATE, runLevel = RunLevel.BASE, trainingDays = setOf(2, 4, 6), bodyWeightKg = 80.0,
+                    birthYear = 2008, doubleDays = true, runGoal = forma.core.model.RunGoal(1500, 335), lapMeters = 230,
+                ),
+            )
+            store.setRunState(store.runStateNow().copy(vdot = 52.5, runs = 20, goalStage = 4))
+            val today = repo.today().toEpochDay()
+            suspend fun add(day: Long, type: forma.core.run.RunType, outcomes: List<forma.core.run.RunOutcome>, laps: List<forma.core.run.Lap>) {
+                val w = forma.core.run.RunWorkout(type, type.name, emptyList(), lapMeters = 230)
+                val id = repo.db.workouts().insert(
+                    forma.app.data.WorkoutEntity(
+                        epochDay = day, kind = forma.app.data.Kind.RUN, templateId = type.name, title = "Бег", startedAt = day * 86_400_000L,
+                        status = forma.app.data.Status.DONE,
+                        summaryJson = forma.app.data.AppJson.encodeToString(forma.app.data.RunSummary.serializer(), forma.app.data.RunSummary(outcomes, 40, 60.0, laps)),
+                    ),
+                )
+                repo.db.runs().insert(
+                    forma.app.data.RunEntity(id, type.name, forma.app.data.AppJson.encodeToString(forma.core.run.RunWorkout.serializer(), w), 1.0, 2400, 6000.0, 330.0, null, null, null),
+                )
+            }
+            listOf(56L to 352, 35L to 344, 7L to 338).forEach { (ago, t) ->
+                add(today - ago, forma.core.run.RunType.TEST, listOf(forma.core.run.RunOutcome.TestTime(1500, t)), emptyList())
+            }
+            listOf(49L to 53.4, 42L to 53.0, 28L to 52.6, 21L to 52.3, 14L to 51.9).forEachIndexed { k, (ago, avg) ->
+                val laps = (1..4).flatMap { rep -> (1..3).map { i -> forma.core.run.Lap(avg + (i - 2) * 0.5 + (k + rep) % 2 * 0.3, fast = 50.9, slow = 51.9, number = i, of = 3, rep = rep) } }
+                add(today - ago, forma.core.run.RunType.GOAL_PACE, emptyList(), laps)
+            }
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) {
+                    Box(Modifier.fillMaxSize().background(F.c.bg)) { ProgressScreen(initialTab = 1) }
+                }
+            }
+        }
+        settle()
+        compose.onAllNodesWithText("Путь к цели")[0].performScrollTo()
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-goalpath.png")
+        compose.onAllNodesWithText("в темпе", substring = true).fetchSemanticsNodes().size.let { n ->
+            compose.onAllNodesWithText("в темпе", substring = true)[n - 1].performScrollTo()
+        }
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-goalpath2.png")
     }
 
     /** The very first session of a new user: every working weight is being found. */

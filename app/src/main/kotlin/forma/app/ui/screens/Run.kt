@@ -151,7 +151,8 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
         if (gps && !fine && granted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
             android.widget.Toast.makeText(context, "С примерной геопозицией дистанцию не посчитать — бег по времени. Нужна точная.", android.widget.Toast.LENGTH_LONG).show()
         }
-        RunService.start(context, workout, gps && fine, voice, settings.beeps, settings.vibration)
+        val stride = forma.core.run.Stride.fit(settings.strideSamples.mapNotNull { if (it.size == 2) it[0] to it[1] else null })
+        RunService.start(context, workout, gps && fine, voice, settings.beeps, settings.vibration, settings.trackLine, settings.autoPause, stride)
         nav.replaceTop(Screen.RunActive)
     }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { start() }
@@ -196,7 +197,8 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
         if (track) {
             Banner(
                 "Стадион, круг ${workout.lapMeters} м. Жми «Круг», когда пересекаешь линию: приложение скажет время круга и в темпе ли ты. " +
-                    "Писк — момент, когда ты должен быть на линии. Кнопка «Круг» есть и в уведомлении.",
+                    "Писк — момент, когда ты должен быть на линии. Кнопка «Круг» есть и в уведомлении." +
+                    if (gps) " С GPS пропущенное нажатие не пропадёт: круг засчитается сам, примерно (±2 с), а дистанция — по кругам." else "",
                 F.c.endurance, icon = Ic.info,
             )
         }
@@ -225,6 +227,8 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
                     add(Manifest.permission.ACCESS_COARSE_LOCATION)
                 }
                 if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+                // The step counter: cadence, and the distance where GPS is lost.
+                if (Build.VERSION.SDK_INT >= 29 && RunSession.tracker == null) add(Manifest.permission.ACTIVITY_RECOGNITION)
             }
             val missing = need.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
             if (missing.isEmpty() || ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
@@ -385,6 +389,9 @@ fun RunActiveScreen() {
                     style = T.secondary(13.sp), textAlign = TextAlign.Center,
                 )
             }
+            if (u.autoPaused) {
+                Banner("Автопауза: стоишь — время встало. Побежишь — продолжится само.", F.c.endurance)
+            }
             if (u.restored && u.state == RunTracker.State.PAUSED) {
                 Banner("Телефон закрыл приложение во время пробежки. Время и дистанция до этого момента сохранены: ▶ — продолжить, «Стоп» — закончить.", F.c.warn)
             }
@@ -430,7 +437,8 @@ fun RunActiveScreen() {
                     val pace = u.pace
                     val inRange = pace != null && target != null && pace >= target.fast - 3 && pace <= target.slow + 3
                     StatTile(
-                        if (inRange) "Сейчас · в коридоре" else "Сейчас", pace?.let { Ru.pace(it) } ?: "–:––", "мин/км, за 30 с",
+                        if (inRange) "Сейчас · в коридоре" else "Сейчас", pace?.let { Ru.pace(it) } ?: "–:––",
+                        u.cadence?.let { "мин/км · $it шаг/мин" } ?: "мин/км",
                         if (target == null) F.c.text else if (inRange) F.c.good else F.c.warn, Modifier.weight(1f),
                     )
                 }
@@ -442,11 +450,11 @@ fun RunActiveScreen() {
             Hairline()
             Row {
                 if (lapM != null && !u.gps) Metric("${u.laps}", Ru.plural(u.laps, "круг", "круга", "кругов"), Modifier.weight(1f), Alignment.Start)
-                else Metric(if (u.gps) Ru.km2(u.distanceM) else "—", "км", Modifier.weight(1f), Alignment.Start)
+                else Metric(if (u.gps) Ru.km2(u.distanceM) else "—", if (lapM != null) "км по кругам" else "км", Modifier.weight(1f), Alignment.Start)
                 Metric(Ru.clock(u.elapsedSec), if (w.isOpenEnded || over) "время" else "из ${Ru.clock(w.totalSeconds)}", Modifier.weight(1f), Alignment.CenterHorizontally)
                 val clock = u.lapClock
                 // Waiting on the line no lap is running: the warm-up's twelve minutes are not "this lap".
-                if (lapM != null && !u.gps && clock != null) Metric(if (waiting) "—" else Ru.clock(clock), "этот круг", Modifier.weight(1f), Alignment.End)
+                if (lapM != null && clock != null) Metric(if (waiting) "—" else Ru.clock(clock), "этот круг", Modifier.weight(1f), Alignment.End)
                 else Metric(u.avgPace?.let { Ru.pace(it) } ?: "–:––", "средний темп", Modifier.weight(1f), Alignment.End)
             }
             Hairline()
@@ -650,7 +658,8 @@ private fun LapLine(laps: List<Lap>) {
     val text = androidx.compose.ui.text.buildAnnotatedString {
         laps.forEachIndexed { i, l ->
             if (i > 0) append(" · ")
-            withStyle(androidx.compose.ui.text.SpanStyle(color = colors[i])) { append(Ru.lap(l.seconds).removeSuffix(" с")) }
+            // A lap GPS counted (no press) is roughly timed: "≈53".
+            withStyle(androidx.compose.ui.text.SpanStyle(color = colors[i])) { append((if (l.auto) "≈" else "") + Ru.lap(l.seconds).removeSuffix(" с")) }
         }
     }
     Text(text, style = T.number(14.sp, FontWeight.SemiBold))
@@ -739,7 +748,7 @@ fun RunDoneScreen(workoutId: Long) {
                     StatTile("Отрезки", result.workPace?.let { Ru.lap(Track.lapSec(it, lapM)) } ?: "—", "средний круг", F.c.text, Modifier.weight(1f))
                 } else {
                     StatTile("Дистанция", result.distanceM?.let { Ru.distance(it) } ?: "—", "", F.c.endurance, Modifier.weight(1f))
-                    StatTile("Темп", tracker.averagePace(nowMs)?.let { Ru.pace(it) } ?: "—", "средний", F.c.text, Modifier.weight(1f))
+                    StatTile("Темп", tracker.averagePace(nowMs)?.let { Ru.pace(it) } ?: "—", result.cadence?.let { "средний · $it шаг/мин" } ?: "средний", F.c.text, Modifier.weight(1f))
                 }
             }
             val w = tracker.workout
@@ -755,6 +764,7 @@ fun RunDoneScreen(workoutId: Long) {
                 Text(
                     when {
                         testTime.isNotBlank() && typed == null -> "Не похоже на время забега — впиши минуты и секунды через двоеточие, например 5:52."
+                        result.testSeconds != null && tracker.laps.any { it.auto } -> "По кнопке «Круг» и GPS: круг без нажатия засчитан примерно (±2 с). Если засекал сам — поправь."
                         result.testSeconds != null -> "По кнопке «Круг». Если засекал сам — поправь."
                         else -> "Впиши время с секундомера: без него забег не засчитается."
                     },
@@ -817,6 +827,18 @@ fun RunDoneScreen(workoutId: Long) {
                         val points = RunSession.points.map { TrackPointEntity(0, it.timeMs, it.lat, it.lon, it.accuracy) }
                         // The day it was run: a run brought back after the app was closed may be saved days later.
                         saved = repo.saveRun(tracker.workout, r, RunSession.startedAtWall, points, repo.dayOf(RunSession.startedAtWall))
+                        // The stadium's line as the presses placed it, and the strides measured where GPS was good: next
+                        // time GPS laps count from the first one, and steps give the distance where GPS is lost.
+                        val line = tracker.line
+                        val strides = tracker.strideSamples()
+                        if (line != null || strides.isNotEmpty()) {
+                            repo.updateSettings { st ->
+                                st.copy(
+                                    trackLine = line?.let { listOf(it.first, it.second) } ?: st.trackLine,
+                                    strideSamples = (st.strideSamples + strides.map { listOf(it.first, it.second) }).takeLast(60),
+                                )
+                            }
+                        }
                         RunSession.clear()
                     } finally {
                         saving = false

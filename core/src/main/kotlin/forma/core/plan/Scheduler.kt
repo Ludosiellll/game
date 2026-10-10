@@ -6,6 +6,7 @@ import forma.core.model.Experience
 import forma.core.model.LiftFocus
 import forma.core.model.RunFocus
 import forma.core.model.RunLevel
+import kotlin.math.max
 import kotlin.math.min
 
 /** How many sessions of each kind a week holds. */
@@ -51,6 +52,10 @@ object Scheduler {
             a.emphasis == Emphasis.GYM -> min(n, maxLifts) to when (n) { 1 -> 0; 2, 3, 4 -> 1; else -> 2 }
             a.emphasis == Emphasis.BALANCED -> intArrayOf(1, 2, 2, 2, 3, 3, 3)[n - 1] to intArrayOf(1, 2, 2, 3, 3, 3, 3)[n - 1]
             else -> intArrayOf(0, 1, 1, 2, 2, 2, 2)[n - 1] to intArrayOf(1, 2, 3, 4, 4, 5, 6)[n - 1]
+        }.let { (l, r) ->
+            // 1500 m is mostly aerobic, and the aerobic base is what a runner who "runs out of breath" lacks: with four
+            // days or more and the gym and running on the same days, a second easy run joins the two hard ones.
+            l to if (shared && middleGoal && a.emphasis != Emphasis.GYM && n >= 4) max(r, min(n, 4)) else r
         }
         // Endurance builds on the long run; speed on intervals and tempo, with a long run once there are three runs.
         val (easy, quality, long) = when (a.run) {

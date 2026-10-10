@@ -44,8 +44,12 @@ sealed interface LibraryMode {
     @Serializable data class SwapInWorkout(val workoutId: Long, val position: Int, val exerciseId: String) : LibraryMode
     /** Replace a plan exercise for good; [planExerciseId] is the plan's own choice, [currentId] what is done now. */
     @Serializable data class SwapInPlan(val planExerciseId: String, val currentId: String) : LibraryMode
-    /** Add an exercise to a running session. */
+    /** Add an exercise to a running session (today or for good). */
     @Serializable data class AddToWorkout(val workoutId: Long) : LibraryMode
+    /** Add an exercise to every session of a plan's template. */
+    @Serializable data class AddToPlan(val templateId: String) : LibraryMode
+    /** Replace an exercise added to a template for good. */
+    @Serializable data class SwapAdded(val templateId: String, val exerciseId: String) : LibraryMode
 }
 
 /** One screen in the back stack; [id] keys its saved state (two entries of the same screen keep their own). */

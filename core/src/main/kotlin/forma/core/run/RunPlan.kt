@@ -100,6 +100,8 @@ data class RunResult(
     val reps: Int? = null,
     /** A time trial over [RunWorkout.testMeters]: its time in seconds. */
     val testSeconds: Int? = null,
+    /** Steps a minute while running, from the phone's step counter. */
+    val cadence: Int? = null,
 )
 
 @Serializable
@@ -256,6 +258,17 @@ object RunPlan {
 
     fun paces(state: RunState): Paces? = state.vdot?.let { PaceTable.forVdot(it) }
 
+    /**
+     * Before the first test of a race goal: a fitness well below the goal's (8 points, about 10 % slower over 1500 m),
+     * only so easy runs have a pace they should not beat — the first runs are where a fast starter overdoes it.
+     */
+    fun provisionalVdot(goal: RunGoal): Double =
+        ((Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble()) - 8) * 2).roundToInt() / 2.0
+
+    /** An easy or long run paced from [provisionalVdot]: the limit is said to be approximate. */
+    fun provisional(w: RunWorkout): RunWorkout =
+        w.copy(note = w.note + " Темп примерный: контрольного ещё не было, граница — от цели; после контрольного уточнится.")
+
     fun runWalk(state: RunState): RunWorkout {
         val stage = state.walkStage.coerceIn(0, WALK_LADDER.lastIndex)
         val segs = mutableListOf(Segment(SegmentKind.WARMUP, WALK_WARM))
@@ -310,7 +323,7 @@ object RunPlan {
             if (i < n - 1) segs += Segment(SegmentKind.RECOVERY, rest, p?.easy)
         }
         segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
-        val note = "Ускорения тяжёлые, но ровные: последнее не медленнее первого. Между ними — трусца."
+        val note = "Ускорения тяжёлые, но ровные: последнее не медленнее первого. Между ними — трусца. В конце разминки — 3–4 коротких ускорения по 15 с."
         return RunWorkout(RunType.INTERVALS, "Интервалы · $n × ${work / 60} мин", segs, note, targetRpe = 8, stage = stage, cutback = n < n0)
     }
 
@@ -389,6 +402,7 @@ object RunPlan {
             val lapRange = Ru.lapRange(Track.lapSec(range.fast.toDouble(), lapMeters), Track.lapSec(range.slow.toDouble(), lapMeters))
             "Каждый круг — $lapRange: на ${lapSec.roundToInt()}-й секунде пискнет, в этот момент ты должен быть на линии. " +
                 "Быстрее не надо: ровный темп — главный навык этой дистанции. Между отрезками $rest шагом или трусцой. " +
+                    "В конце разминки — 3–4 ускорения по 15 с. " +
                 "Нажимай «Круг» на линии — по кругам приложение решит, что дальше." +
                 (work.lastOrNull()?.laps?.takeIf { it % 1.0 != 0.0 }?.let { " Отрезок в ${Ru.laps(it)} начни ${startWords(it % 1.0)}." } ?: "")
         } else {
@@ -422,7 +436,7 @@ object RunPlan {
         )
         val distance = if (laps != null) "${Ru.laps(laps)} (${meters.roundToInt()} м)" else "${goal.meters} м"
         val note = buildString {
-            append("Контрольный: $distance в полную силу, но ровно. ")
+            append("Контрольный: $distance в полную силу, но ровно. В конце разминки — 3–4 ускорения по 15 с. ")
             if (lapSec != null) {
                 append("Первые круги — по ${Ru.lap(lapSec)} (пищит на каждом), со второй половины — быстрее, если силы есть. ")
                 if (laps != null && laps % 1.0 != 0.0) append("Старт — ${startWords(laps % 1.0)}. ")

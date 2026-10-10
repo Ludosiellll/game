@@ -34,6 +34,8 @@ data class Settings(
     val gps: Boolean = true,
     val autoRest: Boolean = true,
     val keepScreenOn: Boolean = true,
+    /** Easy, long and free runs on the road stop the clock at a standstill (traffic lights) and go on with running. */
+    val autoPause: Boolean = true,
     /** Per-exercise load step overrides, kg. */
     val steps: Map<String, Double> = emptyMap(),
     /** Training paused (vacation, illness) from this epoch day … */
@@ -46,6 +48,16 @@ data class Settings(
     val sets: Map<String, Int> = emptyMap(),
     /** Exercises taken out of the plan for good (plan exercise ids); the plan screen brings them back. */
     val removed: Set<String> = emptySet(),
+    /** Exercises added to a lifting session for good: template id → exercise ids, after the plan's own. */
+    val added: Map<String, List<String>> = emptyMap(),
+    /** Rep range of an exercise for good: plan exercise id → [min, max], instead of the plan's. */
+    val reps: Map<String, List<Int>> = emptyMap(),
+    /** Rest between sets of an exercise for good: plan exercise id → seconds, instead of the plan's. */
+    val rest: Map<String, Int> = emptyMap(),
+    /** The start line of the stadium (lat, lon) learnt from the lap presses: GPS laps count from the first one next time. */
+    val trackLine: List<Double>? = null,
+    /** (cadence, stride m) pairs measured where GPS was good: the stride model for distance by steps. */
+    val strideSamples: List<List<Double>> = emptyList(),
 )
 
 /** Lifting state that is not per exercise. */

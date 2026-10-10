@@ -71,8 +71,9 @@ class RunService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> start(intent)
-            ACTION_PAUSE -> control { it.pause(now()) }
-            ACTION_RESUME -> if (attach()) control { it.resume(now()) }
+            // By hand: the auto-pause steps aside until the runner runs again.
+            ACTION_PAUSE -> control { autoPause.reset(); RunSession.autoPaused = false; it.pause(now()) }
+            ACTION_RESUME -> if (attach()) control { autoPause.reset(); RunSession.autoPaused = false; it.resume(now()) }
             ACTION_SKIP -> control { it.skipSegment(now()) }
             ACTION_LAP -> lap()
             ACTION_STOP -> stopRun()
@@ -89,6 +90,9 @@ class RunService : Service() {
 
     /** When the coach last asked to press "lap" at the start while the plan waits on the line. */
     private var waitSaidAt = 0L
+
+    /** Stops the clock at a standstill on the road (easy, long and free runs) and goes on with running. */
+    private val autoPause = forma.core.run.AutoPause()
 
     private fun control(action: (RunTracker) -> Unit) {
         val t = RunSession.tracker ?: return
@@ -126,9 +130,13 @@ class RunService : Service() {
                 ?.let { runCatching { AppJson.decodeFromString(RunWorkout.serializer(), it) }.getOrNull() }
             if (workout != null) {
                 val tracker = RunTracker(workout)
+                // The stadium's line from the last session: laps GPS sees count from the first one.
+                intent.getDoubleArrayExtra(EXTRA_LINE)?.takeIf { it.size == 2 && workout.lapMeters != null }?.let { tracker.setLine(it[0], it[1]) }
+                intent.getDoubleArrayExtra(EXTRA_STRIDE)?.takeIf { it.size == 2 }?.let { tracker.setStride(it[0], it[1]) }
                 RunSession.begin(
                     tracker, gps, intent.getBooleanExtra(EXTRA_VOICE, true),
                     intent.getBooleanExtra(EXTRA_BEEPS, true), intent.getBooleanExtra(EXTRA_VIBRATION, true),
+                    intent.getBooleanExtra(EXTRA_AUTOPAUSE, true),
                 )
                 tracker.start(now())
             }
@@ -151,6 +159,7 @@ class RunService : Service() {
         wake = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "forma:run").apply { acquire(6 * 60 * 60 * 1000L) }
         if (gps) startGps()
+        startSteps()
         RunSession.publish(now())
         RunSession.save(now())
         ticker = scope.launch {
@@ -162,6 +171,11 @@ class RunService : Service() {
                 }
                 val events = tr.tick(now())
                 handle(events)
+                // A lap nobody pressed, seen by GPS crossing the line: in a rep it is said (and roughly timed).
+                tr.autoLap(now())?.let { l ->
+                    coach?.speak(CoachText.autoLap(l))
+                    RunSession.save(now())
+                }
                 if (events.any { (it as? RunEvent.Timeline)?.cue is Cue.ToLine }) waitSaidAt = now()
                 // Waiting on the line: a reminder every minute, in case the first one was missed.
                 if (tr.state == RunTracker.State.RUNNING && tr.waiting(now()) && now() - waitSaidAt > 60_000) {
@@ -242,10 +256,37 @@ class RunService : Service() {
 
     private fun onLocation(loc: Location) {
         val t = RunSession.tracker ?: return
-        val fix = Fix(loc.time, loc.latitude, loc.longitude, if (loc.hasAccuracy()) loc.accuracy else 99f)
+        val fix = Fix(loc.time, loc.latitude, loc.longitude, if (loc.hasAccuracy()) loc.accuracy else 99f, if (loc.hasSpeed()) loc.speed else null)
+        checkAutoPause(t, fix)
         val events = t.onFix(fix, now())
         if (t.state == RunTracker.State.RUNNING && fix.accuracy <= 25f) RunSession.points += fix
         handle(events)
+    }
+
+    /**
+     * The auto-pause: only on the road (not on a stadium, where standing at the line between reps is part of the plan)
+     * and only for runs without a timed plan to keep — easy, long and free.
+     */
+    private fun checkAutoPause(t: RunTracker, fix: Fix) {
+        val w = t.workout
+        if (!RunSession.autoPause || w.lapMeters != null || !(w.continuable || w.isOpenEnded)) return
+        if (t.state == RunTracker.State.FINISHED) return
+        when (val act = autoPause.update(fix.speed, now(), t.state == RunTracker.State.RUNNING)) {
+            is forma.core.run.AutoPause.Act.Pause -> {
+                t.pause(act.atMs)
+                RunSession.autoPaused = true
+                coach?.speak("Автопауза.")
+            }
+            forma.core.run.AutoPause.Act.Resume -> {
+                if (t.state == RunTracker.State.PAUSED) t.resume(now())
+                RunSession.autoPaused = false
+                coach?.speak("Продолжаем.")
+            }
+            null -> return
+        }
+        RunSession.publish(now())
+        RunSession.save(now())
+        notifyNow()
     }
 
     /** "Stop" held on the run screen: the run is finished and waits on its screen to be saved. */
@@ -258,10 +299,34 @@ class RunService : Service() {
         leave()
     }
 
+    /** The step counter (when allowed and the phone has one): cadence, and the distance where GPS is lost. */
+    private val stepListener = object : android.hardware.SensorEventListener {
+        override fun onSensorChanged(e: android.hardware.SensorEvent) {
+            val t = RunSession.tracker ?: return
+            handle(t.onSteps(e.values[0].toLong(), now()))
+        }
+
+        override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
+    }
+
+    private fun startSteps() {
+        if (Build.VERSION.SDK_INT >= 29 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED
+        ) return
+        val sm = getSystemService(android.hardware.SensorManager::class.java) ?: return
+        val sensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_STEP_COUNTER) ?: return
+        runCatching { sm.registerListener(stepListener, sensor, android.hardware.SensorManager.SENSOR_DELAY_NORMAL) }
+    }
+
+    private fun stopSteps() {
+        runCatching { getSystemService(android.hardware.SensorManager::class.java)?.unregisterListener(stepListener) }
+    }
+
     /** Out of the foreground and gone; the run itself stays in [RunSession]. */
     private fun leave() {
         ticker?.cancel()
         ticker = null
+        stopSteps()
         locationManager?.removeUpdates(listener)
         locationManager = null
         wake?.let { if (it.isHeld) it.release() }
@@ -274,6 +339,7 @@ class RunService : Service() {
 
     override fun onDestroy() {
         RunSession.tracker?.let { RunSession.save(now()) }
+        stopSteps()
         locationManager?.removeUpdates(listener)
         wake?.let { if (it.isHeld) it.release() }
         coach?.release()
@@ -363,13 +429,22 @@ class RunService : Service() {
         const val EXTRA_VOICE = "voice"
         const val EXTRA_BEEPS = "beeps"
         const val EXTRA_VIBRATION = "vibration"
+        const val EXTRA_LINE = "line"
+        const val EXTRA_AUTOPAUSE = "autopause"
+        const val EXTRA_STRIDE = "stride"
         private const val CHANNEL = "run"
         private const val NOTIFICATION_ID = 42
 
-        fun start(ctx: Context, workout: RunWorkout, gps: Boolean, voice: Boolean, beeps: Boolean, vibration: Boolean) {
+        fun start(
+            ctx: Context, workout: RunWorkout, gps: Boolean, voice: Boolean, beeps: Boolean, vibration: Boolean,
+            line: List<Double>? = null, autoPause: Boolean = true, stride: Pair<Double, Double>? = null,
+        ) {
             val i = Intent(ctx, RunService::class.java).setAction(ACTION_START)
                 .putExtra(EXTRA_WORKOUT, AppJson.encodeToString(RunWorkout.serializer(), workout))
                 .putExtra(EXTRA_GPS, gps).putExtra(EXTRA_VOICE, voice).putExtra(EXTRA_BEEPS, beeps).putExtra(EXTRA_VIBRATION, vibration)
+                .putExtra(EXTRA_AUTOPAUSE, autoPause)
+            if (stride != null) i.putExtra(EXTRA_STRIDE, doubleArrayOf(stride.first, stride.second))
+            if (line != null && line.size == 2) i.putExtra(EXTRA_LINE, line.toDoubleArray())
             ContextCompat.startForegroundService(ctx, i)
         }
 

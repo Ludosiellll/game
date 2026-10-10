@@ -3,11 +3,14 @@ package forma.app.ui.screens
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -125,13 +128,15 @@ private fun TemplateCard(t: Template) {
     val today = forma.app.ui.rememberToday(repo)
     val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
     val plan by produceState<LiftPlan?>(null, t.id, settings) { value = runCatching { repo.liftPlan(t.id, today) }.getOrNull() }
+    // A plan exercise by its position: the plan's own first, then the ones added for good.
     var editing by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(-1) }
+    val added = repo.addedTo(t.id, settings)
     FCard(gap = 0.dp) {
         Text(t.title, style = T.title(20.sp))
-        Text("Нажми на упражнение: подходы, замена или убрать.", style = T.secondary(12.sp), modifier = Modifier.padding(bottom = 8.dp))
+        Text("Нажми на упражнение: подходы, повторы, отдых, замена или убрать.", style = T.secondary(12.sp), modifier = Modifier.padding(bottom = 8.dp))
         t.slots.forEachIndexed { i, s ->
             Hairline()
-            val item = plan?.items?.firstOrNull { it.position == i }
+            val item = plan?.items?.firstOrNull { it.position == i && !it.addedForGood }
             val removed = s.exerciseId in settings.removed && plan != null && item == null
             Row(
                 Modifier.fillMaxWidth().clickable {
@@ -142,72 +147,148 @@ private fun TemplateCard(t: Template) {
                 Column(Modifier.weight(1f)) {
                     val name = item?.name ?: forma.core.model.Catalog.find(settings.swaps[s.exerciseId] ?: s.exerciseId)?.name ?: s.exerciseId
                     Text(name, style = T.body(15.sp, FontWeight.SemiBold).copy(color = if (removed) F.c.text3 else F.c.text))
-                    val sets = item?.slot?.sets ?: s.sets
+                    val now = item?.slot ?: s
+                    // Only what the user changed, next to what the plan had.
+                    val was = listOfNotNull(
+                        if (now.sets != s.sets) "${s.sets} ${Ru.plural(s.sets, "подход", "подхода", "подходов")}" else null,
+                        if (now.repMin != s.repMin || now.repMax != s.repMax) "${s.repMin}–${s.repMax}" else null,
+                        if (now.restSec != s.restSec) "отдых ${Ru.clock(s.restSec)}" else null,
+                    )
                     Text(
                         if (removed) "Убрано из плана · нажми, чтобы вернуть"
-                        else "$sets × ${s.repMin}–${s.repMax}${if (s.exerciseId == "plank") " с" else ""} · запас ${s.rir} · отдых ${Ru.clock(s.restSec)}" +
-                            if (sets != s.sets) " · в плане было ${s.sets}" else "",
+                        else specLine(now, timed(item?.exerciseId ?: s.exerciseId)) + if (was.isNotEmpty()) " · в плане было: ${was.joinToString(", ")}" else "",
                         style = T.secondary(12.sp),
                     )
                 }
                 if (item != null) NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.exerciseId), style = T.number(14.sp, FontWeight.Bold))
             }
         }
+        added.forEachIndexed { j, id ->
+            Hairline()
+            val pos = t.slots.size + j
+            val item = plan?.items?.firstOrNull { it.position == pos && it.addedForGood }
+            Row(Modifier.fillMaxWidth().clickable { editing = pos }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(item?.name ?: forma.core.model.Catalog.find(id)?.name ?: id, style = T.body(15.sp, FontWeight.SemiBold))
+                    Text("Добавлено тобой · " + specLine(item?.slot ?: repo.addedPlanned(id), timed(id)), style = T.secondary(12.sp))
+                }
+                if (item != null) NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.exerciseId), style = T.number(14.sp, FontWeight.Bold))
+            }
+        }
+        Hairline()
+        GhostButton(
+            "Добавить упражнение", { nav.push(Screen.Library(forma.app.ui.LibraryMode.AddToPlan(t.id))) },
+            Modifier.fillMaxWidth().padding(top = 10.dp), height = 48.dp,
+        )
     }
     val e = editing
-    val slot = t.slots.getOrNull(e)
-    if (slot != null) {
-        val item = plan?.items?.firstOrNull { it.position == e }
-        val kept = t.slots.count { it.exerciseId !in settings.removed }
+    val own = t.slots.getOrNull(e)
+    val addedId = if (e >= t.slots.size) added.getOrNull(e - t.slots.size) else null
+    // What the plan itself sets for this exercise (the user's changes are kept apart, so "как в плане" is always known).
+    val planned = own ?: addedId?.let { repo.addedPlanned(it) }
+    if (planned != null) {
+        val planId = planned.exerciseId
+        val item = plan?.items?.firstOrNull { it.position == e && it.addedForGood == (own == null) }
+        val kept = t.slots.count { it.exerciseId !in settings.removed } + added.size
         // The weight step belongs to the exercise done (after a swap, the one in its place), not to the plan's slot.
-        val exId = item?.exerciseId ?: settings.swaps[slot.exerciseId] ?: slot.exerciseId
+        val exId = item?.exerciseId ?: (if (own != null) settings.swaps[planId] else null) ?: planId
         val ex = forma.core.model.Catalog.find(exId)
         val loaded = ex != null && (ex.load == forma.core.model.LoadKind.EXTERNAL || ex.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS)
         PlanExerciseDialog(
-            name = item?.name ?: slot.exerciseId,
+            name = item?.name ?: ex?.name ?: planId,
             // From the settings, not the plan being loaded: opened in that moment, an unchanged save kept the override.
-            sets = settings.sets[slot.exerciseId]?.coerceIn(1, forma.app.data.TrainingRepository.MAX_SETS) ?: slot.sets,
-            planned = slot.sets,
+            sets = settings.sets[planId]?.coerceIn(1, forma.app.data.TrainingRepository.MAX_SETS) ?: planned.sets,
+            planned = planned.sets,
+            reps = settings.reps[planId]?.takeIf { it.size == 2 }?.let { it[0] to it[1] } ?: (planned.repMin to planned.repMax),
+            plannedReps = planned.repMin to planned.repMax,
+            timed = ex?.load == forma.core.model.LoadKind.TIMED,
+            rest = settings.rest[planId] ?: planned.restSec,
+            plannedRest = planned.restSec,
             canRemove = kept > 1,
             step = if (loaded) settings.steps[exId] ?: ex!!.step else null,
             defaultStep = ex?.step ?: 2.5,
-            onSave = { n, st ->
+            onSave = { n, reps, rest, st ->
                 scope.launch {
-                    repo.setPlanSets(slot.exerciseId, n, slot.sets)
+                    repo.tunePlan(planId, planned, n, reps, rest)
                     if (st != null && ex != null) repo.setStep(exId, st, ex.step)
                 }
                 editing = -1
             },
             onSwap = {
                 editing = -1
-                nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInPlan(slot.exerciseId, item?.exerciseId ?: slot.exerciseId)))
+                nav.push(
+                    Screen.Library(
+                        if (own != null) forma.app.ui.LibraryMode.SwapInPlan(planId, item?.exerciseId ?: planId)
+                        else forma.app.ui.LibraryMode.SwapAdded(t.id, planId),
+                    ),
+                )
             },
-            onRemove = { scope.launch { repo.setRemoved(slot.exerciseId, true) }; editing = -1 },
+            onRemove = {
+                scope.launch { if (own != null) repo.setRemoved(planId, true) else repo.removeAdded(t.id, planId) }
+                editing = -1
+            },
+            removeNote = if (own != null) "Вернуть можно здесь же: убранное останется в списке серым." else "Добавить снова можно кнопкой «Добавить упражнение».",
             onDismiss = { editing = -1 },
         )
     }
 }
 
-/** One exercise of the plan: how many sets from now on, another exercise in its place, or out of the plan. */
+private fun timed(exerciseId: String) = forma.core.model.Catalog.find(exerciseId)?.load == forma.core.model.LoadKind.TIMED
+
+/** "3 × 6–10 · запас 2 · отдых 2:00" for a plan row. */
+private fun specLine(s: forma.core.strength.SlotSpec, timed: Boolean): String =
+    "${s.sets} × ${s.repMin}–${s.repMax}${if (timed) " с" else ""} · запас ${s.rir} · отдых ${Ru.clock(s.restSec)}"
+
+/** Rep ranges to pick from: strength, strength and size, size, size and endurance. */
+private val REP_RANGES = listOf(3 to 5, 5 to 8, 6 to 10, 8 to 12, 10 to 15, 12 to 20)
+private val HOLD_RANGES = listOf(20 to 40, 30 to 60, 45 to 90)
+private val REST_OPTIONS = listOf(60, 90, 120, 180)
+
+/** One exercise of the plan from now on: sets, rep range, rest, the weight step, another exercise in its place, or out. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun PlanExerciseDialog(
-    name: String, sets: Int, planned: Int, canRemove: Boolean, step: Double?, defaultStep: Double,
-    onSave: (Int, Double?) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, onDismiss: () -> Unit,
+    name: String, sets: Int, planned: Int, reps: Pair<Int, Int>, plannedReps: Pair<Int, Int>, timed: Boolean,
+    rest: Int, plannedRest: Int, canRemove: Boolean, step: Double?, defaultStep: Double,
+    onSave: (Int, Pair<Int, Int>, Int, Double?) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, removeNote: String, onDismiss: () -> Unit,
 ) {
     var n by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(sets) }
+    var lo by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(reps.first) }
+    var hi by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(reps.second) }
+    var rs by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(rest) }
     var st by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(step) }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = F.c.surface,
         title = { Text(name, style = T.title(20.sp)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Подходов в каждой тренировке", style = T.secondary(13.sp))
                 forma.app.ui.components.Stepper(
                     "$n", if (n == planned) "как в плане" else "в плане $planned",
                     { n = (n - 1).coerceAtLeast(1) }, { n = (n + 1).coerceAtMost(forma.app.data.TrainingRepository.MAX_SETS) },
                     Modifier.fillMaxWidth(), "Меньше подходов", "Больше подходов",
                 )
+                Text(if (timed) "Секунд в подходе" else "Повторов в подходе", style = T.secondary(13.sp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ((if (timed) HOLD_RANGES else REP_RANGES) + plannedReps).distinct().sortedWith(compareBy({ it.first }, { it.second })).forEach { r ->
+                        forma.app.ui.components.Chip("${r.first}–${r.second}", lo == r.first && hi == r.second, { lo = r.first; hi = r.second }, minWidth = 64.dp)
+                    }
+                }
+                if (lo != plannedReps.first || hi != plannedReps.second) {
+                    Text(
+                        "В плане ${plannedReps.first}–${plannedReps.second}." +
+                            if (timed) "" else " Вес под новый диапазон посчитаю по прошлым подходам, а если их не было — подберём в первой тренировке.",
+                        style = T.secondary(12.sp),
+                    )
+                }
+                Text("Отдых между подходами", style = T.secondary(13.sp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (REST_OPTIONS + plannedRest).distinct().sorted().forEach { v ->
+                        forma.app.ui.components.Chip(Ru.clock(v), rs == v, { rs = v }, minWidth = 64.dp)
+                    }
+                }
+                if (rs != plannedRest) Text("В плане ${Ru.clock(plannedRest)}.", style = T.secondary(12.sp))
                 val chosen = st
                 if (chosen != null) {
                     // Weights come in the steps a gym really has: with 2.5 kg plates the barbell goes in 5 kg steps.
@@ -221,12 +302,12 @@ private fun PlanExerciseDialog(
                 GhostButton("Заменить упражнение", onSwap, Modifier.fillMaxWidth())
                 if (canRemove) {
                     GhostButton("Убрать из плана", onRemove, Modifier.fillMaxWidth(), color = F.c.bad)
-                    Text("Вернуть можно здесь же: убранное останется в списке серым.", style = T.secondary(12.sp))
+                    Text(removeNote, style = T.secondary(12.sp))
                 }
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton({ onSave(n, st) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+            androidx.compose.material3.TextButton({ onSave(n, lo to hi, rs, st) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
         },
         dismissButton = { androidx.compose.material3.TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
     )

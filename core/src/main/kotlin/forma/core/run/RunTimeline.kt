@@ -25,6 +25,8 @@ sealed interface Cue {
     data class LapMark(override val at: Int, val index: Int, val lap: Int, val of: Int) : Cue
     /** The warm-up is over: the rep [index] waits for the runner's start press on the line (see [RunTimeline.startOnLine]). */
     data class ToLine(override val at: Int, val index: Int) : Cue
+    /** Near the end of a warm-up before fast running: a few short accelerations (strides). */
+    data class Strides(override val at: Int, val index: Int) : Cue
     data class Finished(override val at: Int) : Cue
 }
 
@@ -52,6 +54,8 @@ object RunTimeline {
         }
         return TimelineState(workout.segments.size, null, 0, 0, total, 0, true)
     }
+
+    private fun fast(w: RunWorkout) = w.type == RunType.GOAL_PACE || w.type == RunType.INTERVALS || w.type == RunType.TEST
 
     /** Every cue for the whole workout, in time order. */
     fun allCues(workout: RunWorkout): List<Cue> {
@@ -81,6 +85,11 @@ object RunTimeline {
             } else {
                 if (s.seconds >= 6 * 60) out += Cue.Halfway(start + s.seconds / 2, i)
                 if (s.seconds >= 3 * 60) out += Cue.MinuteLeft(end - 60, i)
+                // Before race pace, intervals or a time trial: strides in the last minutes of the warm-up (common coaching
+                // practice: the legs and breathing meet the fast pace before it counts).
+                if (s.kind == SegmentKind.WARMUP && s.seconds >= 8 * 60 && fast(workout) && segs.getOrNull(i + 1)?.kind == SegmentKind.WORK) {
+                    out += Cue.Strides(end - 180, i)
+                }
             }
             // Before a rep that waits on the line no countdown: the runner starts it, the app asks to go to the line.
             if (waits == i + 1) out += Cue.ToLine(end - 1, i + 1)

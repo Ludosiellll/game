@@ -34,6 +34,10 @@ data class RunUi(
     val overSec: Int = 0,
     /** On a stadium after the warm-up: the plan waits for the start press on the line. */
     val waiting: Boolean = false,
+    /** Paused by the auto-pause (standing on the road), not by hand: it goes on with running. */
+    val autoPaused: Boolean = false,
+    /** Steps a minute right now, from the step counter. */
+    val cadence: Int? = null,
 )
 
 /** A run on disk, enough to carry on after the process was killed. */
@@ -45,6 +49,7 @@ data class SavedRun(
     val voice: Boolean = true,
     val beeps: Boolean = true,
     val vibration: Boolean = true,
+    val autoPause: Boolean = true,
 )
 
 /**
@@ -105,6 +110,9 @@ object RunSession {
     internal var voice = true
     internal var beeps = true
     internal var vibration = true
+    internal var autoPause = true
+    /** The run stands by the auto-pause right now. */
+    @Volatile internal var autoPaused = false
     internal val points = mutableListOf<Fix>()
     private var restored = false
     private var store: RunStore? = null
@@ -124,6 +132,7 @@ object RunSession {
         voice = saved.voice
         beeps = saved.beeps
         vibration = saved.vibration
+        autoPause = saved.autoPause
         points.clear()
         points += pts
         savedPoints = points.size
@@ -132,7 +141,7 @@ object RunSession {
     }
 
     /** A new run: whatever was on disk is replaced. */
-    internal fun begin(t: RunTracker, gps: Boolean, voice: Boolean, beeps: Boolean, vibration: Boolean) {
+    internal fun begin(t: RunTracker, gps: Boolean, voice: Boolean, beeps: Boolean, vibration: Boolean, autoPause: Boolean = true) {
         store?.clear()
         tracker = t
         gpsEnabled = gps
@@ -140,6 +149,8 @@ object RunSession {
         this.voice = voice
         this.beeps = beeps
         this.vibration = vibration
+        this.autoPause = autoPause
+        autoPaused = false
         points.clear()
         savedPoints = 0
         restored = false
@@ -159,18 +170,20 @@ object RunSession {
                 st.appendPoints(points.subList(savedPoints, points.size).toList())
                 savedPoints = points.size
             }
-            st.saveState(SavedRun(t.snapshot(nowMs), startedAtWall, gpsEnabled, voice, beeps, vibration))
+            st.saveState(SavedRun(t.snapshot(nowMs), startedAtWall, gpsEnabled, voice, beeps, vibration, autoPause))
         }
     }
 
     internal fun publish(nowMs: Long) {
         val t = tracker ?: return
         _ui.value = RunUi(
-            t.workout, t.state, t.activeSec(nowMs), t.timeline(nowMs), t.distanceM, t.currentPace(), t.averagePace(nowMs),
+            t.workout, t.state, t.activeSec(nowMs), t.timeline(nowMs), t.shownDistanceM(), t.currentPace(), t.averagePace(nowMs),
             gpsEnabled, t.lastAccuracy, startedAtWall, restored, t.laps.lastOrNull(), t.laps.size,
             if (t.workout.lapMeters != null) t.lapClockSec(nowMs) else null,
             if (t.workout.isOpenEnded) 0 else ((t.timelineMs(nowMs) / 1000).toInt() - t.workout.totalSeconds).coerceAtLeast(0),
             t.waiting(nowMs),
+            autoPaused && t.state == RunTracker.State.PAUSED,
+            t.cadence(),
         )
     }
 

@@ -191,6 +191,17 @@ class ReviewFixesRepoTest {
         assertEquals(RunType.TEST, repo.runFor(SessionKind.RUN_QUALITY).type)
     }
 
+    @Test fun easyRunsBeforeTheFirstTestHaveAnApproximateLimit() = runBlocking {
+        val g = RunGoal(1500, 330)
+        repo.completeOnboarding(profile.copy(aim = Aim(LiftFocus.MUSCLE, RunFocus.SPEED, Emphasis.BALANCED), runGoal = g, lapMeters = 230))
+        val easy = repo.runFor(SessionKind.RUN_EASY)
+        assertTrue(easy.segments.any { it.pace != null }, easy.toString())
+        assertTrue(easy.note.contains("примерный"), easy.note)
+        // After a test the paces are the runner's own.
+        repo.store.setRunState(repo.store.runStateNow().copy(vdot = 44.0, lastTestDay = repo.today().toEpochDay()))
+        assertTrue(!repo.runFor(SessionKind.RUN_EASY).note.contains("примерный"))
+    }
+
     @Test fun aWeightStepForTheGymChangesTheWeights() = runBlocking {
         repo.completeOnboarding(profile.copy(experience = Experience.INTERMEDIATE))
         val program = repo.store.programNow()!!

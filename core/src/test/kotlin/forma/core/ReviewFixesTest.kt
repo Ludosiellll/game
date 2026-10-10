@@ -151,6 +151,51 @@ class ReviewFixesTest {
         assertEquals(Press.Ignored, back.press(warm + 30_600))
     }
 
+    @Test fun fourDaysForA1500mGoalHoldTwoHardAndTwoEasyRuns() {
+        val denis = forma.core.model.Profile(
+            aim = forma.core.model.Aim(forma.core.model.LiftFocus.POWERBUILDING, forma.core.model.RunFocus.ENDURANCE, forma.core.model.Emphasis.BALANCED),
+            experience = forma.core.model.Experience.ADVANCED, runLevel = forma.core.model.RunLevel.BASE,
+            trainingDays = setOf(2, 4, 6, 7), runGoal = goal, lapMeters = 230, doubleDays = true,
+        )
+        val p = forma.core.plan.ProgramGenerator.generate(denis, java.time.LocalDate.of(2026, 10, 12))
+        fun count(k: forma.core.plan.SessionKind) = p.week.days.sumOf { d -> d.sessions.count { it.kind == k } }
+        assertEquals(3, count(forma.core.plan.SessionKind.LIFT))
+        assertEquals(2, count(forma.core.plan.SessionKind.RUN_QUALITY))
+        assertEquals(2, count(forma.core.plan.SessionKind.RUN_EASY))
+        assertEquals(0, count(forma.core.plan.SessionKind.RUN_LONG))
+        // Never heavy legs and a hard run on one day, nor a hard run the day after legs.
+        fun legs(s: forma.core.plan.PlannedSession?) = s?.kind == forma.core.plan.SessionKind.LIFT && p.template(s.templateId!!).legs
+        for (d in 1..7) {
+            val today = p.week.on(d)
+            val tomorrow = p.week.on(d % 7 + 1)
+            val hard = today.any { it.kind == forma.core.plan.SessionKind.RUN_QUALITY }
+            assertTrue(!(hard && today.any { legs(it) }), "day $d: ${p.week.days}")
+            assertTrue(!(today.any { legs(it) } && tomorrow.any { it.kind == forma.core.plan.SessionKind.RUN_QUALITY }), "day $d: ${p.week.days}")
+        }
+        // Three days stay three runs.
+        val three = forma.core.plan.ProgramGenerator.generate(denis.copy(trainingDays = setOf(2, 4, 6)), java.time.LocalDate.of(2026, 10, 12))
+        assertEquals(3, three.week.days.sumOf { d -> d.sessions.count { it.isRun } })
+    }
+
+    @Test fun beforeTheFirstTestEasyRunsHaveAnApproximateLimitFromTheGoal() {
+        // 1500 m in 5:30 is VDOT 48.9; the guess is 8 points lower.
+        assertEquals(41.0, RunPlan.provisionalVdot(goal))
+        val easy = RunPlan.provisional(RunPlan.easy(RunState(walkStage = -1, vdot = RunPlan.provisionalVdot(goal))))
+        assertNotNull(easy.segments.first().pace)
+        assertTrue(easy.note.contains("примерный"), easy.note)
+    }
+
+    @Test fun stridesAreSaidBeforeFastRunningOnly() {
+        val st = RunState(walkStage = -1, vdot = 46.0)
+        for (w in listOf(RunPlan.goalPace(st, goal, 230), RunPlan.intervals(st), RunPlan.goalTest(st, goal, 230))) {
+            val cues = forma.core.run.RunTimeline.allCues(w)
+            assertEquals(1, cues.count { it is forma.core.run.Cue.Strides }, w.title)
+        }
+        for (w in listOf(RunPlan.easy(st), RunPlan.tempo(st))) {
+            assertTrue(forma.core.run.RunTimeline.allCues(w).none { it is forma.core.run.Cue.Strides }, w.title)
+        }
+    }
+
     @Test fun gpsOnASmallLoopIsNotThePace() {
         val w = RunPlan.goalPace(RunState(walkStage = -1), goal, 230)
         val t = RunTracker(w)

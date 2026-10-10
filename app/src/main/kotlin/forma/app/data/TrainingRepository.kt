@@ -150,6 +150,9 @@ class TrainingRepository(
     companion object {
         /** The most sets of one exercise the plan can be set to. */
         const val MAX_SETS = 8
+        /** Rest between sets the plan can be set to, seconds. */
+        const val MIN_REST = 30
+        const val MAX_REST = 300
     }
 
     suspend fun liftPlan(templateId: String, date: LocalDate, forceDeload: Boolean = false): LiftPlan {
@@ -158,9 +161,29 @@ class TrainingRepository(
         val t = program.template(templateId)
         val deload = deloadOn(date, forceDeload)
         // Exercises taken out for good stay out — never all of them. Positions stay the plan's (swaps look them up).
-        val kept = t.slots.withIndex().filter { it.value.exerciseId !in settings.removed }.ifEmpty { t.slots.withIndex().toList() }
-        val items = kept.map { (i, spec) -> buildItem(i, tuned(spec, settings), date, deload) }
-        return LiftPlan(t.id, t.title, items, deload)
+        val added = addedTo(t.id, settings)
+        val kept = t.slots.withIndex().filter { it.value.exerciseId !in settings.removed }
+            .ifEmpty { if (added.isEmpty()) t.slots.withIndex().toList() else emptyList() }
+        val own = kept.map { (i, spec) -> buildItem(i, tuned(spec, settings), date, deload).copy(planId = spec.exerciseId) }
+        // Added for good: after the plan's own, as chosen (no swap applies to them: they were picked by hand).
+        val extra = added.mapIndexed { j, id ->
+            buildItem(t.slots.size + j, overrides(addedSpec(id), settings), date, deload).copy(planId = id, addedForGood = true)
+        }
+        return LiftPlan(t.id, t.title, own + extra, deload)
+    }
+
+    /** Exercises added to template [templateId] for good that can still be done (an own exercise may be archived). */
+    fun addedTo(templateId: String, settings: Settings): List<String> =
+        settings.added[templateId].orEmpty().map { Catalog.moved[it] ?: it }.filter { Catalog.find(it)?.archived == false }
+
+    /** Sets, reps and rest of an exercise added to a session: 3 sets in a range that suits it. */
+    private fun addedSpec(exerciseId: String): SlotSpec {
+        val ex = Catalog[exerciseId]
+        return when {
+            ex.load == LoadKind.TIMED -> SlotSpec(ex.id, 3, 20, 60, 1, 60, SlotRole.ACCESSORY)
+            ex.compound -> SlotSpec(ex.id, 3, 6, 10, 2, 120, SlotRole.SECONDARY)
+            else -> SlotSpec(ex.id, 3, 10, 15, 2, 75, SlotRole.ACCESSORY)
+        }
     }
 
     private suspend fun deloadOn(date: LocalDate, force: Boolean): Boolean {
@@ -169,10 +192,16 @@ class TrainingRepository(
         return force || ProgramGenerator.isDeloadWeek(program, date) || (reactive != null && date.toEpochDay() in reactive until reactive + 7)
     }
 
-    /** The plan's slot as the user set it for good: its number of sets, the exercise put in its place. */
-    private fun tuned(spec: SlotSpec, settings: Settings): SlotSpec {
-        val sets = settings.sets[spec.exerciseId]?.coerceIn(1, MAX_SETS)
-        return swapped(if (sets != null) spec.copy(sets = sets) else spec, settings)
+    /** The plan's slot as the user set it for good: its sets, reps and rest, the exercise put in its place. */
+    private fun tuned(spec: SlotSpec, settings: Settings): SlotSpec = swapped(overrides(spec, settings), settings)
+
+    /** Sets, rep range and rest the user set for good for the plan's exercise [SlotSpec.exerciseId]. */
+    private fun overrides(spec: SlotSpec, settings: Settings): SlotSpec {
+        val id = spec.exerciseId
+        val sets = settings.sets[id]?.coerceIn(1, MAX_SETS) ?: spec.sets
+        val reps = settings.reps[id]?.takeIf { it.size == 2 && it[0] >= 1 && it[0] <= it[1] && it[1] <= 100 }
+        val rest = settings.rest[id]?.coerceIn(MIN_REST, MAX_REST) ?: spec.restSec
+        return spec.copy(sets = sets, repMin = reps?.get(0) ?: spec.repMin, repMax = reps?.get(1) ?: spec.repMax, restSec = rest)
     }
 
     /** The plan's slot with the exercise the user put in its place for good, if any. */
@@ -228,35 +257,112 @@ class TrainingRepository(
         val plan = planOf(w) ?: return false
         val old = plan.items.firstOrNull { it.position == position } ?: return false
         if (db.sets().forWorkout(workoutId).any { it.position == position }) return false
-        val original = store.programNow()?.templates?.firstOrNull { it.id == plan.templateId }?.slots?.getOrNull(position)
-        // The plan's slot with the sets set for it for good (the swap is today's choice, the sets stay).
-        val sets = original?.let { store.settingsNow().sets[it.exerciseId] }?.coerceIn(1, MAX_SETS)
-        val base = original?.let { if (sets != null) it.copy(sets = sets) else it } ?: old.slot
+        val settings = store.settingsNow()
+        val own = ownSlot(plan.templateId, old)
+        // The plan's exercise here with its sets, reps and rest for good (the swap is today's choice, those stay).
+        val original = when {
+            old.addedForGood && old.planId != null -> overrides(addedSpec(old.planId), settings)
+            own != null -> overrides(own, settings)
+            else -> null
+        }
+        val base = original ?: old.slot
         val spec = if (newId == base.exerciseId) base else base.copy(exerciseId = newId, increment = null)
+        val forGood = forever && original != null && old.addedForGood
         val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload)
+            .copy(planId = if (forGood) newId else old.planId ?: own?.exerciseId, addedForGood = old.addedForGood)
         replacePlan(workoutId, plan.copy(items = plan.items.map { if (it.position == position) item else it }))
-        if (forever && original != null) setSwap(original.exerciseId, newId)
+        if (forever && original != null) {
+            if (old.addedForGood) replaceAdded(plan.templateId, original.exerciseId, newId) else setSwap(original.exerciseId, newId)
+        }
         return true
     }
 
-    /** Adds [exerciseId] at the end of a running session, for today only (3 sets in a range that suits it). */
-    suspend fun addToWorkout(workoutId: Long, exerciseId: String): Boolean {
+    /** The generated plan's own slot of [item] in template [templateId]; null for an exercise added to the plan or today. */
+    private suspend fun ownSlot(templateId: String, item: LiftItem): SlotSpec? {
+        if (item.addedForGood) return null
+        val slots = store.programNow()?.templates?.firstOrNull { it.id == templateId }?.slots ?: return null
+        // Sessions started before the origin was stored: the position is the plan's index (added ones come after).
+        return item.planId?.let { id -> slots.getOrNull(item.position)?.takeIf { it.exerciseId == id } ?: slots.firstOrNull { it.exerciseId == id } }
+            ?: slots.getOrNull(item.position)
+    }
+
+    /** The exercise at [position] of the session belongs to the plan (its own or added for good), not to today only. */
+    suspend fun inPlan(workoutId: Long, position: Int): Boolean {
+        val plan = db.workouts().get(workoutId)?.let { planOf(it) } ?: return false
+        val item = plan.items.firstOrNull { it.position == position } ?: return false
+        return item.addedForGood || ownSlot(plan.templateId, item) != null
+    }
+
+    /**
+     * Adds [exerciseId] at the end of a running session (3 sets in a range that suits it). [forever] also adds it to
+     * every session of this plan from now on, after the plan's own exercises.
+     */
+    suspend fun addToWorkout(workoutId: Long, exerciseId: String, forever: Boolean = false): Boolean {
         val w = db.workouts().get(workoutId) ?: return false
         val plan = planOf(w) ?: return false
-        val ex = Catalog[exerciseId]
-        val spec = when {
-            ex.load == LoadKind.TIMED -> SlotSpec(ex.id, 3, 20, 60, 1, 60, SlotRole.ACCESSORY)
-            ex.compound -> SlotSpec(ex.id, 3, 6, 10, 2, 120, SlotRole.SECONDARY)
-            else -> SlotSpec(ex.id, 3, 10, 15, 2, 75, SlotRole.ACCESSORY)
-        }
+        val settings = store.settingsNow()
         // Past every position of the plan: an added exercise must never pass for a plan slot (a plan exercise taken out
         // today leaves its position free, and "for good" acts on the plan's exercise at a position).
-        val planSize = store.programNow()?.templates?.firstOrNull { it.id == plan.templateId }?.slots?.size ?: 0
+        val planSize = (store.programNow()?.templates?.firstOrNull { it.id == plan.templateId }?.slots?.size ?: 0) +
+            settings.added[plan.templateId].orEmpty().size
         val position = maxOf(planSize, (plan.items.maxOfOrNull { it.position } ?: -1) + 1)
+        val spec = if (forever) overrides(addedSpec(exerciseId), settings) else addedSpec(exerciseId)
         val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload)
+            .let { if (forever) it.copy(planId = exerciseId, addedForGood = true) else it }
         replacePlan(workoutId, plan.copy(items = plan.items + item))
+        if (forever) addToPlan(plan.templateId, exerciseId)
         return true
     }
+
+    /** Adds [exerciseId] to every session of template [templateId] from now on, after the plan's own exercises. */
+    suspend fun addToPlan(templateId: String, exerciseId: String): Boolean {
+        val s = store.settingsNow()
+        val list = s.added[templateId].orEmpty()
+        if (exerciseId in list) return false
+        store.setSettings(s.copy(added = s.added + (templateId to list + exerciseId)))
+        onChange()
+        return true
+    }
+
+    /** Takes an exercise added for good out of template [templateId]. */
+    suspend fun removeAdded(templateId: String, exerciseId: String) {
+        val s = store.settingsNow()
+        val list = s.added[templateId].orEmpty() - exerciseId
+        store.setSettings(s.copy(added = if (list.isEmpty()) s.added - templateId else s.added + (templateId to list)))
+        onChange()
+    }
+
+    /** Puts [newId] in place of [oldId] among the exercises added for good to template [templateId]. */
+    suspend fun replaceAdded(templateId: String, oldId: String, newId: String) {
+        val s = store.settingsNow()
+        val list = s.added[templateId].orEmpty()
+        if (oldId !in list || newId == oldId) return
+        val next = if (newId in list) list - oldId else list.map { if (it == oldId) newId else it }
+        store.setSettings(s.copy(added = s.added + (templateId to next)))
+        onChange()
+    }
+
+    /**
+     * Sets, rep range and rest of the plan's exercise [planId] in every session from now on; values equal to the
+     * plan's own ([planned]) clear the override, so a later change of the plan comes through.
+     */
+    suspend fun tunePlan(planId: String, planned: SlotSpec, sets: Int, reps: Pair<Int, Int>, restSec: Int) {
+        val s = store.settingsNow()
+        val n = sets.coerceIn(1, MAX_SETS)
+        val r = restSec.coerceIn(MIN_REST, MAX_REST)
+        val range = reps.first.coerceIn(1, 100).let { lo -> lo to reps.second.coerceIn(lo, 100) }
+        store.setSettings(
+            s.copy(
+                sets = if (n == planned.sets) s.sets - planId else s.sets + (planId to n),
+                reps = if (range == planned.repMin to planned.repMax) s.reps - planId else s.reps + (planId to listOf(range.first, range.second)),
+                rest = if (r == planned.restSec) s.rest - planId else s.rest + (planId to r),
+            ),
+        )
+        onChange()
+    }
+
+    /** The exercise added for good [exerciseId] as the plan starts it (before the user's own sets, reps and rest). */
+    fun addedPlanned(exerciseId: String): SlotSpec = addedSpec(exerciseId)
 
     /** Replaces [planId] by [newId] in every session from now on; the same id (or null) brings the original back. */
     /** Settings changed on their screen; they travel to other phones with the next sync. */
@@ -303,8 +409,12 @@ class TrainingRepository(
         val plan = planOf(w) ?: return false
         if (plan.items.size <= 1 || plan.items.none { it.position == position }) return false
         if (db.sets().forWorkout(workoutId).any { it.position == position }) return false
+        val item = plan.items.first { it.position == position }
         replacePlan(workoutId, plan.copy(items = plan.items.filter { it.position != position }))
-        if (forever) planSlot(plan.templateId, position)?.let { setRemoved(it.exerciseId, true) }
+        if (forever) {
+            if (item.addedForGood && item.planId != null) removeAdded(plan.templateId, item.planId)
+            else ownSlot(plan.templateId, item)?.let { setRemoved(it.exerciseId, true) }
+        }
         return true
     }
 
@@ -619,8 +729,10 @@ class TrainingRepository(
         val goal = profile?.runGoal
         val lap = profile?.lapMeters
         val cutback = program != null && ProgramGenerator.isRunCutbackWeek(program, date)
+        // Before the first test of a race goal, easy and long runs get a pace limit from the goal (approximate).
+        val guess = if (st.vdot == null && goal != null) st.copy(vdot = RunPlan.provisionalVdot(goal)) else null
         val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when (kind) {
-            SessionKind.RUN_LONG -> RunPlan.long(st, cutback, date.toEpochDay())
+            SessionKind.RUN_LONG -> if (guess != null) RunPlan.provisional(RunPlan.long(guess, cutback, date.toEpochDay())) else RunPlan.long(st, cutback, date.toEpochDay())
             SessionKind.RUN_QUALITY -> when {
                 !needsTest(st, date, goal) -> RunPlan.quality(st, cutback, goal, lap)
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
@@ -630,7 +742,9 @@ class TrainingRepository(
                 // On a lifting day the easy run comes after the gym: short, unless the plan was built for shared days.
                 val liftDay = program?.week?.on(date.dayOfWeek.value)?.any { it.kind == SessionKind.LIFT } == true
                 val short = liftDay && profile?.doubleDays != true
-                RunPlan.easy(if (short) st.copy(easyMinutes = minOf(st.easyMinutes, 30)) else st, cutback, date.toEpochDay())
+                val base = guess ?: st
+                RunPlan.easy(if (short) base.copy(easyMinutes = minOf(base.easyMinutes, 30)) else base, cutback, date.toEpochDay())
+                    .let { if (guess != null) RunPlan.provisional(it) else it }
             }
         }
         fun track(x: RunWorkout) = if (lap != null) RunPlan.onTrack(x, lap) else x
@@ -677,7 +791,7 @@ class TrainingRepository(
         else if (workout.type == RunType.TEST) next = next.copy(lastTrialTryDay = date.toEpochDay())
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
-        val summary = RunSummary(after.outcomes, minutes, load, result.laps.orEmpty())
+        val summary = RunSummary(after.outcomes, minutes, load, result.laps.orEmpty(), result.cadence)
         val avgPace = result.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
         val id = db.withTransaction {
             val id = db.workouts().insert(

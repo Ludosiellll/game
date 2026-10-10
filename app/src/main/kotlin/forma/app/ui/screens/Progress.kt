@@ -168,6 +168,84 @@ private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState
     }
 }
 
+/** A lap time to a tenth: "51,4 с" (the goal is often a few tenths a lap away). */
+private fun lapTenth(sec: Double): String = if (sec < 59.95) "${Ru.one(sec)} с" else Ru.clock(sec.roundToInt())
+
+/** The way to the goal: trials over its distance, then the average lap and the laps on pace in the goal-pace sessions. */
+@Composable
+private fun GoalPathCard(goal: forma.core.model.RunGoal, lapM: Int, path: forma.app.data.GoalProgress.Result) {
+    val target = forma.core.run.Track.lapSec(goal.pace, lapM)
+    FCard(gap = 8.dp) {
+        Text("Путь к цели", style = T.secondary(13.sp))
+        val trials = path.trials
+        if (trials.isEmpty()) {
+            Text("Контрольных на ${goalDistance(goal.meters)} ещё не было.", style = T.body(15.sp, FontWeight.SemiBold))
+        } else {
+            val best = trials.minBy { it.seconds }
+            val reached = best.seconds <= goal.seconds
+            Text("Лучший контрольный — ${Ru.clock(best.seconds)}", style = T.title(22.sp).copy(color = if (reached) F.c.good else F.c.text))
+            Text(
+                if (reached) "Цель взята ${shortDate(LocalDate.ofEpochDay(best.epochDay))}."
+                else (best.seconds - goal.seconds).let { d -> "До цели ${if (d < 60) "$d с" else Ru.clock(d)}." },
+                style = T.body(14.sp),
+            )
+            if (trials.size >= 2) {
+                LineChart(
+                    listOf(Series(trials.map { it.seconds.toDouble() }, F.c.endurance)), height = 110.dp, reference = goal.seconds.toDouble(),
+                    xLabels = trials.indices.map { if (it == 0 || it == trials.lastIndex) shortDate(LocalDate.ofEpochDay(trials[it].epochDay)) else "" },
+                    description = "Контрольные забеги на ${goalDistance(goal.meters)}: время по датам, линия — цель",
+                )
+                Text("Ниже — быстрее; серая линия — цель.", style = T.secondary(12.sp))
+            }
+            trials.takeLast(4).reversed().forEachIndexed { i, t ->
+                if (i > 0) Hairline()
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(shortDate(LocalDate.ofEpochDay(t.epochDay)), style = T.body(14.sp), modifier = Modifier.weight(1f))
+                    NumText(Ru.clock(t.seconds), style = T.number(15.sp, FontWeight.Bold))
+                }
+            }
+        }
+        Hairline()
+        Text("Отрезки в темпе цели · круг ${Ru.nobreak(lapTenth(target))}", style = T.secondary(13.sp))
+        val sessions = path.sessions
+        if (sessions.isEmpty()) {
+            Text(
+                "После первой такой тренировки здесь будут средний круг отрезков и сколько кругов прошло в темпе — по нажатиям «Круг».",
+                style = T.secondary(13.sp),
+            )
+        } else {
+            fun lapOf(s: forma.app.data.GoalProgress.Session) = s.paceSecKm * lapM / 1000.0
+            val last = sessions.last()
+            val gap = lapOf(last) - target
+            Text(
+                "Средний круг ${lapTenth(lapOf(last))}" + when {
+                    gap > 0.25 -> ", на ${Ru.one(gap)} с медленнее цели"
+                    gap < -0.25 -> ", на ${Ru.one(-gap)} с быстрее цели"
+                    else -> " — ровно в цель"
+                },
+                style = T.title(18.sp),
+            )
+            if (last.judged > 0) Text("В темпе ${last.onPace} из ${last.judged} ${Ru.plural(last.judged, "круга", "кругов", "кругов")}", style = T.body(14.sp))
+            if (sessions.size >= 2) {
+                LineChart(
+                    listOf(Series(sessions.map { lapOf(it) }, F.c.endurance)), height = 110.dp, reference = target,
+                    xLabels = sessions.indices.map { if (it == 0 || it == sessions.lastIndex) shortDate(LocalDate.ofEpochDay(sessions[it].epochDay)) else "" },
+                    description = "Средний круг отрезков в темпе цели по тренировкам, линия — круг цели",
+                )
+                Text("Ниже — быстрее; серая линия — круг цели.", style = T.secondary(12.sp))
+            }
+            sessions.takeLast(4).reversed().forEachIndexed { i, s ->
+                if (i > 0) Hairline()
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(shortDate(LocalDate.ofEpochDay(s.epochDay)), style = T.body(14.sp), modifier = Modifier.weight(1f))
+                    if (s.judged > 0) Text("${s.onPace}/${s.judged} в темпе", style = T.secondary(13.sp), modifier = Modifier.padding(end = 12.dp))
+                    NumText(lapTenth(lapOf(s)), style = T.number(15.sp, FontWeight.Bold))
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun RunTab() {
     val repo = LocalRepo.current
@@ -181,6 +259,13 @@ private fun RunTab() {
     val program by repo.store.program.collectAsState(initial = null)
     val hard = program?.week?.days?.any { d -> d.sessions.any { it.kind == forma.core.plan.SessionKind.RUN_QUALITY } } != false
     profile?.runGoal?.let { GoalCard(it, st, profile?.lapMeters, hard) }
+    // On a stadium: the trials over the goal distance and how the laps at its pace go.
+    val goal = profile?.runGoal
+    val lapM = profile?.lapMeters
+    if (goal != null && goal.middleDistance && lapM != null) {
+        val path = remember(workouts, runs, goal.meters) { forma.app.data.GoalProgress.of(workouts, runs, goal.meters) }
+        GoalPathCard(goal, lapM, path)
+    }
     if (vdot != null) {
         FCard(gap = 6.dp) {
             Text("VDOT — беговая форма", style = T.secondary(13.sp))

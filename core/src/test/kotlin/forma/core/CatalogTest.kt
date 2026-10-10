@@ -80,6 +80,21 @@ class CatalogTest {
         assertTrue(ExerciseSearch.search("абракадабра").isEmpty())
     }
 
+    /** A typo in the one word typed must not hand the top to the shortest name with a similar word ("Сплит-приседания"). */
+    @Test fun typosStillFindTheExerciseMeant() {
+        for (q in listOf("приседаня", "присидания", "приседанея", "приседание", "присядания", "приседенаия")) assertEquals("squat", first(q), q)
+        assertEquals("pushup", first("отжиманя"))
+        assertEquals("pullup", first("подтягиваня"))
+        assertEquals("deadlift", first("становя тяга"))
+        assertEquals("lat_pulldown", first("тяга верхнго блока"))
+        // Another form of a one-word synonym is the synonym.
+        assertEquals("db_lunge", first("выпад"))
+        assertEquals("db_lunge", first("выпады"))
+        // The exact word keeps its order; a near miss does not reach unrelated exercises.
+        assertEquals("squat", first("приседания"))
+        assertTrue(ExerciseSearch.search("приседаня").take(6).all { it.pattern == Catalog["squat"].pattern || "присед" in it.name.lowercase() })
+    }
+
     @Test fun filtersNarrowTheList() {
         val legs = ExerciseSearch.search("", muscle = Muscle.QUADS)
         assertTrue(legs.isNotEmpty() && legs.all { Muscle.QUADS in it.primary || Muscle.QUADS in it.secondary })

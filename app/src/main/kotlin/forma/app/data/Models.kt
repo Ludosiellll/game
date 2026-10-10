@@ -19,6 +19,10 @@ data class LiftItem(
     val prescription: Prescription,
     val warmups: List<WarmUpSet>,
     val step: Double,
+    /** The plan's own exercise at this place (before a swap); null for one added today only (and in older sessions). */
+    val planId: String? = null,
+    /** Added to the plan by the user, not one of the generated plan's own. */
+    val addedForGood: Boolean = false,
 )
 
 @Serializable
@@ -37,6 +41,8 @@ data class RunSummary(
     val load: Double,
     /** Laps from the lap button on a stadium. */
     val laps: List<forma.core.run.Lap> = emptyList(),
+    /** Steps a minute while running, from the phone's step counter. */
+    val cadence: Int? = null,
 )
 
 /** A day of the week with the plan and what was actually done. */

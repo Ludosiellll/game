@@ -71,6 +71,7 @@ object CoachText {
             is Cue.MinuteLeft ->
                 if (RunTimeline.startOnLine(w) == c.index + 1) "Через минуту ${startWhat(w)}. Закончи круг и подходи к старту." else "Осталась минута."
             is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)} и нажми «Круг», когда побежишь: ${startWhat(w)} начнётся с нажатия."
+            is Cue.Strides -> "Последние три минуты разминки: сделай 3–4 ускорения по 15 секунд, между ними трусца."
             is Cue.Countdown, is Cue.LapMark -> null
             is Cue.Finished ->
                 if (w.continuable) "План выполнен. Можно закончить или бежать дальше — время идёт, лишнее засчитается."
@@ -104,6 +105,9 @@ object CoachText {
         val frac = w.segments.getOrNull(index)?.laps?.let { it % 1.0 }?.takeIf { it > 0.01 }
         return if (frac != null) "Встань на старт ${RunPlan.startWords(frac)}" else "Встань на линию"
     }
+
+    /** A lap GPS counted because no press came: its rough time, no verdict. */
+    fun autoLap(l: Lap): String = "Круг по GPS: ${l.seconds.roundToInt()}."
 
     /** Said every minute while the plan waits for the start press. */
     fun waitingReminder(w: RunWorkout): String = "Жду старта: нажми «Круг», когда побежишь."

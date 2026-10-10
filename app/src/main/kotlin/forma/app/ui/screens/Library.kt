@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -63,12 +64,14 @@ fun LibraryScreen(mode: LibraryMode) {
     var equipment by rememberSaveable { mutableStateOf<Equipment?>(null) }
     var creating by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<Exercise?>(null) }
+    var adding by remember { mutableStateOf<Exercise?>(null) }
     // Recompose when own exercises change.
     val own by repo.store.customExercises.collectAsState(initial = emptyList())
 
     val current = when (mode) {
         is LibraryMode.SwapInWorkout -> Catalog[mode.exerciseId]
         is LibraryMode.SwapInPlan -> Catalog[mode.currentId]
+        is LibraryMode.SwapAdded -> Catalog[mode.exerciseId]
         else -> null
     }
     val pool = remember(own, current) {
@@ -83,9 +86,13 @@ fun LibraryScreen(mode: LibraryMode) {
             LibraryMode.Browse -> nav.push(Screen.Exercise(ex.id))
             is LibraryMode.SwapInWorkout -> confirm = ex
             is LibraryMode.SwapInPlan -> scope.launch { repo.setSwap(mode.planExerciseId, ex.id); nav.back() }
-            is LibraryMode.AddToWorkout -> scope.launch { repo.addToWorkout(mode.workoutId, ex.id); nav.back() }
+            is LibraryMode.AddToWorkout -> adding = ex
+            is LibraryMode.AddToPlan -> scope.launch { repo.addToPlan(mode.templateId, ex.id); nav.back() }
+            is LibraryMode.SwapAdded -> scope.launch { repo.replaceAdded(mode.templateId, mode.exerciseId, ex.id); nav.back() }
         }
     }
+    val program by repo.store.program.collectAsState(initial = null)
+    fun templateTitle(id: String) = program?.templates?.firstOrNull { it.id == id }?.title ?: "этого дня"
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
         item {
@@ -93,7 +100,9 @@ fun LibraryScreen(mode: LibraryMode) {
                 LibraryMode.Browse -> "Упражнения" to Catalog.all.size.let { n -> "$n ${forma.core.text.Ru.plural(n, "упражнение", "упражнения", "упражнений")} и их вариации" }
                 is LibraryMode.SwapInWorkout -> "Замена" to "Вместо «${current?.name}»"
                 is LibraryMode.SwapInPlan -> "Замена в плане" to "Вместо «${Catalog[mode.planExerciseId].name}»"
-                is LibraryMode.AddToWorkout -> "Добавить упражнение" to "В сегодняшнюю тренировку"
+                is LibraryMode.AddToWorkout -> "Добавить упражнение" to "В эту тренировку или в план"
+                is LibraryMode.AddToPlan -> "Добавить в план" to "В каждую тренировку «${templateTitle(mode.templateId)}»"
+                is LibraryMode.SwapAdded -> "Замена в плане" to "Вместо «${current?.name}»"
             }
             TopBar(title, subtitle, onBack = { nav.back() })
         }
@@ -164,6 +173,35 @@ fun LibraryScreen(mode: LibraryMode) {
                 }
             },
             dismissButton = { TextButton({ confirm = null }) { Text("Отмена", style = T.body(15.sp)) } },
+        )
+    }
+    val add = adding
+    if (add != null && mode is LibraryMode.AddToWorkout) {
+        val title by produceState<String?>(null, mode.workoutId) { value = repo.db.workouts().get(mode.workoutId)?.title }
+        AlertDialog(
+            onDismissRequest = { adding = null },
+            containerColor = F.c.surface,
+            title = { Text("Добавить «${add.name}»?", style = T.title(20.sp)) },
+            text = {
+                Text(
+                    "Только сегодня — план не меняется. В план насовсем — упражнение будет в каждой тренировке " +
+                        "«${title ?: "этого дня"}» после упражнений плана; подходы, повторы и отдых меняются в плане, там же его можно убрать.",
+                    style = T.secondary(14.sp),
+                )
+            },
+            confirmButton = {
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton({
+                        adding = null
+                        scope.launch { repo.addToWorkout(mode.workoutId, add.id, forever = true); nav.back() }
+                    }) { Text("В план насовсем", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                    TextButton({
+                        adding = null
+                        scope.launch { repo.addToWorkout(mode.workoutId, add.id, forever = false); nav.back() }
+                    }) { Text("Только сегодня", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                }
+            },
+            dismissButton = { TextButton({ adding = null }) { Text("Отмена", style = T.body(15.sp)) } },
         )
     }
     if (creating) {

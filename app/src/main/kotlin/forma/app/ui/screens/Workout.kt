@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -90,6 +92,15 @@ import forma.core.text.Ru
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
+
+/**
+ * The set just logged, for "Отменить": its id, where it was, which set it was and when, the hint shown before it
+ * and whether it started the rest.
+ */
+private data class Undo(val setId: Long, val position: Int, val number: Int, val at: Long, val adjBefore: Adjustment?, val startedRest: Boolean)
+
+/** How long "Отменить" stays after a set. */
+private const val UNDO_MS = 8_000L
 
 /** Values being edited for the next set of one exercise. */
 /** Weight step around [w]: the user's own step if set in settings, else the exercise's (finer for light dumbbells). */
@@ -181,7 +192,8 @@ fun WorkoutScreen(workoutId: Long) {
     LaunchedEffect(Unit) { while (true) { tick = System.currentTimeMillis(); delay(1000) } }
 
     var finishing by remember { mutableStateOf(false) }
-    var lastLogAt by remember { mutableLongStateOf(0L) }
+    var lastLogAt by remember { mutableLongStateOf(Long.MIN_VALUE / 2) }
+    var undo by remember { mutableStateOf<Undo?>(null) }
     var removing by remember { mutableStateOf<Int?>(null) }
     var editing by remember { mutableStateOf<SetEntity?>(null) }
     var typing by remember { mutableStateOf(false) }
@@ -189,214 +201,242 @@ fun WorkoutScreen(workoutId: Long) {
         value = repo.lastReport(item.exerciseId)?.takeIf { it.first.firstOrNull()?.workoutId != workoutId }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            val elapsed = ((tick - w.startedAt) / 1000).toInt().coerceAtLeast(0)
-            TopBar(plan.title, "${Ru.clock(elapsed)} · ${plan.items.indexOf(item) + 1} из ${plan.items.size}", onBack = { nav.back() }) {
-                GhostButton("Завершить", { finishing = true }, height = 48.dp)
-            }
-            if (plan.deload) Banner("Разгрузка: меньше подходов и вес легче. Не дожимай до отказа.", F.c.warn)
+    val mine = doneBy[item.position].orEmpty()
+    val n = mine.size
+    val planned = item.prescription.sets
+    val plusSet = item.prescription.top && n == planned - 1
 
-            // Exercise switcher.
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                plan.items.forEach { it2 ->
-                    val n = doneBy[it2.position]?.size ?: 0
-                    val complete = n >= it2.prescription.sets
-                    val sel = it2.position == item.position
-                    val shape = if (F.shape.pill) RoundedCornerShape(50) else RoundedCornerShape(F.shape.radiusSmall)
-                    Row(
-                        Modifier.height(44.dp).clip(shape)
-                            .background(if (sel) F.c.text else if (complete) F.c.surface2 else Color.Transparent)
-                            .border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, if (sel) F.c.text else F.c.line, shape)
-                            .selectable(selected = sel, role = Role.Tab) { current = it2.position }.padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        if (complete) Icon(Ic.check, null, tint = if (sel) F.c.bg else F.c.good, modifier = Modifier.size(14.dp))
-                        Text(it2.name, style = T.body(13.sp, FontWeight.Bold).copy(color = if (sel) F.c.bg else F.c.text), maxLines = 1)
-                    }
+    // The set panel stays at the bottom: weight, reps, reserve and "done" are always at hand, the rest is inside it.
+    BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding()) {
+        // A small phone with a large font: the panel scrolls inside rather than push the top bar off the screen.
+        val panelMax = maxHeight * 0.75f
+        Column(Modifier.fillMaxSize()) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                val elapsed = ((tick - w.startedAt) / 1000).toInt().coerceAtLeast(0)
+                TopBar(plan.title, "${Ru.clock(elapsed)} · ${plan.items.indexOf(item) + 1} из ${plan.items.size}", onBack = { nav.back() }) {
+                    GhostButton("Завершить", { finishing = true }, height = 48.dp)
                 }
-                val shape = if (F.shape.pill) RoundedCornerShape(50) else RoundedCornerShape(F.shape.radiusSmall)
-                Box(
-                    Modifier.size(44.dp).clip(shape).border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
-                        .clickable(onClickLabel = "Добавить упражнение") { nav.push(Screen.Library(forma.app.ui.LibraryMode.AddToWorkout(workoutId))) },
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Ic.plus, "Добавить упражнение", tint = F.c.text, modifier = Modifier.size(16.dp)) }
-            }
+                if (plan.deload) Banner("Разгрузка: меньше подходов и вес легче. Не дожимай до отказа.", F.c.warn)
 
-            // Header.
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.Top) {
-                    Text(item.name, style = T.title(if (F.type.capsTitles) 34.sp else 24.sp), modifier = Modifier.weight(1f))
-                    // Another exercise in its place, or none: only before its first set (the sets belong to the exercise).
-                    if (doneBy[item.position].isNullOrEmpty()) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            GhostButton("Заменить", {
-                                nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInWorkout(workoutId, item.position, item.exerciseId)))
-                            }, height = 44.dp)
-                            if (plan.items.size > 1) GhostButton("Убрать", { removing = item.position }, height = 44.dp, color = F.c.bad)
+                // Exercise switcher.
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    plan.items.forEach { it2 ->
+                        val n = doneBy[it2.position]?.size ?: 0
+                        val complete = n >= it2.prescription.sets
+                        val sel = it2.position == item.position
+                        val shape = if (F.shape.pill) RoundedCornerShape(50) else RoundedCornerShape(F.shape.radiusSmall)
+                        Row(
+                            Modifier.height(44.dp).clip(shape)
+                                .background(if (sel) F.c.text else if (complete) F.c.surface2 else Color.Transparent)
+                                .border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, if (sel) F.c.text else F.c.line, shape)
+                                .selectable(selected = sel, role = Role.Tab) { current = it2.position }.padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            if (complete) Icon(Ic.check, null, tint = if (sel) F.c.bg else F.c.good, modifier = Modifier.size(14.dp))
+                            Text(it2.name, style = T.body(13.sp, FontWeight.Bold).copy(color = if (sel) F.c.bg else F.c.text), maxLines = 1)
+                        }
+                    }
+                    val shape = if (F.shape.pill) RoundedCornerShape(50) else RoundedCornerShape(F.shape.radiusSmall)
+                    Box(
+                        Modifier.size(44.dp).clip(shape).border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
+                            .clickable(onClickLabel = "Добавить упражнение") { nav.push(Screen.Library(forma.app.ui.LibraryMode.AddToWorkout(workoutId))) },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Ic.plus, "Добавить упражнение", tint = F.c.text, modifier = Modifier.size(16.dp)) }
+                }
+
+                // Header.
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(item.name, style = T.title(if (F.type.capsTitles) 34.sp else 24.sp), modifier = Modifier.weight(1f))
+                        // Another exercise in its place, or none: only before its first set (the sets belong to the exercise).
+                        if (doneBy[item.position].isNullOrEmpty()) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                GhostButton("Заменить", {
+                                    nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInWorkout(workoutId, item.position, item.exerciseId)))
+                                }, height = 44.dp)
+                                if (plan.items.size > 1) GhostButton("Убрать", { removing = item.position }, height = 44.dp, color = F.c.bad)
+                            }
+                        }
+                    }
+                    val p = item.prescription
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (ex.load != LoadKind.TIMED) {
+                            Pill(if (p.weight != null) Texts.weight(ex, p.weight!!) else "вес подбираем", filled = true)
+                            Pill(if (p.calibrate) "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" else "${p.sets} × ${p.reps}")
+                            if (p.top) Pill("последний ${p.reps}+")
+                        } else Pill("${p.sets} × ${p.reps} с", filled = true)
+                        if (!p.calibrate) Pill("запас ${p.rir}")
+                    }
+                    if (ex.equipment == Equipment.BARBELL && ex.bar != null && inp.weight > ex.bar!!) PlatesLine(inp.weight, ex.bar!!)
+                    val last = lastReport
+                    when {
+                        p.calibrate -> Hint(
+                            "Первый раз подбираем рабочий вес. Начни с ${Texts.weight(ex, inp.weight)} и в каждом подходе делай " +
+                                "столько повторов, сколько выходит чисто, оставляя 2 в запасе (не больше 15). После подхода подскажу вес.",
+                            F.c.accent, Ic.info,
+                        )
+                        last != null -> {
+                            val s = last.first.joinToString(", ") { it.reps.toString() }
+                            val wDone = last.first.maxOf { it.weight }
+                            val text = if (ex.load == LoadKind.TIMED) "Прошлый раз: $s с." else "Прошлый раз ${Texts.weight(ex, wDone)} × $s."
+                            val why = last.second?.outcome?.let { " " + Texts.outcome(it, ex) } ?: ""
+                            Hint(text + why, if ((last.second?.outcome?.let { Texts.tone(it) } ?: 0) < 0) F.c.warn else F.c.strength)
                         }
                     }
                 }
-                val p = item.prescription
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (ex.load != LoadKind.TIMED) {
-                        Pill(if (p.weight != null) Texts.weight(ex, p.weight!!) else "вес подбираем", filled = true)
-                        Pill(if (p.calibrate) "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" else "${p.sets} × ${p.reps}")
-                        if (p.top) Pill("последний ${p.reps}+")
-                    } else Pill("${p.sets} × ${p.reps} с", filled = true)
-                    if (!p.calibrate) Pill("запас ${p.rir}")
-                }
-                if (ex.equipment == Equipment.BARBELL && ex.bar != null && inp.weight > ex.bar!!) PlatesLine(inp.weight, ex.bar!!)
-                val last = lastReport
-                when {
-                    p.calibrate -> Hint(
-                        "Первый раз подбираем рабочий вес. Начни с ${Texts.weight(ex, inp.weight)} и в каждом подходе делай " +
-                            "столько повторов, сколько выходит чисто, оставляя 2 в запасе (не больше 15). После подхода подскажу вес.",
-                        F.c.accent, Ic.info,
-                    )
-                    last != null -> {
-                        val s = last.first.joinToString(", ") { it.reps.toString() }
-                        val wDone = last.first.maxOf { it.weight }
-                        val text = if (ex.load == LoadKind.TIMED) "Прошлый раз: $s с." else "Прошлый раз ${Texts.weight(ex, wDone)} × $s."
-                        val why = last.second?.outcome?.let { " " + Texts.outcome(it, ex) } ?: ""
-                        Hint(text + why, if ((last.second?.outcome?.let { Texts.tone(it) } ?: 0) < 0) F.c.warn else F.c.strength)
+
+                // Warm-up.
+                if (item.warmups.isNotEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SectionLabel("Разминка", Modifier.width(92.dp))
+                        NumText(item.warmups.joinToString(" · ") { "${Ru.kg(it.weight)}×${it.reps}" }, style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
                     }
                 }
-            }
 
-            // Warm-up.
-            if (item.warmups.isNotEmpty()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SectionLabel("Разминка", Modifier.width(92.dp))
-                    NumText(item.warmups.joinToString(" · ") { "${Ru.kg(it.weight)}×${it.reps}" }, style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
-                }
-            }
-
-            // Logged sets.
-            val mine = doneBy[item.position].orEmpty()
-            if (mine.isNotEmpty()) {
-                Column {
-                    mine.forEachIndexed { i, s ->
-                        Hairline()
-                        Row(
-                            Modifier.fillMaxWidth().clickable { editing = s }.padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            NumText("${i + 1}", style = T.number(16.sp).copy(color = F.c.text2), modifier = Modifier.width(32.dp))
-                            NumText(
-                                if (ex.load == LoadKind.TIMED) "${s.reps} с" else "${Texts.weight(ex, s.weight)} × ${s.reps}",
-                                style = T.number(18.sp), modifier = Modifier.weight(1f),
-                            )
-                            if (s.rir != null) Text("запас ${if (s.rir >= 5) "5+" else s.rir}", style = T.secondary(13.sp), modifier = Modifier.padding(end = 10.dp))
-                            Box(Modifier.size(24.dp).clip(CircleShape).background(F.c.strength), contentAlignment = Alignment.Center) {
-                                Icon(Ic.check, null, tint = F.c.onData, modifier = Modifier.size(14.dp))
+                // Logged sets.
+                if (mine.isNotEmpty()) {
+                    Column {
+                        mine.forEachIndexed { i, s ->
+                            Hairline()
+                            Row(
+                                Modifier.fillMaxWidth().clickable { editing = s }.padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                NumText("${i + 1}", style = T.number(16.sp).copy(color = F.c.text2), modifier = Modifier.width(32.dp))
+                                NumText(
+                                    if (ex.load == LoadKind.TIMED) "${s.reps} с" else "${Texts.weight(ex, s.weight)} × ${s.reps}",
+                                    style = T.number(18.sp), modifier = Modifier.weight(1f),
+                                )
+                                if (s.rir != null) Text("запас ${if (s.rir >= 5) "5+" else s.rir}", style = T.secondary(13.sp), modifier = Modifier.padding(end = 10.dp))
+                                Box(Modifier.size(24.dp).clip(CircleShape).background(F.c.strength), contentAlignment = Alignment.Center) {
+                                    Icon(Ic.check, null, tint = F.c.onData, modifier = Modifier.size(14.dp))
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            adjustments[item.position]?.let { adj ->
-                val next = "${Texts.weight(ex, adj.weight)} × ${adj.reps}"
-                val text = when {
-                    item.prescription.calibrate && adj.heavier -> "Можно тяжелее. Следующий подход: $next?"
-                    item.prescription.calibrate -> "Тяжеловато. Следующий подход: $next?"
-                    adj.heavier -> "Подход был заметно легче плана. Следующий: $next?"
-                    else -> "Подход был тяжелее плана. Следующий: $next?"
-                }
-                Banner(text, if (adj.heavier) F.c.good else F.c.warn, icon = if (adj.heavier) Ic.up else Ic.down) {
-                    inp.weight = adj.weight
-                    inp.reps = adj.reps
-                    adjustments.remove(item.position)
-                }
-            }
-
-            // Next set.
-            val n = mine.size
-            val planned = item.prescription.sets
-            FCard(outline = F.c.strength) {
-                val plusSet = item.prescription.top && n == planned - 1
-                SectionLabel(
-                    if (n < planned) "Подход ${n + 1} из $planned" + (if (plusSet) " · ${item.prescription.reps}+" else "") else "Дополнительный подход",
-                    color = F.c.strength,
-                )
+                // What the "+" set is for, under the sets it follows.
                 if (plusSet) {
-                    Text(
-                        "Сделай ${item.prescription.reps} и продолжай, пока идёт чисто. Остановись, когда останется 1 повтор в запасе: " +
-                            "по лишним повторам видно, сколько прибавлять.",
-                        style = T.secondary(13.sp),
+                    Hint(
+                        "Последний подход — ${item.prescription.reps}+: сделай ${item.prescription.reps} и продолжай, пока идёт чисто. " +
+                            "Остановись, когда останется 1 повтор в запасе: по лишним повторам видно, сколько прибавлять.",
+                        F.c.strength, Ic.info,
                     )
                 }
-                val timed = ex.load == LoadKind.TIMED
-                val repsText = inp.reps.toString()
-                val repsUnit = if (timed) "сек" else "повт"
-                val repsSlot = StepperSlot(maxOf(repsText, "00", compareBy { it.length }), repsUnit) { m ->
-                    Stepper(
-                        repsText, repsUnit,
-                        { inp.reps = max(1, inp.reps - if (timed) 5 else 1) },
-                        { inp.reps += if (timed) 5 else 1 }, m, "Меньше повторов", "Больше повторов",
-                    )
-                }
-                if (timed) {
-                    StepperGroup(listOf(repsSlot))
-                } else {
-                    // Assisted pull-ups and dips go below zero: negative weight is help from a machine or band.
-                    val lowest = if (ex.assisted) -Progression.maxAssist(ex, bw) else 0.0
-                    val weightText = Ru.kg(kotlin.math.abs(inp.weight))
-                    val weightUnit = when {
-                        inp.weight < 0 -> "помощь, кг"
-                        ex.load == LoadKind.BODYWEIGHT_PLUS -> "доп. кг"
-                        ex.perHand -> "кг × 2"
-                        else -> "кг"
-                    }
-                    // Sized for "102,5" and the longest unit this exercise can show, not for today's number.
-                    val weightSlot = StepperSlot(maxOf(weightText, "000,0", compareBy { it.length }), if (ex.assisted) "помощь, кг" else weightUnit) { m ->
-                        Stepper(
-                            weightText, weightUnit,
-                            { inp.weight = max(lowest, inp.weight - stepOf(ex, item, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, item, inp.weight) }, m,
-                            "Меньше вес", "Больше вес", onLongValue = { typing = true },
+                Spacer(Modifier.height(4.dp))
+            }
+
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = panelMax).background(F.c.bg).navigationBarsPadding()
+                    .padding(horizontal = 20.dp).padding(top = 6.dp, bottom = 10.dp),
+            ) {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Hairline()
+                    if (rest != null) {
+                        val left = ((rest.endAt - now) / 1000).coerceAtLeast(0)
+                        val next = plan.items.firstOrNull { (doneBy[it.position]?.size ?: 0) < it.prescription.sets }
+                        RestBar(
+                            left.toInt(), ((rest.endAt - now).toFloat() / rest.totalMs).coerceIn(0f, 1f), next?.name,
+                            onMinus = { forma.app.ui.RestTimer.adjust(context, -15_000, settings.beeps, settings.vibration) },
+                            onPlus = { forma.app.ui.RestTimer.adjust(context, 15_000, settings.beeps, settings.vibration) },
+                            onSkip = { forma.app.ui.RestTimer.stop() },
+                            modifier = Modifier,
                         )
                     }
-                    StepperGroup(listOf(weightSlot, repsSlot))
+                    // The set just logged can be taken back for a few seconds (a tap too early, the wrong numbers).
+                    val u = undo
+                    if (u != null && tick - u.at < UNDO_MS) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Подход ${u.number} записан", style = T.secondary(14.sp), modifier = Modifier.weight(1f))
+                            TextButton({
+                                undo = null
+                                if (u.startedRest) forma.app.ui.RestTimer.stop()
+                                if (u.adjBefore != null) adjustments[u.position] = u.adjBefore else adjustments.remove(u.position)
+                                current = u.position
+                                scope.launch { repo.deleteSet(u.setId) }
+                            }) { Text("Отменить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                        }
+                    }
+                    adjustments[item.position]?.let { adj ->
+                        val next = "${Texts.weight(ex, adj.weight)} × ${adj.reps}"
+                        val text = when {
+                            item.prescription.calibrate && adj.heavier -> "Можно тяжелее. Следующий подход: $next?"
+                            item.prescription.calibrate -> "Тяжеловато. Следующий подход: $next?"
+                            adj.heavier -> "Подход был заметно легче плана. Следующий: $next?"
+                            else -> "Подход был тяжелее плана. Следующий: $next?"
+                        }
+                        Banner(text, if (adj.heavier) F.c.good else F.c.warn, icon = if (adj.heavier) Ic.up else Ic.down) {
+                            inp.weight = adj.weight
+                            inp.reps = adj.reps
+                            adjustments.remove(item.position)
+                        }
+                    }
+                    SectionLabel(
+                        if (n < planned) "Подход ${n + 1} из $planned" + (if (plusSet) " · ${item.prescription.reps}+" else "") else "Дополнительный подход",
+                        color = F.c.strength,
+                    )
+                    val timed = ex.load == LoadKind.TIMED
+                    val repsText = inp.reps.toString()
+                    val repsUnit = if (timed) "сек" else "повт"
+                    val repsSlot = StepperSlot(maxOf(repsText, "00", compareBy { it.length }), repsUnit) { m ->
+                        Stepper(
+                            repsText, repsUnit,
+                            { inp.reps = max(1, inp.reps - if (timed) 5 else 1) },
+                            { inp.reps += if (timed) 5 else 1 }, m, "Меньше повторов", "Больше повторов",
+                        )
+                    }
+                    if (timed) {
+                        StepperGroup(listOf(repsSlot))
+                    } else {
+                        // Assisted pull-ups and dips go below zero: negative weight is help from a machine or band.
+                        val lowest = if (ex.assisted) -Progression.maxAssist(ex, bw) else 0.0
+                        val weightText = Ru.kg(kotlin.math.abs(inp.weight))
+                        val weightUnit = when {
+                            inp.weight < 0 -> "помощь, кг"
+                            ex.load == LoadKind.BODYWEIGHT_PLUS -> "доп. кг"
+                            ex.perHand -> "кг × 2"
+                            else -> "кг"
+                        }
+                        // Sized for "102,5" and the longest unit this exercise can show, not for today's number.
+                        val weightSlot = StepperSlot(maxOf(weightText, "000,0", compareBy { it.length }), if (ex.assisted) "помощь, кг" else weightUnit) { m ->
+                            Stepper(
+                                weightText, weightUnit,
+                                { inp.weight = max(lowest, inp.weight - stepOf(ex, item, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, item, inp.weight) }, m,
+                                "Меньше вес", "Больше вес", onLongValue = { typing = true },
+                            )
+                        }
+                        StepperGroup(listOf(weightSlot, repsSlot))
+                    }
+                    if (!timed) {
+                        Text("Сколько ещё повторов мог сделать?", style = T.secondary(12.sp))
+                        RirChips(inp.rir) { inp.rir = it }
+                    }
                 }
-                if (ex.load != LoadKind.TIMED) {
-                    Text("Сколько ещё повторов мог сделать?", style = T.secondary(13.sp))
-                    RirChips(inp.rir) { inp.rir = it }
-                }
+                Spacer(Modifier.height(8.dp))
                 PrimaryButton("Подход сделан", {
                     // A double tap of a sweaty finger is one set, not two.
                     val tap = android.os.SystemClock.elapsedRealtime()
                     if (tap - lastLogAt < 1500) return@PrimaryButton
                     lastLogAt = tap
                     val doneSet = DoneSet(inp.weight, inp.reps, inp.rir)
+                    val logged = item
                     scope.launch {
-                        repo.logSet(workoutId, item, inp.weight, inp.reps, inp.rir)
-                        val adj = Progression.adjustAfterSet(ex, item.prescription, doneSet, bw, index = n)
-                        if (adj != null) adjustments[item.position] = adj else adjustments.remove(item.position)
+                        val id = repo.logSet(workoutId, logged, inp.weight, inp.reps, inp.rir)
+                        undo = Undo(id, logged.position, n + 1, System.currentTimeMillis(), adjustments[logged.position], settings.autoRest)
+                        val adj = Progression.adjustAfterSet(ex, logged.prescription, doneSet, bw, index = n)
+                        if (adj != null) adjustments[logged.position] = adj else adjustments.remove(logged.position)
                         inp.rir = null
                         if (settings.autoRest) {
-                            forma.app.ui.RestTimer.start(context, workoutId, item.slot.restSec * 1000L, settings.beeps, settings.vibration)
+                            forma.app.ui.RestTimer.start(context, workoutId, logged.slot.restSec * 1000L, settings.beeps, settings.vibration)
                         }
                         if (n + 1 >= planned) {
-                            plan.items.firstOrNull { it.position > item.position && (doneBy[it.position]?.size ?: 0) < it.prescription.sets }
+                            plan.items.firstOrNull { it.position > logged.position && (doneBy[it.position]?.size ?: 0) < it.prescription.sets }
                                 ?.let { current = it.position }
                         }
                     }
                 }, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData, icon = Ic.check)
             }
-            Spacer(Modifier.height(if (rest != null) 110.dp else 24.dp))
-        }
-
-        if (rest != null) {
-            val left = ((rest.endAt - now) / 1000).coerceAtLeast(0)
-            val next = plan.items.firstOrNull { (doneBy[it.position]?.size ?: 0) < it.prescription.sets }
-            RestBar(
-                left.toInt(), ((rest.endAt - now).toFloat() / rest.totalMs).coerceIn(0f, 1f), next?.name,
-                onMinus = { forma.app.ui.RestTimer.adjust(context, -15_000, settings.beeps, settings.vibration) },
-                onPlus = { forma.app.ui.RestTimer.adjust(context, 15_000, settings.beeps, settings.vibration) },
-                onSkip = { forma.app.ui.RestTimer.stop() },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
         }
     }
 
@@ -407,7 +447,7 @@ fun WorkoutScreen(workoutId: Long) {
     removing?.let { pos ->
         val target = plan.items.firstOrNull { it.position == pos }
         // "For good" only for an exercise that comes from the plan (not one added to this session).
-        val fromPlan by produceState(false, plan.templateId, pos) { value = repo.planSlot(plan.templateId, pos) != null }
+        val fromPlan by produceState(false, workoutId, pos) { value = repo.inPlan(workoutId, pos) }
         if (target == null) {
             removing = null
         } else {
@@ -537,13 +577,13 @@ private fun PlatesLine(total: Double, bar: Double) {
 @Composable
 private fun RestBar(left: Int, fraction: Float, next: String?, onMinus: () -> Unit, onPlus: () -> Unit, onSkip: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(F.shape.radius + 2.dp)
-    var m = modifier.navigationBarsPadding().padding(12.dp).fillMaxWidth().clip(shape).background(F.c.surface2)
+    var m = modifier.fillMaxWidth().clip(shape).background(F.c.surface2)
     if (F.shape.border > 0.dp || F.c.dark) m = m.border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
-    Row(m.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Ring(fraction, F.c.strength, Modifier.size(52.dp), stroke = 5.dp)
+    Row(m.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Ring(fraction, F.c.strength, Modifier.size(40.dp), stroke = 4.dp)
         Column(Modifier.weight(1f)) {
             Text(labelText("Отдых"), style = T.label())
-            NumText(Ru.clock(left), style = T.number(28.sp))
+            NumText(Ru.clock(left), style = T.number(22.sp))
             if (next != null) Text("далее: $next", style = T.secondary(11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         SmallButton("−15", onMinus)
