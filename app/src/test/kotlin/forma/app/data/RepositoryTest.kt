@@ -264,6 +264,60 @@ class RepositoryTest {
         assertTrue(next.segments.filter { it.kind == forma.core.run.SegmentKind.WORK }.all { it.laps != null && it.lapSec != null })
     }
 
+    @Test fun setsAndExercisesCanBeChangedInThePlan() = runBlocking {
+        repo.completeOnboarding(profile)
+        val program = repo.store.programNow()!!
+        val t = program.templates.first { it.slots.size >= 3 }
+        val day = LocalDate.ofEpochDay(program.startEpochDay)
+        val first = t.slots[0]
+        val second = t.slots[1]
+        // Five sets of the first exercise from now on.
+        repo.setPlanSets(first.exerciseId, 5, first.sets)
+        assertEquals(5, repo.liftPlan(t.id, day).items.first { it.position == 0 }.prescription.sets)
+        // The second one out of the plan: the others keep their places.
+        repo.setRemoved(second.exerciseId, true)
+        val plan = repo.liftPlan(t.id, day)
+        assertTrue(plan.items.none { it.position == 1 })
+        assertEquals(t.slots.size - 1, plan.items.size)
+        assertEquals(t.slots[2].exerciseId, plan.items.first { it.position == 2 }.slot.exerciseId)
+        // Back as in the plan.
+        repo.setPlanSets(first.exerciseId, first.sets, first.sets)
+        repo.setRemoved(second.exerciseId, false)
+        val back = repo.liftPlan(t.id, day)
+        assertEquals(first.sets, back.items.first { it.position == 0 }.prescription.sets)
+        assertEquals(t.slots.size, back.items.size)
+        assertTrue(repo.store.settingsNow().sets.isEmpty())
+        // Every exercise out: the session still has them all, never an empty one.
+        t.slots.forEach { repo.setRemoved(it.exerciseId, true) }
+        assertEquals(t.slots.size, repo.liftPlan(t.id, day).items.size)
+    }
+
+    @Test fun anExerciseCanBeTakenOutOfASession() = runBlocking {
+        repo.completeOnboarding(profile)
+        val program = repo.store.programNow()!!
+        val t = program.templates.first { it.slots.size >= 3 }
+        val day = LocalDate.ofEpochDay(program.startEpochDay)
+        val id = repo.startLift(t.id, day)
+        val plan = repo.planOf(db.workouts().get(id)!!)!!
+        // Only today: the plan keeps it.
+        assertTrue(repo.removeFromWorkout(id, plan.items.last().position, forever = false))
+        assertEquals(plan.items.size - 1, repo.planOf(db.workouts().get(id)!!)!!.items.size)
+        assertEquals(t.slots.size, repo.liftPlan(t.id, day).items.size)
+        // For good: out of the plan too.
+        val pos = plan.items[1].position
+        assertTrue(repo.removeFromWorkout(id, pos, forever = true))
+        assertTrue(t.slots[pos].exerciseId in repo.store.settingsNow().removed)
+        assertTrue(repo.liftPlan(t.id, day).items.none { it.position == pos })
+        // Not after its first set.
+        val firstItem = plan.items.first()
+        repo.logSet(id, firstItem, firstItem.prescription.weight ?: 40.0, firstItem.prescription.reps, 2)
+        assertTrue(!repo.removeFromWorkout(id, firstItem.position, forever = false))
+        // Never the last one left.
+        val left = repo.planOf(db.workouts().get(id)!!)!!.items.filter { it.position != firstItem.position }
+        left.forEach { repo.removeFromWorkout(id, it.position, forever = false) }
+        assertEquals(1, repo.planOf(db.workouts().get(id)!!)!!.items.size)
+    }
+
     @Test fun aSessionIsStartedAndFinishedOnce() = runBlocking {
         repo.completeOnboarding(profile)
         val program = repo.store.programNow()!!

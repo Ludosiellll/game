@@ -13,8 +13,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -330,6 +332,38 @@ class ScreensShotTest {
         RunSession.publish(at + 5 * 60_000)
         shot("trial") { forma.app.ui.screens.RunDoneScreen(0) }
         RunSession.clear()
+    }
+
+    /** The plan screen: an exercise opened to change its sets, swap it or take it out; one already taken out. */
+    @Test fun planExerciseDialog() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = SettingsStore(ctx, "shots-plan")
+        val repo = TrainingRepository(FormaDatabase.create(ctx, inMemory = true), store, now = { clock })
+        val t = runBlocking {
+            store.clear()
+            repo.completeOnboarding(
+                Profile(name = "Денис", goal = Goal.HYBRID, experience = Experience.INTERMEDIATE, runLevel = RunLevel.BASE, trainingDays = setOf(1, 3, 5), bodyWeightKg = 80.0),
+            )
+            val t = store.programNow()!!.templates.first { it.slots.any { s -> s.exerciseId == "plank" } }
+            repo.setRemoved("plank", true)
+            repo.setPlanSets(t.slots.first().exerciseId, 4, t.slots.first().sets)
+            t
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) {
+                    Box(Modifier.fillMaxSize().background(F.c.bg)) { PlanScreen() }
+                }
+            }
+        }
+        settle()
+        val first = forma.core.model.Catalog[t.slots.first().exerciseId].name
+        compose.onAllNodesWithText(first)[0].performScrollTo()
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-planrows.png")
+        compose.onAllNodesWithText(first)[0].performClick()
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-plandialog.png")
     }
 
     /** The very first session of a new user: every working weight is being found. */

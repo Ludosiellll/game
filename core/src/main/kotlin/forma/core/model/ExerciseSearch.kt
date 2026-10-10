@@ -68,11 +68,21 @@ object ExerciseSearch {
         return Fields(name.split(' '), aliases.flatMap { it.split(' ') }, tags, words(ex.secondary.map { it.ru }), name, aliases)
     }
 
+    /** How well one typed word matches the exercise: 0 — not at all. */
+    private fun wordMatch(f: Fields, t: String): Int {
+        val inName = f.name.maxOf { wordScore(t, it) }
+        val inAlias = f.aliases.maxOfOrNull { wordScore(t, it) } ?: 0
+        // Main muscles, equipment and movement count fully; muscles that only help, half.
+        val inTags = maxOf(f.tags.maxOf { wordScore(t, it) } * 2, f.helpers.maxOfOrNull { wordScore(t, it) } ?: 0)
+        return maxOf(inName * 3, inAlias * 2, inTags)
+    }
+
     /** 0 — no match; higher — better. Every typed word has to match something. */
-    fun score(ex: Exercise, query: String): Int {
-        val q = normalize(query)
+    fun score(ex: Exercise, query: String): Int = score(fields(ex), normalize(query), emptySet())
+
+    /** Like [score], but the [optional] words only add to it when they match; the rest have to. */
+    private fun score(f: Fields, q: String, optional: Set<String>): Int {
         if (q.isEmpty()) return 1
-        val f = fields(ex)
         // The whole query as a name or a synonym: an exact synonym ("присед") beats a name that merely starts so.
         var total = maxOf(
             if (f.nameText == q) 200 else 0,
@@ -80,16 +90,39 @@ object ExerciseSearch {
             if (f.nameText.startsWith(q)) 120 else 0,
             if (f.aliasTexts.any { it.startsWith(q) }) 90 else 0,
         )
+        var matched = false
         for (t in q.split(' ')) {
-            val inName = f.name.maxOf { wordScore(t, it) }
-            val inAlias = f.aliases.maxOfOrNull { wordScore(t, it) } ?: 0
-            // Main muscles, equipment and movement count fully; muscles that only help, half.
-            val inTags = maxOf(f.tags.maxOf { wordScore(t, it) } * 2, f.helpers.maxOfOrNull { wordScore(t, it) } ?: 0)
-            val best = maxOf(inName * 3, inAlias * 2, inTags)
-            if (best == 0) return 0
+            // Little words ("в", "на", "со") help no exercise more than another: they never add to the score.
+            if (t in optional && t.isShortWord()) continue
+            val best = wordMatch(f, t)
+            if (best == 0) {
+                if (t in optional) continue
+                return 0
+            }
+            matched = true
             total += best
         }
-        return total
+        return if (matched) total else 0
+    }
+
+    /** A Russian word of one or two letters: "в", "на", "со". */
+    private fun String.isShortWord() = length <= 2 && all { it in 'а'..'я' }
+
+    /** Words about the load ("со своим весом", "без веса", "с отягощением"): they say how, not which exercise. */
+    private val LOAD_WORDS = setOf(
+        "свой", "своим", "своего", "собственный", "собственным", "собственного", "собственном", "вес", "весом", "веса",
+        "без", "отягощение", "отягощением", "отягощения", "доп", "дополнительный", "дополнительным",
+    )
+
+    /**
+     * Words of [q] that need not match: short Russian words ("со", "в", "на"), words about the load, and words no
+     * exercise in [pool] has. "Подтягивания со своим весом" finds the pull-ups; a query of such words alone ("свой
+     * вес") still has to match.
+     */
+    private fun optionalWords(q: String, pool: List<Fields>): Set<String> {
+        val words = q.split(' ')
+        val optional = words.filter { t -> t.isShortWord() || t in LOAD_WORDS || pool.none { wordMatch(it, t) > 0 } }.toSet()
+        return if (words.all { it in optional }) emptySet() else optional
     }
 
     /**
@@ -101,8 +134,10 @@ object ExerciseSearch {
             (muscle == null || muscle in it.primary || muscle in it.secondary) && (equipment == null || it.equipment == equipment)
         }
         if (normalize(query).isEmpty()) return candidates.sortedWith(compareBy<Exercise> { it.pattern.ordinal }.thenBy { it.name })
-        val queries = listOf(query, fromLatinLayout(query)).map(::normalize).distinct()
-        return candidates.mapNotNull { ex -> queries.maxOf { score(ex, it) }.takeIf { it > 0 }?.let { ex to it } }
+        val all = pool.associateWith(::fields)
+        // What is optional is judged on the whole pool: a real exercise word with a filter that rules it out finds nothing.
+        val queries = listOf(query, fromLatinLayout(query)).map(::normalize).distinct().map { it to optionalWords(it, all.values.toList()) }
+        return candidates.mapNotNull { ex -> queries.maxOf { (q, opt) -> score(all.getValue(ex), q, opt) }.takeIf { it > 0 }?.let { ex to it } }
             .sortedWith(compareByDescending<Pair<Exercise, Int>> { it.second }.thenBy { it.first.name.length })
             .map { it.first }
     }

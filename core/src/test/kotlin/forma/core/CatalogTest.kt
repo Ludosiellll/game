@@ -56,6 +56,16 @@ class CatalogTest {
         assertTrue(ExerciseSearch.search("присидания").any { it.id == "squat" })
         assertEquals("squat", first("ghbctl"))
         assertEquals("pullup", first("подтягивания"))
+        // Words about the load or little words do not hide the exercise.
+        assertEquals("pullup", first("подтягивания со своим весом"))
+        assertEquals("pullup", first("подтягивания без веса"))
+        assertEquals("pullup", first("подтягивания на турнике"))
+        assertEquals("leg_press", first("жим ногами в тренажёре"))
+        assertEquals("bench", first("жим лёжа со штангой"))
+        // A real exercise word still has to match: no barbell pull-ups.
+        assertTrue(forma.core.model.ExerciseSearch.search("подтягивания", equipment = Equipment.BARBELL).isEmpty())
+        // Nothing but filler finds nothing.
+        assertTrue(forma.core.model.ExerciseSearch.search("со своим").isEmpty())
         // Muscles and equipment as words.
         assertTrue(ExerciseSearch.search("трицепс").take(5).all { Muscle.TRICEPS in it.primary }, ExerciseSearch.search("трицепс").take(5).toString())
         assertTrue(ExerciseSearch.search("гиря").any { it.id == "kb_swing" })

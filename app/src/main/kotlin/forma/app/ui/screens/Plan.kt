@@ -15,6 +15,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -120,28 +121,91 @@ fun PlanScreen() {
 private fun TemplateCard(t: Template) {
     val repo = LocalRepo.current
     val nav = LocalNav.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val today = forma.app.ui.rememberToday(repo)
-    val plan by produceState<LiftPlan?>(null, t.id) { value = runCatching { repo.liftPlan(t.id, today) }.getOrNull() }
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    val plan by produceState<LiftPlan?>(null, t.id, settings) { value = runCatching { repo.liftPlan(t.id, today) }.getOrNull() }
+    var editing by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(-1) }
     FCard(gap = 0.dp) {
         Text(t.title, style = T.title(20.sp))
-        Text("Нажми на упражнение, чтобы заменить его.", style = T.secondary(12.sp), modifier = Modifier.padding(bottom = 8.dp))
+        Text("Нажми на упражнение: подходы, замена или убрать.", style = T.secondary(12.sp), modifier = Modifier.padding(bottom = 8.dp))
         t.slots.forEachIndexed { i, s ->
             Hairline()
-            val item = plan?.items?.getOrNull(i)
+            val item = plan?.items?.firstOrNull { it.position == i }
+            val removed = s.exerciseId in settings.removed && plan != null && item == null
             Row(
                 Modifier.fillMaxWidth().clickable {
-                    nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInPlan(s.exerciseId, item?.exerciseId ?: s.exerciseId)))
+                    if (removed) scope.launch { repo.setRemoved(s.exerciseId, false) } else editing = i
                 }.padding(vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(item?.name ?: s.exerciseId, style = T.body(15.sp, FontWeight.SemiBold))
-                    Text("${s.sets} × ${s.repMin}–${s.repMax}${if (s.exerciseId == "plank") " с" else ""} · запас ${s.rir} · отдых ${Ru.clock(s.restSec)}", style = T.secondary(12.sp))
+                    val name = item?.name ?: forma.core.model.Catalog.find(settings.swaps[s.exerciseId] ?: s.exerciseId)?.name ?: s.exerciseId
+                    Text(name, style = T.body(15.sp, FontWeight.SemiBold).copy(color = if (removed) F.c.text3 else F.c.text))
+                    val sets = item?.slot?.sets ?: s.sets
+                    Text(
+                        if (removed) "Убрано из плана · нажми, чтобы вернуть"
+                        else "$sets × ${s.repMin}–${s.repMax}${if (s.exerciseId == "plank") " с" else ""} · запас ${s.rir} · отдых ${Ru.clock(s.restSec)}" +
+                            if (sets != s.sets) " · в плане было ${s.sets}" else "",
+                        style = T.secondary(12.sp),
+                    )
                 }
                 if (item != null) NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.exerciseId), style = T.number(14.sp, FontWeight.Bold))
             }
         }
     }
+    val e = editing
+    val slot = t.slots.getOrNull(e)
+    if (slot != null) {
+        val item = plan?.items?.firstOrNull { it.position == e }
+        val kept = t.slots.count { it.exerciseId !in settings.removed }
+        PlanExerciseDialog(
+            name = item?.name ?: slot.exerciseId,
+            sets = item?.slot?.sets ?: slot.sets,
+            planned = slot.sets,
+            canRemove = kept > 1,
+            onSets = { n -> scope.launch { repo.setPlanSets(slot.exerciseId, n, slot.sets) }; editing = -1 },
+            onSwap = {
+                editing = -1
+                nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInPlan(slot.exerciseId, item?.exerciseId ?: slot.exerciseId)))
+            },
+            onRemove = { scope.launch { repo.setRemoved(slot.exerciseId, true) }; editing = -1 },
+            onDismiss = { editing = -1 },
+        )
+    }
+}
+
+/** One exercise of the plan: how many sets from now on, another exercise in its place, or out of the plan. */
+@Composable
+private fun PlanExerciseDialog(
+    name: String, sets: Int, planned: Int, canRemove: Boolean,
+    onSets: (Int) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, onDismiss: () -> Unit,
+) {
+    var n by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(sets) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = F.c.surface,
+        title = { Text(name, style = T.title(20.sp)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Подходов в каждой тренировке", style = T.secondary(13.sp))
+                forma.app.ui.components.Stepper(
+                    "$n", if (n == planned) "как в плане" else "в плане $planned",
+                    { n = (n - 1).coerceAtLeast(1) }, { n = (n + 1).coerceAtMost(forma.app.data.TrainingRepository.MAX_SETS) },
+                    Modifier.fillMaxWidth(), "Меньше подходов", "Больше подходов",
+                )
+                GhostButton("Заменить упражнение", onSwap, Modifier.fillMaxWidth())
+                if (canRemove) {
+                    GhostButton("Убрать из плана", onRemove, Modifier.fillMaxWidth(), color = F.c.bad)
+                    Text("Вернуть можно здесь же: убранное останется в списке серым.", style = T.secondary(12.sp))
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton({ onSets(n) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
+    )
 }
 
 /** Vacation or illness: the plan stops expecting sessions and brings the person back gently. */

@@ -42,6 +42,10 @@ data class Settings(
     val pauseUntil: Long? = null,
     /** Exercises replaced for good: plan exercise id → the one done instead. Survives plan changes. */
     val swaps: Map<String, String> = emptyMap(),
+    /** Sets of an exercise for good: plan exercise id → how many, instead of the plan's number. */
+    val sets: Map<String, Int> = emptyMap(),
+    /** Exercises taken out of the plan for good (plan exercise ids); the plan screen brings them back. */
+    val removed: Set<String> = emptySet(),
 )
 
 /** Lifting state that is not per exercise. */

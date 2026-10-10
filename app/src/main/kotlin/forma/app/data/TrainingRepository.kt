@@ -124,12 +124,19 @@ class TrainingRepository(
 
     // ---------- lifting ----------
 
+    companion object {
+        /** The most sets of one exercise the plan can be set to. */
+        const val MAX_SETS = 8
+    }
+
     suspend fun liftPlan(templateId: String, date: LocalDate, forceDeload: Boolean = false): LiftPlan {
         val program = store.programNow() ?: error("no program")
         val settings = store.settingsNow()
         val t = program.template(templateId)
         val deload = deloadOn(date, forceDeload)
-        val items = t.slots.mapIndexed { i, spec -> buildItem(i, swapped(spec, settings), date, deload) }
+        // Exercises taken out for good stay out — never all of them. Positions stay the plan's (swaps look them up).
+        val kept = t.slots.withIndex().filter { it.value.exerciseId !in settings.removed }.ifEmpty { t.slots.withIndex().toList() }
+        val items = kept.map { (i, spec) -> buildItem(i, tuned(spec, settings), date, deload) }
         return LiftPlan(t.id, t.title, items, deload)
     }
 
@@ -137,6 +144,12 @@ class TrainingRepository(
         val program = store.programNow() ?: return force
         val reactive = store.liftStateNow().reactiveDeloadStart
         return force || ProgramGenerator.isDeloadWeek(program, date) || (reactive != null && date.toEpochDay() in reactive until reactive + 7)
+    }
+
+    /** The plan's slot as the user set it for good: its number of sets, the exercise put in its place. */
+    private fun tuned(spec: SlotSpec, settings: Settings): SlotSpec {
+        val sets = settings.sets[spec.exerciseId]?.coerceIn(1, MAX_SETS)
+        return swapped(if (sets != null) spec.copy(sets = sets) else spec, settings)
     }
 
     /** The plan's slot with the exercise the user put in its place for good, if any. */
@@ -230,6 +243,39 @@ class TrainingRepository(
         store.setSettings(s.copy(swaps = swaps))
         onChange()
     }
+
+    /** Sets of [planId] in every session from now on; null (or the plan's own number) brings the plan's back. */
+    suspend fun setPlanSets(planId: String, sets: Int?, planned: Int) {
+        val s = store.settingsNow()
+        val n = sets?.coerceIn(1, MAX_SETS)
+        store.setSettings(s.copy(sets = if (n == null || n == planned) s.sets - planId else s.sets + (planId to n)))
+        onChange()
+    }
+
+    /** Takes [planId] out of every session from now on, or brings it back. */
+    suspend fun setRemoved(planId: String, removed: Boolean) {
+        val s = store.settingsNow()
+        store.setSettings(s.copy(removed = if (removed) s.removed + planId else s.removed - planId))
+        onChange()
+    }
+
+    /**
+     * Takes the exercise at [position] out of a running session (only before its first set, never the last one left).
+     * [forever] takes it out of the plan too, when it comes from the plan.
+     */
+    suspend fun removeFromWorkout(workoutId: Long, position: Int, forever: Boolean): Boolean {
+        val w = db.workouts().get(workoutId) ?: return false
+        val plan = planOf(w) ?: return false
+        if (plan.items.size <= 1 || plan.items.none { it.position == position }) return false
+        if (db.sets().forWorkout(workoutId).any { it.position == position }) return false
+        replacePlan(workoutId, plan.copy(items = plan.items.filter { it.position != position }))
+        if (forever) planSlot(plan.templateId, position)?.let { setRemoved(it.exerciseId, true) }
+        return true
+    }
+
+    /** The plan's own slot at [position] of template [templateId], if the position comes from the plan. */
+    suspend fun planSlot(templateId: String, position: Int): SlotSpec? =
+        store.programNow()?.templates?.firstOrNull { it.id == templateId }?.slots?.getOrNull(position)
 
     /** Loads the user's own exercises into the catalog (start, after sync, after edits). */
     suspend fun refreshCustom() = Catalog.setCustom(store.customNow())

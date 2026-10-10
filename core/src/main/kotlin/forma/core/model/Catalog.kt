@@ -219,6 +219,8 @@ object Catalog {
             aliases = "наклонный жим гантелей|incline dumbbell press"),
         mc("smith_incline", "Жим на наклонной в Смите", Equipment.MACHINE, Pattern.INCLINE_PUSH, listOf(CH, SH), listOf(TR), step = 2.5,
             compound = true, ratio = 0.35, aliases = "наклонный жим в смите|smith incline"),
+        mc("machine_incline_press", "Жим в тренажёре на наклонной", Equipment.MACHINE, Pattern.INCLINE_PUSH, listOf(CH), listOf(SH, TR),
+            compound = true, ratio = 0.5, aliases = "наклонный жим в тренажёре|жим на верх груди в тренажёре|incline machine press"),
         mc("incline_machine_press", "Жим на наклонной в тренажёре", Equipment.MACHINE, Pattern.INCLINE_PUSH, listOf(CH, SH), listOf(TR),
             compound = true, ratio = 0.3, aliases = "наклонный жим в тренажёре"),
 
@@ -241,6 +243,8 @@ object Catalog {
             aliases = "брусья|отжимания на брусьях в гравитроне|гравитрон|dips"),
         bw("bench_dip", "Обратные отжимания от скамьи", Pattern.DIP, listOf(TR), listOf(CH, SH), share = 0.5,
             aliases = "отжимания от скамьи сзади|bench dip"),
+        mc("machine_dip", "Отжимания в тренажёре", Equipment.MACHINE, Pattern.DIP, listOf(TR, CH), listOf(SH), compound = true, ratio = 0.5,
+            aliases = "брусья в тренажёре|тренажёр для брусьев|жим вниз в тренажёре|dip machine|seated dip"),
 
         // ---------- rows ----------
         bb("row", "Тяга штанги в наклоне", Pattern.HORIZONTAL_PULL, listOf(BK), listOf(BI), false, 0.4,
@@ -326,6 +330,8 @@ object Catalog {
         bb("skullcrusher", "Французский жим лёжа", Pattern.TRICEPS_EXT, listOf(TR), emptyList(), false, 0.2,
             "французский жим|французский жим ez|skull crusher|skullcrusher", bar = null, compound = false),
         db("kickback", "Разгибание гантели в наклоне", Pattern.TRICEPS_EXT, listOf(TR), ratio = 0.05, aliases = "кикбэк|kickback"),
+        mc("machine_triceps_ext", "Разгибание рук в тренажёре", Equipment.MACHINE, Pattern.TRICEPS_EXT, listOf(TR), step = 2.5,
+            ratio = 0.2, aliases = "трицепс в тренажёре|разгибания на трицепс в тренажёре|разгибание рук сидя|machine triceps extension"),
 
         // ---------- legs: isolation ----------
         mc("leg_ext", "Разгибание ног", Equipment.MACHINE, Pattern.KNEE_EXTENSION, listOf(QU), lower = true, ratio = 0.3,
@@ -368,6 +374,8 @@ object Catalog {
         bw("ab_wheel", "Ролик для пресса", Pattern.CORE, listOf(CO), listOf(BK), compound = false, share = 0.5, aliases = "ролик|колесо|ab wheel"),
         mc("cable_crunch", "Скручивания на блоке", Equipment.CABLE, Pattern.CORE, listOf(CO), step = 2.5, ratio = 0.3,
             aliases = "молитва|скручивания стоя на коленях|cable crunch"),
+        mc("machine_crunch", "Скручивания в тренажёре", Equipment.MACHINE, Pattern.CORE, listOf(CO), step = 2.5, ratio = 0.3,
+            aliases = "пресс в тренажёре|тренажёр для пресса|ab crunch machine"),
         mc("pallof_press", "Жим Паллофа", Equipment.CABLE, Pattern.CORE, listOf(CO), step = 2.5, ratio = 0.08, aliases = "паллоф|pallof press"),
     )
 

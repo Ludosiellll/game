@@ -172,6 +172,7 @@ fun WorkoutScreen(workoutId: Long) {
     LaunchedEffect(Unit) { while (true) { tick = System.currentTimeMillis(); delay(1000) } }
 
     var finishing by remember { mutableStateOf(false) }
+    var removing by remember { mutableStateOf<Int?>(null) }
     var editing by remember { mutableStateOf<SetEntity?>(null) }
     var typing by remember { mutableStateOf(false) }
     val lastReport by produceState<Pair<List<SetEntity>, SlotReport?>?>(null, item.exerciseId) {
@@ -216,11 +217,14 @@ fun WorkoutScreen(workoutId: Long) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.Top) {
                     Text(item.name, style = T.title(if (F.type.capsTitles) 34.sp else 24.sp), modifier = Modifier.weight(1f))
-                    // Another exercise in its place: only before its first set (the sets belong to the exercise).
+                    // Another exercise in its place, or none: only before its first set (the sets belong to the exercise).
                     if (doneBy[item.position].isNullOrEmpty()) {
-                        GhostButton("Заменить", {
-                            nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInWorkout(workoutId, item.position, item.exerciseId)))
-                        }, height = 44.dp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GhostButton("Заменить", {
+                                nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInWorkout(workoutId, item.position, item.exerciseId)))
+                            }, height = 44.dp)
+                            if (plan.items.size > 1) GhostButton("Убрать", { removing = item.position }, height = 44.dp, color = F.c.bad)
+                        }
                     }
                 }
                 val p = item.prescription
@@ -369,6 +373,49 @@ fun WorkoutScreen(workoutId: Long) {
                 onPlus = { forma.app.ui.RestTimer.adjust(context, 15_000, settings.beeps, settings.vibration) },
                 onSkip = { forma.app.ui.RestTimer.stop() },
                 modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+    }
+
+    // The exercise to show once the one at [pos] is gone: the next unfinished one, else any other.
+    fun nextAfterRemoving(pos: Int): Int =
+        plan.items.firstOrNull { it.position != pos && (doneBy[it.position]?.size ?: 0) < it.prescription.sets }?.position
+            ?: plan.items.firstOrNull { it.position != pos }?.position ?: -1
+    removing?.let { pos ->
+        val target = plan.items.firstOrNull { it.position == pos }
+        // "For good" only for an exercise that comes from the plan (not one added to this session).
+        val fromPlan by produceState(false, plan.templateId, pos) { value = repo.planSlot(plan.templateId, pos) != null }
+        if (target == null) {
+            removing = null
+        } else {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { removing = null },
+                containerColor = F.c.surface,
+                title = { Text("Убрать «${target.name}»?", style = T.title(20.sp)) },
+                text = {
+                    Text(
+                        if (fromPlan) "Только из этой тренировки — или из плана насовсем (вернуть можно на экране «План»)."
+                        else "Упражнение уйдёт из этой тренировки.",
+                        style = T.secondary(14.sp),
+                    )
+                },
+                confirmButton = {
+                    Column(horizontalAlignment = Alignment.End) {
+                        if (fromPlan) {
+                            TextButton({
+                                removing = null
+                                current = nextAfterRemoving(pos)
+                                scope.launch { repo.removeFromWorkout(workoutId, pos, forever = true) }
+                            }) { Text("Из плана насовсем", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.bad)) }
+                        }
+                        TextButton({
+                            removing = null
+                            current = nextAfterRemoving(pos)
+                            scope.launch { repo.removeFromWorkout(workoutId, pos, forever = false) }
+                        }) { Text("Только сегодня", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                        TextButton({ removing = null }) { Text("Отмена", style = T.body(15.sp)) }
+                    }
+                },
             )
         }
     }
