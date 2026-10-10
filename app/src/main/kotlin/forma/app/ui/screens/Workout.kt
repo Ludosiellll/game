@@ -39,6 +39,11 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -95,6 +100,26 @@ private class SetInput(weight: Double, reps: Int) {
     var rir by mutableStateOf<Int?>(null)
 }
 
+/** Typed values per exercise, kept while another screen is on top and through rotation. */
+private val InputsSaver = listSaver<SnapshotStateMap<Int, SetInput>, Any>(
+    save = { m -> m.flatMap { (k, v) -> listOf(k, v.weight, v.reps, v.rir ?: -1) } },
+    restore = { l ->
+        mutableStateMapOf<Int, SetInput>().apply {
+            l.chunked(4).forEach { (k, w, r, rir) -> put(k as Int, SetInput(w as Double, r as Int).also { it.rir = (rir as Int).takeIf { x -> x >= 0 } }) }
+        }
+    },
+)
+
+/** In-session weight hints, kept the same way. */
+private val AdjustmentsSaver = listSaver<SnapshotStateMap<Int, Adjustment>, Any>(
+    save = { m -> m.flatMap { (k, a) -> listOf(k, a.weight, a.reps, a.heavier) } },
+    restore = { l ->
+        mutableStateMapOf<Int, Adjustment>().apply {
+            l.chunked(4).forEach { (k, w, r, h) -> put(k as Int, Adjustment(w as Double, r as Int, h as Boolean)) }
+        }
+    },
+)
+
 @Composable
 fun WorkoutScreen(workoutId: Long) {
     val repo = LocalRepo.current
@@ -116,7 +141,7 @@ fun WorkoutScreen(workoutId: Long) {
         onDispose { view.keepScreenOn = false }
     }
 
-    val inputs = remember { mutableStateMapOf<Int, SetInput>() }
+    val inputs = rememberSaveable(saver = InputsSaver) { mutableStateMapOf() }
     fun input(item: LiftItem): SetInput = inputs.getOrPut(item.position) {
         val p = item.prescription
         val ex = Catalog[item.exerciseId]
@@ -124,26 +149,22 @@ fun WorkoutScreen(workoutId: Long) {
         SetInput(start, p.reps)
     }
     val doneBy = sets.groupBy { it.position }
-    var current by remember { mutableIntStateOf(-1) }
+    var current by rememberSaveable { mutableIntStateOf(-1) }
     if (current < 0 && plan.items.isNotEmpty()) {
         current = plan.items.firstOrNull { (doneBy[it.position]?.size ?: 0) < it.prescription.sets }?.position ?: 0
     }
     val item = plan.items.firstOrNull { it.position == current } ?: plan.items.first()
     val ex = Catalog[item.exerciseId]
     val inp = input(item)
-    val adjustments = remember { mutableStateMapOf<Int, Adjustment>() }
+    val adjustments = rememberSaveable(saver = AdjustmentsSaver) { mutableStateMapOf() }
 
-    var restEnd by remember { mutableLongStateOf(0L) }
-    var restTotal by remember { mutableLongStateOf(1L) }
+    // The rest goes on (and beeps) while the library or another screen is open on top.
+    val restState by forma.app.ui.RestTimer.rest.collectAsState()
+    val rest = restState?.takeIf { it.workoutId == workoutId }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(restEnd) {
-        while (restEnd > 0) {
+    LaunchedEffect(rest) {
+        while (rest != null) {
             now = System.currentTimeMillis()
-            if (now >= restEnd) {
-                forma.app.run.Feedback.restOver(context, settings.beeps, settings.vibration)
-                restEnd = 0
-                break
-            }
             delay(200)
         }
     }
@@ -160,8 +181,8 @@ fun WorkoutScreen(workoutId: Long) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             val elapsed = ((tick - w.startedAt) / 1000).toInt().coerceAtLeast(0)
-            TopBar(plan.title, "${Ru.clock(elapsed)} · упражнение ${plan.items.indexOf(item) + 1} из ${plan.items.size}", onBack = { nav.back() }) {
-                GhostButton("Завершить", { finishing = true }, height = 38.dp)
+            TopBar(plan.title, "${Ru.clock(elapsed)} · ${plan.items.indexOf(item) + 1} из ${plan.items.size}", onBack = { nav.back() }) {
+                GhostButton("Завершить", { finishing = true }, height = 48.dp)
             }
             if (plan.deload) Banner("Разгрузка: меньше подходов и вес легче. Не дожимай до отказа.", F.c.warn)
 
@@ -173,10 +194,10 @@ fun WorkoutScreen(workoutId: Long) {
                     val sel = it2.position == item.position
                     val shape = if (F.shape.pill) RoundedCornerShape(50) else RoundedCornerShape(F.shape.radiusSmall)
                     Row(
-                        Modifier.height(36.dp).clip(shape)
+                        Modifier.height(44.dp).clip(shape)
                             .background(if (sel) F.c.text else if (complete) F.c.surface2 else Color.Transparent)
                             .border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, if (sel) F.c.text else F.c.line, shape)
-                            .clickable { current = it2.position }.padding(horizontal = 12.dp),
+                            .selectable(selected = sel, role = Role.Tab) { current = it2.position }.padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         if (complete) Icon(Ic.check, null, tint = if (sel) F.c.bg else F.c.good, modifier = Modifier.size(14.dp))
@@ -185,7 +206,7 @@ fun WorkoutScreen(workoutId: Long) {
                 }
                 val shape = if (F.shape.pill) RoundedCornerShape(50) else RoundedCornerShape(F.shape.radiusSmall)
                 Box(
-                    Modifier.size(36.dp).clip(shape).border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
+                    Modifier.size(44.dp).clip(shape).border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
                         .clickable(onClickLabel = "Добавить упражнение") { nav.push(Screen.Library(forma.app.ui.LibraryMode.AddToWorkout(workoutId))) },
                     contentAlignment = Alignment.Center,
                 ) { Icon(Ic.plus, "Добавить упражнение", tint = F.c.text, modifier = Modifier.size(16.dp)) }
@@ -199,7 +220,7 @@ fun WorkoutScreen(workoutId: Long) {
                     if (doneBy[item.position].isNullOrEmpty()) {
                         GhostButton("Заменить", {
                             nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInWorkout(workoutId, item.position, item.exerciseId)))
-                        }, height = 36.dp)
+                        }, height = 44.dp)
                     }
                 }
                 val p = item.prescription
@@ -327,8 +348,7 @@ fun WorkoutScreen(workoutId: Long) {
                         if (adj != null) adjustments[item.position] = adj else adjustments.remove(item.position)
                         inp.rir = null
                         if (settings.autoRest) {
-                            restTotal = item.slot.restSec * 1000L
-                            restEnd = System.currentTimeMillis() + restTotal
+                            forma.app.ui.RestTimer.start(context, workoutId, item.slot.restSec * 1000L, settings.beeps, settings.vibration)
                         }
                         if (n + 1 >= planned) {
                             plan.items.firstOrNull { it.position > item.position && (doneBy[it.position]?.size ?: 0) < it.prescription.sets }
@@ -337,15 +357,17 @@ fun WorkoutScreen(workoutId: Long) {
                     }
                 }, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData, icon = Ic.check)
             }
-            Spacer(Modifier.height(if (restEnd > 0) 110.dp else 24.dp))
+            Spacer(Modifier.height(if (rest != null) 110.dp else 24.dp))
         }
 
-        if (restEnd > 0) {
-            val left = ((restEnd - now) / 1000).coerceAtLeast(0)
+        if (rest != null) {
+            val left = ((rest.endAt - now) / 1000).coerceAtLeast(0)
             val next = plan.items.firstOrNull { (doneBy[it.position]?.size ?: 0) < it.prescription.sets }
             RestBar(
-                left.toInt(), (restEnd - now).toFloat() / restTotal, next?.name,
-                onMinus = { restEnd -= 15_000 }, onPlus = { restEnd += 15_000; restTotal += 15_000 }, onSkip = { restEnd = 0 },
+                left.toInt(), ((rest.endAt - now).toFloat() / rest.totalMs).coerceIn(0f, 1f), next?.name,
+                onMinus = { forma.app.ui.RestTimer.adjust(context, -15_000, settings.beeps, settings.vibration) },
+                onPlus = { forma.app.ui.RestTimer.adjust(context, 15_000, settings.beeps, settings.vibration) },
+                onSkip = { forma.app.ui.RestTimer.stop() },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
@@ -357,10 +379,12 @@ fun WorkoutScreen(workoutId: Long) {
             onDismiss = { finishing = false },
             onCancelWorkout = {
                 finishing = false
+                forma.app.ui.RestTimer.stop()
                 scope.launch { repo.cancelWorkout(workoutId); nav.back() }
             },
             onFinish = { rpe ->
                 finishing = false
+                forma.app.ui.RestTimer.stop()
                 scope.launch {
                     repo.finishLift(workoutId, rpe)
                     nav.replaceTop(Screen.LiftDone(workoutId))
@@ -369,13 +393,13 @@ fun WorkoutScreen(workoutId: Long) {
         )
     }
     editing?.let { s ->
-        EditSetDialog(s, ex.load, onDismiss = { editing = null }, onSave = { ns -> scope.launch { repo.updateSet(ns) }; editing = null }, onDelete = {
+        EditSetDialog(s, ex, onDismiss = { editing = null }, onSave = { ns -> scope.launch { repo.updateSet(ns) }; editing = null }, onDelete = {
             scope.launch { repo.deleteSet(s.id) }
             editing = null
         })
     }
     if (typing) {
-        WeightDialog(inp.weight, onDismiss = { typing = false }) { inp.weight = it; typing = false }
+        WeightDialog(inp.weight, ex.assisted, onDismiss = { typing = false }) { inp.weight = it; typing = false }
     }
 }
 
@@ -499,9 +523,34 @@ private fun FinishDialog(hasSets: Boolean, onDismiss: () -> Unit, onCancelWorkou
     )
 }
 
+/**
+ * Weight typed as a number. For assisted exercises the number is how much help (shown without a minus) or how much
+ * extra weight, chosen next to it: typing "15" for 15 kg of help must not log 15 kg on a belt.
+ */
 @Composable
-private fun EditSetDialog(s: SetEntity, load: LoadKind, onDismiss: () -> Unit, onSave: (SetEntity) -> Unit, onDelete: () -> Unit) {
-    var weight by remember { mutableStateOf(Ru.kg(s.weight)) }
+private fun SignedWeightField(text: String, onText: (String) -> Unit, assisted: Boolean, help: Boolean, onHelp: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (assisted) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Chip("помощь", help, { onHelp(true) }, Modifier.weight(1f), minWidth = 0.dp)
+                Chip("доп. вес", !help, { onHelp(false) }, Modifier.weight(1f), minWidth = 0.dp)
+            }
+        }
+        NumberField(text, onText, if (assisted && help) "Помощь" else "Вес", "кг")
+    }
+}
+
+/** The typed value with the sign the choice gives it (help is negative weight); null when it is not a number. */
+private fun signed(text: String, assisted: Boolean, help: Boolean): Double? {
+    val v = parseNum(text)?.let { kotlin.math.abs(it) } ?: return null
+    return if (assisted && help) -v else v
+}
+
+@Composable
+private fun EditSetDialog(s: SetEntity, ex: forma.core.model.Exercise, onDismiss: () -> Unit, onSave: (SetEntity) -> Unit, onDelete: () -> Unit) {
+    val load = ex.load
+    var weight by remember { mutableStateOf(Ru.kg(kotlin.math.abs(s.weight))) }
+    var help by remember { mutableStateOf(s.weight < 0) }
     var reps by remember { mutableStateOf(s.reps.toString()) }
     var rir by remember { mutableStateOf(s.rir) }
     AlertDialog(
@@ -510,10 +559,8 @@ private fun EditSetDialog(s: SetEntity, load: LoadKind, onDismiss: () -> Unit, o
         title = { Text("Исправить подход", style = T.title(20.sp)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (load != LoadKind.TIMED) NumberField(weight, { weight = it }, "Вес", "кг", Modifier.weight(1f))
-                    NumberField(reps, { reps = it }, if (load == LoadKind.TIMED) "Секунды" else "Повторы", modifier = Modifier.weight(1f), keyboard = androidx.compose.ui.text.input.KeyboardType.Number)
-                }
+                if (load != LoadKind.TIMED) SignedWeightField(weight, { weight = it }, ex.assisted, help, { help = it })
+                NumberField(reps, { reps = it }, if (load == LoadKind.TIMED) "Секунды" else "Повторы", keyboard = androidx.compose.ui.text.input.KeyboardType.Number)
                 if (load != LoadKind.TIMED) {
                     Text("Сколько ещё мог?", style = T.secondary(13.sp))
                     RirChips(rir) { rir = it }
@@ -522,7 +569,7 @@ private fun EditSetDialog(s: SetEntity, load: LoadKind, onDismiss: () -> Unit, o
         },
         confirmButton = {
             TextButton({
-                onSave(s.copy(weight = parseNum(weight) ?: s.weight, reps = reps.toIntOrNull()?.coerceAtLeast(0) ?: s.reps, rir = rir))
+                onSave(s.copy(weight = signed(weight, ex.assisted, help) ?: s.weight, reps = reps.toIntOrNull()?.coerceAtLeast(0) ?: s.reps, rir = rir))
             }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
         },
         dismissButton = { TextButton(onDelete) { Text("Удалить подход", style = T.body(15.sp).copy(color = F.c.bad)) } },
@@ -530,14 +577,15 @@ private fun EditSetDialog(s: SetEntity, load: LoadKind, onDismiss: () -> Unit, o
 }
 
 @Composable
-private fun WeightDialog(value: Double, onDismiss: () -> Unit, onSet: (Double) -> Unit) {
-    var text by remember { mutableStateOf(Ru.kg(value)) }
+private fun WeightDialog(value: Double, assisted: Boolean, onDismiss: () -> Unit, onSet: (Double) -> Unit) {
+    var text by remember { mutableStateOf(Ru.kg(kotlin.math.abs(value))) }
+    var help by remember { mutableStateOf(value < 0) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = F.c.surface,
         title = { Text("Вес", style = T.title(20.sp)) },
-        text = { NumberField(text, { text = it }, "Точный вес", "кг") },
-        confirmButton = { TextButton({ parseNum(text)?.let(onSet) ?: onDismiss() }) { Text("Готово", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
+        text = { SignedWeightField(text, { text = it }, assisted, help, { help = it }) },
+        confirmButton = { TextButton({ signed(text, assisted, help)?.let(onSet) ?: onDismiss() }) { Text("Готово", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
         dismissButton = { TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
     )
 }

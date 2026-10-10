@@ -103,8 +103,13 @@ private fun StrengthTab() {
         val exercises = rows.map { it.exerciseId }.distinct().mapNotNull { Catalog.find(it) }
         exercises.forEachIndexed { i, ex ->
             if (i > 0) Hairline()
-            val series = Stats.e1rmSeries(rows, ex, bw)
-            val cur = stats.firstOrNull { it.exerciseId == ex.id }?.e1rm ?: series.lastOrNull()?.value
+            val timed = ex.load == forma.core.model.LoadKind.TIMED
+            // Holds are measured in seconds: the longest hold of each session.
+            val series = if (timed) {
+                rows.filter { it.exerciseId == ex.id && it.reps > 0 }.groupBy { it.workoutId }
+                    .map { (_, s) -> forma.core.analytics.Point(s.first().epochDay, s.maxOf { it.reps }.toDouble()) }.sortedBy { it.epochDay }
+            } else Stats.e1rmSeries(rows, ex, bw)
+            val cur = if (timed) series.maxOfOrNull { it.value } else stats.firstOrNull { it.exerciseId == ex.id }?.e1rm?.takeIf { it > 0 } ?: series.lastOrNull()?.value
             val delta = if (series.size >= 2) series.last().value - series.first().value else null
             Row(
                 Modifier.fillMaxWidth().padding(vertical = 10.dp).then(Modifier.clickableRow { nav.push(Screen.Exercise(ex.id)) }),
@@ -116,8 +121,12 @@ private fun StrengthTab() {
                 }
                 Sparkline(series.map { it.value }, F.c.strength, Modifier.size(64.dp, 24.dp).padding(end = 8.dp))
                 Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(64.dp)) {
-                    NumText(cur?.let { Ru.kg((it * 2).roundToInt() / 2.0) } ?: "—", style = T.number(17.sp))
-                    if (delta != null) NumText((if (delta >= 0) "▲ +" else "▼ ") + Ru.kg((delta * 2).roundToInt() / 2.0), style = T.number(11.sp, FontWeight.Bold).copy(color = if (delta >= 0) F.c.good else F.c.warn))
+                    val unit = if (timed) " с" else ""
+                    NumText(cur?.let { (if (timed) "${it.roundToInt()}" else Ru.kg((it * 2).roundToInt() / 2.0)) + unit } ?: "—", style = T.number(17.sp))
+                    if (delta != null) NumText(
+                        (if (delta >= 0) "▲ +" else "▼ ") + (if (timed) "${kotlin.math.abs(delta).roundToInt()}" else Ru.kg((kotlin.math.abs(delta) * 2).roundToInt() / 2.0)) + unit,
+                        style = T.number(11.sp, FontWeight.Bold).copy(color = if (delta >= 0) F.c.good else F.c.warn),
+                    )
                 }
             }
         }
@@ -132,7 +141,7 @@ private fun RunTab() {
     val runState by repo.store.runState.collectAsState(initial = null)
     val runs by remember { repo.db.runs().observeAll() }.collectAsState(initial = emptyList())
     val workouts by remember { repo.db.workouts().observeHistory() }.collectAsState(initial = emptyList())
-    val today = remember { repo.today() }
+    val today = forma.app.ui.rememberToday(repo)
     val st = runState?.let { RunPlan.withBreak(it, today.toEpochDay()) }
     val vdot = st?.vdot
     if (vdot != null) {
@@ -208,19 +217,22 @@ private fun LoadTab() {
     val loads by remember { repo.dailyLoads() }.collectAsState(initial = emptyMap())
     val rows by remember { repo.setRows() }.collectAsState(initial = emptyList())
     val profile by repo.store.profile.collectAsState(initial = null)
-    val today = remember { repo.today() }
+    val today = forma.app.ui.rememberToday(repo)
     if (loads.isEmpty()) {
         Empty("Нагрузка = оценка тяжести тренировки (1–10) × минуты. Из неё считаются форма (42 дня) и усталость (7 дней).")
         return
     }
-    val series = remember(loads) { TrainingLoad.series(loads, today.minusDays(120), today) }
+    val series = remember(loads, today) { TrainingLoad.series(loads, today.minusDays(120), today) }
+    val history = remember(loads, today) { TrainingLoad.hasHistory(loads, today) }
     val last = series.takeLast(56)
     FCard(gap = 6.dp) {
         val now = series.last()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Metric3("Форма", now.fitness.roundToInt().toString(), F.c.endurance, Modifier.weight(1f))
             Metric3("Усталость", now.fatigue.roundToInt().toString(), F.c.load, Modifier.weight(1f))
-            Metric3("Свежесть", (if (now.formPct >= 0) "+" else "") + now.formPct.roundToInt() + "%", if (now.formPct >= -30) F.c.good else F.c.warn, Modifier.weight(1f))
+            // A few sessions say nothing about freshness yet (one hard day reads as −100 %).
+            if (history) Metric3("Свежесть", (if (now.formPct >= 0) "+" else "") + now.formPct.roundToInt() + "%", if (now.formPct >= -30) F.c.good else F.c.warn, Modifier.weight(1f))
+            else Metric3("Свежесть", "—", F.c.text3, Modifier.weight(1f))
         }
         LineChart(
             listOf(Series(last.map { it.fitness }, F.c.endurance), Series(last.map { it.fatigue }, F.c.load, width = 2.dp)),

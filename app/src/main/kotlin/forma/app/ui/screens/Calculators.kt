@@ -209,9 +209,12 @@ private fun HeartCalc() {
         NumberField(max, { max = it }, "Макс., если знаешь", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number, placeholder = "—")
     }
     val a = age.toIntOrNull()?.coerceIn(10, 100) ?: return
-    val hrMax = max.toIntOrNull()?.takeIf { it in 120..230 } ?: HeartRate.maxTanaka(a)
+    val typed = max.toIntOrNull()?.takeIf { it in 120..230 }
+    val hrMax = typed ?: HeartRate.maxTanaka(a)
     val zones = HeartRate.zones(hrMax, rest.toIntOrNull())
-    Text("Максимум $hrMax уд/мин${if (max.toIntOrNull() == null) " по формуле Танаки (208 − 0,7 × возраст; точность ±11)" else ""}.", style = T.secondary(13.sp))
+    // The formula note whenever the formula is used — also when a typed maximum was not believable.
+    Text("Максимум $hrMax уд/мин${if (typed == null) " по формуле Танаки (208 − 0,7 × возраст; точность ±11)" else ""}.", style = T.secondary(13.sp))
+    if (typed == null && max.isNotBlank()) Text("Введённый максимум не похож на настоящий (бывает 120–230) — взят расчётный.", style = T.secondary(12.sp).copy(color = F.c.warn))
     ResultRows(zones.map { z -> "${z.number}. ${z.name}" to "${z.low}–${z.high}" })
 }
 

@@ -59,8 +59,8 @@ fun LibraryScreen(mode: LibraryMode) {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
-    var muscle by remember { mutableStateOf<Muscle?>(null) }
-    var equipment by remember { mutableStateOf<Equipment?>(null) }
+    var muscle by rememberSaveable { mutableStateOf<Muscle?>(null) }
+    var equipment by rememberSaveable { mutableStateOf<Equipment?>(null) }
     var creating by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<Exercise?>(null) }
     // Recompose when own exercises change.
@@ -90,7 +90,7 @@ fun LibraryScreen(mode: LibraryMode) {
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
         item {
             val (title, subtitle) = when (mode) {
-                LibraryMode.Browse -> "Упражнения" to "${Catalog.all.size} упражнений и их вариации"
+                LibraryMode.Browse -> "Упражнения" to Catalog.all.size.let { n -> "$n ${forma.core.text.Ru.plural(n, "упражнение", "упражнения", "упражнений")} и их вариации" }
                 is LibraryMode.SwapInWorkout -> "Замена" to "Вместо «${current?.name}»"
                 is LibraryMode.SwapInPlan -> "Замена в плане" to "Вместо «${Catalog[mode.planExerciseId].name}»"
                 is LibraryMode.AddToWorkout -> "Добавить упражнение" to "В сегодняшнюю тренировку"
@@ -201,7 +201,7 @@ private fun ExerciseRow(ex: Exercise, onClick: () -> Unit) {
 private fun CustomExerciseDialog(initialName: String, onDismiss: () -> Unit, onSave: (Exercise) -> Unit) {
     var name by remember { mutableStateOf(initialName.trim().replaceFirstChar { it.uppercase() }) }
     var equipment by remember { mutableStateOf(Equipment.MACHINE) }
-    var muscle by remember { mutableStateOf<Muscle?>(null) }
+    var muscle by rememberSaveable { mutableStateOf<Muscle?>(null) }
     var load by remember { mutableStateOf(LoadKind.EXTERNAL) }
     AlertDialog(
         onDismissRequest = onDismiss,

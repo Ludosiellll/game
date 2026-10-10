@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -84,7 +87,17 @@ fun AppRoot() {
     LaunchedEffect(Unit) { onboarded = repo.isOnboarded() }
     val s = settings ?: return
     val ready = onboarded ?: return
-    val nav = remember { Navigator(if (ready) Screen.Today else Screen.Onboarding) }
+    // Saved with the instance state: rotation, a theme or font change, split screen keep the screen and the stack.
+    val nav = rememberSaveable(saver = Navigator.Saver) { Navigator(if (ready) Screen.Today else Screen.Onboarding) }
+    // Each screen in the stack keeps its own state (search text, typed weights, the open tab) while others are on top.
+    val holder = rememberSaveableStateHolder()
+    val ids = nav.stack.map { it.id }.toSet()
+    val known = remember { mutableSetOf<Long>() }
+    LaunchedEffect(ids) {
+        (known - ids).forEach { holder.removeState(it) }
+        known.clear()
+        known += ids
+    }
     FormaTheme(Looks.byId(s.look)) {
         val view = LocalView.current
         val dark = F.c.dark
@@ -99,8 +112,8 @@ fun AppRoot() {
             BackHandler(enabled = nav.canGoBack) { nav.back() }
             Column(Modifier.fillMaxSize().background(F.c.bg)) {
                 Box(Modifier.weight(1f)) {
-                    AnimatedContent(targetState = nav.current, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "screen") { screen ->
-                        ScreenFor(screen)
+                    AnimatedContent(targetState = nav.currentEntry, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "screen") { entry ->
+                        holder.SaveableStateProvider(entry.id) { ScreenFor(entry.screen) }
                     }
                 }
                 if (nav.current in TABS) BottomBar(nav)
@@ -163,7 +176,7 @@ private fun androidx.compose.foundation.layout.RowScope.TabItem(label: String, i
     }
     Column(
         Modifier.weight(1f).fillMaxSize().background(if (poster && selected) F.c.accent else androidx.compose.ui.graphics.Color.Transparent)
-            .clickable(role = Role.Tab, onClick = onClick),
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {
         if (!poster) {

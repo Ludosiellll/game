@@ -64,13 +64,24 @@ fun ExerciseScreen(exerciseId: String) {
         }
         if (rec != null) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatTile("Лучший расчёт", if (ex.load == LoadKind.TIMED) "—" else Ru.kg((rec.bestE1rm * 2).roundToInt() / 2.0), "кг", F.c.strength, Modifier.weight(1f))
-                StatTile("Тяжелее всего", Ru.kg(rec.heaviest), if (ex.load == LoadKind.BODYWEIGHT_PLUS) "доп. кг" else "кг", F.c.text, Modifier.weight(1f))
+                if (ex.load == LoadKind.TIMED) {
+                    // Holds: seconds, not kilograms.
+                    StatTile("Дольше всего", "${rec.mostReps}", "с", F.c.strength, Modifier.weight(1f))
+                } else {
+                    StatTile("Лучший расчёт", if (rec.bestE1rm > 0) Ru.kg((rec.bestE1rm * 2).roundToInt() / 2.0) else "—", "кг", F.c.strength, Modifier.weight(1f))
+                    val (value, unit) = when {
+                        ex.load != LoadKind.BODYWEIGHT_PLUS -> Ru.kg(rec.heaviest) to "кг"
+                        rec.heaviest > 0 -> "+${Ru.kg(rec.heaviest)}" to "доп. кг"
+                        rec.heaviest < 0 -> Ru.kg(-rec.heaviest) to "помощь, кг"
+                        else -> "0" to "свой вес"
+                    }
+                    StatTile("Тяжелее всего", value, unit, F.c.text, Modifier.weight(1f))
+                }
                 StatTile("Тренировок", "${rec.sessions}", null, F.c.text, Modifier.weight(1f))
             }
         }
         val slot = slots.filter { it.exerciseId == exerciseId }.maxByOrNull { it.updatedAt }
-        if (slot?.weight != null) {
+        if (slot != null && (slot.weight != null || ex.load == LoadKind.TIMED)) {
             FCard(gap = 4.dp) {
                 SectionLabel("Следующая цель")
                 Text(if (ex.load == LoadKind.TIMED) "${slot.reps} с" else "${forma.app.ui.Texts.weight(ex, slot.weight!!)} × ${slot.reps}", style = T.title(22.sp))

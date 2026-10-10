@@ -1,6 +1,8 @@
 package forma.app.ui.components
 
 import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -129,19 +131,35 @@ fun RoundIcon(icon: ImageVector, description: String, onClick: () -> Unit, modif
     }
 }
 
+/** How a chip behaves for screen readers: one of a group, one of several to tick, or a plain action. */
+enum class ChipKind { RADIO, TOGGLE, ACTION }
+
 @Composable
-fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, minWidth: Dp = 44.dp) {
+fun Chip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    minWidth: Dp = 44.dp,
+    kind: ChipKind = ChipKind.RADIO,
+) {
     val shape = if (F.shape.pill) RoundedCornerShape(50) else RoundedCornerShape(F.shape.radiusSmall)
     val bg = if (selected) F.c.text else Color.Transparent
     val fg = if (selected) F.c.bg else F.c.text
+    val interaction = when (kind) {
+        ChipKind.RADIO -> Modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+        ChipKind.TOGGLE -> Modifier.toggleable(value = selected, role = Role.Checkbox, onValueChange = { onClick() })
+        ChipKind.ACTION -> Modifier.clickable(role = Role.Button, onClick = onClick)
+    }
     Box(
-        modifier.heightIn(min = 40.dp).widthIn(min = minWidth).clip(shape).background(bg)
+        modifier.heightIn(min = 44.dp).widthIn(min = minWidth).clip(shape).background(bg)
             .border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, if (selected) F.c.text else F.c.line, shape)
-            .clickable(role = Role.RadioButton, onClick = onClick).padding(horizontal = 12.dp),
+            .then(interaction).padding(horizontal = if (minWidth == 0.dp) 4.dp else 12.dp),
         contentAlignment = Alignment.Center,
     ) {
         val st = T.number(15.sp, FontWeight.Bold).copy(color = fg)
-        Text(numText(text, st), style = st, maxLines = 1)
+        // Never cut: a label that does not fit (day names on a narrow phone, "Регулярно") shrinks a little.
+        BasicText(numText(text, st), style = st, maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = 15.sp, stepSize = 1.sp))
     }
 }
 
@@ -217,7 +235,7 @@ fun TopBar(title: String, subtitle: String? = null, onBack: (() -> Unit)? = null
         if (onBack != null) RoundIcon(Ic.back, "Назад", onBack, size = 42.dp)
         Column(Modifier.weight(1f)) {
             Text(title, style = T.body(17.sp, FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (subtitle != null) Text(subtitle, style = T.secondary(13.sp), maxLines = 1)
+            if (subtitle != null) Text(subtitle, style = T.secondary(13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         actions()
     }
@@ -233,8 +251,8 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
         options.forEachIndexed { i, o ->
             val sel = i == selected
             Box(
-                Modifier.weight(1f).height(38.dp).clip(outer).background(if (sel) F.c.accent else Color.Transparent)
-                    .clickable(role = Role.Tab, onClick = { onSelect(i) }),
+                Modifier.weight(1f).height(44.dp).clip(outer).background(if (sel) F.c.accent else Color.Transparent)
+                    .selectable(selected = sel, role = Role.Tab, onClick = { onSelect(i) }),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(

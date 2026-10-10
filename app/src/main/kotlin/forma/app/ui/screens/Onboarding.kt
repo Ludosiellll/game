@@ -45,7 +45,38 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 /** Profile editor shared by the first launch and the profile screen. */
+/** The answers as plain values, so a half-done questionnaire survives rotation and the like. */
+@kotlinx.serialization.Serializable
+private data class DraftState(
+    val lift: LiftFocus, val run: RunFocus, val emphasis: forma.core.model.Emphasis, val experience: Experience,
+    val runLevel: RunLevel, val days: Set<Int>, val minutes: Int, val sex: Sex, val birthYear: String, val weight: String,
+    val height: String, val restingHr: String, val raceKm: Double?, val raceTime: String,
+)
+
 class ProfileDraft(p: Profile) {
+    companion object {
+        val Saver: androidx.compose.runtime.saveable.Saver<ProfileDraft, String> = androidx.compose.runtime.saveable.Saver(
+            save = { d ->
+                forma.app.data.AppJson.encodeToString(
+                    DraftState.serializer(),
+                    DraftState(
+                        d.lift, d.run, d.emphasis, d.experience, d.runLevel, d.days, d.minutes, d.sex, d.birthYear, d.weight,
+                        d.height, d.restingHr, d.raceKm, d.raceTime,
+                    ),
+                )
+            },
+            restore = { text ->
+                runCatching { forma.app.data.AppJson.decodeFromString(DraftState.serializer(), text) }.getOrNull()?.let { s ->
+                    ProfileDraft(Profile()).apply {
+                        lift = s.lift; run = s.run; emphasis = s.emphasis; experience = s.experience; runLevel = s.runLevel
+                        days = s.days; minutes = s.minutes; sex = s.sex; birthYear = s.birthYear; weight = s.weight
+                        height = s.height; restingHr = s.restingHr; raceKm = s.raceKm; raceTime = s.raceTime
+                    }
+                }
+            },
+        )
+    }
+
     var lift by mutableStateOf(p.aim.lift)
     var run by mutableStateOf(p.aim.run)
     var emphasis by mutableStateOf(p.aim.emphasis)
@@ -83,8 +114,8 @@ fun OnboardingScreen() {
     val repo = LocalRepo.current
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
-    val draft = remember { ProfileDraft(Profile()) }
-    var step by remember { mutableIntStateOf(0) }
+    val draft = androidx.compose.runtime.saveable.rememberSaveable(saver = ProfileDraft.Saver) { ProfileDraft(Profile()) }
+    var step by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(0) }
     val last = 4
     val cloud = LocalCloud.current
     ScrollScreen(gap = 18.dp, bottomInset = true) {
@@ -176,7 +207,7 @@ private fun DaysStep(d: ProfileDraft) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         DAY_SHORT.forEachIndexed { i, name ->
             val day = i + 1
-            Chip(name, day in d.days, { d.days = if (day in d.days) d.days - day else d.days + day }, Modifier.weight(1f), minWidth = 0.dp)
+            Chip(name, day in d.days, { d.days = if (day in d.days) d.days - day else d.days + day }, Modifier.weight(1f), minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.TOGGLE)
         }
     }
     Text("Выбрано дней: ${d.days.size}", style = T.secondary(14.sp))

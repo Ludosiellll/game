@@ -75,7 +75,7 @@ fun TodayScreen() {
     val repo = LocalRepo.current
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
-    val today = remember { repo.today() }
+    val today = forma.app.ui.rememberToday(repo)
     val monday = remember(today) { today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) }
     val program by repo.store.program.collectAsState(initial = null)
     val runState by repo.store.runState.collectAsState(initial = null)
@@ -87,9 +87,32 @@ fun TodayScreen() {
     val rows by remember { repo.setRows() }.collectAsState(initial = emptyList())
     val bw by remember { repo.bodyWeightLookup() }.collectAsState(initial = { _: Long -> 75.0 })
     var pickTemplate by remember { mutableStateOf(false) }
+    // One start at a time (a double tap must not open two sessions), and never silently over an unfinished one.
+    var starting by remember { mutableStateOf(false) }
+    var pending by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    fun open(templateId: String, light: Boolean = false, replace: Long? = null) {
+        if (starting) return
+        starting = true
+        scope.launch {
+            try {
+                if (replace != null) repo.cancelWorkout(replace)
+                nav.push(Screen.Workout(repo.startLift(templateId, today, forceDeload = light)))
+            } finally {
+                starting = false
+            }
+        }
+    }
+    fun startLift(templateId: String, light: Boolean = false) {
+        val a = active
+        when {
+            a == null -> open(templateId, light)
+            a.templateId == templateId -> nav.push(Screen.Workout(a.id))
+            else -> pending = templateId to light
+        }
+    }
     val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
-    var feel by rememberSaveable { mutableStateOf(Feel.UNSET) }
-    val catchUp by produceState<CatchUp.Suggestion?>(null, week, settings) { value = repo.catchUp(today) }
+    var feel by rememberSaveable(today) { mutableStateOf(Feel.UNSET) }
+    val catchUp by produceState<CatchUp.Suggestion?>(null, week, settings, today) { value = repo.catchUp(today) }
 
     val p = program ?: return
     val weekNo = ProgramGenerator.weekIndex(p, today)
@@ -121,19 +144,23 @@ fun TodayScreen() {
 
         WeekStrip(week, today, p)
 
+        // The same window as on Progress → Нагрузка, so "Свежесть" reads the same number on both screens.
         val loadSeries = remember(loads, today) {
-            TrainingLoad.series(loads, today.minusDays(120), today.minusDays(1))
+            TrainingLoad.series(loads, today.minusDays(120), today)
         }
         val history = TrainingLoad.hasHistory(loads, today)
         val form = loadSeries.lastOrNull()?.takeIf { history }?.formPct
         val todays = todayItem?.planned.orEmpty()
         when {
-            repo.paused(settings, today) -> PauseCard(java.time.LocalDate.ofEpochDay(settings.pauseUntil!!)) { scope.launch { repo.resume(today) } }
+            repo.paused(settings, today) -> PauseCard(
+                java.time.LocalDate.ofEpochDay(settings.pauseUntil!!),
+                restarts = settings.pauseUntil!! - (settings.pauseFrom ?: settings.pauseUntil!!) + 1 >= 7,
+            ) { scope.launch { repo.resume(today) } }
             todays.isEmpty() -> RestCard(
                 week, today, p, catchUp, onFree = { nav.push(Screen.RunSetup(repo.freeRun(), null)) }, onOther = { pickTemplate = true },
                 onCatchUp = { s ->
                     scope.launch {
-                        if (s.kind == SessionKind.LIFT) nav.push(Screen.Workout(repo.startLift(s.templateId!!, today)))
+                        if (s.kind == SessionKind.LIFT) startLift(s.templateId!!)
                         else nav.push(Screen.RunSetup(repo.runFor(s.kind, today), s.kind))
                     }
                 },
@@ -148,8 +175,7 @@ fun TodayScreen() {
                     if (s.kind == SessionKind.LIFT) {
                         LiftCard(s, p, today, done, light) {
                             scope.launch {
-                                val id = repo.startLift(s.templateId!!, today, forceDeload = light)
-                                nav.push(Screen.Workout(id))
+                                startLift(s.templateId!!, light)
                             }
                         }
                     } else {
@@ -210,16 +236,27 @@ fun TodayScreen() {
                             t.title, style = T.body(17.sp, FontWeight.SemiBold),
                             modifier = Modifier.fillMaxWidth().clickable {
                                 pickTemplate = false
-                                scope.launch {
-                                    val id = repo.startLift(t.id, today)
-                                    nav.push(Screen.Workout(id))
-                                }
+                                startLift(t.id)
                             }.padding(vertical = 12.dp),
                         )
                     }
                 }
             },
             confirmButton = { TextButton({ pickTemplate = false }) { Text("Отмена", style = T.body(15.sp)) } },
+            containerColor = F.c.surface,
+        )
+    }
+
+    val a = active
+    val next = pending
+    if (next != null && a != null) {
+        val title = p.templates.firstOrNull { it.id == next.first }?.title ?: "новую"
+        AlertDialog(
+            onDismissRequest = { pending = null },
+            title = { Text("«${a.title}» не закончена", style = T.title(20.sp)) },
+            text = { Text("Продолжить её или удалить и начать «$title»? Подходы начатой тренировки при удалении пропадут.", style = T.secondary(14.sp)) },
+            confirmButton = { TextButton({ pending = null; nav.push(Screen.Workout(a.id)) }) { Text("Продолжить начатую", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
+            dismissButton = { TextButton({ pending = null; open(next.first, next.second, replace = a.id) }) { Text("Удалить и начать", style = T.body(15.sp).copy(color = F.c.bad)) } },
             containerColor = F.c.surface,
         )
     }
@@ -415,12 +452,13 @@ private fun SickCard(onTrainAnyway: () -> Unit) {
 }
 
 @Composable
-private fun PauseCard(until: LocalDate, onBack: () -> Unit) {
+private fun PauseCard(until: LocalDate, restarts: Boolean, onBack: () -> Unit) {
     FCard {
         SectionLabel("Пауза")
         Text("Отдыхаем до ${shortDate(until)}", style = T.title(22.sp))
         Text(
-            "Тренировки не ждут. После возвращения первые силовые будут легче, бег — короче и спокойнее, а цикл начнётся заново.",
+            "Пропусков за эти дни не будет. После возвращения первые силовые будут легче, бег — короче и спокойнее" +
+                if (restarts) ", а цикл начнётся заново." else ".",
             style = T.secondary(14.sp),
         )
         GhostButton("Вернуться сегодня", onBack, Modifier.fillMaxWidth())

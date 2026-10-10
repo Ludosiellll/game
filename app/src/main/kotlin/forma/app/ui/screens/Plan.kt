@@ -47,7 +47,7 @@ fun PlanScreen() {
     val program by repo.store.program.collectAsState(initial = null)
     val profile by repo.store.profile.collectAsState(initial = null)
     val p = program ?: return
-    val today = remember { repo.today() }
+    val today = forma.app.ui.rememberToday(repo)
     val weekNo = ProgramGenerator.weekIndex(p, today)
     ScrollScreen {
         Text(if (F.type.capsTitles) "ПЛАН" else "План", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
@@ -120,7 +120,7 @@ fun PlanScreen() {
 private fun TemplateCard(t: Template) {
     val repo = LocalRepo.current
     val nav = LocalNav.current
-    val today = remember { repo.today() }
+    val today = forma.app.ui.rememberToday(repo)
     val plan by produceState<LiftPlan?>(null, t.id) { value = runCatching { repo.liftPlan(t.id, today) }.getOrNull() }
     FCard(gap = 0.dp) {
         Text(t.title, style = T.title(20.sp))
@@ -150,7 +150,7 @@ private fun PauseControl() {
     val repo = LocalRepo.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
-    val today = remember { repo.today() }
+    val today = forma.app.ui.rememberToday(repo)
     SectionLabel("Пауза")
     FCard(gap = 10.dp) {
         if (repo.paused(settings, today)) {
@@ -159,14 +159,14 @@ private fun PauseControl() {
         } else {
             Text(
                 "Отпуск, командировка или болезнь? Поставь паузу: пропуски не будут висеть, после возвращения первые тренировки " +
-                    "будут легче, а если пауза дольше недели — цикл начнётся заново.",
+                    "будут легче, а после паузы в неделю и больше цикл начнётся заново.",
                 style = T.secondary(14.sp),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(1, 2, 3).forEach { w ->
                     forma.app.ui.components.Chip(Ru.weeks(w), false, {
                         scope.launch { repo.pause(today, today.plusDays(w * 7L - 1)) }
-                    }, Modifier.weight(1f))
+                    }, Modifier.weight(1f), kind = forma.app.ui.components.ChipKind.ACTION)
                 }
             }
         }

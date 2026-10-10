@@ -50,8 +50,8 @@ fun LiftDoneScreen(workoutId: Long) {
             Text(workout.title, style = T.secondary(15.sp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatTile("Время", "${summary.minutes}", "минут", F.c.text, Modifier.weight(1f))
-            StatTile("Подходы", "${summary.sets}", "рабочих", F.c.text, Modifier.weight(1f))
+            StatTile("Время", "${summary.minutes}", Ru.plural(summary.minutes, "минута", "минуты", "минут"), F.c.text, Modifier.weight(1f))
+            StatTile("Подходы", "${summary.sets}", Ru.plural(summary.sets, "рабочий", "рабочих", "рабочих"), F.c.text, Modifier.weight(1f))
             StatTile("Тоннаж", Ru.one(summary.volumeKg / 1000), "тонны", F.c.strength, Modifier.weight(1f))
         }
         val records = summary.reports.filter { it.record }

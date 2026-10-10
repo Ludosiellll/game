@@ -46,7 +46,7 @@ fun ProfileScreen() {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             DAY_SHORT.forEachIndexed { i, name ->
                 val day = i + 1
-                Chip(name, day in d.days, { d.days = if (day in d.days) d.days - day else d.days + day }, Modifier.weight(1f), minWidth = 0.dp)
+                Chip(name, day in d.days, { d.days = if (day in d.days) d.days - day else d.days + day }, Modifier.weight(1f), minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.TOGGLE)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
