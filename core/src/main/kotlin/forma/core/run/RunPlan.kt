@@ -1,5 +1,6 @@
 package forma.core.run
 
+import forma.core.text.Ru
 import kotlinx.serialization.Serializable
 import kotlin.math.max
 import kotlin.math.min
@@ -57,6 +58,8 @@ data class RunState(
     val lastRunDay: Long? = null,
     /** Runs of the last 30 days: the long-run cap is based on them. */
     val recent: List<RunLog> = emptyList(),
+    /** Easy runs still to do after a long break before intervals and tempo come back. */
+    val returnEasy: Int = 0,
 ) {
     val canRunContinuously: Boolean get() = walkStage < 0
 
@@ -243,28 +246,86 @@ object RunPlan {
         )
     }
 
-    fun quality(state: RunState, cutback: Boolean = false): RunWorkout =
-        if (state.qualityCount % 2 == 0) intervals(state, cutback) else tempo(state, cutback)
+    /** The weekly hard session; while coming back from a long break it is an easy run. */
+    fun quality(state: RunState, cutback: Boolean = false): RunWorkout = when {
+        state.returnEasy > 0 -> easy(state, cutback).let {
+            val n = state.returnEasy
+            it.copy(note = "После перерыва сначала втягиваемся: интервалы и темп вернутся через $n " +
+                "${Ru.plural(n, "лёгкую пробежку", "лёгкие пробежки", "лёгких пробежек")}. " + it.note)
+        }
+        state.qualityCount % 2 == 0 -> intervals(state, cutback)
+        else -> tempo(state, cutback)
+    }
 
     private fun scaled(min: Int, cutback: Boolean) = if (cutback) max(15, (min * 0.75 / 5).roundToInt() * 5) else min
 
-    /** VDOT drops by 1 for every 2 weeks without running (at most 5): fitness fades. */
+    /** Days since the last run when that is more than a week (a break), else null. */
+    fun breakDays(state: RunState, day: Long): Int? {
+        val last = state.lastRunDay ?: return null
+        val off = day - last
+        return if (off > 7) off.toInt() else null
+    }
+
+    /** Share of aerobic fitness lost after [off] days without running. */
+    fun fitnessLoss(off: Int): Double = when {
+        off <= 7 -> 0.0
+        off <= 28 -> 0.0025 * (off - 7)
+        else -> min(0.15, 0.0525 + 0.0015 * (off - 28))
+    }
+
+    /**
+     * Back after a break of more than a week. Fitness fades — VO2max drops about 7 % in the first 2–3 weeks
+     * without training and about 15 % by 8–12 weeks (Coyle et al. 1984) — so paces slow down accordingly, easy and
+     * long runs restart at 50–90 % of their length, interval and tempo stages go back one per two weeks off, the
+     * run/walk plan goes back a week per two weeks off (Couch to 5K: repeat a week when it feels too hard), and after
+     * four weeks or more the first 2–3 runs are easy. The usual rules then build everything back up.
+     * Applied once: the result counts the break as taken.
+     */
     fun withBreak(state: RunState, day: Long): RunState {
-        val last = state.lastRunDay ?: return state
-        val v = state.vdot ?: return state
-        val drop = minOf(5, ((day - last) / 14).toInt())
-        return if (drop <= 0) state else state.copy(vdot = v - drop, lastRunDay = day - (day - last) % 14)
+        val off = breakDays(state, day) ?: return state
+        val keep = when {
+            off < 14 -> 0.9
+            off < 28 -> 0.75
+            off < 56 -> 0.6
+            else -> 0.5
+        }
+        val back = off / 14
+        fun cut(minutes: Int, floor: Int) = max(min(minutes, floor), (minutes * keep / 5).roundToInt() * 5)
+        return state.copy(
+            vdot = state.vdot?.let { (it * (1 - fitnessLoss(off)) * 2).roundToInt() / 2.0 },
+            walkStage = if (state.walkStage >= 0) max(0, state.walkStage - 3 * back) else state.walkStage,
+            easyMinutes = cut(state.easyMinutes, 20),
+            longMinutes = cut(state.longMinutes, 30),
+            intervalStage = max(0, state.intervalStage - back),
+            tempoStage = max(0, state.tempoStage - back),
+            qualityOnPace = 0,
+            qualityFails = 0,
+            walkFails = 0,
+            returnEasy = max(state.returnEasy, if (off >= 56) 3 else if (off >= 28) 2 else 0),
+            lastRunDay = day,
+        )
+    }
+
+    /** A line for the first run after a break, or null. */
+    fun comebackNote(state: RunState, day: Long): String? {
+        val off = breakDays(state, day) ?: return null
+        val weeks = off / 7
+        val gap = if (weeks >= 2) Ru.weeks(weeks) else Ru.days(off)
+        return "Перерыв $gap — сегодня короче и спокойнее, чтобы втянуться."
     }
 
     fun after(state: RunState, w: RunWorkout, r: RunResult, caps: RunCaps, day: Long = 0): RunAfter {
         val out = mutableListOf<RunOutcome>()
         val minutes = (r.durationSec / 60.0).roundToInt()
-        val before = withBreak(state, day)
-        if (before.vdot != state.vdot && before.vdot != null) out += RunOutcome.VdotChanged(state.vdot, before.vdot)
-        var s = before.copy(
+        val original = state
+        // Every decision below starts from the state after any break was taken into account.
+        @Suppress("NAME_SHADOWING") val state = withBreak(original, day)
+        if (state.vdot != original.vdot && state.vdot != null) out += RunOutcome.VdotChanged(original.vdot, state.vdot)
+        var s = state.copy(
             runs = state.runs + 1,
             lastRunDay = day,
             recent = (state.recent + RunLog(day, minutes)).filter { it.day > day - 31 }.takeLast(40),
+            returnEasy = max(0, state.returnEasy - 1),
         )
         val done = r.completed >= 0.95
         when (w.type) {

@@ -250,11 +250,11 @@ class TrainingRepository(
     // ---------- running ----------
 
     suspend fun runFor(kind: SessionKind, date: LocalDate = today()): RunWorkout {
-        val st = RunPlan.withBreak(store.runStateNow(), date.toEpochDay())
+        val saved = store.runStateNow()
+        val st = RunPlan.withBreak(saved, date.toEpochDay())
         val program = store.programNow()
         val cutback = program != null && ProgramGenerator.isRunCutbackWeek(program, date)
-        if (!st.canRunContinuously) return RunPlan.runWalk(st)
-        return when (kind) {
+        val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when (kind) {
             SessionKind.RUN_LONG -> RunPlan.long(st, cutback, date.toEpochDay())
             SessionKind.RUN_QUALITY -> if (needsTest(st, date)) RunPlan.test(st) else RunPlan.quality(st, cutback)
             else -> {
@@ -263,11 +263,13 @@ class TrainingRepository(
                 RunPlan.easy(if (liftDay) st.copy(easyMinutes = minOf(st.easyMinutes, 30)) else st, cutback)
             }
         }
+        val comeback = RunPlan.comebackNote(saved, date.toEpochDay()) ?: return w
+        return w.copy(note = "$comeback ${w.note}")
     }
 
-    /** A 12-minute test calibrates paces when they are unknown, and again every 8 weeks. */
+    /** A 12-minute test calibrates paces when they are unknown, and again every 8 weeks (not while coming back). */
     private fun needsTest(st: RunState, date: LocalDate): Boolean {
-        if (st.runs < 2) return false
+        if (st.runs < 2 || st.returnEasy > 0) return false
         val last = st.lastTestDay ?: return st.vdot == null
         return date.toEpochDay() - last >= 56
     }

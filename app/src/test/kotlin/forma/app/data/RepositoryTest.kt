@@ -89,6 +89,30 @@ class RepositoryTest {
         assertTrue(week.any { d -> d.done.isNotEmpty() })
     }
 
+    @Test fun runsComeBackGentlyAfterABreak() = runBlocking {
+        repo.completeOnboarding(profile.copy(runLevel = RunLevel.TRAINED, raceMeters = 5000.0, raceSeconds = 1500.0))
+        val day = LocalDate.of(2026, 1, 5)
+        val easy = repo.runFor(SessionKind.RUN_EASY, day)
+        repo.saveRun(easy, RunResult(1.0, 4, easy.totalSeconds), clock, emptyList(), day)
+        val before = repo.store.runStateNow()
+
+        // Six weeks later: shorter, slower, and the hard day is an easy run for now.
+        val back = day.plusWeeks(6)
+        val easyBack = repo.runFor(SessionKind.RUN_EASY, back)
+        assertTrue(easyBack.note.startsWith("Перерыв 6 недель"), easyBack.note)
+        assertTrue(easyBack.totalSeconds <= before.easyMinutes * 60 * 0.6 + 150, "${easyBack.totalSeconds}")
+        val hard = repo.runFor(SessionKind.RUN_QUALITY, back)
+        assertEquals(RunType.EASY, hard.type)
+        val long = repo.runFor(SessionKind.RUN_LONG, back)
+        assertTrue(long.totalSeconds < before.longMinutes * 60, "${long.totalSeconds}")
+
+        // The break is taken once: the next day plans from the run done on the way back.
+        repo.saveRun(easyBack, RunResult(1.0, 4, easyBack.totalSeconds), clock, emptyList(), back)
+        val next = repo.runFor(SessionKind.RUN_EASY, back.plusDays(2))
+        assertTrue(!next.note.startsWith("Перерыв"), next.note)
+        assertTrue(repo.store.runStateNow().vdot!! < before.vdot!!)
+    }
+
     @Test fun runIsSavedAndMovesTheLadder() = runBlocking {
         repo.completeOnboarding(profile.copy(runLevel = RunLevel.NONE))
         val w = repo.runFor(SessionKind.RUN_EASY)

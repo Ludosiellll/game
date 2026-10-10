@@ -13,6 +13,7 @@ import forma.core.run.SegmentKind
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RunTest {
@@ -93,11 +94,71 @@ class RunTest {
         assertEquals(55 * 60, RunPlan.long(st, day = 100).totalSeconds)
     }
 
-    @Test fun breakLowersVdot() {
-        val st = RunState(vdot = 50.0, lastRunDay = 0)
-        assertEquals(48.0, RunPlan.withBreak(st, 30).vdot)
-        assertEquals(45.0, RunPlan.withBreak(st, 200).vdot)
-        assertEquals(50.0, RunPlan.withBreak(st, 10).vdot)
+    // ---------- breaks ----------
+
+    private val fit = RunState(
+        vdot = 50.0, walkStage = -1, easyMinutes = 40, longMinutes = 60, intervalStage = 4, tempoStage = 3,
+        lastRunDay = 0, qualityOnPace = 2,
+    )
+
+    @Test fun aWeekOffChangesNothing() {
+        assertEquals(fit, RunPlan.withBreak(fit, 7))
+        assertNull(RunPlan.comebackNote(fit, 7))
+    }
+
+    @Test fun fitnessFadesWithTheBreak() {
+        // About −7 % in the first weeks, −15 % at most (Coyle et al. 1984).
+        assertEquals(49.5, RunPlan.withBreak(fit, 10).vdot)
+        assertEquals(47.5, RunPlan.withBreak(fit, 28).vdot)
+        assertEquals(45.5, RunPlan.withBreak(fit, 56).vdot)
+        assertEquals(42.5, RunPlan.withBreak(fit, 200).vdot)
+    }
+
+    @Test fun aBreakShortensRunsAndStepsBackQuality() {
+        val three = RunPlan.withBreak(fit, 21)
+        assertEquals(30, three.easyMinutes)
+        assertEquals(45, three.longMinutes)
+        assertEquals(3, three.intervalStage)
+        assertEquals(2, three.tempoStage)
+        assertEquals(0, three.returnEasy)
+        assertEquals(0, three.qualityOnPace)
+
+        val six = RunPlan.withBreak(fit, 42)
+        assertEquals(25, six.easyMinutes)
+        assertEquals(35, six.longMinutes)
+        assertEquals(1, six.intervalStage)
+        assertEquals(0, six.tempoStage)
+        // Four weeks or more: the first runs back are easy, the hard day included.
+        assertEquals(2, six.returnEasy)
+        assertEquals(RunType.EASY, RunPlan.quality(six).type)
+        assertTrue(RunPlan.quality(six).note.contains("2 лёгкие пробежки"))
+
+        val ten = RunPlan.withBreak(fit, 70)
+        assertEquals(20, ten.easyMinutes)
+        assertEquals(30, ten.longMinutes)
+        assertEquals(3, ten.returnEasy)
+        assertTrue(RunPlan.comebackNote(fit, 70)!!.contains("10 недель"))
+    }
+
+    @Test fun runWalkGoesBackAWeekPerTwoWeeksOff() {
+        val st = RunState(walkStage = 15, lastRunDay = 0)
+        assertEquals(15, RunPlan.withBreak(st, 10).walkStage)
+        assertEquals(12, RunPlan.withBreak(st, 14).walkStage)
+        assertEquals(9, RunPlan.withBreak(st, 28).walkStage)
+        assertEquals(0, RunPlan.withBreak(st, 100).walkStage)
+    }
+
+    @Test fun aBreakCountsOnceAndRunsBuildBackUp() {
+        val back = RunPlan.withBreak(fit, 30)
+        assertEquals(back, RunPlan.withBreak(back, 30))
+        // The first run back grows from the shortened length, not from the old one.
+        val first = RunPlan.after(fit, RunPlan.easy(back), RunResult(1.0, 4, back.easyMinutes * 60), caps, day = 30)
+        assertEquals(back.easyMinutes + 3, first.state.easyMinutes)
+        assertEquals(1, first.state.returnEasy)
+        assertTrue(first.outcomes.any { it is RunOutcome.VdotChanged })
+        val second = RunPlan.after(first.state, RunPlan.quality(first.state), RunResult(1.0, 4, 1800), caps, day = 32)
+        assertEquals(0, second.state.returnEasy)
+        assertEquals(RunType.INTERVALS, RunPlan.quality(second.state).type)
     }
 
     @Test fun cutbackWeekIsShorter() {
