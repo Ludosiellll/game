@@ -12,7 +12,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val result = cloud.syncNow()
         return when {
             result.isSuccess -> Result.success()
-            result.exceptionOrNull() is NotSignedInException -> Result.success()
+            // Nothing a retry can fix: the user signs in, or decides about another account's data on the cloud screen.
+            result.exceptionOrNull() is NotSignedInException || result.exceptionOrNull() is AccountMismatchException -> Result.success()
             runAttemptCount < 5 -> Result.retry()
             else -> Result.failure()
         }
