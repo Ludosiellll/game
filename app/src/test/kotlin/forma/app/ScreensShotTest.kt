@@ -222,4 +222,30 @@ class ScreensShotTest {
             }
         }
     }
+
+    /** The very first session of a new user: every working weight is being found. */
+    @Test fun firstSession() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = SettingsStore(ctx, "shots-first")
+        val repo = TrainingRepository(FormaDatabase.create(ctx, inMemory = true), store, now = { clock })
+        val id = runBlocking {
+            store.clear()
+            repo.completeOnboarding(
+                Profile(
+                    name = "Денис", goal = Goal.HYBRID, experience = Experience.NOVICE, runLevel = RunLevel.BASE,
+                    trainingDays = setOf(1, 3, 5), bodyWeightKg = 80.0, birthYear = 1996,
+                ),
+            )
+            repo.startLift(store.programNow()!!.templates.first().id)
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) {
+                    Box(Modifier.fillMaxSize().background(F.c.bg)) { WorkoutScreen(id) }
+                }
+            }
+        }
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-workoutfirst.png")
+    }
 }

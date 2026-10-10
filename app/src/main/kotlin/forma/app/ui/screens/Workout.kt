@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -188,17 +189,22 @@ fun WorkoutScreen(workoutId: Long) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(item.name, style = T.title(if (F.type.capsTitles) 34.sp else 24.sp))
                 val p = item.prescription
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (ex.load != LoadKind.TIMED) {
                         Pill(if (p.weight != null) Texts.weight(ex, p.weight!!) else "вес подбираем", filled = true)
-                        Pill("${p.sets} × ${p.reps}")
+                        Pill(if (p.calibrate) "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" else "${p.sets} × ${p.reps}")
+                        if (p.top) Pill("последний ${p.reps}+")
                     } else Pill("${p.sets} × ${p.reps} с", filled = true)
-                    Pill("запас ${p.rir}")
+                    if (!p.calibrate) Pill("запас ${p.rir}")
                 }
                 if (ex.equipment == Equipment.BARBELL && ex.bar != null && inp.weight > ex.bar!!) PlatesLine(inp.weight, ex.bar!!)
                 val last = lastReport
                 when {
-                    p.calibrate -> Hint("Первый раз: начни с ${Texts.weight(ex, inp.weight)} и сделай ${p.reps} повторов. После подхода подскажу рабочий вес.", F.c.accent)
+                    p.calibrate -> Hint(
+                        "Первый раз подбираем рабочий вес. Начни с ${Texts.weight(ex, inp.weight)} и в каждом подходе делай " +
+                            "столько повторов, сколько выходит чисто, оставляя 2 в запасе (не больше 15). После подхода подскажу вес.",
+                        F.c.accent, Ic.info,
+                    )
                     last != null -> {
                         val s = last.first.joinToString(", ") { it.reps.toString() }
                         val wDone = last.first.maxOf { it.weight }
@@ -232,7 +238,7 @@ fun WorkoutScreen(workoutId: Long) {
                                 if (ex.load == LoadKind.TIMED) "${s.reps} с" else "${Texts.weight(ex, s.weight)} × ${s.reps}",
                                 style = T.number(18.sp), modifier = Modifier.weight(1f),
                             )
-                            if (s.rir != null) Text("запас ${s.rir}", style = T.secondary(13.sp), modifier = Modifier.padding(end = 10.dp))
+                            if (s.rir != null) Text("запас ${if (s.rir >= 5) "5+" else s.rir}", style = T.secondary(13.sp), modifier = Modifier.padding(end = 10.dp))
                             Box(Modifier.size(24.dp).clip(CircleShape).background(F.c.strength), contentAlignment = Alignment.Center) {
                                 Icon(Ic.check, null, tint = F.c.onData, modifier = Modifier.size(14.dp))
                             }
@@ -242,8 +248,13 @@ fun WorkoutScreen(workoutId: Long) {
             }
 
             adjustments[item.position]?.let { adj ->
-                val text = if (adj.heavier) "Подход был заметно легче плана. Следующий: ${Texts.weight(ex, adj.weight)} × ${adj.reps}?"
-                else "Подход был тяжелее плана. Следующий: ${Texts.weight(ex, adj.weight)} × ${adj.reps}?"
+                val next = "${Texts.weight(ex, adj.weight)} × ${adj.reps}"
+                val text = when {
+                    item.prescription.calibrate && adj.heavier -> "Можно тяжелее. Следующий подход: $next?"
+                    item.prescription.calibrate -> "Тяжеловато. Следующий подход: $next?"
+                    adj.heavier -> "Подход был заметно легче плана. Следующий: $next?"
+                    else -> "Подход был тяжелее плана. Следующий: $next?"
+                }
                 Banner(text, if (adj.heavier) F.c.good else F.c.warn, icon = if (adj.heavier) Ic.up else Ic.down) {
                     inp.weight = adj.weight
                     inp.reps = adj.reps
@@ -255,12 +266,32 @@ fun WorkoutScreen(workoutId: Long) {
             val n = mine.size
             val planned = item.prescription.sets
             FCard(outline = F.c.strength) {
-                SectionLabel(if (n < planned) "Подход ${n + 1} из $planned" else "Дополнительный подход", color = F.c.strength)
+                val plusSet = item.prescription.top && n == planned - 1
+                SectionLabel(
+                    if (n < planned) "Подход ${n + 1} из $planned" + (if (plusSet) " · ${item.prescription.reps}+" else "") else "Дополнительный подход",
+                    color = F.c.strength,
+                )
+                if (plusSet) {
+                    Text(
+                        "Сделай ${item.prescription.reps} и продолжай, пока идёт чисто. Остановись, когда останется 1 повтор в запасе: " +
+                            "по лишним повторам видно, сколько прибавлять.",
+                        style = T.secondary(13.sp),
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (ex.load != LoadKind.TIMED) {
+                        // Assisted pull-ups and dips go below zero: negative weight is help from a machine or band.
+                        val lowest = if (ex.assisted) -Progression.maxAssist(ex, bw) else 0.0
+                        val assist = inp.weight < 0
                         Stepper(
-                            Ru.kg(inp.weight), if (ex.load == LoadKind.BODYWEIGHT_PLUS) "доп. кг" else if (ex.perHand) "кг × 2" else "кг",
-                            { inp.weight = max(0.0, inp.weight - stepOf(ex, item, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, item, inp.weight) }, Modifier.weight(1f),
+                            Ru.kg(kotlin.math.abs(inp.weight)),
+                            when {
+                                assist -> "помощь, кг"
+                                ex.load == LoadKind.BODYWEIGHT_PLUS -> "доп. кг"
+                                ex.perHand -> "кг × 2"
+                                else -> "кг"
+                            },
+                            { inp.weight = max(lowest, inp.weight - stepOf(ex, item, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, item, inp.weight) }, Modifier.weight(1f),
                             "Меньше вес", "Больше вес", onLongValue = { typing = true },
                         )
                     }
@@ -271,12 +302,8 @@ fun WorkoutScreen(workoutId: Long) {
                     )
                 }
                 if (ex.load != LoadKind.TIMED) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Сколько ещё мог?", style = T.secondary(13.sp), modifier = Modifier.weight(1f))
-                        listOf(0, 1, 2, 3).forEach { v ->
-                            Chip(if (v == 3) "3+" else "$v", inp.rir == v, { inp.rir = if (inp.rir == v) null else v }, minWidth = 44.dp)
-                        }
-                    }
+                    Text("Сколько ещё повторов мог сделать?", style = T.secondary(13.sp))
+                    RirChips(inp.rir) { inp.rir = it }
                 }
                 PrimaryButton("Подход сделан", {
                     val doneSet = DoneSet(inp.weight, inp.reps, inp.rir)
@@ -349,10 +376,20 @@ private fun Pill(text: String, filled: Boolean = false) {
     )
 }
 
+/** "How many more reps could you do": 0–4 and 5+, tap again to clear. */
 @Composable
-private fun Hint(text: String, color: Color) {
+private fun RirChips(value: Int?, onChange: (Int?) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        (0..5).forEach { v ->
+            Chip(if (v == 5) "5+" else "$v", value == v, { onChange(if (value == v) null else v) }, Modifier.weight(1f), minWidth = 0.dp)
+        }
+    }
+}
+
+@Composable
+private fun Hint(text: String, color: Color, icon: androidx.compose.ui.graphics.vector.ImageVector = Ic.up) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(Ic.up, null, tint = color, modifier = Modifier.size(16.dp).padding(top = 2.dp))
+        Icon(icon, null, tint = color, modifier = Modifier.size(16.dp).padding(top = 2.dp))
         Text(text, style = T.body(13.sp, FontWeight.SemiBold).copy(color = if (F.c.dark) color else F.c.text))
     }
 }
@@ -452,19 +489,26 @@ private fun FinishDialog(hasSets: Boolean, onDismiss: () -> Unit, onCancelWorkou
 private fun EditSetDialog(s: SetEntity, load: LoadKind, onDismiss: () -> Unit, onSave: (SetEntity) -> Unit, onDelete: () -> Unit) {
     var weight by remember { mutableStateOf(Ru.kg(s.weight)) }
     var reps by remember { mutableStateOf(s.reps.toString()) }
+    var rir by remember { mutableStateOf(s.rir) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = F.c.surface,
         title = { Text("Исправить подход", style = T.title(20.sp)) },
         text = {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (load != LoadKind.TIMED) NumberField(weight, { weight = it }, "Вес", "кг", Modifier.weight(1f))
-                NumberField(reps, { reps = it }, if (load == LoadKind.TIMED) "Секунды" else "Повторы", modifier = Modifier.weight(1f), keyboard = androidx.compose.ui.text.input.KeyboardType.Number)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (load != LoadKind.TIMED) NumberField(weight, { weight = it }, "Вес", "кг", Modifier.weight(1f))
+                    NumberField(reps, { reps = it }, if (load == LoadKind.TIMED) "Секунды" else "Повторы", modifier = Modifier.weight(1f), keyboard = androidx.compose.ui.text.input.KeyboardType.Number)
+                }
+                if (load != LoadKind.TIMED) {
+                    Text("Сколько ещё мог?", style = T.secondary(13.sp))
+                    RirChips(rir) { rir = it }
+                }
             }
         },
         confirmButton = {
             TextButton({
-                onSave(s.copy(weight = parseNum(weight) ?: s.weight, reps = reps.toIntOrNull()?.coerceAtLeast(0) ?: s.reps))
+                onSave(s.copy(weight = parseNum(weight) ?: s.weight, reps = reps.toIntOrNull()?.coerceAtLeast(0) ?: s.reps, rir = rir))
             }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
         },
         dismissButton = { TextButton(onDelete) { Text("Удалить подход", style = T.body(15.sp).copy(color = F.c.bad)) } },

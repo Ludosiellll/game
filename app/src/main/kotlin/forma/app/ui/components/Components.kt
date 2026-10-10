@@ -1,5 +1,7 @@
 package forma.app.ui.components
 
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -186,7 +188,11 @@ private fun ValueBox(value: String, unit: String, modifier: Modifier, onLong: ((
     var m = modifier
     if (onLong != null) m = m.combinedClickable(onClick = onLong, onLongClick = onLong)
     Column(m, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, style = T.number(26.sp), maxLines = 1)
+        // "102,5" must fit between the buttons on a narrow phone: shrink instead of clipping.
+        BasicText(
+            value, style = T.number(26.sp), maxLines = 1,
+            autoSize = TextAutoSize.StepBased(minFontSize = 14.sp, maxFontSize = 26.sp, stepSize = 1.sp),
+        )
         Text(labelText(unit), style = T.label())
     }
 }
