@@ -52,6 +52,7 @@ class RunService : Service() {
     private var locationManager: LocationManager? = null
     private var lastNotifiedIndex = -1
     private var lastNotifyAt = 0L
+    private var stopped = false
 
     private val listener = LocationListener { loc: Location -> onLocation(loc) }
 
@@ -62,6 +63,7 @@ class RunService : Service() {
             ACTION_START -> start(intent)
             ACTION_PAUSE -> RunSession.tracker?.let { it.pause(now()); RunSession.publish(now()); notifyNow() }
             ACTION_RESUME -> RunSession.tracker?.let { it.resume(now()); RunSession.publish(now()); notifyNow() }
+            ACTION_SKIP -> RunSession.tracker?.let { it.skipSegment(now()); RunSession.publish(now()); notifyNow() }
             ACTION_STOP -> stopRun()
         }
         return START_NOT_STICKY
@@ -104,6 +106,9 @@ class RunService : Service() {
                     t.finish(now())
                     RunSession.publish(now())
                     notifyNow()
+                    // Let the coach finish the last sentence, then leave the foreground.
+                    delay(4000)
+                    stopRun()
                     break
                 }
                 delay(250)
@@ -146,6 +151,8 @@ class RunService : Service() {
     }
 
     private fun stopRun() {
+        if (stopped) return
+        stopped = true
         RunSession.tracker?.finish(now())
         RunSession.publish(now())
         ticker?.cancel()
@@ -205,7 +212,7 @@ class RunService : Service() {
         val parts = mutableListOf<String>()
         if (t.distanceM > 0) parts += Ru.distance(t.distanceM)
         t.currentPace()?.let { parts += "${Ru.pace(it)} /км" }
-        if (!t.workout.isOpenEnded) parts += "всего ${Ru.clock(t.activeSec(nowMs))} из ${Ru.clock(t.workout.totalSeconds)}"
+        if (!t.workout.isOpenEnded) parts += "всего ${Ru.clock(t.activeSec(nowMs))}, план ${Ru.clock(t.workout.totalSeconds)}"
         b.setContentTitle(title).setContentText(parts.joinToString(" · "))
         if (t.state == RunTracker.State.RUNNING) {
             if (!t.workout.isOpenEnded && !tl.finished) {
@@ -230,6 +237,7 @@ class RunService : Service() {
         const val ACTION_PAUSE = "forma.run.PAUSE"
         const val ACTION_RESUME = "forma.run.RESUME"
         const val ACTION_STOP = "forma.run.STOP"
+        const val ACTION_SKIP = "forma.run.SKIP"
         const val EXTRA_WORKOUT = "workout"
         const val EXTRA_GPS = "gps"
         const val EXTRA_VOICE = "voice"

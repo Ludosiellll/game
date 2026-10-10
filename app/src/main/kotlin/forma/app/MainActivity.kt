@@ -4,13 +4,17 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
+import forma.app.ui.AppRoot
+import forma.app.ui.LocalRepo
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { Text("Форма") } }
+        val repo = (application as FormaApp).repository
+        setContent {
+            CompositionLocalProvider(LocalRepo provides repo) { AppRoot() }
+        }
     }
 }

@@ -70,6 +70,23 @@ class RunTracker(
 
     private var finishedActiveMs = 0L
 
+    /** Seconds the runner skipped ahead in the plan (the timeline runs ahead of the clock by this much). */
+    private var skipMs = 0L
+    private var skippedWorkSec = 0
+
+    /** Position in the planned timeline: active time plus skipped parts. */
+    fun timelineMs(nowMs: Long): Long = activeMs(nowMs) + skipMs
+
+    /** Jumps to the start of the next segment. Skipped running time does not count as done. */
+    fun skipSegment(nowMs: Long) {
+        if (workout.isOpenEnded || (state != State.RUNNING && state != State.PAUSED)) return
+        val tl = RunTimeline.at(workout, (timelineMs(nowMs) / 1000).toInt())
+        val seg = tl.segment ?: return
+        if (seg.kind == SegmentKind.WORK || seg.kind == SegmentKind.RUN) skippedWorkSec += tl.segmentRemaining
+        skipMs += tl.segmentRemaining * 1000L
+        lastTickSec = (timelineMs(nowMs) / 1000).toInt() - 1
+    }
+
     fun activeMs(nowMs: Long): Long = when (state) {
         State.READY -> 0
         State.RUNNING -> nowMs - startedAt - pausedTotal
@@ -79,7 +96,7 @@ class RunTracker(
 
     fun activeSec(nowMs: Long): Int = (activeMs(nowMs) / 1000).toInt()
 
-    fun timeline(nowMs: Long): TimelineState = RunTimeline.at(workout, activeSec(nowMs))
+    fun timeline(nowMs: Long): TimelineState = RunTimeline.at(workout, (timelineMs(nowMs) / 1000).toInt())
 
     /** Feeds a GPS fix; returns kilometre events crossed by it. */
     fun onFix(fix: Fix, nowMs: Long): List<RunEvent> {
@@ -97,7 +114,7 @@ class RunTracker(
         val d = Geo.haversine(prev.lat, prev.lon, fix.lat, fix.lon)
         if (d / dt > maxSpeed) return emptyList()
         distanceM += d
-        val seg = RunTimeline.at(workout, (active / 1000).toInt()).segment
+        val seg = RunTimeline.at(workout, ((active + skipMs) / 1000).toInt()).segment
         if (seg != null && (seg.kind == SegmentKind.WORK || seg.kind == SegmentKind.RUN)) workDistanceM += d
         window.addLast(active to distanceM)
         while (window.size > 2 && active - window.first().first > 30_000) window.removeFirst()
@@ -127,7 +144,7 @@ class RunTracker(
     /** Timeline cues for whole seconds passed since the previous tick. */
     fun tick(nowMs: Long): List<RunEvent> {
         if (state != State.RUNNING) return emptyList()
-        val sec = activeSec(nowMs)
+        val sec = (timelineMs(nowMs) / 1000).toInt()
         if (sec == lastTickSec) return emptyList()
         val from = lastTickSec
         lastTickSec = sec
@@ -137,7 +154,7 @@ class RunTracker(
 
     /** Seconds spent in work segments so far. */
     fun workSec(nowMs: Long): Int {
-        val t = activeSec(nowMs)
+        val t = (timelineMs(nowMs) / 1000).toInt()
         var start = 0
         var sum = 0
         for (s in workout.segments) {
@@ -145,12 +162,13 @@ class RunTracker(
             if (s.kind == SegmentKind.WORK || s.kind == SegmentKind.RUN) sum += (minOf(t, end) - start).coerceAtLeast(0)
             start = end
         }
-        return sum
+        return (sum - skippedWorkSec).coerceAtLeast(0)
     }
 
     fun result(nowMs: Long, rpe: Int): RunResult {
         val sec = activeSec(nowMs)
-        val completed = if (workout.isOpenEnded) 1.0 else (sec.toDouble() / workout.totalSeconds).coerceIn(0.0, 1.0)
+        val planned = (timelineMs(nowMs) / 1000).toInt() - skippedWorkSec
+        val completed = if (workout.isOpenEnded) 1.0 else (planned.toDouble() / workout.totalSeconds).coerceIn(0.0, 1.0)
         val work = workSec(nowMs)
         val workPace = if (workDistanceM > 100 && work > 0) work / (workDistanceM / 1000.0) else null
         return RunResult(

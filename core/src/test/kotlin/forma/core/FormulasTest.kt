@@ -92,12 +92,19 @@ class FormulasTest {
         assertEquals(190, z[4].high)
     }
 
-    @Test fun fitnessRisesSlowerThanFatigue() {
+    @Test fun steadyTrainingIsNeutralAndARampShowsFatigue() {
         val start = LocalDate.of(2026, 1, 1)
-        val loads = (0 until 14).associate { start.plusDays(it.toLong()) to 300.0 }
-        val s = TrainingLoad.series(loads, start, start.plusDays(13))
-        assertTrue(s.last().fatigue > s.last().fitness)
-        assertTrue(s.last().form < 0)
+        val steady = (0 until 28).associate { start.plusDays(it.toLong()) to 200.0 }
+        val s1 = TrainingLoad.series(steady, start, start.plusDays(27))
+        assertTrue(abs(s1.last().formPct) < 1.0, "steady form ${s1.last().formPct}")
+        // A hard week on top: fatigue jumps above fitness.
+        val ramp = steady + (28 until 35).associate { start.plusDays(it.toLong()) to 500.0 }
+        val s2 = TrainingLoad.series(ramp, start, start.plusDays(34))
+        assertTrue(s2.last().fatigue > s2.last().fitness)
+        assertTrue(s2.last().formPct < -30)
+        // A week off: fresh.
+        val rest = TrainingLoad.series(steady, start, start.plusDays(34))
+        assertTrue(rest.last().formPct > 10)
         assertEquals(420.0, TrainingLoad.sessionLoad(7, 60.0))
     }
 

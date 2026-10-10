@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 object Kind {
     const val LIFT = "LIFT"
@@ -16,6 +17,7 @@ object Status {
 }
 
 @Entity(tableName = "workout", indices = [Index("epochDay"), Index("status")])
+@Serializable
 data class WorkoutEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val epochDay: Long,
@@ -41,6 +43,7 @@ data class WorkoutEntity(
     indices = [Index("workoutId"), Index("exerciseId")],
     foreignKeys = [ForeignKey(WorkoutEntity::class, ["id"], ["workoutId"], onDelete = ForeignKey.CASCADE)],
 )
+@Serializable
 data class SetEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val workoutId: Long,
@@ -60,6 +63,7 @@ data class SetEntity(
     tableName = "run_entry",
     foreignKeys = [ForeignKey(WorkoutEntity::class, ["id"], ["workoutId"], onDelete = ForeignKey.CASCADE)],
 )
+@Serializable
 data class RunEntity(
     @PrimaryKey val workoutId: Long,
     val type: String,
@@ -78,9 +82,11 @@ data class RunEntity(
     primaryKeys = ["workoutId", "t"],
     foreignKeys = [ForeignKey(WorkoutEntity::class, ["id"], ["workoutId"], onDelete = ForeignKey.CASCADE)],
 )
+@Serializable
 data class TrackPointEntity(val workoutId: Long, val t: Long, val lat: Double, val lon: Double, val accuracy: Float)
 
 @Entity(tableName = "slot_state")
+@Serializable
 data class SlotStateEntity(
     @PrimaryKey val slotKey: String,
     val exerciseId: String,
@@ -93,6 +99,7 @@ data class SlotStateEntity(
 )
 
 @Entity(tableName = "exercise_stat")
+@Serializable
 data class ExerciseStatEntity(
     @PrimaryKey val exerciseId: String,
     /** Smoothed working estimate used for new prescriptions. */
@@ -103,4 +110,5 @@ data class ExerciseStatEntity(
 )
 
 @Entity(tableName = "body_weight")
+@Serializable
 data class BodyWeightEntity(@PrimaryKey val epochDay: Long, val kg: Double)

@@ -235,7 +235,11 @@ class TrainingRepository(
         return when (kind) {
             SessionKind.RUN_LONG -> RunPlan.long(st, cutback, date.toEpochDay())
             SessionKind.RUN_QUALITY -> if (needsTest(st, date)) RunPlan.test(st) else RunPlan.quality(st, cutback)
-            else -> RunPlan.easy(st, cutback)
+            else -> {
+                // On a lifting day the easy run comes after the gym: keep it short.
+                val liftDay = program?.week?.on(date.dayOfWeek.value)?.any { it.kind == SessionKind.LIFT } == true
+                RunPlan.easy(if (liftDay) st.copy(easyMinutes = minOf(st.easyMinutes, 30)) else st, cutback)
+            }
         }
     }
 
@@ -303,14 +307,24 @@ class TrainingRepository(
         f
     }
 
-    fun dailyLoads(): Flow<Map<Long, Double>> = db.workouts().observeHistory().map { ws ->
-        ws.groupBy { it.epochDay }.mapValues { (_, l) -> l.sumOf { it.load ?: 0.0 } }
+    fun dailyLoads(): Flow<Map<LocalDate, Double>> = db.workouts().observeHistory().map { ws ->
+        ws.groupBy { LocalDate.ofEpochDay(it.epochDay) }.mapValues { (_, l) -> l.sumOf { it.load ?: 0.0 } }
     }
 
     suspend fun lastSetsFor(exerciseId: String): List<SetEntity> {
         val recent = db.sets().recent(exerciseId)
         val lastWorkout = recent.firstOrNull()?.workoutId ?: return emptyList()
         return recent.filter { it.workoutId == lastWorkout }.sortedBy { it.doneAt }
+    }
+
+    /** The last finished session's report for this exercise: what was done and what changed. */
+    suspend fun lastReport(exerciseId: String): Pair<List<SetEntity>, SlotReport?>? {
+        val sets = lastSetsFor(exerciseId)
+        if (sets.isEmpty()) return null
+        val w = db.workouts().get(sets.first().workoutId)
+        val report = w?.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
+            ?.reports?.firstOrNull { it.exerciseId == exerciseId }
+        return sets to report
     }
 
     suspend fun hasData(): Boolean = db.workouts().allDone().isNotEmpty()

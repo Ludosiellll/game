@@ -22,6 +22,8 @@ val AppJson = Json {
 
 @Serializable
 data class Settings(
+    /** Design direction id from the design board: carbon, light, poster, tone. */
+    val look: String = "carbon",
     val voice: Boolean = true,
     val beeps: Boolean = true,
     val vibration: Boolean = true,

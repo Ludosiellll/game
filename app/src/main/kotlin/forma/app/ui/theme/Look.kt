@@ -19,10 +19,12 @@ data class Palette(
     val text3: Color,
     val accent: Color,
     val onAccent: Color,
-    /** Data colours: strength, endurance, load/fatigue. */
+    /** Data colours: strength (gym), endurance (running), load/fatigue. */
     val strength: Color,
     val endurance: Color,
     val load: Color,
+    /** Text/icons drawn on [strength] and [endurance] fills. */
+    val onData: Color,
     val good: Color,
     val warn: Color,
     val bad: Color,
@@ -45,78 +47,80 @@ data class Typo(
     val displayWeight: FontWeight,
     /** Running text and controls. */
     val text: FontFamily,
-    /** Big numbers: timers, weights. */
+    /** Numbers: timers, weights, reps. */
     val numbers: FontFamily,
     val numbersWeight: FontWeight,
     /** Small labels in capitals with tracking. */
     val capsLabels: Boolean,
-    /** Multiplier for the huge timer digits (condensed faces can be taller). */
+    /** Uppercase screen titles and buttons (poster). */
+    val capsTitles: Boolean,
+    /** Multiplier for the huge timer digits. */
     val bigNumberScale: Float,
 )
 
-/** One design direction: palette, shapes and type. */
+/** One design direction from the design board: palette, shapes and type. */
 @Immutable
 data class Look(val id: String, val name: String, val note: String, val palette: Palette, val shape: Shape, val typo: Typo)
 
 object Looks {
-    /** Near-black with a volt accent: high contrast in a dim gym, huge condensed digits. */
-    val night = Look(
-        "night", "Ночь", "Тёмный, контрастный, акцент «вольт»",
+    /** А · Карбон: near-black, lime for the gym, cyan for running, monospaced instrument digits. */
+    val carbon = Look(
+        "carbon", "Карбон", "Тёмный. Лайм — зал, бирюза — бег",
         Palette(
-            bg = Color(0xFF0C0D0F), surface = Color(0xFF16171A), surface2 = Color(0xFF202125), line = Color(0xFF2C2D32),
-            text = Color(0xFFF5F5F2), text2 = Color(0xFFA9ABB1), text3 = Color(0xFF6E7076),
-            accent = Color(0xFFD7FF3A), onAccent = Color(0xFF0C0D0F),
-            strength = Color(0xFFD7FF3A), endurance = Color(0xFF4FD1FF), load = Color(0xFFFF8A3D),
+            bg = Color(0xFF0B0D10), surface = Color(0xFF15181D), surface2 = Color(0xFF1E232A), line = Color(0xFF2A3039),
+            text = Color(0xFFF2F4F6), text2 = Color(0xFFA0A8B3), text3 = Color(0xFF6B7480),
+            accent = Color(0xFFC6F135), onAccent = Color(0xFF0B0D10),
+            strength = Color(0xFFC6F135), endurance = Color(0xFF3DD6F5), load = Color(0xFFFF8A3D), onData = Color(0xFF0B0D10),
             good = Color(0xFF5BE38C), warn = Color(0xFFFFC94D), bad = Color(0xFFFF5C5C), dark = true,
         ),
         Shape(radius = 20.dp, radiusSmall = 12.dp, border = 0.dp, pill = true),
-        Typo(Fonts.manrope, FontWeight.ExtraBold, Fonts.manrope, Fonts.condensed, FontWeight.Black, capsLabels = true, bigNumberScale = 1.15f),
+        Typo(Fonts.manrope, FontWeight.ExtraBold, Fonts.manrope, Fonts.mono, FontWeight.ExtraBold, capsLabels = true, capsTitles = false, bigNumberScale = 1.0f),
     )
 
-    /** Warm paper, black type, one cobalt accent: calm and editorial. */
-    val paper = Look(
-        "paper", "Бумага", "Светлый, спокойный, много воздуха",
+    /** Б · Свет: cool light, cobalt for the gym, vermilion for running, thin large numbers. */
+    val light = Look(
+        "light", "Свет", "Светлый и спокойный. Кобальт — зал, оранжевый — бег",
         Palette(
-            bg = Color(0xFFF3F1EC), surface = Color(0xFFFFFFFF), surface2 = Color(0xFFEAE7E0), line = Color(0xFFDDD9D0),
-            text = Color(0xFF121212), text2 = Color(0xFF5D5B57), text3 = Color(0xFF8E8B85),
-            accent = Color(0xFF2346FF), onAccent = Color(0xFFFFFFFF),
-            strength = Color(0xFF121212), endurance = Color(0xFF2346FF), load = Color(0xFFE2582B),
-            good = Color(0xFF1E8E5A), warn = Color(0xFFC98A0B), bad = Color(0xFFD23C3C), dark = false,
+            bg = Color(0xFFF5F6F8), surface = Color(0xFFFFFFFF), surface2 = Color(0xFFEDEFF3), line = Color(0xFFE1E4EA),
+            text = Color(0xFF14161A), text2 = Color(0xFF5B6170), text3 = Color(0xFF8A90A0),
+            accent = Color(0xFF2F5BEA), onAccent = Color(0xFFFFFFFF),
+            strength = Color(0xFF2F5BEA), endurance = Color(0xFFE2582B), load = Color(0xFF9043A1), onData = Color(0xFFFFFFFF),
+            good = Color(0xFF1E8E5A), warn = Color(0xFFB7791F), bad = Color(0xFFD23C3C), dark = false,
         ),
-        Shape(radius = 18.dp, radiusSmall = 10.dp, border = 0.dp, pill = true),
-        Typo(Fonts.onest, FontWeight.Bold, Fonts.onest, Fonts.onest, FontWeight.SemiBold, capsLabels = false, bigNumberScale = 0.9f),
+        Shape(radius = 22.dp, radiusSmall = 14.dp, border = 0.dp, pill = false),
+        Typo(Fonts.onest, FontWeight.SemiBold, Fonts.onest, Fonts.onest, FontWeight.Normal, capsLabels = false, capsTitles = false, bigNumberScale = 0.82f),
     )
 
-    /** Sport poster: cream and black with a signal orange, wide display type, hard outlines. */
+    /** В · Афиша: race poster — paper and ink, one signal orange, giant condensed numbers, hard rules. */
     val poster = Look(
-        "poster", "Постер", "Смелый, крупная типографика, оранжевый",
+        "poster", "Афиша", "Спортивный плакат. Огромные узкие цифры, оранжевый",
         Palette(
-            bg = Color(0xFFF1ECE2), surface = Color(0xFFFFFBF3), surface2 = Color(0xFFE6DFD1), line = Color(0xFF151413),
-            text = Color(0xFF151413), text2 = Color(0xFF4F4A43), text3 = Color(0xFF857E73),
-            accent = Color(0xFFFF4F12), onAccent = Color(0xFF151413),
-            strength = Color(0xFFFF4F12), endurance = Color(0xFF2F55FF), load = Color(0xFF151413),
-            good = Color(0xFF1B8A4B), warn = Color(0xFFD99A00), bad = Color(0xFFD7261E), dark = false,
+            bg = Color(0xFFF2F2EE), surface = Color(0xFFFFFFFF), surface2 = Color(0xFFE6E6E0), line = Color(0xFF0A0A0A),
+            text = Color(0xFF0A0A0A), text2 = Color(0xFF4A4A46), text3 = Color(0xFF7A7A74),
+            accent = Color(0xFFFF5A1F), onAccent = Color(0xFF0A0A0A),
+            strength = Color(0xFFFF5A1F), endurance = Color(0xFF0E4EC8), load = Color(0xFF0A0A0A), onData = Color(0xFF0A0A0A),
+            good = Color(0xFF127A3B), warn = Color(0xFFB45F00), bad = Color(0xFFD03B3B), dark = false,
         ),
-        Shape(radius = 6.dp, radiusSmall = 4.dp, border = 2.dp, pill = false),
-        Typo(Fonts.unbounded, FontWeight.Black, Fonts.manrope, Fonts.unbounded, FontWeight.Bold, capsLabels = true, bigNumberScale = 0.82f),
+        Shape(radius = 4.dp, radiusSmall = 2.dp, border = 2.dp, pill = false),
+        Typo(Fonts.condensed, FontWeight.Black, Fonts.manrope, Fonts.condensed, FontWeight.Black, capsLabels = true, capsTitles = true, bigNumberScale = 1.35f),
     )
 
-    /** Soft colourful containers and big rounded shapes, in the spirit of Material 3 Expressive. */
-    val bloom = Look(
-        "bloom", "Цвет", "Мягкие цветные плашки, крупные скругления",
+    /** Г · Тон: soft Material 3 Expressive — tonal containers, large rounded shapes. */
+    val tone = Look(
+        "tone", "Тон", "Мягкий Material 3: цветные плашки, крупные скругления",
         Palette(
-            bg = Color(0xFFFAF7FF), surface = Color(0xFFFFFFFF), surface2 = Color(0xFFEDE6FB), line = Color(0xFFE2DAF2),
-            text = Color(0xFF1C1631), text2 = Color(0xFF5E5675), text3 = Color(0xFF8F88A3),
-            accent = Color(0xFF5B3FD6), onAccent = Color(0xFFFFFFFF),
-            strength = Color(0xFF5B3FD6), endurance = Color(0xFF00A887), load = Color(0xFFFF7A59),
-            good = Color(0xFF00A887), warn = Color(0xFFE59B00), bad = Color(0xFFE5484D), dark = false,
+            bg = Color(0xFFF9F9FE), surface = Color(0xFFEEEDF5), surface2 = Color(0xFFE3DFFF), line = Color(0xFFC7C5D5),
+            text = Color(0xFF1C1B20), text2 = Color(0xFF474553), text3 = Color(0xFF777585),
+            accent = Color(0xFF3E53C7), onAccent = Color(0xFFFFFFFF),
+            strength = Color(0xFF3E53C7), endurance = Color(0xFF036A65), load = Color(0xFF9A4A13), onData = Color(0xFFFFFFFF),
+            good = Color(0xFF1E7A45), warn = Color(0xFF9A4A13), bad = Color(0xFFBA1A1A), dark = false,
         ),
         Shape(radius = 28.dp, radiusSmall = 16.dp, border = 0.dp, pill = true),
-        Typo(Fonts.onest, FontWeight.ExtraBold, Fonts.onest, Fonts.onest, FontWeight.Bold, capsLabels = false, bigNumberScale = 0.92f),
+        Typo(Fonts.rubik, FontWeight.SemiBold, Fonts.rubik, Fonts.rubik, FontWeight.SemiBold, capsLabels = false, capsTitles = false, bigNumberScale = 0.85f),
     )
 
-    val all = listOf(night, paper, poster, bloom)
-    fun byId(id: String?) = all.firstOrNull { it.id == id } ?: night
+    val all = listOf(carbon, light, poster, tone)
+    fun byId(id: String?) = all.firstOrNull { it.id == id } ?: carbon
 }
 
-val LocalLook = staticCompositionLocalOf { Looks.night }
+val LocalLook = staticCompositionLocalOf { Looks.carbon }

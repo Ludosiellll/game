@@ -68,6 +68,9 @@ object Ru {
     /** "1,0" style decimal with one digit. */
     fun one(x: Double): String = String.format(Locale.ROOT, "%.1f", x).replace('.', ',')
 
+    /** Kilometres with two decimals and no unit: "3,90". */
+    fun km2(meters: Double): String = String.format(Locale.ROOT, "%.2f", meters / 1000).replace('.', ',')
+
     /** Distance "5,2 км" or "850 м". */
     fun distance(meters: Double): String =
         if (meters < 1000) "${meters.roundToInt()} м" else "${String.format(Locale.ROOT, "%.2f", meters / 1000).replace('.', ',')} км"

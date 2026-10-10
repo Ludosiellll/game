@@ -1,0 +1,330 @@
+package forma.app.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import forma.app.data.DayItem
+import forma.app.data.LiftPlan
+import forma.app.data.LiftState
+import forma.app.run.RunSession
+import forma.app.ui.LocalNav
+import forma.app.ui.LocalRepo
+import forma.app.ui.Screen
+import forma.app.ui.components.Banner
+import forma.app.ui.components.Dot
+import forma.app.ui.components.FCard
+import forma.app.ui.components.GhostButton
+import forma.app.ui.components.PrimaryButton
+import forma.app.ui.components.SectionLabel
+import forma.app.ui.components.StatTile
+import forma.app.ui.components.NumText
+import forma.app.ui.theme.F
+import forma.app.ui.theme.Ic
+import forma.app.ui.theme.T
+import forma.app.ui.theme.labelText
+import forma.core.analytics.Stats
+import forma.core.load.TrainingLoad
+import forma.core.plan.PlannedSession
+import forma.core.plan.Program
+import forma.core.plan.ProgramGenerator
+import forma.core.plan.SessionKind
+import forma.core.plan.Templates
+import forma.core.run.RunPlan
+import forma.core.run.RunTracker
+import forma.core.run.RunWorkout
+import forma.core.run.Vdot
+import forma.core.text.Ru
+import kotlinx.coroutines.launch
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
+import kotlin.math.roundToInt
+
+@Composable
+fun TodayScreen() {
+    val repo = LocalRepo.current
+    val nav = LocalNav.current
+    val scope = rememberCoroutineScope()
+    val today = remember { repo.today() }
+    val monday = remember(today) { today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) }
+    val program by repo.store.program.collectAsState(initial = null)
+    val runState by repo.store.runState.collectAsState(initial = null)
+    val liftState by repo.store.liftState.collectAsState(initial = LiftState())
+    val week by remember(monday) { repo.weekFlow(monday) }.collectAsState(initial = emptyList())
+    val active by remember { repo.db.workouts().observeActive() }.collectAsState(initial = null)
+    val run by RunSession.ui.collectAsState()
+    val loads by remember { repo.dailyLoads() }.collectAsState(initial = emptyMap())
+    val rows by remember { repo.setRows() }.collectAsState(initial = emptyList())
+    val bw by remember { repo.bodyWeightLookup() }.collectAsState(initial = { _: Long -> 75.0 })
+    var pickTemplate by remember { mutableStateOf(false) }
+
+    val p = program ?: return
+    val weekNo = ProgramGenerator.weekIndex(p, today)
+    val deload = ProgramGenerator.isDeloadWeek(p, today) ||
+        (liftState.reactiveDeloadStart?.let { today.toEpochDay() in it until it + 7 } == true)
+    val todayItem = week.firstOrNull { it.date == today }
+
+    ScrollScreen {
+        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 8.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(dateLine(today), style = T.secondary(13.sp))
+                Text(if (F.type.capsTitles) "СЕГОДНЯ" else "Сегодня", style = T.screenTitle())
+            }
+            Text(labelText("Неделя $weekNo"), style = T.label())
+        }
+
+        val a = active
+        if (a != null) Banner("Тренировка «${a.title}» не закончена — продолжить", F.c.strength, icon = Ic.dumbbell) { nav.push(Screen.Workout(a.id)) }
+        val r = run
+        if (r != null && r.state != RunTracker.State.FINISHED) Banner("Идёт пробежка · ${Ru.clock(r.elapsedSec)}", F.c.endurance, icon = Ic.run) { nav.push(Screen.RunActive) }
+        if (deload) Banner("Разгрузочная неделя: вдвое меньше подходов и вес −10 %. Восстановление — тоже тренировка.", F.c.warn)
+
+        WeekStrip(week, today, p)
+
+        val todays = todayItem?.planned.orEmpty()
+        if (todays.isEmpty()) {
+            RestCard(week, today, p, onFree = { nav.push(Screen.RunSetup(repo.freeRun(), null)) }, onOther = { pickTemplate = true })
+        } else {
+            todays.forEach { s ->
+                val done = todayItem?.isDone(s) == true
+                if (s.kind == SessionKind.LIFT) {
+                    LiftCard(s, p, today, done) {
+                        scope.launch {
+                            val id = repo.startLift(s.templateId!!, today)
+                            nav.push(Screen.Workout(id))
+                        }
+                    }
+                } else {
+                    RunCard(s, today, done) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
+                }
+            }
+        }
+
+        val loadSeries = remember(loads, today) {
+            TrainingLoad.series(loads, today.minusDays(120), today.minusDays(1))
+        }
+        val form = loadSeries.lastOrNull()?.takeIf { loads.isNotEmpty() }?.formPct
+        val strength = remember(rows, bw) { Stats.changePct(Stats.strengthIndex(rows, bw)) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatTile(
+                "Свежесть", form?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—",
+                when {
+                    form == null -> "нет данных"
+                    form > 10 -> "можно грузиться"
+                    form < -30 -> "нужен отдых"
+                    else -> "рабочий режим"
+                },
+                when {
+                    form == null -> F.c.text2
+                    form < -30 -> F.c.warn
+                    else -> F.c.good
+                }, Modifier.weight(1f),
+            )
+            StatTile("Сила", strength?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—", if (strength == null) "после 2 недель" else "с начала", F.c.strength, Modifier.weight(1f))
+            val rs = runState
+            val vdot = rs?.vdot
+            StatTile(
+                if (vdot != null) "VDOT" else "Бег",
+                when {
+                    vdot != null -> Ru.one(vdot)
+                    rs != null && !rs.canRunContinuously -> "${rs.walkStage / 3 + 1}/9"
+                    else -> "—"
+                },
+                when {
+                    vdot != null -> "5 км ≈ ${Ru.clock(Vdot.predictSeconds(vdot, 5000.0).roundToInt())}"
+                    rs != null && !rs.canRunContinuously -> "неделя бега с ходьбой"
+                    else -> "после контрольного"
+                },
+                F.c.endurance, Modifier.weight(1f),
+            )
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GhostButton("Свободный бег", { nav.push(Screen.RunSetup(repo.freeRun(), null)) }, Modifier.weight(1f))
+            GhostButton("Другая силовая", { pickTemplate = true }, Modifier.weight(1f))
+        }
+    }
+
+    if (pickTemplate) {
+        AlertDialog(
+            onDismissRequest = { pickTemplate = false },
+            title = { Text("Какую силовую сделать?", style = T.title(20.sp)) },
+            text = {
+                Column {
+                    p.templates.forEach { t ->
+                        Text(
+                            t.title, style = T.body(17.sp, FontWeight.SemiBold),
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                pickTemplate = false
+                                scope.launch {
+                                    val id = repo.startLift(t.id, today)
+                                    nav.push(Screen.Workout(id))
+                                }
+                            }.padding(vertical = 12.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton({ pickTemplate = false }) { Text("Отмена", style = T.body(15.sp)) } },
+            containerColor = F.c.surface,
+        )
+    }
+}
+
+@Composable
+private fun WeekStrip(week: List<DayItem>, today: LocalDate, program: Program) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        week.forEach { d ->
+            val isToday = d.date == today
+            val shape = RoundedCornerShape(if (F.shape.pill) 14.dp else F.shape.radiusSmall)
+            val doneAll = d.planned.isNotEmpty() && d.planned.all { d.isDone(it) }
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(labelText(dayShort(d.date.dayOfWeek)), style = T.label().copy(color = if (isToday) F.c.accent else F.c.text3))
+                var m = Modifier.fillMaxWidth().height(56.dp).clip(shape)
+                m = when {
+                    isToday -> m.background(F.c.accent)
+                    d.planned.isNotEmpty() -> m.background(F.c.surface).border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
+                    else -> m.border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
+                }
+                Column(m, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    NumText(
+                        d.date.dayOfMonth.toString(),
+                        style = T.number(16.sp).copy(color = if (isToday) F.c.onAccent else if (d.planned.isEmpty()) F.c.text3 else F.c.text),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), modifier = Modifier.padding(top = 4.dp).height(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (doneAll) {
+                            Icon(Ic.check, "Сделано", tint = if (isToday) F.c.onAccent else F.c.good, modifier = Modifier.size(12.dp))
+                        } else {
+                            d.planned.forEach { s ->
+                                val c = if (s.kind == SessionKind.LIFT) F.c.strength else F.c.endurance
+                                Dot(if (isToday) F.c.onAccent.copy(alpha = if (s.isRun) 0.5f else 1f) else c)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, done: Boolean, onStart: () -> Unit) {
+    val repo = LocalRepo.current
+    val plan by produceState<LiftPlan?>(null, s.templateId, today) { value = runCatching { repo.liftPlan(s.templateId!!, today) }.getOrNull() }
+    val t = program.templates.firstOrNull { it.id == s.templateId }
+    FCard(outline = if (done) null else null) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Ic.dumbbell, null, tint = F.c.strength, modifier = Modifier.size(18.dp))
+            Text(labelText("  Силовая"), style = T.label().copy(color = F.c.strength), modifier = Modifier.weight(1f))
+            if (t != null) NumText("~${Templates.minutes(t)} мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
+        }
+        Text(t?.title ?: "Силовая", style = T.title(26.sp))
+        val items = plan?.items.orEmpty()
+        Column {
+            items.take(3).forEach { item ->
+                forma.app.ui.components.Hairline()
+                Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(item.name, style = T.body(15.sp, FontWeight.SemiBold), modifier = Modifier.weight(1f), maxLines = 1)
+                    NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.slot.exerciseId), style = T.number(14.sp, FontWeight.Bold))
+                }
+            }
+            if (items.size > 3) {
+                forma.app.ui.components.Hairline()
+                Text("+ ещё ${items.size - 3} ${Ru.plural(items.size - 3, "упражнение", "упражнения", "упражнений")}", style = T.secondary(13.sp), modifier = Modifier.padding(top = 10.dp))
+            }
+        }
+        val calib = items.count { it.prescription.calibrate }
+        if (calib > 0 && !done) Text("Первая тренировка с этими упражнениями: начни с подсказанного веса — после первого подхода приложение подберёт рабочий.", style = T.secondary(13.sp))
+        if (done) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
+                Text("Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
+            }
+        } else {
+            PrimaryButton("Начать тренировку", onStart, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
+        }
+    }
+}
+
+fun prescriptionShort(sets: Int, reps: Int, weight: Double?, exerciseId: String): String {
+    val ex = forma.core.model.Catalog.find(exerciseId)
+    return when {
+        ex?.load == forma.core.model.LoadKind.TIMED -> "$sets×${reps} с"
+        weight == null -> "$sets×$reps · подбор"
+        ex?.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS -> if (weight > 0) "$sets×$reps · +${Ru.kg(weight)}" else "$sets×$reps"
+        else -> "$sets×$reps · ${Ru.kg(weight)} кг"
+    }
+}
+
+@Composable
+private fun RunCard(s: PlannedSession, today: LocalDate, done: Boolean, onStart: (RunWorkout) -> Unit) {
+    val repo = LocalRepo.current
+    val workout by produceState<RunWorkout?>(null, s.kind, today) { value = repo.runFor(s.kind, today) }
+    val w = workout ?: return
+    FCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Ic.run, null, tint = F.c.endurance, modifier = Modifier.size(18.dp))
+            Text(labelText("  ${kindLabel(s)}"), style = T.label().copy(color = F.c.endurance), modifier = Modifier.weight(1f))
+            NumText("${w.totalSeconds / 60} мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
+        }
+        Text(w.title, style = T.title(22.sp))
+        Text(w.note, style = T.secondary(14.sp))
+        val pace = w.segments.firstOrNull { it.kind == forma.core.run.SegmentKind.WORK || it.kind == forma.core.run.SegmentKind.RUN }?.pace
+        if (pace != null) NumText("Темп ${Ru.pace(pace.fast.toDouble())}–${Ru.pace(pace.slow.toDouble())} /км", style = T.number(14.sp, FontWeight.Bold).copy(color = F.c.text2))
+        if (done) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
+                Text("Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
+            }
+        } else {
+            PrimaryButton("Начать пробежку", { onStart(w) }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, icon = Ic.play)
+        }
+    }
+}
+
+@Composable
+private fun RestCard(week: List<DayItem>, today: LocalDate, program: Program, onFree: () -> Unit, onOther: () -> Unit) {
+    val next = week.firstOrNull { it.date.isAfter(today) && it.planned.isNotEmpty() }
+    FCard {
+        SectionLabel("Отдых")
+        Text("Сегодня день восстановления", style = T.title(22.sp))
+        Text(
+            if (next != null) "Дальше: ${dayShort(next.date.dayOfWeek)} — ${next.planned.joinToString(" + ") { sessionTitle(it, program) }}."
+            else "На этой неделе тренировок больше нет. Новая неделя — с понедельника.",
+            style = T.secondary(14.sp),
+        )
+        Text("Лёгкая прогулка или растяжка не помешают. Если очень хочется — можно потренироваться вне плана.", style = T.secondary(13.sp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GhostButton("Пробежка", onFree, Modifier.weight(1f))
+            GhostButton("Силовая", onOther, Modifier.weight(1f))
+        }
+    }
+}

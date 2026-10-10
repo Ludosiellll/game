@@ -72,4 +72,19 @@ class TrackerTest {
         assertTrue(abs(r.workPace!! - 250.0) < 8, "work pace ${r.workPace}")
         assertTrue(cues.any { it is RunEvent.Timeline })
     }
+
+    @Test fun skippingWarmUpCountsAsDoneButSkippingWorkDoesNot() {
+        val w = RunPlan.intervals(RunState(vdot = 50.0, walkStage = -1))
+        val t = RunTracker(w)
+        t.start(0)
+        t.tick(1000)
+        t.skipSegment(60_000) // skip the rest of the 10-minute warm-up
+        assertEquals(1, t.timeline(60_000).index)
+        val cues = t.tick(61_000)
+        assertTrue(cues.any { it is RunEvent.Timeline && (it.cue as? forma.core.run.Cue.SegmentStart)?.index == 1 })
+        assertTrue(cues.none { it is RunEvent.Timeline && it.cue is forma.core.run.Cue.Countdown })
+        t.skipSegment(70_000) // skip most of the first work interval
+        val r = t.result(70_000, 7)
+        assertTrue(r.completed < 0.35, "completed ${r.completed}")
+    }
 }
