@@ -6,9 +6,65 @@ import java.time.DayOfWeek
 @Serializable
 enum class Sex { MALE, FEMALE }
 
-/** What the person wants most. Drives the weekly mix and rep ranges. */
+/** The five classic goals. Kept as presets and for profiles saved before [Aim] existed. */
 @Serializable
 enum class Goal { STRENGTH, MUSCLE, HYBRID, ENDURANCE, FITNESS }
+
+/** What the gym part is for. */
+@Serializable
+enum class LiftFocus { STRENGTH, POWERBUILDING, MUSCLE, GENERAL, NONE }
+
+/** What the running part is for. */
+@Serializable
+enum class RunFocus { NONE, HEALTH, ENDURANCE, SPEED }
+
+/** Which side gets the days and the recovery when the two compete. */
+@Serializable
+enum class Emphasis { GYM, BALANCED, RUN }
+
+/**
+ * What the plan is built for: the gym focus, the running focus and which of them comes first.
+ * "Muscle and running endurance, both equally" is `Aim(MUSCLE, ENDURANCE, BALANCED)`.
+ */
+@Serializable
+data class Aim(val lift: LiftFocus, val run: RunFocus, val emphasis: Emphasis = Emphasis.BALANCED) {
+    val lifts: Boolean get() = lift != LiftFocus.NONE
+    val runs: Boolean get() = run != RunFocus.NONE
+
+    /** Running worth planning around (intervals, long runs, fresh legs for them) and not a side dish of the gym. */
+    val seriousRunning: Boolean get() = (run == RunFocus.ENDURANCE || run == RunFocus.SPEED) && emphasis != Emphasis.GYM
+
+    /** One side alone has nothing to share the week with; neither side means general fitness. */
+    fun normalized(): Aim = when {
+        !lifts && !runs -> Aim(LiftFocus.GENERAL, RunFocus.HEALTH, Emphasis.BALANCED)
+        !lifts -> copy(emphasis = Emphasis.RUN)
+        !runs -> copy(emphasis = Emphasis.GYM)
+        else -> this
+    }
+
+    /** The closest classic goal, stored next to the aim. */
+    fun nearestGoal(): Goal {
+        val a = normalized()
+        val bigRunning = a.run == RunFocus.ENDURANCE || a.run == RunFocus.SPEED
+        return when {
+            !a.lifts || a.emphasis == Emphasis.RUN && bigRunning -> Goal.ENDURANCE
+            bigRunning && a.lift != LiftFocus.GENERAL -> Goal.HYBRID
+            a.lift == LiftFocus.STRENGTH || a.lift == LiftFocus.POWERBUILDING -> Goal.STRENGTH
+            a.lift == LiftFocus.MUSCLE -> Goal.MUSCLE
+            else -> Goal.FITNESS
+        }
+    }
+}
+
+/** Each classic goal as a combination. */
+fun Goal.aim(): Aim = when (this) {
+    Goal.STRENGTH -> Aim(LiftFocus.STRENGTH, RunFocus.HEALTH, Emphasis.GYM)
+    Goal.MUSCLE -> Aim(LiftFocus.MUSCLE, RunFocus.HEALTH, Emphasis.GYM)
+    Goal.HYBRID -> Aim(LiftFocus.POWERBUILDING, RunFocus.ENDURANCE, Emphasis.BALANCED)
+    // Runners lift heavy and little: strength work improves running economy without much fatigue.
+    Goal.ENDURANCE -> Aim(LiftFocus.STRENGTH, RunFocus.ENDURANCE, Emphasis.RUN)
+    Goal.FITNESS -> Aim(LiftFocus.GENERAL, RunFocus.HEALTH, Emphasis.BALANCED)
+}
 
 @Serializable
 enum class Experience { NOVICE, INTERMEDIATE, ADVANCED }
@@ -35,6 +91,8 @@ data class Profile(
     val raceSeconds: Double? = null,
     val restingHr: Int? = null,
     val maxHr: Int? = null,
+    /** What the plan is built for; profiles saved before it existed get the one of their goal. */
+    val aim: Aim = goal.aim(),
 ) {
     fun age(year: Int): Int = (year - birthYear).coerceIn(10, 100)
     val days: Set<DayOfWeek> get() = trainingDays.map { DayOfWeek.of(it) }.toSet()

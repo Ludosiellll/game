@@ -41,14 +41,8 @@ fun ProfileScreen() {
     val d = remember(base) { ProfileDraft(base) }
     ScrollScreen {
         TopBar("Цель, дни и данные", "План пересчитается, прогресс по упражнениям сохранится", onBack = { nav.back() })
-        SectionLabel("Цель")
-        GOALS.forEach { g ->
-            FCard(onClick = { d.goal = g.goal }, outline = if (d.goal == g.goal) F.c.accent else null, gap = 2.dp) {
-                Text(g.title, style = T.body(16.sp, FontWeight.ExtraBold).copy(color = if (d.goal == g.goal) F.c.accent else F.c.text))
-                Text(g.text, style = T.secondary(13.sp))
-            }
-        }
-        SectionLabel("Дни")
+        AimPicker(d)
+        SectionLabel("Дни", Modifier.padding(top = 6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             DAY_SHORT.forEachIndexed { i, name ->
                 val day = i + 1

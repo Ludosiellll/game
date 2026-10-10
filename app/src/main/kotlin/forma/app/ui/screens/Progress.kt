@@ -44,7 +44,7 @@ import forma.core.analytics.SetRow
 import forma.core.analytics.Stats
 import forma.core.load.TrainingLoad
 import forma.core.model.Catalog
-import forma.core.model.Goal
+import forma.core.model.LiftFocus
 import forma.core.model.Muscle
 import forma.core.run.PaceTable
 import forma.core.run.RunPlan
@@ -237,7 +237,13 @@ private fun LoadTab() {
         BarChart(weekly, F.c.load.copy(alpha = 0.5f), highlight = F.c.load, description = "Нагрузка за 8 недель")
     }
     val sets = remember(rows, today) { Stats.weeklySets(rows, today, 1) }
-    val target = when (profile?.goal) { Goal.MUSCLE -> 10.0 to 20.0; Goal.STRENGTH -> 6.0 to 12.0; else -> 6.0 to 14.0 }
+    // Weekly hard sets per muscle that suit the gym focus (more for hypertrophy, fewer heavy ones for strength).
+    val target = when (profile?.aim?.lift) {
+        LiftFocus.MUSCLE -> 10.0 to 20.0
+        LiftFocus.POWERBUILDING -> 8.0 to 16.0
+        LiftFocus.STRENGTH -> 6.0 to 12.0
+        else -> 6.0 to 14.0
+    }
     SectionLabel("Подходы на мышцу за неделю")
     FCard(gap = 10.dp) {
         Text("Полоса — разумный диапазон для твоей цели (${target.first.roundToInt()}–${target.second.roundToInt()}). Подход для вспомогательной мышцы считается за половину.", style = T.secondary(12.sp))

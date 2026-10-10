@@ -98,11 +98,15 @@ fun titleText(s: String): String = if (F.type.capsTitles) s.uppercase() else s
 fun numText(s: String, base: TextStyle): AnnotatedString {
     val unit = SpanStyle(fontFamily = F.type.text, fontWeight = FontWeight.SemiBold, fontSize = base.fontSize * 0.62)
     val sep = SpanStyle(fontFamily = F.type.text, fontWeight = FontWeight.Medium, fontSize = base.fontSize * 0.8)
+    // Words without numbers ("Без зала", "вес подбираем") are plain text at full size.
+    if (s.none { it.isDigit() }) return buildAnnotatedString { withStyle(SpanStyle(fontFamily = F.type.text)) { append(s) } }
     return buildAnnotatedString {
-        for (ch in s) {
+        for ((i, ch) in s.withIndex()) {
             when {
                 ch.isDigit() || ch in ",.:+−–-%" -> append(ch)
                 ch == '×' || ch == '·' || ch == '≈' || ch == '/' -> withStyle(sep) { append(ch) }
+                // A space between two words is as small as the words, not as wide as a digit.
+                ch == ' ' && s.getOrNull(i - 1)?.isLetter() == true && s.getOrNull(i + 1)?.isLetter() == true -> withStyle(unit) { append(ch) }
                 ch == ' ' -> append(ch)
                 else -> withStyle(unit) { append(ch) }
             }

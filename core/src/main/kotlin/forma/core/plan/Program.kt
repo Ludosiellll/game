@@ -1,7 +1,9 @@
 package forma.core.plan
 
 import forma.core.model.Experience
+import forma.core.model.Aim
 import forma.core.model.Goal
+import forma.core.model.aim
 import forma.core.run.RunCaps
 import forma.core.strength.SlotSpec
 import kotlinx.serialization.Serializable
@@ -44,6 +46,7 @@ data class Program(
     val runCaps: RunCaps,
     /** Monday of the first week, epoch day. */
     val startEpochDay: Long,
+    val aim: Aim = goal.aim(),
 ) {
     fun template(id: String): Template = templates.first { it.id == id }
 }

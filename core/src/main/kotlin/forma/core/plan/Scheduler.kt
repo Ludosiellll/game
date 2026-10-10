@@ -1,8 +1,12 @@
 package forma.core.plan
 
+import forma.core.model.Aim
+import forma.core.model.Emphasis
 import forma.core.model.Experience
-import forma.core.model.Goal
+import forma.core.model.LiftFocus
+import forma.core.model.RunFocus
 import forma.core.model.RunLevel
+import kotlin.math.min
 
 /** How many sessions of each kind a week holds. */
 data class Mix(val lifts: Int, val easy: Int, val quality: Int, val long: Int) {
@@ -19,56 +23,62 @@ data class Mix(val lifts: Int, val easy: Int, val quality: Int, val long: Int) {
  * (lift first), at least one full rest day, the long run on a weekend if possible.
  */
 object Scheduler {
-    fun mix(goal: Goal, days: Int, exp: Experience, runLevel: RunLevel): Mix {
+    /**
+     * Sessions of each kind for [days] training days.
+     *
+     * The priority decides how the days are shared; running focus decides what the runs are. Interference between
+     * running and lifting grows with how often and how long one runs (Wilson et al. 2012), while on average it costs
+     * neither muscle nor maximal strength (Schumann et al. 2022) — so the gym-first plans keep running to 1–2 sessions
+     * and the balanced ones get both in full, kept apart by the layout below.
+     */
+    fun mix(aim: Aim, days: Int, exp: Experience, runLevel: RunLevel): Mix {
+        val a = aim.normalized()
         val n = days.coerceIn(1, 7)
-        val heavySplit = exp != Experience.NOVICE
-        var m = when (goal) {
-            Goal.HYBRID -> when (n) {
-                1 -> Mix(1, 1, 0, 0)
-                2 -> Mix(2, 2, 0, 0)
-                3 -> Mix(2, 1, 1, 0)
-                4 -> Mix(2, 1, 1, 1)
-                5 -> Mix(3, 1, 1, 1)
-                6 -> Mix(3, 1, 1, 1)
-                else -> Mix(3, 2, 1, 1)
+        val maxLifts = when {
+            exp == Experience.NOVICE -> 3
+            a.lift == LiftFocus.MUSCLE && exp == Experience.ADVANCED -> 5
+            else -> 4
+        }
+        val (lifts, runs) = when {
+            !a.runs -> min(n, maxLifts) to 0
+            !a.lifts -> 0 to min(n, 6)
+            a.emphasis == Emphasis.GYM -> min(n, maxLifts) to when (n) { 1 -> 0; 2, 3, 4 -> 1; else -> 2 }
+            a.emphasis == Emphasis.BALANCED -> intArrayOf(1, 2, 2, 2, 3, 3, 3)[n - 1] to intArrayOf(1, 2, 2, 3, 3, 3, 3)[n - 1]
+            else -> intArrayOf(0, 1, 1, 2, 2, 2, 2)[n - 1] to intArrayOf(1, 2, 3, 4, 4, 5, 6)[n - 1]
+        }
+        // Endurance builds on the long run; speed on intervals and tempo, with a long run once there are three runs.
+        val (easy, quality, long) = when (a.run) {
+            RunFocus.NONE -> Triple(0, 0, 0)
+            RunFocus.HEALTH -> Triple(runs, 0, 0)
+            RunFocus.ENDURANCE -> when (runs) {
+                0 -> Triple(0, 0, 0)
+                1 -> Triple(0, 0, 1)
+                2 -> Triple(1, 0, 1)
+                3 -> Triple(1, 1, 1)
+                4 -> Triple(2, 1, 1)
+                5 -> Triple(3, 1, 1)
+                else -> Triple(runs - 3, 2, 1)
             }
-            Goal.STRENGTH -> when (n) {
-                1 -> Mix(1, 0, 0, 0)
-                2 -> Mix(2, 0, 0, 0)
-                3 -> Mix(3, 1, 0, 0)
-                4 -> if (heavySplit) Mix(4, 0, 0, 0) else Mix(3, 1, 0, 0)
-                5 -> if (heavySplit) Mix(4, 1, 0, 0) else Mix(3, 2, 0, 0)
-                else -> if (heavySplit) Mix(4, 2, 0, 0) else Mix(3, 2, 0, 0)
-            }
-            Goal.MUSCLE -> when (n) {
-                1 -> Mix(1, 0, 0, 0)
-                2 -> Mix(2, 0, 0, 0)
-                3 -> Mix(3, 0, 0, 0)
-                4 -> if (heavySplit) Mix(4, 0, 0, 0) else Mix(3, 1, 0, 0)
-                5 -> if (heavySplit) Mix(4, 1, 0, 0) else Mix(3, 1, 0, 0)
-                else -> if (heavySplit) Mix(5, 1, 0, 0) else Mix(3, 2, 0, 0)
-            }
-            Goal.ENDURANCE -> when (n) {
-                1 -> Mix(0, 1, 0, 0)
-                2 -> Mix(1, 1, 0, 1)
-                3 -> Mix(1, 1, 1, 1)
-                4 -> Mix(2, 2, 1, 1)
-                5 -> Mix(2, 2, 1, 1)
-                6 -> Mix(2, 3, 1, 1)
-                else -> Mix(2, 3, 2, 1)
-            }
-            Goal.FITNESS -> when (n) {
-                1 -> Mix(1, 0, 0, 0)
-                2 -> Mix(2, 2, 0, 0)
-                3 -> Mix(2, 2, 0, 0)
-                4 -> Mix(2, 2, 0, 0)
-                5 -> Mix(3, 2, 0, 0)
-                else -> Mix(3, 2, 1, 0)
+            RunFocus.SPEED -> when (runs) {
+                0 -> Triple(0, 0, 0)
+                1 -> Triple(0, 1, 0)
+                2 -> Triple(1, 1, 0)
+                3 -> Triple(1, 1, 1)
+                else -> Triple(runs - 3, 2, 1)
             }
         }
+        // Intervals and long runs need a day without lifting (never heavy legs and a hard run together): when the
+        // days run out they become easy runs — the speed plan keeps its intervals, the endurance plan its long run.
+        var (e, q, l) = Triple(easy, quality, long)
+        val free = (if (n == 7) 6 else n) - lifts
+        while (q + l > maxOf(0, free)) {
+            if (a.run == RunFocus.SPEED) { if (l > 0) l-- else q-- } else { if (q > 0) q-- else l-- }
+            e++
+        }
+        var m = Mix(lifts, e, q, l)
         if (runLevel == RunLevel.NONE) {
             // Until 30 minutes of running are possible every run is a run/walk session, three a week at most.
-            m = m.copy(easy = (m.runs).coerceAtMost(3), quality = 0, long = 0)
+            m = m.copy(easy = m.runs.coerceAtMost(3), quality = 0, long = 0)
         }
         return m
     }
@@ -76,7 +86,7 @@ object Scheduler {
     private data class Slot(val day: Int, val lift: PlannedSession?, val run: PlannedSession?)
 
     /** Days are ISO numbers 1..7. Template ids are assigned to lift days in order. */
-    fun schedule(available: Set<Int>, mix: Mix, templates: List<Template>, goal: Goal): WeekPlan {
+    fun schedule(available: Set<Int>, mix: Mix, templates: List<Template>, aim: Aim): WeekPlan {
         val days = available.filter { it in 1..7 }.sorted()
         require(days.isNotEmpty()) { "no training days" }
         // Leave one day of the week without any session.
@@ -104,7 +114,7 @@ object Scheduler {
                                 if (ri >= 0) PlannedSession(perm[ri]) else null,
                             )
                         }
-                        val sc = score(slots, templates, goal)
+                        val sc = score(slots, templates, aim)
                         if (sc < bestScore - 1e-9) {
                             bestScore = sc
                             best = slots
@@ -114,18 +124,19 @@ object Scheduler {
             }
         }
         val chosen = best!!
-        val runFirst = goal == Goal.ENDURANCE
+        val runFirst = aim.normalized().emphasis == Emphasis.RUN
         val plan = chosen.filter { it.lift != null || it.run != null }.map { s ->
             val list = if (runFirst) listOfNotNull(s.run, s.lift) else listOfNotNull(s.lift, s.run)
             DayPlan(s.day, list)
         }
-        return WeekPlan(plan, notes(chosen, templates, goal))
+        return WeekPlan(plan, notes(chosen, templates, aim.normalized()))
     }
 
     private fun legs(s: PlannedSession?, templates: List<Template>): Boolean =
         s != null && s.kind == SessionKind.LIFT && (templates.firstOrNull { it.id == s.templateId }?.legs ?: true)
 
-    private fun score(slots: List<Slot>, templates: List<Template>, goal: Goal): Double {
+    private fun score(slots: List<Slot>, templates: List<Template>, aim: Aim): Double {
+        val emphasis = aim.normalized().emphasis
         var p = 0.0
         fun at(d: Int) = slots[((d - 1) % 7 + 7) % 7]
         for (s in slots) {
@@ -141,9 +152,13 @@ object Scheduler {
             }
             // No intervals or long run within 24 h after heavy legs (running is impaired up to a day later).
             if (legDay && next.run?.isHardRun == true) p += 8.0
-            // A hard run the day before heavy legs blunts the lift; it matters most when strength is the goal.
+            // A hard run the day before heavy legs blunts the lift; it matters most when the gym comes first.
             if (legs(next.lift, templates) && s.run?.isHardRun == true) {
-                p += if (goal == Goal.STRENGTH || goal == Goal.MUSCLE) 8.0 else 4.0
+                p += when (emphasis) {
+                    Emphasis.GYM -> 8.0
+                    Emphasis.BALANCED -> 6.0
+                    Emphasis.RUN -> 4.0
+                }
             }
             // Lifting the same muscles on consecutive days.
             if (s.lift != null && next.lift != null) {
@@ -183,12 +198,12 @@ object Scheduler {
             val gaps = hardDays.zipWithNext { a, b -> b - a } + (hardDays.first() + 7 - hardDays.last())
             p += (gaps.max() - gaps.min()) * 0.5
         }
-        // Mild preference for lifting earlier in the week when the goal is strength.
-        if (goal == Goal.STRENGTH || goal == Goal.MUSCLE) p += liftDays.sum() * 0.01
+        // Mild preference for lifting earlier in the week when the gym comes first.
+        if (emphasis == Emphasis.GYM) p += liftDays.sum() * 0.01
         return p
     }
 
-    private fun notes(slots: List<Slot>, templates: List<Template>, goal: Goal): List<String> {
+    private fun notes(slots: List<Slot>, templates: List<Template>, aim: Aim): List<String> {
         val out = mutableListOf<String>()
         val liftDays = slots.filter { it.lift != null }
         if (liftDays.size >= 2) {
@@ -204,8 +219,11 @@ object Scheduler {
         }
         val long = slots.firstOrNull { it.run?.kind == SessionKind.RUN_LONG }
         if (long != null && long.day >= 6) out += "Длинная пробежка — в выходной, когда больше времени."
+        if (aim.seriousRunning && aim.lift != LiftFocus.GENERAL && hard.isNotEmpty() && slots.any { it.lift != null }) {
+            out += "Бег почти не мешает росту мышц и силы, если тяжёлые ноги и тяжёлый бег разнесены хотя бы на 6 часов, лучше на сутки."
+        }
         if (slots.any { it.lift != null && it.run != null }) {
-            out += if (goal == Goal.ENDURANCE) {
+            out += if (aim.emphasis == Emphasis.RUN) {
                 "В дни «бег + силовая» сначала бег. Если получится, разнеси их на 6+ часов."
             } else {
                 "В дни «силовая + лёгкий бег» за один заход — сначала силовая. Если можешь разнести, бег утром, зал через 6+ часов."

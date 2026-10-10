@@ -49,7 +49,7 @@ fun PlanScreen() {
     val weekNo = ProgramGenerator.weekIndex(p, today)
     ScrollScreen {
         Text(if (F.type.capsTitles) "ПЛАН" else "План", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
-        val goal = GOALS.firstOrNull { it.goal == p.goal }?.title ?: ""
+        val goal = aimTitle(p.aim)
         Text("$goal · ${when (p.experience) { Experience.NOVICE -> "новичок"; Experience.INTERMEDIATE -> "средний уровень"; Experience.ADVANCED -> "опытный" }}", style = T.secondary(15.sp))
 
         FCard(gap = 6.dp) {

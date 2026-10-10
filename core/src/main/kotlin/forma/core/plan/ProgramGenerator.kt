@@ -1,8 +1,10 @@
 package forma.core.plan
 
+import forma.core.model.Aim
+import forma.core.model.Emphasis
 import forma.core.model.Experience
-import forma.core.model.Goal
 import forma.core.model.Profile
+import forma.core.model.RunFocus
 import forma.core.model.RunLevel
 import forma.core.run.RunCaps
 import forma.core.run.RunState
@@ -13,24 +15,37 @@ import java.time.temporal.TemporalAdjusters
 
 object ProgramGenerator {
     fun generate(profile: Profile, today: LocalDate): Program {
+        val aim = profile.aim.normalized()
         val days = profile.trainingDays.filter { it in 1..7 }.toSet().ifEmpty { setOf(1, 3, 5) }
-        val mix = Scheduler.mix(profile.goal, days.size, profile.experience, profile.runLevel)
-        val templates = Templates.forWeek(profile.goal, profile.experience, mix.lifts)
+        val mix = Scheduler.mix(aim, days.size, profile.experience, profile.runLevel)
+        val templates = Templates.forWeek(aim, profile.experience, mix.lifts)
             .map { Templates.fit(it, profile.sessionMinutes) }
-        val week = Scheduler.schedule(days, mix, templates, profile.goal)
+        val week = Scheduler.schedule(days, mix, templates, aim)
         val block = when (profile.experience) {
             Experience.NOVICE -> 0
             Experience.INTERMEDIATE -> 5
             Experience.ADVANCED -> 4
         }
-        val caps = when (profile.goal) {
-            Goal.ENDURANCE -> RunCaps(easyMax = 60, longMax = 120)
-            Goal.HYBRID -> RunCaps(easyMax = 45, longMax = 90)
-            Goal.FITNESS -> RunCaps(easyMax = 45, longMax = 60)
-            Goal.STRENGTH, Goal.MUSCLE -> RunCaps(easyMax = 35, longMax = 50)
-        }
         val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        return Program(profile.goal, profile.experience, templates, week, block, caps, monday.toEpochDay())
+        return Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(aim), monday.toEpochDay(), aim)
+    }
+
+    /** How long easy and long runs may grow: by what running is for and how much of the week it gets. */
+    fun caps(aim: Aim): RunCaps {
+        val a = aim.normalized()
+        return when (a.run) {
+            RunFocus.NONE, RunFocus.HEALTH -> if (a.emphasis == Emphasis.RUN) RunCaps(45, 75) else RunCaps(40, 60)
+            RunFocus.ENDURANCE -> when (a.emphasis) {
+                Emphasis.RUN -> RunCaps(60, 150)
+                Emphasis.BALANCED -> RunCaps(50, 110)
+                Emphasis.GYM -> RunCaps(40, 90)
+            }
+            RunFocus.SPEED -> when (a.emphasis) {
+                Emphasis.RUN -> RunCaps(55, 100)
+                Emphasis.BALANCED -> RunCaps(45, 90)
+                Emphasis.GYM -> RunCaps(35, 70)
+            }
+        }
     }
 
     /** Starting point of the running ladders from what the person told about their running. */

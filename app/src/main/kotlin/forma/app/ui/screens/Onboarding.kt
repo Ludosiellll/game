@@ -33,28 +33,22 @@ import forma.app.ui.components.PrimaryButton
 import forma.app.ui.components.SectionLabel
 import forma.app.ui.theme.F
 import forma.app.ui.theme.T
+import forma.core.model.Aim
 import forma.core.model.Experience
-import forma.core.model.Goal
+import forma.core.model.LiftFocus
 import forma.core.model.Profile
+import forma.core.model.RunFocus
 import forma.core.model.RunLevel
 import forma.core.model.Sex
 import forma.core.plan.ProgramGenerator
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
-data class GoalInfo(val goal: Goal, val title: String, val text: String)
-
-val GOALS = listOf(
-    GoalInfo(Goal.HYBRID, "Сила и выносливость", "Зал и бег поровну: растут и веса, и темп"),
-    GoalInfo(Goal.STRENGTH, "Сила", "Больше вес в базовых упражнениях, бег для здоровья"),
-    GoalInfo(Goal.MUSCLE, "Мышцы", "Объём и форма, больше подходов"),
-    GoalInfo(Goal.ENDURANCE, "Бег и выносливость", "Бег в приоритете, зал для крепких ног и спины"),
-    GoalInfo(Goal.FITNESS, "Форма и здоровье", "Умеренно и регулярно, минус лишний вес"),
-)
-
 /** Profile editor shared by the first launch and the profile screen. */
 class ProfileDraft(p: Profile) {
-    var goal by mutableStateOf(p.goal)
+    var lift by mutableStateOf(p.aim.lift)
+    var run by mutableStateOf(p.aim.run)
+    var emphasis by mutableStateOf(p.aim.emphasis)
     var experience by mutableStateOf(p.experience)
     var runLevel by mutableStateOf(p.runLevel)
     var days by mutableStateOf(p.trainingDays)
@@ -66,10 +60,13 @@ class ProfileDraft(p: Profile) {
     var raceKm by mutableStateOf(p.raceMeters?.let { it / 1000.0 })
     var raceTime by mutableStateOf(p.raceSeconds?.let { forma.core.text.Ru.clock(it.toInt()) } ?: "")
 
+    val aim: Aim get() = Aim(lift, run, emphasis).normalized()
+
     fun toProfile(base: Profile): Profile {
         val race = raceKm?.let { km -> parseClock(raceTime)?.takeIf { it > 0 }?.let { km * 1000 to it } }
+        val aim = aim
         return base.copy(
-            goal = goal, experience = experience, runLevel = runLevel, trainingDays = days.ifEmpty { setOf(1, 3, 5) },
+            goal = aim.nearestGoal(), aim = aim, experience = experience, runLevel = runLevel, trainingDays = days.ifEmpty { setOf(1, 3, 5) },
             sessionMinutes = minutes, sex = sex,
             birthYear = birthYear.toIntOrNull()?.coerceIn(1930, LocalDate.now().year - 10) ?: base.birthYear,
             bodyWeightKg = parseNum(weight)?.coerceIn(30.0, 250.0) ?: base.bodyWeightKg,
@@ -142,17 +139,20 @@ private fun Option(title: String, text: String?, selected: Boolean, onClick: () 
 
 @Composable
 private fun GoalStep(d: ProfileDraft) {
-    StepTitle("Цель", "Под неё приложение соберёт неделю: сколько зала, сколько бега и в какие дни.")
-    GOALS.forEach { g -> Option(g.title, g.text, d.goal == g.goal) { d.goal = g.goal } }
+    StepTitle("Цель", "Выбери, зачем тебе зал и зачем бег — неделя соберётся под это сочетание: сколько чего и в какие дни.")
+    AimPicker(d)
 }
 
 @Composable
 private fun ExperienceStep(d: ProfileDraft) {
     StepTitle("Опыт", "От этого зависят стартовые веса, объём и как часто нужна разгрузка.")
-    SectionLabel("Зал")
-    Option("Новичок", "Меньше полугода регулярных тренировок", d.experience == Experience.NOVICE) { d.experience = Experience.NOVICE }
-    Option("Средний", "От полугода до двух лет", d.experience == Experience.INTERMEDIATE) { d.experience = Experience.INTERMEDIATE }
-    Option("Опытный", "Больше двух лет, знаю свои рабочие веса", d.experience == Experience.ADVANCED) { d.experience = Experience.ADVANCED }
+    if (d.lift != LiftFocus.NONE) {
+        SectionLabel("Зал")
+        Option("Новичок", "Меньше полугода регулярных тренировок", d.experience == Experience.NOVICE) { d.experience = Experience.NOVICE }
+        Option("Средний", "От полугода до двух лет", d.experience == Experience.INTERMEDIATE) { d.experience = Experience.INTERMEDIATE }
+        Option("Опытный", "Больше двух лет, знаю свои рабочие веса", d.experience == Experience.ADVANCED) { d.experience = Experience.ADVANCED }
+    }
+    if (d.run == RunFocus.NONE) return
     SectionLabel("Бег", Modifier.padding(top = 6.dp))
     Option("Пока не пробегу 20 минут", "Начнём с бега чередуя с ходьбой", d.runLevel == RunLevel.NONE) { d.runLevel = RunLevel.NONE }
     Option("Пробегу 20–30 минут", "Лёгкий бег есть, интервалов не было", d.runLevel == RunLevel.BASE) { d.runLevel = RunLevel.BASE }
