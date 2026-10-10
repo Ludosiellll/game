@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Цвет рисовой бумаги из интро: вместо белой вспышки при запуске. -->
-    <color name="paper">#ECE3CD</color>
-</resources>
