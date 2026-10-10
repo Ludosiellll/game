@@ -367,7 +367,13 @@ private fun RunCard(s: PlannedSession, today: LocalDate, done: Boolean, light: B
         Text(w.title, style = T.title(22.sp))
         Text(w.note, style = T.secondary(14.sp))
         val pace = w.segments.firstOrNull { it.kind == forma.core.run.SegmentKind.WORK || it.kind == forma.core.run.SegmentKind.RUN }?.pace
-        if (pace != null) NumText("Темп ${Ru.pace(pace.fast.toDouble())}–${Ru.pace(pace.slow.toDouble())} /км", style = T.number(14.sp, FontWeight.Bold).copy(color = F.c.text2))
+        val lapM = w.lapMeters
+        if (pace != null) NumText(
+            // On a stadium the lap time is what the runner checks.
+            if (lapM != null) "Круг ${Ru.lapRange(forma.core.run.Track.lapSec(pace.fast.toDouble(), lapM), forma.core.run.Track.lapSec(pace.slow.toDouble(), lapM))}"
+            else "Темп ${Ru.pace(pace.fast.toDouble())}–${Ru.pace(pace.slow.toDouble())} /км",
+            style = T.number(14.sp, FontWeight.Bold).copy(color = F.c.text2),
+        )
         if (done) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
