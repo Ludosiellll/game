@@ -58,7 +58,10 @@ class TrainingRepository(
     private val sessionLock = Mutex()
 
     /** Today by the repository's clock (tests and simulations move it). */
-    fun today(): LocalDate = java.time.Instant.ofEpochMilli(now()).atZone(zone()).toLocalDate()
+    fun today(): LocalDate = dayOf(now())
+
+    /** The local day of a moment ([ms] since the epoch). */
+    fun dayOf(ms: Long): LocalDate = java.time.Instant.ofEpochMilli(ms).atZone(zone()).toLocalDate()
 
     // ---------- profile and program ----------
 

@@ -451,7 +451,8 @@ fun RunDoneScreen(workoutId: Long) {
                         var r = tracker.result(android.os.SystemClock.elapsedRealtime(), rpe)
                         parseNum(testKm)?.let { km -> if (r.workDistanceM == null) r = r.copy(workDistanceM = km * 1000) }
                         val points = RunSession.points.map { TrackPointEntity(0, it.timeMs, it.lat, it.lon, it.accuracy) }
-                        saved = repo.saveRun(tracker.workout, r, RunSession.startedAtWall, points)
+                        // The day it was run: a run brought back after the app was closed may be saved days later.
+                        saved = repo.saveRun(tracker.workout, r, RunSession.startedAtWall, points, repo.dayOf(RunSession.startedAtWall))
                         RunSession.clear()
                     } finally {
                         saving = false
