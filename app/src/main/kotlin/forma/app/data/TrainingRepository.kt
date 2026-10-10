@@ -11,6 +11,7 @@ import forma.core.model.Profile
 import forma.core.model.Sex
 import forma.core.plan.CatchUp
 import forma.core.plan.PlannedSession
+import forma.core.plan.Program
 import forma.core.plan.ProgramGenerator
 import forma.core.plan.SessionKind
 import forma.core.run.RunOutcome
@@ -35,6 +36,9 @@ import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.max
 import kotlin.math.roundToInt
+
+/** Template id of sessions copied from a friend (not part of the own plan). */
+const val COPIED_TEMPLATE = "copy"
 
 class TrainingRepository(
     val db: FormaDatabase,
@@ -330,6 +334,57 @@ class TrainingRepository(
         if (setbacks.size >= 2 && !plannedSoon && !recent) {
             store.setLiftState(state.copy(reactiveDeloadStart = nextMonday.toEpochDay()))
         }
+    }
+
+    // ---------- from friends ----------
+
+    /** A friend's own exercises that this phone does not know yet, so their workouts and programs can be copied. */
+    suspend fun importExercises(list: List<Exercise>) {
+        val known = store.customNow().map { it.id }.toSet()
+        val missing = list.filter { it.custom && it.id !in known && Catalog.find(it.id) == null }
+        if (missing.isEmpty()) return
+        store.setCustom(store.customNow() + missing.map { it.copy(archived = false) })
+        refreshCustom()
+        onChange()
+    }
+
+    /**
+     * Starts a session with a friend's exercises, sets and rep ranges; the weights are this user's own (progress,
+     * estimate or the first-time search). Exercises this phone cannot know are left out. Null while another session runs.
+     */
+    suspend fun startCopiedLift(plan: LiftPlan, from: String, exercises: List<Exercise> = emptyList(), date: LocalDate = today()): Long? {
+        if (db.workouts().active() != null) return null
+        importExercises(exercises)
+        val specs = plan.items.map { it.slot }.filter { Catalog.find(it.exerciseId)?.archived == false }
+        if (specs.isEmpty()) return null
+        val items = specs.mapIndexed { i, spec -> buildItem(i, spec.copy(increment = null), date, deload = false) }
+        val copy = LiftPlan(COPIED_TEMPLATE, "${plan.title} · как у $from", items, deload = false)
+        return db.workouts().insert(
+            WorkoutEntity(
+                epochDay = date.toEpochDay(), kind = Kind.LIFT, templateId = COPIED_TEMPLATE, title = copy.title,
+                startedAt = now(), status = Status.ACTIVE, deload = false, planJson = AppJson.encodeToString(LiftPlan.serializer(), copy),
+            ),
+        )
+    }
+
+    /**
+     * Takes a friend's program as one's own: the same days, sessions and exercises; this user's weights, block length
+     * and progress per exercise. The profile follows (aim and days); changing the profile later builds one's own again.
+     */
+    suspend fun copyProgram(program: Program, from: String, exercises: List<Exercise> = emptyList()) {
+        importExercises(exercises)
+        val profile = store.profileNow() ?: return
+        val days = program.week.days.filter { it.sessions.isNotEmpty() }.map { it.day }.toSet().ifEmpty { profile.trainingDays }
+        val updated = profile.copy(aim = program.aim, goal = program.aim.nearestGoal(), trainingDays = days)
+        val own = ProgramGenerator.generate(updated, today())
+        store.setProfile(updated)
+        store.setProgram(
+            program.copy(
+                experience = profile.experience, blockWeeks = own.blockWeeks, startEpochDay = own.startEpochDay,
+                createdEpochDay = today().toEpochDay(), copiedFrom = from,
+            ),
+        )
+        onChange()
     }
 
     // ---------- daily life: pause, missed sessions, energy ----------

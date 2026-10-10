@@ -27,6 +27,7 @@ import forma.app.ui.LocalSettings
 import forma.app.ui.Navigator
 import forma.app.ui.Screen
 import forma.app.ui.screens.CalculatorsScreen
+import forma.app.ui.screens.FriendsUi
 import forma.app.ui.screens.LiftDoneScreen
 import forma.app.ui.screens.OnboardingScreen
 import forma.app.ui.screens.PlanScreen
@@ -300,5 +301,60 @@ class ScreensShotTest {
         runBlocking { repo.pause(monday.plusDays(4), monday.plusDays(17)) }
         shot("today-pause", monday.plusDays(6)) { TodayScreen() }
         shot("body", monday.plusDays(6)) { forma.app.ui.screens.BodyScreen() }
+    }
+
+    /** Friends with sample answers from the server: a code, a request, friends, their workouts, one friend's progress. */
+    @Test fun friends() {
+        val today = LocalDate.now()
+        val program = forma.core.plan.ProgramGenerator.generate(
+            Profile(aim = forma.core.model.Aim(forma.core.model.LiftFocus.MUSCLE, forma.core.model.RunFocus.ENDURANCE), experience = Experience.INTERMEDIATE, trainingDays = setOf(1, 3, 5, 6)),
+            today,
+        )
+        val t = program.templates.first()
+        val plan = forma.app.data.LiftPlan(t.id, t.title, t.slots.mapIndexed { i, s ->
+            forma.app.data.LiftItem(i, s, s.exerciseId, forma.core.model.Catalog[s.exerciseId].name,
+                forma.core.strength.Prescription(60.0, s.repMin, s.sets, s.rir, calibrate = false), emptyList(), 2.5)
+        }, deload = false)
+        val planJson = forma.app.data.AppJson.encodeToJsonElement(forma.app.data.LiftPlan.serializer(), plan)
+        fun sets(vararg x: Triple<String, Double, Int>) = x.mapIndexed { i, (id, w, r) -> forma.app.sync.FeedSet(id, i, w, r) }
+        val lift = forma.app.sync.FeedItem(
+            "u1", "Иван", "w1", today.minusDays(1).toString(), "LIFT", t.title, today.minusDays(1).toString() + "T18:00:00Z", 3300, 7,
+            plan = planJson, sets = sets(Triple(t.slots[0].exerciseId, 100.0, 8), Triple(t.slots[1].exerciseId, 80.0, 9), Triple(t.slots[2].exerciseId, 62.5, 10), Triple(t.slots[3].exerciseId, 12.0, 14)),
+        )
+        val run = forma.app.sync.FeedItem(
+            "u2", "Маша", "w2", today.minusDays(2).toString(), "RUN", "Длинная пробежка · 75 мин", today.minusDays(2).toString() + "T07:00:00Z", 4500,
+            run = forma.app.sync.FeedRun("LONG", 13800.0, 4490, 325.4, 46.0),
+        )
+        val ui = FriendsUi(
+            me = forma.app.sync.FriendMe("Денис", "K7QM4XZ2", shareActivity = true, shareBody = false),
+            friends = listOf(
+                forma.app.sync.Friend("u3", "Олег", "incoming"),
+                forma.app.sync.Friend("u1", "Иван", "friend", lastDay = today.minusDays(1).toString()),
+                forma.app.sync.Friend("u2", "Маша", "friend", lastDay = today.minusDays(2).toString()),
+                forma.app.sync.Friend("u4", "Аня", "outgoing"),
+            ),
+            feed = listOf(lift, run),
+        )
+        val progress = forma.app.sync.FriendProgress(
+            "Иван", shared = true,
+            stats = listOf(forma.app.sync.FriendStat("squat", 131.0, 135.0), forma.app.sync.FriendStat("bench", 102.0, 105.0)),
+            vdot = 45.0,
+            weeks = (0..7).map { forma.app.sync.FriendWeek(today.with(java.time.DayOfWeek.MONDAY).minusWeeks(it.toLong()).toString(), 2 + it % 2, 2) },
+            program = forma.app.data.AppJson.encodeToJsonElement(forma.core.plan.Program.serializer(), program),
+        )
+        var screen by mutableStateOf<@Composable () -> Unit>({})
+        compose.setContent {
+            CompositionLocalProvider(LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) {
+                    Box(Modifier.fillMaxSize().background(F.c.bg)) { screen() }
+                }
+            }
+        }
+        screen = { forma.app.ui.screens.FriendsContent(ui, {}, {}, {}, { _, _ -> }, {}, { _, _ -> }, {}, {}, {}, {}) }
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-friends.png")
+        screen = { forma.app.ui.screens.FriendContent("Иван", progress, listOf(lift), null, null, {}, {}, {}, {}) }
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-friend.png")
     }
 }

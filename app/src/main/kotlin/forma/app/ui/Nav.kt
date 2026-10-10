@@ -28,6 +28,8 @@ sealed interface Screen {
     /** [restore]: opened from the first launch to bring an existing copy back. */
     data class CloudSignIn(val restore: Boolean) : Screen
     data class Library(val mode: LibraryMode = LibraryMode.Browse) : Screen
+    data object Friends : Screen
+    data class Friend(val userId: String, val name: String) : Screen
 }
 
 /** What the exercise library was opened for. */

@@ -30,6 +30,8 @@ fun MoreScreen() {
             Hairline()
             ListRow("Упражнения", "Поиск, похожие, свои упражнения", icon = Ic.dumbbell, iconTint = F.c.accent) { nav.push(Screen.Library()) }
             Hairline()
+            ListRow("Друзья", "Прогресс друзей, их тренировки и программы", icon = Ic.user, iconTint = F.c.accent) { nav.push(Screen.Friends) }
+            Hairline()
             ListRow("Вес тела", "Записать и посмотреть график", icon = Ic.scale, iconTint = F.c.accent) { nav.push(Screen.Body) }
         }
         FCard(gap = 0.dp) {

@@ -97,6 +97,9 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
 
     private val engine = client?.let { SyncEngine(SupabaseApi(it), repo.db, repo.store) }
 
+    /** Friends through the server functions; null when this build has no cloud. */
+    val friends: FriendsApi? = client?.let { c -> SupabaseFriendsApi(c) { currentUser(c) ?: throw NotSignedInException() } }
+
     init {
         val c = client
         if (c == null) {

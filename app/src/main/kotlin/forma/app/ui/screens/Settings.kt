@@ -121,7 +121,7 @@ fun SettingsScreen() {
 }
 
 @Composable
-private fun Toggle(title: String, subtitle: String, value: Boolean, onChange: (Boolean) -> Unit) {
+fun Toggle(title: String, subtitle: String, value: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = T.body(15.sp, FontWeight.SemiBold))
