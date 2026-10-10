@@ -89,7 +89,9 @@ fun PlanScreen() {
                                 if (s.kind == SessionKind.LIFT) {
                                     Text(sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
                                 } else {
-                                    val w by produceState<RunWorkout?>(null, s.kind) { value = repo.runFor(s.kind, today) }
+                                    // Each row on its own date this week: an easy run on a lifting day is shorter.
+                                    val date = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).plusDays(day - 1L)
+                                    val w by produceState<RunWorkout?>(null, s.kind, date) { value = repo.runFor(s.kind, date) }
                                     Text(w?.title ?: sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
                                 }
                             }

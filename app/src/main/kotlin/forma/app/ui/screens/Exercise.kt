@@ -84,7 +84,8 @@ fun ExerciseScreen(exerciseId: String) {
                     if (i > 0) Hairline()
                     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
                         Text("${Ru.reps(r)} до отказа", style = T.body(14.sp), modifier = Modifier.weight(1f))
-                        NumText("${Ru.kg((OneRm.loadFor(e1rm, r) / ex.step).roundToInt() * ex.step)} кг", style = T.number(14.sp, FontWeight.Bold))
+                        // Down to the step: "you can do it" must not promise more than the estimate.
+                        NumText("${Ru.kg(kotlin.math.floor(OneRm.loadFor(e1rm, r) / ex.step + 1e-9) * ex.step)} кг", style = T.number(14.sp, FontWeight.Bold))
                     }
                 }
             }
