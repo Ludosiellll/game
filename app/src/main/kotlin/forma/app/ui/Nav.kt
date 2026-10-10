@@ -24,6 +24,9 @@ sealed interface Screen {
     data object Settings : Screen
     data object Profile : Screen
     data object Body : Screen
+    data object Cloud : Screen
+    /** [restore]: opened from the first launch to bring an existing copy back. */
+    data class CloudSignIn(val restore: Boolean) : Screen
 }
 
 class Navigator(start: Screen) {

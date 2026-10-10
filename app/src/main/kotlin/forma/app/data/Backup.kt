@@ -44,10 +44,17 @@ class BackupManager(private val repo: TrainingRepository) {
             ?: error("Не удалось открыть файл")
     }
 
-    /** Replaces all data with the file's content. Returns the number of workouts restored. */
+    /**
+     * Replaces the data on the phone with the file's content. Returns the number of workouts restored.
+     * With the cloud on, the next sync uploads the file's rows and brings back cloud rows the file lacks:
+     * restoring an old file never deletes anything from the cloud.
+     */
     suspend fun import(context: Context, uri: Uri): Int {
         val text = context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: error("Не удалось прочитать файл")
-        val b = AppJson.decodeFromString(Backup.serializer(), text)
+        return restore(AppJson.decodeFromString(Backup.serializer(), text))
+    }
+
+    suspend fun restore(b: Backup): Int {
         repo.db.backup().replaceAll(b.workouts, b.sets, b.runs, b.points, b.slots, b.stats, b.bodyWeights)
         val st = repo.store
         b.profile?.let { st.setProfile(it) }
@@ -55,6 +62,8 @@ class BackupManager(private val repo: TrainingRepository) {
         b.runState?.let { st.setRunState(it) }
         st.setSettings(b.settings)
         st.setLiftState(b.liftState)
+        repo.db.sync().reset()
+        repo.notifyChanged()
         return b.workouts.size
     }
 }

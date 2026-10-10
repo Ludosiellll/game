@@ -16,6 +16,10 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+
+        // Cloud copy (Supabase). The publishable key is public by design: row level security protects the data.
+        buildConfigField("String", "SUPABASE_URL", "\"${providers.gradleProperty("forma.supabase.url").getOrElse("")}\"")
+        buildConfigField("String", "SUPABASE_KEY", "\"${providers.gradleProperty("forma.supabase.key").getOrElse("")}\"")
     }
 
     buildTypes {
@@ -68,6 +72,11 @@ dependencies {
     implementation(libs.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(platform(libs.supabase.bom))
+    implementation(libs.supabase.auth)
+    implementation(libs.supabase.postgrest)
+    implementation(libs.ktor.client.okhttp)
+    implementation(libs.work.runtime)
 
     testImplementation(libs.junit)
     testImplementation(kotlin("test-junit"))
@@ -77,6 +86,7 @@ dependencies {
     testImplementation(libs.roborazzi.junit.rule)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.junit)
+    testImplementation(libs.work.testing)
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.test.manifest)

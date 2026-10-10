@@ -52,6 +52,7 @@ object Ic {
     val calc = stroke("calc", "M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M8 7h8M8 12h1M12 12h1M16 12h0M8 16h1M12 16h1M16 16h0")
     val list = stroke("list", "M9 6h11M9 12h11M9 18h11M4.5 6h0M4.5 12h0M4.5 18h0", width = 2.4f)
     val gear = stroke("gear", "M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0z", "M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7")
+    val cloud = stroke("cloud", "M7.5 18.5h9.8a3.9 3.9 0 0 0 .5-7.77A5.6 5.6 0 0 0 7.1 9.3a4.6 4.6 0 0 0 .4 9.2z")
     val user = stroke("user", "M16 8a4 4 0 1 1-8 0a4 4 0 1 1 8 0z", "M4.5 20c1.2-3.6 4-5.5 7.5-5.5s6.3 1.9 7.5 5.5")
     val trash = stroke("trash", "M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3")
     val swap = stroke("swap", "M7 7h12l-3-3M17 17H5l3 3")

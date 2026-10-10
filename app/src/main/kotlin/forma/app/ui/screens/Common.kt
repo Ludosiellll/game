@@ -85,6 +85,39 @@ fun NumberField(
     }
 }
 
+/** Text input in the look's style (email and the like). */
+@Composable
+fun TextInput(
+    value: String,
+    onChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    keyboard: KeyboardType = KeyboardType.Text,
+    placeholder: String = "",
+    maxLength: Int = 254,
+    enabled: Boolean = true,
+    secret: Boolean = false,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, style = T.secondary(13.sp))
+        val shape = RoundedCornerShape(F.shape.radiusSmall + 2.dp)
+        Box(
+            Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(shape).background(F.c.surface)
+                .border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape).padding(horizontal = 14.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, style = T.body(17.sp).copy(color = F.c.text3))
+            BasicTextField(
+                value, { onChange(it.take(maxLength)) }, singleLine = true, enabled = enabled,
+                textStyle = T.body(17.sp), cursorBrush = SolidColor(F.c.accent),
+                keyboardOptions = KeyboardOptions(keyboardType = if (secret) KeyboardType.Password else keyboard, autoCorrectEnabled = false),
+                visualTransformation = if (secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
 fun parseNum(s: String): Double? = s.replace(',', '.').trim().toDoubleOrNull()
 
 /** "25:30" or "1:45:00" → seconds. */

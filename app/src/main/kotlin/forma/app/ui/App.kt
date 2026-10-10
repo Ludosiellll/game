@@ -42,8 +42,11 @@ import androidx.core.view.WindowCompat
 import forma.app.data.Settings
 import forma.app.data.TrainingRepository
 import forma.app.ui.components.Hairline
+import forma.app.sync.Cloud
 import forma.app.ui.screens.BodyScreen
 import forma.app.ui.screens.CalculatorsScreen
+import forma.app.ui.screens.CloudScreen
+import forma.app.ui.screens.CloudSignInScreen
 import forma.app.ui.screens.ExerciseScreen
 import forma.app.ui.screens.HistoryItemScreen
 import forma.app.ui.screens.HistoryScreen
@@ -69,6 +72,9 @@ import forma.app.ui.theme.labelText
 val LocalRepo = staticCompositionLocalOf<TrainingRepository> { error("repository not provided") }
 val LocalNav = staticCompositionLocalOf<Navigator> { error("navigator not provided") }
 val LocalSettings = staticCompositionLocalOf { Settings() }
+
+/** Null in previews and tests: cloud screens then show "not configured". */
+val LocalCloud = staticCompositionLocalOf<Cloud?> { null }
 
 @Composable
 fun AppRoot() {
@@ -125,6 +131,8 @@ private fun ScreenFor(screen: Screen) {
         Screen.Settings -> SettingsScreen()
         Screen.Profile -> ProfileScreen()
         Screen.Body -> BodyScreen()
+        Screen.Cloud -> CloudScreen()
+        is Screen.CloudSignIn -> CloudSignInScreen(screen.restore)
     }
 }
 

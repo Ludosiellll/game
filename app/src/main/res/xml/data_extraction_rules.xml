@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android backup and phone-to-phone transfer (API 31+): a new phone signs in to the cloud again. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="forma_auth.xml" />
+        <exclude domain="sharedpref" path="forma_sync.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="forma_auth.xml" />
+        <exclude domain="sharedpref" path="forma_sync.xml" />
+    </device-transfer>
+</data-extraction-rules>

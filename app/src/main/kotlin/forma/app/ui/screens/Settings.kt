@@ -113,10 +113,10 @@ fun SettingsScreen() {
                 GhostButton("Сохранить", { exporter.launch("forma-${LocalDate.now()}.json") }, Modifier.weight(1f))
                 GhostButton("Восстановить", { importer.launch(arrayOf("application/json", "text/plain", "*/*")) }, Modifier.weight(1f))
             }
-            Text("Восстановление заменяет все текущие данные.", style = T.secondary(12.sp))
+            Text("Восстановление заменяет данные на телефоне. Если включено облако, копия из облака потом добавится к ним.", style = T.secondary(12.sp))
         }
         message?.let { Banner(it, F.c.accent) }
-        Text("Форма ${BuildConfig.VERSION_NAME}. Шрифты Manrope, Onest, Unbounded, Sofia Sans — SIL Open Font License.", style = T.secondary(12.sp))
+        Text("Форма ${BuildConfig.VERSION_NAME}. Шрифты Manrope, Onest, Rubik, JetBrains Mono, Sofia Sans Extra Condensed — SIL Open Font License.", style = T.secondary(12.sp))
     }
 }
 

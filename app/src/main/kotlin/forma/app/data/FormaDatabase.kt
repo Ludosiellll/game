@@ -9,6 +9,7 @@ import androidx.room.RoomDatabase
     entities = [
         WorkoutEntity::class, SetEntity::class, RunEntity::class, TrackPointEntity::class,
         SlotStateEntity::class, ExerciseStatEntity::class, BodyWeightEntity::class,
+        SyncRowEntity::class, SyncCursorEntity::class,
     ],
     version = 1,
     exportSchema = true,
@@ -19,6 +20,7 @@ abstract class FormaDatabase : RoomDatabase() {
     abstract fun runs(): RunDao
     abstract fun state(): StateDao
     abstract fun backup(): BackupDao
+    abstract fun sync(): SyncDao
 
     companion object {
         fun create(context: Context, inMemory: Boolean = false): FormaDatabase {

@@ -1,10 +1,12 @@
 package forma.app.data
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import androidx.datastore.preferences.preferencesDataStoreFile
 import forma.core.model.Profile
 import forma.core.plan.Program
 import forma.core.run.RunState
@@ -41,9 +43,17 @@ data class LiftState(
     val reactiveDeloadStart: Long? = null,
 )
 
-private val Context.store by preferencesDataStore("forma")
+/** One DataStore per file and process (DataStore forbids two instances on the same file). */
+private val stores = mutableMapOf<String, DataStore<Preferences>>()
 
-class SettingsStore(private val context: Context) {
+private fun Context.namedStore(name: String): DataStore<Preferences> = synchronized(stores) {
+    stores.getOrPut(name) { PreferenceDataStoreFactory.create { applicationContext.preferencesDataStoreFile(name) } }
+}
+
+/** Profile, program, running state and settings as JSON documents. [name] other than the default is for tests. */
+class SettingsStore(context: Context, name: String = "forma") {
+    private val store = context.namedStore(name)
+
     private object Keys {
         val profile = stringPreferencesKey("profile")
         val program = stringPreferencesKey("program")
@@ -52,11 +62,39 @@ class SettingsStore(private val context: Context) {
         val lift = stringPreferencesKey("lift_state")
     }
 
+    /** Documents copied to the cloud, by cloud key, with the type that must decode them. */
+    private val synced: Map<String, Pair<Preferences.Key<String>, KSerializer<*>>> = mapOf(
+        "profile" to (Keys.profile to Profile.serializer()),
+        "program" to (Keys.program to Program.serializer()),
+        "run_state" to (Keys.runState to RunState.serializer()),
+        "settings" to (Keys.settings to Settings.serializer()),
+        "lift_state" to (Keys.lift to LiftState.serializer()),
+    )
+
     private fun <T> read(key: Preferences.Key<String>, s: KSerializer<T>): Flow<T?> =
-        context.store.data.map { p -> p[key]?.let { runCatching { AppJson.decodeFromString(s, it) }.getOrNull() } }
+        store.data.map { p -> p[key]?.let { runCatching { AppJson.decodeFromString(s, it) }.getOrNull() } }
 
     private suspend fun <T> write(key: Preferences.Key<String>, s: KSerializer<T>, value: T) {
-        context.store.edit { it[key] = AppJson.encodeToString(s, value) }
+        store.edit { it[key] = AppJson.encodeToString(s, value) }
+    }
+
+    /** Raw JSON of every stored document that the cloud copies. */
+    suspend fun syncDocs(): Map<String, String> {
+        val p = store.data.first()
+        return synced.mapNotNull { (cloudKey, v) -> p[v.first]?.let { cloudKey to it } }.toMap()
+    }
+
+    /** Stores a document that came from the cloud. False when the key is unknown or the JSON does not fit the type. */
+    suspend fun putSyncDoc(cloudKey: String, json: String): Boolean {
+        val (key, serializer) = synced[cloudKey] ?: return false
+        if (runCatching { AppJson.decodeFromString(serializer, json) }.isFailure) return false
+        store.edit { it[key] = json }
+        return true
+    }
+
+    suspend fun removeSyncDoc(cloudKey: String) {
+        val key = synced[cloudKey]?.first ?: return
+        store.edit { it.remove(key) }
     }
 
     val profile: Flow<Profile?> = read(Keys.profile, Profile.serializer())
@@ -78,6 +116,6 @@ class SettingsStore(private val context: Context) {
     suspend fun setSettings(s: Settings) = write(Keys.settings, Settings.serializer(), s)
 
     suspend fun clear() {
-        context.store.edit { it.clear() }
+        store.edit { it.clear() }
     }
 }

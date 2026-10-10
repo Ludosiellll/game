@@ -21,9 +21,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import forma.app.ui.LocalCloud
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.Screen
+import forma.app.ui.components.Banner
 import forma.app.ui.components.Chip
 import forma.app.ui.components.FCard
 import forma.app.ui.components.GhostButton
@@ -85,12 +87,18 @@ fun OnboardingScreen() {
     val draft = remember { ProfileDraft(Profile()) }
     var step by remember { mutableIntStateOf(0) }
     val last = 4
+    val cloud = LocalCloud.current
     ScrollScreen(gap = 18.dp, bottomInset = true) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
             repeat(last + 1) { i ->
                 androidx.compose.foundation.layout.Box(
                     Modifier.weight(1f).height(4.dp).background(if (i <= step) F.c.accent else F.c.line),
                 )
+            }
+        }
+        if (step == 0 && cloud?.configured == true) {
+            Banner("Уже тренировался с «Формой»? Войди и восстанови данные из облака", F.c.accent, icon = forma.app.ui.theme.Ic.cloud) {
+                nav.push(Screen.CloudSignIn(restore = true))
             }
         }
         when (step) {

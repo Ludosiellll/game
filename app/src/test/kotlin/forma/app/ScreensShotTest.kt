@@ -196,11 +196,26 @@ class ScreensShotTest {
             "exercise" to { ExerciseScreen("squat") },
             "calc" to { CalculatorsScreen() },
             "onboarding" to { OnboardingScreen() },
+            "more" to { forma.app.ui.screens.MoreScreen() },
+            "cloud" to {
+                forma.app.ui.screens.CloudContent(
+                    forma.app.sync.CloudState(configured = true, ready = true, email = "denis@example.com", lastSyncAt = System.currentTimeMillis() - 2 * 3_600_000),
+                    null, {}, {}, {}, {},
+                )
+            },
+            "cloudoff" to { forma.app.ui.screens.CloudContent(forma.app.sync.CloudState(configured = true, ready = true), null, {}, {}, {}, {}) },
+            "cloudin" to {
+                forma.app.ui.screens.CloudSignInContent(
+                    restore = false, configured = true, mode = forma.app.ui.screens.SignInMode.SIGN_UP, email = "denis@example.com",
+                    password = "secret-pass", busy = false, error = null, progress = null, result = null,
+                    onEmail = {}, onPassword = {}, onMode = {}, onSubmit = {}, onBack = {},
+                )
+            },
         )
         for (l in Looks.all) {
             look = l.id
             for ((name, s) in screens) {
-                if (l.id != "carbon" && name in setOf("runsetup", "exercise", "calc", "onboarding", "liftdone")) continue
+                if (l.id != "carbon" && name in setOf("runsetup", "exercise", "calc", "onboarding", "liftdone", "more", "cloudoff")) continue
                 screen = s
                 settle()
                 compose.onRoot().captureRoboImage("build/shots/${l.id}-$name.png")

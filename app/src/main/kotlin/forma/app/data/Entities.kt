@@ -16,7 +16,10 @@ object Status {
     const val DONE = "DONE"
 }
 
-@Entity(tableName = "workout", indices = [Index("epochDay"), Index("status")])
+/** Global id for rows that other devices must recognise (the local Long ids differ per phone). */
+fun newUid(): String = java.util.UUID.randomUUID().toString()
+
+@Entity(tableName = "workout", indices = [Index("epochDay"), Index("status"), Index("uid", unique = true)])
 @Serializable
 data class WorkoutEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -36,11 +39,12 @@ data class WorkoutEntity(
     /** What changed after the session (JSON list of SlotReport / RunOutcome). */
     val summaryJson: String? = null,
     val note: String? = null,
+    val uid: String = newUid(),
 )
 
 @Entity(
     tableName = "set_entry",
-    indices = [Index("workoutId"), Index("exerciseId")],
+    indices = [Index("workoutId"), Index("exerciseId"), Index("uid", unique = true)],
     foreignKeys = [ForeignKey(WorkoutEntity::class, ["id"], ["workoutId"], onDelete = ForeignKey.CASCADE)],
 )
 @Serializable
@@ -57,6 +61,7 @@ data class SetEntity(
     val targetWeight: Double?,
     val targetReps: Int?,
     val doneAt: Long,
+    val uid: String = newUid(),
 )
 
 @Entity(
@@ -112,3 +117,11 @@ data class ExerciseStatEntity(
 @Entity(tableName = "body_weight")
 @Serializable
 data class BodyWeightEntity(@PrimaryKey val epochDay: Long, val kg: Double)
+
+/** Fingerprint of a row as the cloud last saw it (after an upload or a download). */
+@Entity(tableName = "sync_row", primaryKeys = ["tbl", "key"])
+data class SyncRowEntity(val tbl: String, val key: String, val hash: String)
+
+/** Server time of the newest change downloaded per cloud table. */
+@Entity(tableName = "sync_cursor")
+data class SyncCursorEntity(@PrimaryKey val tbl: String, val cursor: String)

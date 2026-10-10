@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "fbb8be9cb5052636ffc7395952b070d3",
+    "identityHash": "a80fefd6c865e1d522907c74b80d7872",
     "entities": [
       {
         "tableName": "workout",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `epochDay` INTEGER NOT NULL, `kind` TEXT NOT NULL, `templateId` TEXT, `title` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER, `status` TEXT NOT NULL, `rpe` INTEGER, `durationSec` INTEGER, `load` REAL, `deload` INTEGER NOT NULL, `planJson` TEXT, `summaryJson` TEXT, `note` TEXT)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `epochDay` INTEGER NOT NULL, `kind` TEXT NOT NULL, `templateId` TEXT, `title` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER, `status` TEXT NOT NULL, `rpe` INTEGER, `durationSec` INTEGER, `load` REAL, `deload` INTEGER NOT NULL, `planJson` TEXT, `summaryJson` TEXT, `note` TEXT, `uid` TEXT NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -89,6 +89,12 @@
             "fieldPath": "note",
             "columnName": "note",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -115,12 +121,21 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_workout_status` ON `${TABLE_NAME}` (`status`)"
+          },
+          {
+            "name": "index_workout_uid",
+            "unique": true,
+            "columnNames": [
+              "uid"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_workout_uid` ON `${TABLE_NAME}` (`uid`)"
           }
         ]
       },
       {
         "tableName": "set_entry",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `workoutId` INTEGER NOT NULL, `exerciseId` TEXT NOT NULL, `slotKey` TEXT NOT NULL, `position` INTEGER NOT NULL, `weight` REAL NOT NULL, `reps` INTEGER NOT NULL, `rir` INTEGER, `targetWeight` REAL, `targetReps` INTEGER, `doneAt` INTEGER NOT NULL, FOREIGN KEY(`workoutId`) REFERENCES `workout`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `workoutId` INTEGER NOT NULL, `exerciseId` TEXT NOT NULL, `slotKey` TEXT NOT NULL, `position` INTEGER NOT NULL, `weight` REAL NOT NULL, `reps` INTEGER NOT NULL, `rir` INTEGER, `targetWeight` REAL, `targetReps` INTEGER, `doneAt` INTEGER NOT NULL, `uid` TEXT NOT NULL, FOREIGN KEY(`workoutId`) REFERENCES `workout`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "id",
@@ -184,6 +199,12 @@
             "columnName": "doneAt",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -210,6 +231,15 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_set_entry_exerciseId` ON `${TABLE_NAME}` (`exerciseId`)"
+          },
+          {
+            "name": "index_set_entry_uid",
+            "unique": true,
+            "columnNames": [
+              "uid"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_set_entry_uid` ON `${TABLE_NAME}` (`uid`)"
           }
         ],
         "foreignKeys": [
@@ -480,11 +510,66 @@
             "epochDay"
           ]
         }
+      },
+      {
+        "tableName": "sync_row",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`tbl` TEXT NOT NULL, `key` TEXT NOT NULL, `hash` TEXT NOT NULL, PRIMARY KEY(`tbl`, `key`))",
+        "fields": [
+          {
+            "fieldPath": "tbl",
+            "columnName": "tbl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hash",
+            "columnName": "hash",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "tbl",
+            "key"
+          ]
+        }
+      },
+      {
+        "tableName": "sync_cursor",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`tbl` TEXT NOT NULL, `cursor` TEXT NOT NULL, PRIMARY KEY(`tbl`))",
+        "fields": [
+          {
+            "fieldPath": "tbl",
+            "columnName": "tbl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cursor",
+            "columnName": "cursor",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "tbl"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fbb8be9cb5052636ffc7395952b070d3')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'a80fefd6c865e1d522907c74b80d7872')"
     ]
   }
 }

@@ -39,6 +39,8 @@ class TrainingRepository(
     val store: SettingsStore,
     private val now: () -> Long = System::currentTimeMillis,
     private val zone: ZoneId = ZoneId.systemDefault(),
+    /** Called after anything worth copying to the cloud has been saved. */
+    private val onChange: () -> Unit = {},
 ) {
     fun today(): LocalDate = LocalDate.now(zone)
 
@@ -49,6 +51,7 @@ class TrainingRepository(
         store.setProgram(ProgramGenerator.generate(profile, today()))
         store.setRunState(ProgramGenerator.initialRunState(profile))
         db.state().upsertBodyWeight(BodyWeightEntity(today().toEpochDay(), profile.bodyWeightKg))
+        onChange()
     }
 
     /** Saves the profile and rebuilds the plan. Lifting progress is kept per exercise and rep range. */
@@ -67,11 +70,13 @@ class TrainingRepository(
             )
         }
         if (old?.bodyWeightKg != profile.bodyWeightKg) logBodyWeight(profile.bodyWeightKg)
+        onChange()
     }
 
     suspend fun logBodyWeight(kg: Double) {
         db.state().upsertBodyWeight(BodyWeightEntity(today().toEpochDay(), kg))
         store.profileNow()?.let { if (it.bodyWeightKg != kg) store.setProfile(it.copy(bodyWeightKg = kg)) }
+        onChange()
     }
 
     private fun exercise(id: String, settings: Settings): Exercise {
@@ -197,6 +202,7 @@ class TrainingRepository(
             ),
         )
         checkReactiveDeload(LocalDate.ofEpochDay(w.epochDay))
+        onChange()
         return summary
     }
 
@@ -281,6 +287,7 @@ class TrainingRepository(
             ),
         )
         if (points.isNotEmpty()) db.runs().insertPoints(points.map { it.copy(workoutId = id) })
+        onChange()
         return id to summary
     }
 
@@ -326,6 +333,9 @@ class TrainingRepository(
             ?.reports?.firstOrNull { it.exerciseId == exerciseId }
         return sets to report
     }
+
+    /** Data changed outside the usual paths (a restored backup file). */
+    fun notifyChanged() = onChange()
 
     suspend fun hasData(): Boolean = db.workouts().allDone().isNotEmpty()
 
