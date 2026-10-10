@@ -60,6 +60,13 @@ class CatalogTest {
         assertEquals("pullup", first("подтягивания со своим весом"))
         assertEquals("pullup", first("подтягивания без веса"))
         assertEquals("pullup", first("подтягивания на турнике"))
+        assertEquals("pullup", first("подтягивания с  доп весом"))
+        assertEquals("pullup", first("подтягивания с поясом"))
+        // A word no pull-up has ("гантелей" belongs to dumbbell lifts): the exercise the first words name still shows.
+        assertEquals("pullup", first("подтягивания с гантелей"))
+        assertEquals("pushup", first("отжимания с весом"))
+        assertEquals("belt_squat", first("присед с поясом"))
+        assertEquals("machine_triceps_ext", first("разгибания на трицепс в тренажере"))
         assertEquals("leg_press", first("жим ногами в тренажёре"))
         assertEquals("bench", first("жим лёжа со штангой"))
         // A real exercise word still has to match: no barbell pull-ups.

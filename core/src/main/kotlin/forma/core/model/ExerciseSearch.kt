@@ -81,15 +81,19 @@ object ExerciseSearch {
     fun score(ex: Exercise, query: String): Int = score(fields(ex), normalize(query), emptySet())
 
     /** Like [score], but the [optional] words only add to it when they match; the rest have to. */
+    /** The whole of [q] as a name or a synonym: an exact synonym ("присед") beats a name that merely starts so. */
+    private fun whole(f: Fields, q: String): Int = maxOf(
+        if (f.nameText == q) 200 else 0,
+        if (f.aliasTexts.any { it == q }) 150 else 0,
+        if (f.nameText.startsWith(q)) 120 else 0,
+        if (f.aliasTexts.any { it.startsWith(q) }) 90 else 0,
+    )
+
     private fun score(f: Fields, q: String, optional: Set<String>): Int {
         if (q.isEmpty()) return 1
-        // The whole query as a name or a synonym: an exact synonym ("присед") beats a name that merely starts so.
-        var total = maxOf(
-            if (f.nameText == q) 200 else 0,
-            if (f.aliasTexts.any { it == q }) 150 else 0,
-            if (f.nameText.startsWith(q)) 120 else 0,
-            if (f.aliasTexts.any { it.startsWith(q) }) 90 else 0,
-        )
+        // The query as typed, or its words that matter ("отжимания с весом" is "отжимания").
+        val core = q.split(' ').filter { it !in optional }.joinToString(" ")
+        var total = maxOf(whole(f, q), if (core.isNotEmpty()) whole(f, core) else 0)
         var matched = false
         for (t in q.split(' ')) {
             // Little words ("в", "на", "со") help no exercise more than another: they never add to the score.
@@ -111,7 +115,9 @@ object ExerciseSearch {
     /** Words about the load ("со своим весом", "без веса", "с отягощением"): they say how, not which exercise. */
     private val LOAD_WORDS = setOf(
         "свой", "своим", "своего", "собственный", "собственным", "собственного", "собственном", "вес", "весом", "веса",
-        "без", "отягощение", "отягощением", "отягощения", "доп", "дополнительный", "дополнительным",
+        "без", "отягощение", "отягощением", "отягощения", "доп", "дополнительный", "дополнительным", "дополнительного",
+        "кг", "груз", "грузом", "утяжелитель", "утяжелителем", "утяжелителями", "утяжелителя", "пояс", "пояса", "поясом",
+        "поясе", "блин", "блином", "цепь", "цепью", "цепями", "жилет", "жилетом",
     )
 
     /**
@@ -136,9 +142,21 @@ object ExerciseSearch {
         if (normalize(query).isEmpty()) return candidates.sortedWith(compareBy<Exercise> { it.pattern.ordinal }.thenBy { it.name })
         val all = pool.associateWith(::fields)
         // What is optional is judged on the whole pool: a real exercise word with a filter that rules it out finds nothing.
-        val queries = listOf(query, fromLatinLayout(query)).map(::normalize).distinct().map { it to optionalWords(it, all.values.toList()) }
-        return candidates.mapNotNull { ex -> queries.maxOf { (q, opt) -> score(all.getValue(ex), q, opt) }.takeIf { it > 0 }?.let { ex to it } }
-            .sortedWith(compareByDescending<Pair<Exercise, Int>> { it.second }.thenBy { it.first.name.length })
-            .map { it.first }
+        var queries = listOf(query, fromLatinLayout(query)).map(::normalize).distinct().map { it to optionalWords(it, all.values.toList()) }
+        fun find() = candidates.mapNotNull { ex -> queries.maxOf { (q, opt) -> score(all.getValue(ex), q, opt) }.takeIf { it > 0 }?.let { ex to it } }
+        var found = find()
+        // No exercise has every word ("подтягивания с гантелей"): the first words say which exercise, the last ones how —
+        // let go of the last word, then the one before, while one is left.
+        while (found.isEmpty()) {
+            queries = queries.mapNotNull { (q, opt) ->
+                val required = q.split(' ').filter { it !in opt }
+                // Never down to filler alone ("со своим" finds nothing).
+                val rest = required.dropLast(1)
+                if (rest.none { !it.isShortWord() && it !in LOAD_WORDS }) null else q to opt + required.last()
+            }
+            if (queries.isEmpty()) break
+            found = find()
+        }
+        return found.sortedWith(compareByDescending<Pair<Exercise, Int>> { it.second }.thenBy { it.first.name.length }).map { it.first }
     }
 }
