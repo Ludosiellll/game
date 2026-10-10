@@ -47,6 +47,8 @@ data class Program(
     /** Monday of the first week, epoch day. */
     val startEpochDay: Long,
     val aim: Aim = goal.aim(),
+    /** The day this program was made (catch-up ignores what was planned before it). */
+    val createdEpochDay: Long? = null,
 ) {
     fun template(id: String): Template = templates.first { it.id == id }
 }

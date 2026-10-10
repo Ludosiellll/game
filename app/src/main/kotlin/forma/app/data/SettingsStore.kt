@@ -34,6 +34,10 @@ data class Settings(
     val keepScreenOn: Boolean = true,
     /** Per-exercise load step overrides, kg. */
     val steps: Map<String, Double> = emptyMap(),
+    /** Training paused (vacation, illness) from this epoch day … */
+    val pauseFrom: Long? = null,
+    /** … to this one, inclusive. */
+    val pauseUntil: Long? = null,
 )
 
 /** Lifting state that is not per exercise. */

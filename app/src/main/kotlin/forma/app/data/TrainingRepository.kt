@@ -9,6 +9,8 @@ import forma.core.model.Experience
 import forma.core.model.LoadKind
 import forma.core.model.Profile
 import forma.core.model.Sex
+import forma.core.plan.CatchUp
+import forma.core.plan.PlannedSession
 import forma.core.plan.ProgramGenerator
 import forma.core.plan.SessionKind
 import forma.core.run.RunOutcome
@@ -247,9 +249,87 @@ class TrainingRepository(
         }
     }
 
+    // ---------- daily life: pause, missed sessions, energy ----------
+
+    /** The last pause window stays in the settings: its days are never counted as missed. */
+    fun paused(s: Settings, day: LocalDate): Boolean {
+        val until = s.pauseUntil ?: return false
+        return day.toEpochDay() in (s.pauseFrom ?: until)..until
+    }
+
+    private fun mondayOf(day: LocalDate): LocalDate = day.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+
+    /**
+     * Vacation or illness from [from] to [until]: no sessions are expected. A week or more away is rest enough, so the
+     * lifting block starts anew in the week of return instead of putting a lighter week right after it. The first
+     * sessions back are lighter by themselves (layoff and comeback rules).
+     */
+    suspend fun pause(from: LocalDate, until: LocalDate) {
+        store.setSettings(store.settingsNow().copy(pauseFrom = from.toEpochDay(), pauseUntil = until.toEpochDay()))
+        if (until.toEpochDay() - from.toEpochDay() + 1 >= 7) restartBlock(until.plusDays(1))
+        onChange()
+    }
+
+    /** Back earlier than planned: the pause ends yesterday. */
+    suspend fun resume(day: LocalDate = today()) {
+        val s = store.settingsNow()
+        val from = s.pauseFrom ?: return
+        if (!paused(s, day)) return
+        store.setSettings(s.copy(pauseUntil = day.toEpochDay() - 1))
+        // A long pause moved the block to the planned week of return: bring it to the actual one.
+        val movedAhead = (store.programNow()?.startEpochDay ?: Long.MIN_VALUE) > mondayOf(day).toEpochDay()
+        if (day.toEpochDay() - from >= 7 || movedAhead) restartBlock(day)
+        onChange()
+    }
+
+    private suspend fun restartBlock(back: LocalDate) {
+        val p = store.programNow() ?: return
+        store.setProgram(p.copy(startEpochDay = mondayOf(back).toEpochDay()))
+    }
+
+    /** What a finished workout stands for in the weekly plan. */
+    private fun asSession(w: WorkoutEntity): PlannedSession = when {
+        w.kind == Kind.LIFT -> PlannedSession(SessionKind.LIFT, w.templateId)
+        w.templateId == RunType.LONG.name -> PlannedSession(SessionKind.RUN_LONG)
+        w.templateId in setOf(RunType.INTERVALS.name, RunType.TEMPO.name, RunType.TEST.name) -> PlannedSession(SessionKind.RUN_QUALITY)
+        else -> PlannedSession(SessionKind.RUN_EASY)
+    }
+
+    /** A session missed earlier this week that fits [day] — never while paused, never from before the plan existed. */
+    suspend fun catchUp(day: LocalDate = today()): CatchUp.Suggestion? {
+        val program = store.programNow() ?: return null
+        val settings = store.settingsNow()
+        if (paused(settings, day)) return null
+        val monday = mondayOf(day)
+        val done = db.workouts().allDone().filter { it.epochDay in monday.toEpochDay()..monday.toEpochDay() + 6 }
+        val week = (1..7).map { d ->
+            val date = monday.plusDays(d - 1L)
+            val planned = if (paused(settings, date)) emptyList() else program.week.on(d)
+            CatchUp.Day(d, planned, done.filter { it.epochDay == date.toEpochDay() }.map(::asSession))
+        }
+        val first = program.createdEpochDay?.let { (it - monday.toEpochDay() + 1).toInt().coerceIn(1, 8) } ?: 1
+        return CatchUp.suggest(program, day.dayOfWeek.value, week, first)
+    }
+
+    /** Average training energy per week over the last four weeks (or since the first session), kcal. */
+    suspend fun trainingKcalPerWeek(kg: Double, day: LocalDate = today()): Double {
+        val all = db.workouts().allDone()
+        val first = all.minOfOrNull { it.epochDay } ?: return 0.0
+        val from = maxOf(day.toEpochDay() - 28, first)
+        val weeks = ((day.toEpochDay() - from) / 7.0).coerceIn(1.0, 4.0)
+        val ws = all.filter { it.epochDay in from until day.toEpochDay() }
+        val kcal = ws.sumOf { w ->
+            val minutes = (w.durationSec ?: 0) / 60.0
+            if (w.kind == Kind.LIFT) forma.core.body.Body.liftKcal(kg, minutes)
+            else db.runs().get(w.id)?.distanceM?.takeIf { it > 100 }?.let { forma.core.body.Body.runKcal(kg, it / 1000) }
+                ?: forma.core.body.Body.runKcalByTime(kg, minutes)
+        }
+        return kcal / weeks
+    }
+
     // ---------- running ----------
 
-    suspend fun runFor(kind: SessionKind, date: LocalDate = today()): RunWorkout {
+    suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false): RunWorkout {
         val saved = store.runStateNow()
         val st = RunPlan.withBreak(saved, date.toEpochDay())
         val program = store.programNow()
@@ -263,8 +343,9 @@ class TrainingRepository(
                 RunPlan.easy(if (liftDay) st.copy(easyMinutes = minOf(st.easyMinutes, 30)) else st, cutback)
             }
         }
-        val comeback = RunPlan.comebackNote(saved, date.toEpochDay()) ?: return w
-        return w.copy(note = "$comeback ${w.note}")
+        val planned = if (light) RunPlan.lighter(st, w) else w
+        val comeback = RunPlan.comebackNote(saved, date.toEpochDay()) ?: return planned
+        return planned.copy(note = "$comeback ${planned.note}")
     }
 
     /** A 12-minute test calibrates paces when they are unknown, and again every 8 weeks (not while coming back). */

@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -247,5 +248,55 @@ class ScreensShotTest {
         }
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-workoutfirst.png")
+    }
+
+    /** Daily life on a fixed calendar: a missed session on a free day, a bad day, a vacation, body estimates. */
+    @Test fun dailyLife() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = SettingsStore(ctx, "shots-life")
+        var now by mutableStateOf(at(LocalDate.of(2026, 10, 5), 9))
+        val repo = TrainingRepository(FormaDatabase.create(ctx, inMemory = true), store, now = { now })
+        val monday = LocalDate.of(2026, 10, 5)
+        runBlocking {
+            store.clear()
+            repo.completeOnboarding(
+                Profile(
+                    name = "Денис", goal = Goal.HYBRID, experience = Experience.INTERMEDIATE, runLevel = RunLevel.BASE,
+                    trainingDays = setOf(1, 3, 5, 6), bodyWeightKg = 80.0, heightCm = 182, birthYear = 1996,
+                ),
+            )
+            // Monday skipped; Wednesday's hard run done.
+            val wed = monday.plusDays(2)
+            now = at(wed, 7)
+            val q = repo.runFor(SessionKind.RUN_QUALITY, wed)
+            repo.saveRun(q, RunResult(1.0, 7, q.totalSeconds, distanceM = 7000.0), now, emptyList(), wed)
+        }
+        var screen by mutableStateOf<@Composable () -> Unit>({})
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) {
+                    Box(Modifier.fillMaxSize().background(F.c.bg)) { screen() }
+                }
+            }
+        }
+        fun shot(name: String, day: LocalDate, content: @Composable () -> Unit) {
+            now = at(day, 9)
+            screen = {}
+            settle()
+            screen = content
+            settle()
+            compose.onRoot().captureRoboImage("build/shots/carbon-$name.png")
+        }
+        // Thursday is free: the missed session that fits is offered.
+        shot("today-catchup", monday.plusDays(3)) { TodayScreen() }
+        // Friday: "so-so" makes the session lighter.
+        shot("today-light", monday.plusDays(4)) { TodayScreen() }
+        compose.onNode(androidx.compose.ui.test.hasText("Так себе")).performClick()
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-today-light.png")
+        // Two weeks away from Friday.
+        runBlocking { repo.pause(monday.plusDays(4), monday.plusDays(17)) }
+        shot("today-pause", monday.plusDays(6)) { TodayScreen() }
+        shot("body", monday.plusDays(6)) { forma.app.ui.screens.BodyScreen() }
     }
 }

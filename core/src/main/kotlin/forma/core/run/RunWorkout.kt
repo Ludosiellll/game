@@ -30,6 +30,8 @@ data class RunWorkout(
     val targetRpe: Int = 5,
     /** Stage in its progression ladder, if any. */
     val stage: Int = 0,
+    /** Made lighter for a bad day: done or not, it moves no ladder. */
+    val light: Boolean = false,
 ) {
     val totalSeconds: Int get() = segments.sumOf { it.seconds }
     val workSeconds: Int get() = segments.filter { it.kind == SegmentKind.WORK || it.kind == SegmentKind.RUN }.sumOf { it.seconds }

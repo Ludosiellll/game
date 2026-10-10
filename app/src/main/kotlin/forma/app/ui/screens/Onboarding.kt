@@ -56,6 +56,7 @@ class ProfileDraft(p: Profile) {
     var sex by mutableStateOf(p.sex)
     var birthYear by mutableStateOf(p.birthYear.toString())
     var weight by mutableStateOf(forma.core.text.Ru.kg(p.bodyWeightKg))
+    var height by mutableStateOf(p.heightCm?.toString() ?: "")
     var restingHr by mutableStateOf(p.restingHr?.toString() ?: "")
     var raceKm by mutableStateOf(p.raceMeters?.let { it / 1000.0 })
     var raceTime by mutableStateOf(p.raceSeconds?.let { forma.core.text.Ru.clock(it.toInt()) } ?: "")
@@ -70,6 +71,7 @@ class ProfileDraft(p: Profile) {
             sessionMinutes = minutes, sex = sex,
             birthYear = birthYear.toIntOrNull()?.coerceIn(1930, LocalDate.now().year - 10) ?: base.birthYear,
             bodyWeightKg = parseNum(weight)?.coerceIn(30.0, 250.0) ?: base.bodyWeightKg,
+            heightCm = if (height.isBlank()) null else height.toIntOrNull()?.takeIf { it in 120..230 } ?: base.heightCm,
             restingHr = restingHr.toIntOrNull()?.takeIf { it in 30..110 },
             raceMeters = race?.first, raceSeconds = race?.second,
         )
@@ -186,7 +188,7 @@ private fun DaysStep(d: ProfileDraft) {
 
 @Composable
 private fun AboutStep(d: ProfileDraft) {
-    StepTitle("О себе", "Для стартовых весов, пульсовых зон и относительной силы. Хранится только на телефоне.")
+    StepTitle("О себе", "Для стартовых весов, пульсовых зон, расхода энергии и относительной силы.")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Chip("Мужчина", d.sex == Sex.MALE, { d.sex = Sex.MALE }, Modifier.weight(1f))
         Chip("Женщина", d.sex == Sex.FEMALE, { d.sex = Sex.FEMALE }, Modifier.weight(1f))
@@ -195,6 +197,7 @@ private fun AboutStep(d: ProfileDraft) {
         NumberField(d.birthYear, { d.birthYear = it }, "Год рождения", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number)
         NumberField(d.weight, { d.weight = it }, "Вес", "кг", Modifier.weight(1f))
     }
+    NumberField(d.height, { d.height = it }, "Рост (для расхода энергии и ИМТ)", "см", keyboard = KeyboardType.Number, placeholder = "178")
     NumberField(d.restingHr, { d.restingHr = it }, "Пульс в покое утром (необязательно)", "уд/мин", keyboard = KeyboardType.Number, placeholder = "60")
 }
 

@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -52,6 +53,7 @@ import forma.app.ui.theme.T
 import forma.app.ui.theme.labelText
 import forma.core.analytics.Stats
 import forma.core.load.TrainingLoad
+import forma.core.plan.CatchUp
 import forma.core.plan.PlannedSession
 import forma.core.plan.Program
 import forma.core.plan.ProgramGenerator
@@ -85,6 +87,9 @@ fun TodayScreen() {
     val rows by remember { repo.setRows() }.collectAsState(initial = emptyList())
     val bw by remember { repo.bodyWeightLookup() }.collectAsState(initial = { _: Long -> 75.0 })
     var pickTemplate by remember { mutableStateOf(false) }
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    var feel by rememberSaveable { mutableStateOf(Feel.UNSET) }
+    val catchUp by produceState<CatchUp.Suggestion?>(null, week, settings) { value = repo.catchUp(today) }
 
     val p = program ?: return
     val weekNo = ProgramGenerator.weekIndex(p, today)
@@ -109,35 +114,49 @@ fun TodayScreen() {
 
         WeekStrip(week, today, p)
 
-        val todays = todayItem?.planned.orEmpty()
-        if (todays.isEmpty()) {
-            RestCard(week, today, p, onFree = { nav.push(Screen.RunSetup(repo.freeRun(), null)) }, onOther = { pickTemplate = true })
-        } else {
-            todays.forEach { s ->
-                val done = todayItem?.isDone(s) == true
-                if (s.kind == SessionKind.LIFT) {
-                    LiftCard(s, p, today, done) {
-                        scope.launch {
-                            val id = repo.startLift(s.templateId!!, today)
-                            nav.push(Screen.Workout(id))
-                        }
-                    }
-                } else {
-                    RunCard(s, today, done) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
-                }
-            }
-        }
-
         val loadSeries = remember(loads, today) {
             TrainingLoad.series(loads, today.minusDays(120), today.minusDays(1))
         }
-        val form = loadSeries.lastOrNull()?.takeIf { loads.isNotEmpty() }?.formPct
+        val history = TrainingLoad.hasHistory(loads, today)
+        val form = loadSeries.lastOrNull()?.takeIf { history }?.formPct
+        val todays = todayItem?.planned.orEmpty()
+        when {
+            repo.paused(settings, today) -> PauseCard(java.time.LocalDate.ofEpochDay(settings.pauseUntil!!)) { scope.launch { repo.resume(today) } }
+            todays.isEmpty() -> RestCard(
+                week, today, p, catchUp, onFree = { nav.push(Screen.RunSetup(repo.freeRun(), null)) }, onOther = { pickTemplate = true },
+                onCatchUp = { s ->
+                    scope.launch {
+                        if (s.kind == SessionKind.LIFT) nav.push(Screen.Workout(repo.startLift(s.templateId!!, today)))
+                        else nav.push(Screen.RunSetup(repo.runFor(s.kind, today), s.kind))
+                    }
+                },
+            )
+            else -> {
+                if (a == null && todays.any { todayItem?.isDone(it) != true }) FeelRow(feel, tired = (form ?: 0.0) < -30) { feel = it }
+                if (feel == Feel.SICK) {
+                    SickCard { feel = Feel.UNSET }
+                } else todays.forEach { s ->
+                    val done = todayItem?.isDone(s) == true
+                    val light = feel == Feel.LOW
+                    if (s.kind == SessionKind.LIFT) {
+                        LiftCard(s, p, today, done, light) {
+                            scope.launch {
+                                val id = repo.startLift(s.templateId!!, today, forceDeload = light)
+                                nav.push(Screen.Workout(id))
+                            }
+                        }
+                    } else {
+                        RunCard(s, today, done, light) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
+                    }
+                }
+            }
+        }
         val strength = remember(rows, bw) { Stats.changePct(Stats.strengthIndex(rows, bw)) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatTile(
                 "Свежесть", form?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—",
                 when {
-                    form == null -> "нет данных"
+                    form == null -> if (loads.isEmpty()) "нет данных" else "копим данные"
                     form > 10 -> "можно грузиться"
                     form < -30 -> "нужен отдых"
                     else -> "рабочий режим"
@@ -161,7 +180,7 @@ fun TodayScreen() {
                 when {
                     vdot != null -> "5 км ≈ ${Ru.clock(Vdot.predictSeconds(vdot, 5000.0).roundToInt())}"
                     rs != null && !rs.canRunContinuously -> "неделя бега с ходьбой"
-                    else -> "после контрольного"
+                    else -> "после теста"
                 },
                 F.c.endurance, Modifier.weight(1f),
             )
@@ -236,9 +255,11 @@ private fun WeekStrip(week: List<DayItem>, today: LocalDate, program: Program) {
 }
 
 @Composable
-private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, done: Boolean, onStart: () -> Unit) {
+private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, done: Boolean, light: Boolean, onStart: () -> Unit) {
     val repo = LocalRepo.current
-    val plan by produceState<LiftPlan?>(null, s.templateId, today) { value = runCatching { repo.liftPlan(s.templateId!!, today) }.getOrNull() }
+    val plan by produceState<LiftPlan?>(null, s.templateId, today, light) {
+        value = runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
+    }
     val t = program.templates.firstOrNull { it.id == s.templateId }
     FCard(outline = if (done) null else null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -269,7 +290,7 @@ private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, done
                 Text("Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
             }
         } else {
-            PrimaryButton("Начать тренировку", onStart, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
+            PrimaryButton(if (light) "Начать лёгкую тренировку" else "Начать тренировку", onStart, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
         }
     }
 }
@@ -285,9 +306,9 @@ fun prescriptionShort(sets: Int, reps: Int, weight: Double?, exerciseId: String)
 }
 
 @Composable
-private fun RunCard(s: PlannedSession, today: LocalDate, done: Boolean, onStart: (RunWorkout) -> Unit) {
+private fun RunCard(s: PlannedSession, today: LocalDate, done: Boolean, light: Boolean, onStart: (RunWorkout) -> Unit) {
     val repo = LocalRepo.current
-    val workout by produceState<RunWorkout?>(null, s.kind, today) { value = repo.runFor(s.kind, today) }
+    val workout by produceState<RunWorkout?>(null, s.kind, today, light) { value = repo.runFor(s.kind, today, light) }
     val w = workout ?: return
     FCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -311,8 +332,27 @@ private fun RunCard(s: PlannedSession, today: LocalDate, done: Boolean, onStart:
 }
 
 @Composable
-private fun RestCard(week: List<DayItem>, today: LocalDate, program: Program, onFree: () -> Unit, onOther: () -> Unit) {
+private fun RestCard(
+    week: List<DayItem>, today: LocalDate, program: Program, catchUp: CatchUp.Suggestion?,
+    onFree: () -> Unit, onOther: () -> Unit, onCatchUp: (PlannedSession) -> Unit,
+) {
     val next = week.firstOrNull { it.date.isAfter(today) && it.planned.isNotEmpty() }
+    if (catchUp != null) {
+        val s = catchUp.session
+        FCard(outline = if (s.isRun) F.c.endurance else F.c.strength) {
+            SectionLabel("Пропущено", color = if (s.isRun) F.c.endurance else F.c.strength)
+            Text(sessionTitle(s, program), style = T.title(22.sp))
+            Text(
+                "Стояло в плане на ${DAY_ACCUSATIVE[catchUp.plannedOn - 1]}. Можно сделать сегодня вместо отдыха — " +
+                    "завтрашнему плану это не помешает.",
+                style = T.secondary(14.sp),
+            )
+            PrimaryButton(
+                "Сделать сегодня", { onCatchUp(s) }, Modifier.fillMaxWidth(),
+                color = if (s.isRun) F.c.endurance else F.c.strength, textColor = F.c.onData,
+            )
+        }
+    }
     FCard {
         SectionLabel("Отдых")
         Text("Сегодня день восстановления", style = T.title(22.sp))
@@ -326,5 +366,56 @@ private fun RestCard(week: List<DayItem>, today: LocalDate, program: Program, on
             GhostButton("Пробежка", onFree, Modifier.weight(1f))
             GhostButton("Силовая", onOther, Modifier.weight(1f))
         }
+    }
+}
+
+/** "на понедельник", "на среду": day names after «на». */
+private val DAY_ACCUSATIVE = listOf("понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье")
+
+/** How the person feels today: decides between the planned session, a lighter one and rest. */
+enum class Feel { UNSET, GOOD, LOW, SICK }
+
+@Composable
+private fun FeelRow(feel: Feel, tired: Boolean, onPick: (Feel) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Как ты сегодня?", style = T.body(15.sp, FontWeight.Bold))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(Feel.GOOD to "Хорошо", Feel.LOW to "Так себе", Feel.SICK to "Болею").forEach { (f, label) ->
+                forma.app.ui.components.Chip(label, feel == f, { onPick(if (feel == f) Feel.UNSET else f) }, Modifier.weight(1f))
+            }
+        }
+        val text = when {
+            feel == Feel.LOW -> "Лёгкий вариант: в силовой вдвое меньше подходов и вес −10 %, бег — только лёгкий. Прогресс и план не сдвинутся."
+            feel == Feel.UNSET && tired -> "Нагрузка последних дней высокая. Если плохо спал или чувствуешь усталость — выбери «Так себе»."
+            else -> null
+        }
+        if (text != null) Text(text, style = T.secondary(13.sp))
+    }
+}
+
+@Composable
+private fun SickCard(onTrainAnyway: () -> Unit) {
+    FCard {
+        SectionLabel("Отдых")
+        Text("Сегодня выздоравливаем", style = T.title(22.sp))
+        Text(
+            "При температуре, ломоте или кашле — никаких тренировок, пока не пройдёт. Пропущенное можно будет сделать в свободный " +
+                "день, а после перерыва первые тренировки станут легче сами.",
+            style = T.secondary(14.sp),
+        )
+        GhostButton("Всё равно тренироваться", onTrainAnyway, Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun PauseCard(until: LocalDate, onBack: () -> Unit) {
+    FCard {
+        SectionLabel("Пауза")
+        Text("Отдыхаем до ${shortDate(until)}", style = T.title(22.sp))
+        Text(
+            "Тренировки не ждут. После возвращения первые силовые будут легче, бег — короче и спокойнее, а цикл начнётся заново.",
+            style = T.secondary(14.sp),
+        )
+        GhostButton("Вернуться сегодня", onBack, Modifier.fillMaxWidth())
     }
 }

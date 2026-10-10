@@ -23,6 +23,16 @@ object TrainingLoad {
     /** Session-RPE (Foster et al. 2001): CR-10 rating × minutes. */
     fun sessionLoad(rpe: Int, minutes: Double): Double = rpe.coerceIn(0, 10) * minutes.coerceAtLeast(0.0)
 
+    /**
+     * Form means something only with history: two weeks since the first session and at least four sessions.
+     * Before that one hard session makes the 7-day average jump over a 42-day one that barely moved.
+     */
+    fun hasHistory(loads: Map<LocalDate, Double>, today: LocalDate): Boolean {
+        val days = loads.filter { it.value > 0 && !it.key.isAfter(today) }.keys
+        val first = days.minOrNull() ?: return false
+        return days.size >= 4 && !first.isAfter(today.minusDays(14))
+    }
+
     const val FITNESS_DAYS = 42.0
     const val FATIGUE_DAYS = 7.0
 

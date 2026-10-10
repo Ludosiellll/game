@@ -37,6 +37,7 @@ import forma.core.plan.SessionKind
 import forma.core.plan.Template
 import forma.core.run.RunWorkout
 import forma.core.text.Ru
+import kotlinx.coroutines.launch
 
 @Composable
 fun PlanScreen() {
@@ -105,6 +106,8 @@ fun PlanScreen() {
         SectionLabel("Силовые")
         p.templates.forEach { t -> TemplateCard(t) }
 
+        PauseControl()
+
         GhostButton("Изменить цель, дни и данные", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 52.dp)
         profile?.let { Text("Дни: ${it.trainingDays.sorted().joinToString(", ") { d -> DAY_SHORT[d - 1] }} · до ${it.sessionMinutes} мин", style = T.secondary(13.sp)) }
     }
@@ -130,6 +133,35 @@ private fun TemplateCard(t: Template) {
                     Text("${s.sets} × ${s.repMin}–${s.repMax}${if (s.exerciseId == "plank") " с" else ""} · запас ${s.rir} · отдых ${Ru.clock(s.restSec)}", style = T.secondary(12.sp))
                 }
                 if (item != null) NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.exerciseId), style = T.number(14.sp, FontWeight.Bold))
+            }
+        }
+    }
+}
+
+/** Vacation or illness: the plan stops expecting sessions and brings the person back gently. */
+@Composable
+private fun PauseControl() {
+    val repo = LocalRepo.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    val today = remember { repo.today() }
+    SectionLabel("Пауза")
+    FCard(gap = 10.dp) {
+        if (repo.paused(settings, today)) {
+            Text("Пауза до ${shortDate(java.time.LocalDate.ofEpochDay(settings.pauseUntil!!))}", style = T.title(20.sp))
+            GhostButton("Вернуться сегодня", { scope.launch { repo.resume(today) } }, Modifier.fillMaxWidth())
+        } else {
+            Text(
+                "Отпуск, командировка или болезнь? Поставь паузу: пропуски не будут висеть, после возвращения первые тренировки " +
+                    "будут легче, а если пауза дольше недели — цикл начнётся заново.",
+                style = T.secondary(14.sp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(1, 2, 3).forEach { w ->
+                    forma.app.ui.components.Chip(Ru.weeks(w), false, {
+                        scope.launch { repo.pause(today, today.plusDays(w * 7L - 1)) }
+                    }, Modifier.weight(1f))
+                }
             }
         }
     }

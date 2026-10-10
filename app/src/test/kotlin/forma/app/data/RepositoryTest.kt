@@ -21,6 +21,8 @@ import java.time.LocalDate
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import forma.core.plan.PlannedSession
 import kotlin.test.assertTrue
 
 @RunWith(AndroidJUnit4::class)
@@ -111,6 +113,41 @@ class RepositoryTest {
         val next = repo.runFor(SessionKind.RUN_EASY, back.plusDays(2))
         assertTrue(!next.note.startsWith("Перерыв"), next.note)
         assertTrue(repo.store.runStateNow().vdot!! < before.vdot!!)
+    }
+
+    @Test fun missedSessionsPausesAndBadDays() = runBlocking {
+        repo.completeOnboarding(profile)
+        val program = repo.store.programNow()!!
+        val plan = (1..7).joinToString("  ") { d -> "$d:" + program.week.on(d).joinToString("+") { it.templateId ?: it.kind.name } }
+        // A new user (plan made on Thursday) is not told about Monday and Wednesday.
+        assertNull(repo.catchUp(LocalDate.of(2025, 10, 9)), plan)
+
+        // Next week: Monday skipped, Wednesday's intervals done. On free Thursday the missed easy run fits; the
+        // missed full-body session does not (Friday is a leg day).
+        val monday = LocalDate.of(2025, 10, 13)
+        val wed = monday.plusDays(2)
+        val q = repo.runFor(SessionKind.RUN_QUALITY, wed)
+        repo.saveRun(q, RunResult(1.0, 7, q.totalSeconds, distanceM = 6000.0), clock, emptyList(), wed)
+        val s = repo.catchUp(monday.plusDays(3))
+        assertEquals(PlannedSession(SessionKind.RUN_EASY), s?.session, plan)
+        assertEquals(1, s?.plannedOn)
+        assertTrue(repo.trainingKcalPerWeek(80.0, monday.plusDays(3)) >= 6.0 * 80 / 4 - 1)
+
+        // A bad day: the long run becomes an easy one that moves no ladder.
+        val light = repo.runFor(SessionKind.RUN_LONG, monday.plusDays(5), light = true)
+        assertTrue(light.light)
+        assertEquals(RunType.EASY, light.type)
+
+        // Two weeks of vacation from Friday: nothing is missed meanwhile, the block restarts in the week of return.
+        repo.pause(monday.plusDays(4), monday.plusDays(17))
+        assertTrue(repo.paused(repo.store.settingsNow(), monday.plusDays(5)))
+        assertNull(repo.catchUp(monday.plusDays(6)))
+        assertEquals(monday.plusDays(14).toEpochDay(), repo.store.programNow()!!.startEpochDay)
+        // Back early on Wednesday: the pause ends the day before, the block starts this week.
+        repo.resume(monday.plusDays(9))
+        assertEquals(monday.plusDays(8).toEpochDay(), repo.store.settingsNow().pauseUntil)
+        assertEquals(monday.plusDays(7).toEpochDay(), repo.store.programNow()!!.startEpochDay)
+        assertTrue(!repo.paused(repo.store.settingsNow(), monday.plusDays(9)))
     }
 
     @Test fun runIsSavedAndMovesTheLadder() = runBlocking {

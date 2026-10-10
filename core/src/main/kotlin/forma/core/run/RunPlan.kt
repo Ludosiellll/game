@@ -232,6 +232,17 @@ object RunPlan {
         return RunWorkout(RunType.TEMPO, title, segs, note, targetRpe = 7, stage = stage)
     }
 
+    /**
+     * The same day when the body says no: an easy run of at most the usual easy length and 3/4 of the planned running
+     * time. Run/walk stays as it is — walking more is already the lighter version.
+     */
+    fun lighter(state: RunState, w: RunWorkout): RunWorkout {
+        if (w.type == RunType.RUN_WALK || w.type == RunType.FREE) return w
+        val minutes = max(15, min(state.easyMinutes, (w.workSeconds * 0.75 / 60 / 5).toInt() * 5))
+        val e = easy(state.copy(easyMinutes = minutes))
+        return e.copy(note = "Самочувствие так себе — сегодня только лёгкий бег, план не сдвигается. " + e.note, light = true)
+    }
+
     /** 12-minute time trial: the distance gives a fresh VDOT. */
     fun test(state: RunState): RunWorkout {
         val p = paces(state)
@@ -328,6 +339,8 @@ object RunPlan {
             returnEasy = max(0, state.returnEasy - 1),
         )
         val done = r.completed >= 0.95
+        // A run made lighter for a bad day counts as running, but moves no ladder.
+        if (w.light) return RunAfter(s, out)
         when (w.type) {
             RunType.RUN_WALK -> {
                 val stage = state.walkStage.coerceAtLeast(0)

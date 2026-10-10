@@ -79,6 +79,7 @@ fun ProfileScreen() {
             NumberField(d.birthYear, { d.birthYear = it }, "Год рождения", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number)
             NumberField(d.weight, { d.weight = it }, "Вес", "кг", Modifier.weight(1f))
         }
+        NumberField(d.height, { d.height = it }, "Рост", "см", keyboard = KeyboardType.Number, placeholder = "—")
         NumberField(d.restingHr, { d.restingHr = it }, "Пульс в покое", "уд/мин", keyboard = KeyboardType.Number, placeholder = "—")
         PrimaryButton("Сохранить и пересчитать план", {
             scope.launch {

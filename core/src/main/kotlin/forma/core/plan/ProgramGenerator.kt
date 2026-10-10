@@ -1,5 +1,6 @@
 package forma.core.plan
 
+import forma.core.body.Body
 import forma.core.model.Aim
 import forma.core.model.Emphasis
 import forma.core.model.Experience
@@ -27,7 +28,7 @@ object ProgramGenerator {
             Experience.ADVANCED -> 4
         }
         val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        return Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(aim), monday.toEpochDay(), aim)
+        return Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(aim), monday.toEpochDay(), aim, today.toEpochDay())
     }
 
     /** How long easy and long runs may grow: by what running is for and how much of the week it gets. */
@@ -53,9 +54,13 @@ object ProgramGenerator {
         val vdot = if (profile.raceMeters != null && profile.raceSeconds != null && profile.raceMeters > 0 && profile.raceSeconds > 0) {
             (Vdot.fromRace(profile.raceMeters, profile.raceSeconds) * 2).toInt() / 2.0
         } else null
+        // Novice runners with BMI over 30 get injured more (Nielsen et al. 2013) and fewer when they start with less
+        // running (Bertelsen et al.): they start shorter and grow by the same rules.
+        val heavy = profile.heightCm?.let { Body.bmi(profile.bodyWeightKg, it) >= 30 } == true
         return when (profile.runLevel) {
             RunLevel.NONE -> RunState(vdot = vdot, walkStage = 0)
-            RunLevel.BASE -> RunState(vdot = vdot, walkStage = -1, easyMinutes = 25, longMinutes = 40)
+            RunLevel.BASE -> if (heavy) RunState(vdot = vdot, walkStage = -1, easyMinutes = 20, longMinutes = 30)
+            else RunState(vdot = vdot, walkStage = -1, easyMinutes = 25, longMinutes = 40)
             RunLevel.TRAINED -> RunState(vdot = vdot, walkStage = -1, easyMinutes = 35, longMinutes = 60, intervalStage = 2, tempoStage = 2)
         }
     }
