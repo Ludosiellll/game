@@ -39,7 +39,17 @@ class GoalProgressTest {
             run(20, RunType.TEST, listOf(RunOutcome.TestTime(3000, 700))),
             run(30, RunType.TEST, listOf(RunOutcome.TestNotCounted)),
         )
-        assertEquals(listOf(GoalProgress.Trial(10, 341), GoalProgress.Trial(40, 333)), p.trials)
+        assertEquals(listOf(GoalProgress.Trial(10, 1500, 341, 341.0), GoalProgress.Trial(40, 1500, 333, 333.0)), p.trials)
+    }
+
+    /** On a 230 m track the trial is 6.5 laps — 1495 m: it is a 1500 m trial, its time carried over to 1500 m. */
+    @Test fun theStadiumTrialOfWholeLapsCounts() {
+        val p = of(run(12, RunType.TEST, listOf(RunOutcome.TestTime(1495, 338))))
+        val t = p.trials.single()
+        assertEquals(1495, t.meters)
+        assertEquals(338, t.seconds)
+        // A little longer for 5 m more, by the same fitness.
+        assertTrue(t.goalSeconds > 338.5 && t.goalSeconds < 340.0, "${t.goalSeconds}")
     }
 
     @Test fun theAverageLapAndTheLapsOnPace() {

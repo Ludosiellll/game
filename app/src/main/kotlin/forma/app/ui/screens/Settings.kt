@@ -106,7 +106,7 @@ fun SettingsScreen() {
             Hairline()
             Toggle("GPS по умолчанию", "Дистанция и темп на улице", s.gps) { v -> save { it.copy(gps = v) } }
             Hairline()
-            Toggle("Автопауза на остановках", "Лёгкий, длинный и свободный бег по улице: на светофоре время встаёт само", s.autoPause) { v -> save { it.copy(autoPause = v) } }
+            Toggle("Автопауза на остановках", "Лёгкий, длинный и свободный бег по улице: на светофоре время встаёт само. На стадионе — нет", s.autoPause) { v -> save { it.copy(autoPause = v) } }
         }
         SectionLabel("Резервная копия")
         FCard {

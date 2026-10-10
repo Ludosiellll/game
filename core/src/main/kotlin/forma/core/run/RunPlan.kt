@@ -259,7 +259,7 @@ object RunPlan {
     fun paces(state: RunState): Paces? = state.vdot?.let { PaceTable.forVdot(it) }
 
     /**
-     * Before the first test of a race goal: a fitness well below the goal's (8 points, about 10 % slower over 1500 m),
+     * Before the first test of a race goal: a fitness well below the goal's (8 points, about a sixth slower over 1500 m),
      * only so easy runs have a pace they should not beat — the first runs are where a fast starter overdoes it.
      */
     fun provisionalVdot(goal: RunGoal): Double =

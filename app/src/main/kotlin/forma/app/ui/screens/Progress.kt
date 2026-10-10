@@ -181,17 +181,24 @@ private fun GoalPathCard(goal: forma.core.model.RunGoal, lapM: Int, path: forma.
         if (trials.isEmpty()) {
             Text("Контрольных на ${goalDistance(goal.meters)} ещё не было.", style = T.body(15.sp, FontWeight.SemiBold))
         } else {
-            val best = trials.minBy { it.seconds }
-            val reached = best.seconds <= goal.seconds
-            Text("Лучший контрольный — ${Ru.clock(best.seconds)}", style = T.title(22.sp).copy(color = if (reached) F.c.good else F.c.text))
+            // Over the goal distance itself: on a 230 m track the trial is 6.5 laps, 1495 m.
+            val best = trials.minBy { it.goalSeconds }
+            val gap = (best.goalSeconds - goal.seconds).roundToInt()
+            val reached = gap <= 0
+            Text("Лучший контрольный — ${Ru.clock(best.goalSeconds.roundToInt())}", style = T.title(22.sp).copy(color = if (reached) F.c.good else F.c.text))
             Text(
-                if (reached) "Цель взята ${shortDate(LocalDate.ofEpochDay(best.epochDay))}."
-                else (best.seconds - goal.seconds).let { d -> "До цели ${if (d < 60) "$d с" else Ru.clock(d)}." },
+                if (reached) "Цель взята ${shortDate(LocalDate.ofEpochDay(best.epochDay))}." else "До цели ${if (gap < 60) "$gap с" else Ru.clock(gap)}.",
                 style = T.body(14.sp),
             )
+            trials.lastOrNull { it.meters != goal.meters }?.let { t ->
+                Text(
+                    "На стадионе контрольный — целые круги (${t.meters} м): время пересчитано на ${goalDistance(goal.meters)} по той же форме.",
+                    style = T.secondary(12.sp),
+                )
+            }
             if (trials.size >= 2) {
                 LineChart(
-                    listOf(Series(trials.map { it.seconds.toDouble() }, F.c.endurance)), height = 110.dp, reference = goal.seconds.toDouble(),
+                    listOf(Series(trials.map { it.goalSeconds }, F.c.endurance)), height = 110.dp, reference = goal.seconds.toDouble(),
                     xLabels = trials.indices.map { if (it == 0 || it == trials.lastIndex) shortDate(LocalDate.ofEpochDay(trials[it].epochDay)) else "" },
                     description = "Контрольные забеги на ${goalDistance(goal.meters)}: время по датам, линия — цель",
                 )
@@ -201,7 +208,8 @@ private fun GoalPathCard(goal: forma.core.model.RunGoal, lapM: Int, path: forma.
                 if (i > 0) Hairline()
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(shortDate(LocalDate.ofEpochDay(t.epochDay)), style = T.body(14.sp), modifier = Modifier.weight(1f))
-                    NumText(Ru.clock(t.seconds), style = T.number(15.sp, FontWeight.Bold))
+                    if (t.meters != goal.meters) Text("${Ru.clock(t.seconds)} за ${t.meters} м", style = T.secondary(13.sp), modifier = Modifier.padding(end = 12.dp))
+                    NumText(Ru.clock(t.goalSeconds.roundToInt()), style = T.number(15.sp, FontWeight.Bold))
                 }
             }
         }

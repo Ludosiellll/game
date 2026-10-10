@@ -132,8 +132,36 @@ fun SegmentBar(w: RunWorkout, elapsed: Int, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Before the start. A run the plan put on the stadium can be run on the road this time: no laps, the distance and pace
+ * by GPS, auto-pause on easy and free runs.
+ */
 @Composable
 fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
+    val repo = LocalRepo.current
+    val today = forma.app.ui.rememberToday(repo)
+    var road by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val roadRun by androidx.compose.runtime.produceState<RunWorkout?>(null, road) {
+        value = when {
+            !road -> null
+            kind == null -> repo.freeRun(null)
+            else -> repo.runFor(kind, today, light = workout.light, road = true)
+        }
+    }
+    val lap = workout.lapMeters
+    RunSetupBody(
+        if (road) roadRun ?: workout else workout,
+        ready = !road || roadRun != null,
+        where = lap?.let {
+            {
+                forma.app.ui.components.Segmented(listOf("Стадион · $it м", "Улица"), if (road) 1 else 0, { i -> road = i == 1 })
+            }
+        },
+    )
+}
+
+@Composable
+private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composable () -> Unit)?) {
     val nav = LocalNav.current
     val settings = LocalSettings.current
     val context = LocalContext.current
@@ -161,6 +189,7 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
     LaunchedEffect(voice) { if (voice) forma.app.run.VoiceCoach.checkRussian(context) { speaks = it } }
     ScrollScreen(bottomInset = true) {
         TopBar(if (workout.isOpenEnded) "Свободный бег" else workout.title, onBack = { nav.back() })
+        where?.invoke()
         if (voice && speaks == false) {
             Banner("В телефоне нет русского голоса: подсказок голосом не будет, только писки. Нажми — откроются настройки синтеза речи, там скачай русский.", F.c.warn) {
                 val open = listOf(android.content.Intent("com.android.settings.TTS_SETTINGS"), android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA))
@@ -198,7 +227,7 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
             Banner(
                 "Стадион, круг ${workout.lapMeters} м. Жми «Круг», когда пересекаешь линию: приложение скажет время круга и в темпе ли ты. " +
                     "Писк — момент, когда ты должен быть на линии. Кнопка «Круг» есть и в уведомлении." +
-                    if (gps) " С GPS пропущенное нажатие не пропадёт: круг засчитается сам, примерно (±2 с), а дистанция — по кругам." else "",
+                    if (gps) " С GPS забытое в отрезке нажатие обычно не пропадёт: когда линия уже известна (её запоминают твои нажатия на ней), круг засчитается сам, примерно (±2 с)." else "",
                 F.c.endurance, icon = Ic.info,
             )
         }
@@ -220,6 +249,7 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
             )
         }
         PrimaryButton("Старт", {
+            if (!ready) return@PrimaryButton
             val need = buildList {
                 // Android 12+ ignores a request for precise location that does not ask for approximate too.
                 if (gps && RunSession.tracker == null) {
@@ -450,7 +480,7 @@ fun RunActiveScreen() {
             Hairline()
             Row {
                 if (lapM != null && !u.gps) Metric("${u.laps}", Ru.plural(u.laps, "круг", "круга", "кругов"), Modifier.weight(1f), Alignment.Start)
-                else Metric(if (u.gps) Ru.km2(u.distanceM) else "—", if (lapM != null) "км по кругам" else "км", Modifier.weight(1f), Alignment.Start)
+                else Metric(if (u.gps) Ru.km2(u.distanceM) else "—", "км", Modifier.weight(1f), Alignment.Start)
                 Metric(Ru.clock(u.elapsedSec), if (w.isOpenEnded || over) "время" else "из ${Ru.clock(w.totalSeconds)}", Modifier.weight(1f), Alignment.CenterHorizontally)
                 val clock = u.lapClock
                 // Waiting on the line no lap is running: the warm-up's twelve minutes are not "this lap".
@@ -835,7 +865,7 @@ fun RunDoneScreen(workoutId: Long) {
                             repo.updateSettings { st ->
                                 st.copy(
                                     trackLine = line?.let { listOf(it.first, it.second) } ?: st.trackLine,
-                                    strideSamples = (st.strideSamples + strides.map { listOf(it.first, it.second) }).takeLast(60),
+                                    strideSamples = (st.strideSamples + strides.map { listOf(it.first, it.second) }).takeLast(150),
                                 )
                             }
                         }

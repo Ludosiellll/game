@@ -17,7 +17,8 @@ object Stride {
         // Cadence hardly changed: one stride for all.
         if (varC / ok.size < 9.0) return ms to 0.0
         val b = ok.sumOf { (it.first - mc) * (it.second - ms) } / varC
-        // A stride that shrinks as cadence grows is noise, not running.
-        return if (b < 0 || abs(b) > 0.05) ms to 0.0 else (ms - b * mc) to b
+        // A stride that shrinks as cadence grows is noise, not running; real strides grow about 0.01–0.02 m per step a
+        // minute — a steeper line is noise too, and would run away outside the cadences measured.
+        return if (b < 0 || abs(b) > 0.03) ms to 0.0 else (ms - b * mc) to b
     }
 }

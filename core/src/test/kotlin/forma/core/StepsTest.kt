@@ -72,6 +72,66 @@ class StepsTest {
         assertEquals(1.133, a + b * 180, 0.03)
     }
 
+    /**
+     * The steps lead while GPS is not there yet (a slow lock at the start) — and give the distance back once it is, even
+     * with the counter reporting several times a second (each report used to wipe GPS's anchor).
+     */
+    @Test fun gpsTakesTheDistanceBackFromTheSteps() {
+        val t = free()
+        // A stride model 25 % too long: the steps alone would say 2520 m.
+        t.setStride(1.4, 0.0)
+        var total = 0L
+        t.onSteps(total, 0)
+        for (k in 1..1500) {
+            val ms = k * 400L
+            total += if (k % 5 == 0) 2 else 1
+            t.onSteps(total, ms)
+            if (ms % 1000 == 0L && ms >= 15_000) t.onFix(Fix(ms, 53.9, 27.56 + 3.4 * ms / 1000.0 / 65_500.0, 4f, 3.4f), ms)
+        }
+        // 3.4 m/s for 10 minutes: 2040 m, give or take the first seconds on the steps.
+        assertTrue(abs(t.distanceM - 2040) < 60, "${t.distanceM}")
+        assertTrue(t.strideSamples().isNotEmpty(), "the stride is learnt again once GPS is back")
+    }
+
+    /** The system closes the app mid-run: the steps so far and the stride come back with the run. */
+    @Test fun stepsAndTheStrideSurviveARestore() {
+        val t = free()
+        t.setStride(1.2, 0.0)
+        var total = 0L
+        t.onSteps(total, 0)
+        for (sec in 1..120) {
+            total += 3
+            t.onSteps(total, sec * 1000L)
+        }
+        val back = RunTracker.restore(t.snapshot(120_000), 120_000)
+        assertEquals(t.steps, back.steps)
+        back.resume(120_000)
+        // The counter goes on from wherever it is: a new baseline.
+        var again = 900_000L
+        back.onSteps(again, 120_000)
+        for (sec in 121..240) {
+            again += 3
+            back.onSteps(again, sec * 1000L)
+        }
+        // Distance from the steps after the restore too: about 2 minutes × 180 × 1.2 m less the first 10 s.
+        assertTrue(back.distanceM - t.distanceM > 350, "${back.distanceM} after ${t.distanceM}")
+        val c = assertNotNull(back.result(240_000, 5).cadence)
+        assertTrue(abs(c - 180) <= 3, "$c")
+    }
+
+    /** Intervals with standing rests: the cadence is the running one, not halved by the rests. */
+    @Test fun theCadenceIsWhileRunning() {
+        val t = free()
+        var total = 0L
+        t.onSteps(total, 0)
+        for (sec in 1..600) {
+            if ((sec - 1) / 60 % 2 == 0) total += 3
+            t.onSteps(total, sec * 1000L)
+        }
+        val c = assertNotNull(t.result(600_000, 5).cadence)
+        assertTrue(abs(c - 180) <= 3, "$c")
+    }
+
     @Test fun theStrideModelNeedsEnoughOfTheRunner() {
         assertNull(Stride.fit(listOf(170.0 to 1.1, 172.0 to 1.12)))
         // Longer strides at higher cadence: a rising line.

@@ -188,6 +188,8 @@ private fun TemplateCard(t: Template) {
     val planned = own ?: addedId?.let { repo.addedPlanned(it) }
     if (planned != null) {
         val planId = planned.exerciseId
+        // Where its sets, reps and rest are kept: under the plan's exercise, or for one added to this day, under the day.
+        val key = if (own != null) planId else forma.app.data.TrainingRepository.addedKey(t.id, planId)
         val item = plan?.items?.firstOrNull { it.position == e && it.addedForGood == (own == null) }
         val kept = t.slots.count { it.exerciseId !in settings.removed } + added.size
         // The weight step belongs to the exercise done (after a swap, the one in its place), not to the plan's slot.
@@ -197,19 +199,19 @@ private fun TemplateCard(t: Template) {
         PlanExerciseDialog(
             name = item?.name ?: ex?.name ?: planId,
             // From the settings, not the plan being loaded: opened in that moment, an unchanged save kept the override.
-            sets = settings.sets[planId]?.coerceIn(1, forma.app.data.TrainingRepository.MAX_SETS) ?: planned.sets,
+            sets = settings.sets[key]?.coerceIn(1, forma.app.data.TrainingRepository.MAX_SETS) ?: planned.sets,
             planned = planned.sets,
-            reps = settings.reps[planId]?.takeIf { it.size == 2 }?.let { it[0] to it[1] } ?: (planned.repMin to planned.repMax),
+            reps = settings.reps[key]?.takeIf { it.size == 2 }?.let { it[0] to it[1] } ?: (planned.repMin to planned.repMax),
             plannedReps = planned.repMin to planned.repMax,
             timed = ex?.load == forma.core.model.LoadKind.TIMED,
-            rest = settings.rest[planId] ?: planned.restSec,
+            rest = settings.rest[key] ?: planned.restSec,
             plannedRest = planned.restSec,
             canRemove = kept > 1,
             step = if (loaded) settings.steps[exId] ?: ex!!.step else null,
             defaultStep = ex?.step ?: 2.5,
             onSave = { n, reps, rest, st ->
                 scope.launch {
-                    repo.tunePlan(planId, planned, n, reps, rest)
+                    repo.tunePlan(key, planned, n, reps, rest)
                     if (st != null && ex != null) repo.setStep(exId, st, ex.step)
                 }
                 editing = -1

@@ -146,6 +146,54 @@ class PlanEditsRepoTest {
         assertTrue(w < 60.0, "weight $w")
     }
 
+    /** One exercise added to two days (and in a third day's own plan): each day keeps its own sets, reps and rest. */
+    @Test fun anExerciseAddedToTwoDaysKeepsItsNumbersOnEach() = runBlocking {
+        val templates = repo.store.programNow()!!.templates
+        val (a, b) = templates[0] to templates[1]
+        val ex = "db_curl"
+        repo.addToPlan(a.id, ex)
+        repo.addToPlan(b.id, ex)
+        val planned = repo.addedPlanned(ex)
+        repo.tunePlan(TrainingRepository.addedKey(a.id, ex), planned, 4, 8 to 12, 90)
+        val onA = repo.liftPlan(a.id, day()).items.first { it.exerciseId == ex && it.addedForGood }
+        val onB = repo.liftPlan(b.id, day()).items.first { it.exerciseId == ex && it.addedForGood }
+        assertEquals(4, onA.slot.sets)
+        assertEquals(8, onA.slot.repMin)
+        assertEquals(90, onA.slot.restSec)
+        assertEquals(planned.sets, onB.slot.sets)
+        assertEquals(planned.repMin, onB.slot.repMin)
+        assertEquals(planned.restSec, onB.slot.restSec)
+        // Saving day B at its plan's numbers does not wipe day A's.
+        repo.tunePlan(TrainingRepository.addedKey(b.id, ex), planned, planned.sets, planned.repMin to planned.repMax, planned.restSec)
+        assertEquals(4, repo.liftPlan(a.id, day()).items.first { it.exerciseId == ex && it.addedForGood }.slot.sets)
+        // Nor the plan's own exercise of that id anywhere.
+        assertNull(repo.store.settingsNow().sets[ex])
+        // Replaced on day A: the new exercise keeps the numbers chosen for that place; taken out: they go too.
+        val alt = repo.alternativesFor(ex).first { it.id != ex && !it.custom }.id
+        repo.replaceAdded(a.id, ex, alt)
+        assertEquals(4, repo.liftPlan(a.id, day()).items.first { it.exerciseId == alt && it.addedForGood }.slot.sets)
+        repo.removeAdded(a.id, alt)
+        assertNull(repo.store.settingsNow().sets[TrainingRepository.addedKey(a.id, alt)])
+    }
+
+    /**
+     * The plan rebuilt during a session (the profile saved, a sync): the session's exercise keeps its own identity —
+     * "out for good" never takes out whatever the plan now has at that position.
+     */
+    @Test fun aRebuiltPlanDoesNotTurnARemovalOnAnotherExercise() = runBlocking {
+        val t = template()
+        val id = repo.startLift(t.id, day())
+        val first = plan(id).items.first { it.position == 0 }
+        // The plan now has another exercise at the first position, the session's one nowhere.
+        val other = notIn(*t.slots.map { it.exerciseId }.toTypedArray())
+        val program = repo.store.programNow()!!
+        repo.store.setProgram(
+            program.copy(templates = program.templates.map { tt -> if (tt.id != t.id) tt else tt.copy(slots = tt.slots.map { if (it.exerciseId == first.planId) it.copy(exerciseId = other) else it }) }),
+        )
+        assertTrue(repo.removeFromWorkout(id, first.position, forever = true))
+        assertTrue(other !in repo.store.settingsNow().removed, "the exercise now at that place stays")
+    }
+
     @Test fun anArchivedOwnExerciseLeavesThePlan() = runBlocking {
         val t = template()
         val mine = repo.addCustom(Exercise("own_cable_thing", "Моё упражнение", Equipment.CABLE, listOf(Muscle.CHEST)))

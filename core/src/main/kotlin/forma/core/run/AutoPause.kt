@@ -2,7 +2,7 @@ package forma.core.run
 
 /**
  * Auto-pause for runs on the road (easy, long, free): stopped for [HOLD_MS] (a traffic light, a shoelace) — the clock
- * stops from the moment the stop began; running again for two fixes — it goes on. Judged on the satellites' speed, which
+ * stops from the moment the stop began; moving again (walking on counts) for two fixes — it goes on. Judged on the satellites' speed, which
  * is near zero when standing, unlike positions that wander a few metres. A pause or resume by hand cancels the automatic
  * one ([reset]).
  */
@@ -61,7 +61,7 @@ class AutoPause {
 
     companion object {
         const val STOP = 0.8f
-        const val GO = 1.6f
+        const val GO = 1.2f
         const val HOLD_MS = 6_000L
     }
 }

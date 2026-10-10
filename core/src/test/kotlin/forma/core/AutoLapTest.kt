@@ -11,6 +11,7 @@ import forma.core.run.SegmentKind
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
 import kotlin.test.Test
@@ -175,6 +176,153 @@ class AutoLapTest {
         assertTrue(run.tracker.laps.any { it.auto })
         val back = RunTracker.restore(run.tracker.snapshot(0), 0)
         assertEquals(run.tracker.line, back.line)
+    }
+
+    /** Crossing a point [at] (metres along the loop) between positions [a] and [b]. */
+    private fun cross(a: Double, b: Double, at: Double) = Math.floorDiv((a - at).toLong(), lapM.toLong()) != Math.floorDiv((b - at).toLong(), lapM.toLong())
+
+    /**
+     * The first trial on a stadium with no line known yet: 6.5 laps start half a lap before the line, here in the middle of
+     * the back straight (44 m across the field). The start press must not teach the line: laps end on the line only.
+     */
+    @Test fun aTrialStartedHalfALapBackKeepsItsLaps() {
+        val lineAt = straight / 2
+        val w = RunPlan.goalTest(RunState(walkStage = -1, vdot = 46.0), goal, lapM)
+        val work = w.segments.first { it.kind == SegmentKind.WORK }
+        assertEquals(6.5, work.laps)
+        repeat(30) { seed ->
+            val rnd = Random(seed)
+            val t = RunTracker(w)
+            t.start(0)
+            var now = 0L
+            var s = lineAt + lapM / 2.0
+            var phase = "warm"
+            var pressed = 0
+            var raceStart = 0L
+            var raceEnd = 0L
+            while (phase != "done") {
+                now += 250
+                val before = s
+                when (phase) {
+                    "warm" -> {
+                        s += 2.9 * 0.25
+                        // The plan waits: on to the start, half a lap before the line, and go.
+                        if (t.waiting(now) && cross(before, s, lineAt + lapM / 2.0)) {
+                            assertEquals(Press.Start, t.press(now))
+                            phase = "race"
+                            raceStart = now
+                        }
+                    }
+                    "race" -> {
+                        s += lapM / work.lapSec!! * 0.25
+                        if (cross(before, s, lineAt)) {
+                            val p = t.press(now)
+                            assertTrue(p is Press.Done, "seed $seed press ${pressed + 1}: $p")
+                            if (++pressed == 7) {
+                                phase = "cool"
+                                raceEnd = now
+                            }
+                        }
+                    }
+                    "cool" -> {
+                        s += 2.5 * 0.25
+                        if (now - raceEnd > 120_000) phase = "done"
+                    }
+                }
+                if (now % 1000 == 0L) {
+                    t.onFix(fix(s, now, rnd), now)
+                    t.autoLap(now)
+                }
+            }
+            val laps = t.laps.filter { it.rep == 1 }
+            assertEquals(7, laps.size, "seed $seed: ${t.laps}")
+            assertTrue(laps.none { it.auto }, "seed $seed: ${t.laps}")
+            assertEquals(0.5, laps.first().part)
+            val time = assertNotNull(t.repTimes().first())
+            assertEquals((raceEnd - raceStart) / 1000.0, time, 0.6, "seed $seed")
+            assertEquals(time.roundToInt(), t.result(now, 9).testSeconds, "seed $seed")
+            // The line is where the laps end.
+            val line = assertNotNull(t.line)
+            val (x, y) = at(lineAt)
+            val dLat = (line.first - lat0) * 111_195.0 - y
+            val dLon = (line.second - lon0) * 111_195.0 * cos(Math.toRadians(lat0)) - x
+            assertTrue(dLat * dLat + dLon * dLon < 10.0 * 10.0, "seed $seed: line off by ${Math.sqrt(dLat * dLat + dLon * dLon)} m")
+        }
+    }
+
+    /** In the warm-up a jog 50 m along the track and back over the line is no lap; a whole lap is one. */
+    @Test fun aJogOffTheLineAndBackIsNoLap() {
+        val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 2), goal, lapM)
+        repeat(10) { seed ->
+            val rnd = Random(seed)
+            val t = RunTracker(w)
+            val (x, y) = at(0.0)
+            t.setLine(lat0 + y / 111_195.0, lon0 + x / (111_195.0 * cos(Math.toRadians(lat0))))
+            t.start(0)
+            val path = mutableListOf<Double>()
+            repeat(2) {
+                (1..20).forEach { path += it * 2.5 }
+                (19 downTo 0).forEach { path += it * 2.5 }
+            }
+            (1..80).forEach { path += it * 2.9 }
+            var now = 0L
+            for (p in path + List(12) { path.last() }) {
+                now += 1000
+                // Doppler speed as a phone gives it, so the way counts as run.
+                t.onFix(fix(p, now, rnd).copy(speed = 2.6f), now)
+                t.autoLap(now)
+            }
+            assertEquals(1.0, t.lapDistanceM() / lapM, 1e-9, "seed $seed")
+        }
+    }
+
+    /**
+     * Two laps a rep; the first crossing not pressed in time — the press comes 10 s late, after GPS closed the lap. It
+     * times that lap: the rep is not ended after a 10-second "lap".
+     */
+    @Test fun aPressLateAfterAGpsLapTimesThatLap() {
+        val work = forma.core.run.Segment(SegmentKind.WORK, 104, forma.core.run.PaceRange(224, 228), laps = 2.0, lapSec = 52.0)
+        val w = RunWorkout(
+            forma.core.run.RunType.GOAL_PACE, "2 × 2 круга",
+            listOf(forma.core.run.Segment(SegmentKind.WARMUP, 60), work, forma.core.run.Segment(SegmentKind.RECOVERY, 90), work, forma.core.run.Segment(SegmentKind.COOLDOWN, 60)),
+            lapMeters = lapM,
+        )
+        repeat(10) { seed ->
+            val rnd = Random(seed)
+            val t = RunTracker(w)
+            val (x, y) = at(0.0)
+            t.setLine(lat0 + y / 111_195.0, lon0 + x / (111_195.0 * cos(Math.toRadians(lat0))))
+            t.start(0)
+            var now = 0L
+            var s = 0.0
+            // Warm-up on the spot near the line until the plan waits, then the start press.
+            while (!t.waiting(now)) {
+                now += 1000
+                t.onFix(fix(s, now, rnd), now)
+            }
+            assertEquals(Press.Start, t.press(now))
+            val go = now
+            var late: Press? = null
+            var second: Press? = null
+            while (now - go < 104_000) {
+                now += 250
+                s += lapM / 52.0 * 0.25
+                if (now - go == 62_000L) late = t.press(now)
+                if (now - go == 104_000L) second = t.press(now)
+                if (now % 1000 == 0L) {
+                    t.onFix(fix(s, now, rnd), now)
+                    t.autoLap(now)
+                }
+            }
+            val first = assertNotNull(late as? Press.Done, "seed $seed: $late").lap
+            assertEquals(1, first.number, "seed $seed")
+            assertEquals(62.0, first.seconds, 0.6, "seed $seed")
+            assertTrue(!first.auto)
+            val last = assertNotNull(second as? Press.Done, "seed $seed: $second").lap
+            assertEquals(2, last.number, "seed $seed")
+            assertEquals(104.0, assertNotNull(t.repTimes().first()), 0.6, "seed $seed")
+            assertEquals(2, t.laps.count { it.rep == 1 })
+        }
     }
 
     @Test fun onAStadiumTheDistanceIsTheLaps() {
