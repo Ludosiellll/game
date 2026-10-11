@@ -82,6 +82,15 @@ class GoalProgressTest {
         assertEquals(0, p.sessions[0].judged)
     }
 
+    /** Reps run with a watch and entered by hand: their average lap is in the line, with nothing to judge lap by lap. */
+    @Test fun aSessionEnteredByHandShowsItsPace() {
+        val (w, r) = run(9, RunType.GOAL_PACE)
+        val p = of(w to r.copy(workPace = 52.0 / 230 * 1000))
+        val s = p.sessions.single()
+        assertTrue(abs(s.paceSecKm - 52.0 / 230 * 1000) < 1e-9)
+        assertEquals(0, s.judged)
+    }
+
     @Test fun aSessionWithoutLapsIsLeftOut() {
         // On the road (no lap button) or less than a lap pressed: no average to show.
         val p = of(

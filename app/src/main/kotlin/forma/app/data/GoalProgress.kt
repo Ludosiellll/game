@@ -26,6 +26,7 @@ object GoalProgress {
         val lapOf = runs.associate { r ->
             r.workoutId to runCatching { AppJson.decodeFromString(RunWorkout.serializer(), r.planJson).lapMeters }.getOrNull()
         }
+        val paceOf = runs.associate { it.workoutId to it.workPace }
         val trials = mutableListOf<Trial>()
         val sessions = mutableListOf<Session>()
         workouts.filter { it.kind == Kind.RUN && it.status == Status.DONE }.sortedBy { it.startedAt }.forEach { w ->
@@ -36,11 +37,15 @@ object GoalProgress {
                 trials += Trial(w.epochDay, it.meters, it.seconds, same)
             }
             if (w.templateId != RunType.GOAL_PACE.name) return@forEach
-            val lapM = lapOf[w.id] ?: return@forEach
             // The laps of the reps (a rep of 6.5 laps starts with a half: counted as half a lap).
             val reps = s.laps.filter { it.rep != null && it.part > 0 }
             val parts = reps.sumOf { it.part }
-            if (parts < 1.0) return@forEach
+            val lapM = lapOf[w.id]
+            if (lapM == null || parts < 1.0) {
+                // No laps pressed: the reps' pace as entered by hand (a watch) or measured on the road; nothing to judge.
+                paceOf[w.id]?.takeIf { it > 0 }?.let { sessions += Session(w.epochDay, it, 0, 0) }
+                return@forEach
+            }
             val lapSec = reps.sumOf { it.seconds } / parts
             // Laps the GPS closed are about ±2 s: they count in the average, not in the judging.
             val judged = reps.filter { !it.auto && it.verdict != null }

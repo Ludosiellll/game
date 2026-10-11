@@ -218,7 +218,8 @@ private fun GoalPathCard(goal: forma.core.model.RunGoal, lapM: Int, path: forma.
         val sessions = path.sessions
         if (sessions.isEmpty()) {
             Text(
-                "После первой такой тренировки здесь будут средний круг отрезков и сколько кругов прошло в темпе — по нажатиям «Круг».",
+                "После первой такой тренировки здесь будут средний круг отрезков и сколько кругов прошло в темпе — по нажатиям «Круг» " +
+                    "(с часами — по среднему кругу, который впишешь).",
                 style = T.secondary(13.sp),
             )
         } else {
