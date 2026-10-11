@@ -78,6 +78,7 @@ import forma.app.ui.Texts
 import forma.app.ui.components.Banner
 import forma.app.ui.components.Chip
 import forma.app.ui.components.FCard
+import forma.app.ui.components.GhostButton
 import forma.app.ui.components.Hairline
 import forma.app.ui.components.PrimaryButton
 import forma.app.ui.components.RoundIcon
@@ -265,6 +266,8 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
                 missing.all { it == Manifest.permission.ACCESS_COARSE_LOCATION }
             ) start() else launcher.launch(need.toTypedArray())
         }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, icon = Ic.play, height = 60.dp)
+        // Run with a watch and no phone: the numbers go in by hand and the plan moves as after a timed run.
+        GhostButton("Бегал без телефона — внести", { if (ready) nav.push(Screen.RunManual(workout)) }, Modifier.fillMaxWidth())
     }
 }
 
@@ -603,7 +606,7 @@ fun RunActiveScreen() {
 }
 
 /** The saved run and its summary through a turn of the phone: the "what next" must not turn into "already saved". */
-private val SavedRunSaver = androidx.compose.runtime.saveable.Saver<Pair<Long, RunSummary>?, String>(
+internal val SavedRunSaver = androidx.compose.runtime.saveable.Saver<Pair<Long, RunSummary>?, String>(
     save = { v -> v?.let { (id, sum) -> "$id|" + forma.app.data.AppJson.encodeToString(RunSummary.serializer(), sum) } },
     restore = { t ->
         runCatching { t.substringBefore('|').toLong() to forma.app.data.AppJson.decodeFromString(RunSummary.serializer(), t.substringAfter('|')) }.getOrNull()
@@ -611,7 +614,7 @@ private val SavedRunSaver = androidx.compose.runtime.saveable.Saver<Pair<Long, R
 )
 
 /** A typed time-trial time ("5:52") over [meters], or null when it is not one: no colon, or a pace no one runs. */
-private fun trialSeconds(text: String, meters: Int): Int? {
+internal fun trialSeconds(text: String, meters: Int): Int? {
     if (':' !in text) return null
     val t = parseClock(text)?.roundToInt() ?: return null
     return t.takeIf { it > 0 && it / (meters / 1000.0) in forma.core.run.RunPlan.PLAUSIBLE_PACE }

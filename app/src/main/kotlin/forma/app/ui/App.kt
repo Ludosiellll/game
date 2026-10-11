@@ -137,6 +137,7 @@ private fun ScreenFor(screen: Screen) {
         is Screen.RunSetup -> RunSetupScreen(screen.workout, screen.kind)
         Screen.RunActive -> RunActiveScreen()
         is Screen.RunDone -> RunDoneScreen(screen.workoutId)
+        is Screen.RunManual -> forma.app.ui.screens.RunManualScreen(screen.workout)
         is Screen.Exercise -> ExerciseScreen(screen.exerciseId)
         Screen.History -> HistoryScreen()
         is Screen.HistoryItem -> HistoryItemScreen(screen.workoutId)

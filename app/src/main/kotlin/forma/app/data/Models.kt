@@ -43,6 +43,8 @@ data class RunSummary(
     val laps: List<forma.core.run.Lap> = emptyList(),
     /** Steps a minute while running, from the phone's step counter. */
     val cadence: Int? = null,
+    /** Run without the phone (a watch, a stopwatch) and entered by hand. */
+    val manual: Boolean = false,
 )
 
 /** A day of the week with the plan and what was actually done. */

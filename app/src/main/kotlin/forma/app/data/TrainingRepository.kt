@@ -60,6 +60,9 @@ class TrainingRepository(
     /** Today by the repository's clock (tests and simulations move it). */
     fun today(): LocalDate = dayOf(now())
 
+    /** Midday of [date] in this phone's time zone (when a run entered for an earlier day is filed). */
+    fun middayOf(date: LocalDate): Long = date.atTime(12, 0).atZone(zone()).toInstant().toEpochMilli()
+
     /** The local day of a moment ([ms] since the epoch). */
     fun dayOf(ms: Long): LocalDate = java.time.Instant.ofEpochMilli(ms).atZone(zone()).toLocalDate()
 
@@ -795,6 +798,7 @@ class TrainingRepository(
      */
     suspend fun saveRun(
         workout: RunWorkout, result: RunResult, startedAt: Long, points: List<TrackPointEntity>, date: LocalDate = today(),
+        manual: Boolean = false,
     ): Pair<Long, RunSummary> = sessionLock.withLock {
         db.workouts().runStartedAt(startedAt)?.let { w ->
             val s = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
@@ -810,7 +814,7 @@ class TrainingRepository(
         else if (workout.type == RunType.TEST) next = next.copy(lastTrialTryDay = date.toEpochDay())
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
-        val summary = RunSummary(after.outcomes, minutes, load, result.laps.orEmpty(), result.cadence)
+        val summary = RunSummary(after.outcomes, minutes, load, result.laps.orEmpty(), result.cadence, manual)
         val avgPace = result.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
         val id = db.withTransaction {
             val id = db.workouts().insert(

@@ -104,6 +104,23 @@ data class RunResult(
     val cadence: Int? = null,
 )
 
+/** A run timed without the phone (a watch, a stopwatch) and entered by hand. */
+data class ManualRun(
+    /** The whole session, warm-up and cool-down included; null — as planned (a trial's time is often all one has). */
+    val durationSec: Int?,
+    val distanceM: Double?,
+    /** Session effort, CR-10. */
+    val rpe: Int,
+    /** Work reps done, in a session of reps. */
+    val reps: Int? = null,
+    /** The reps' pace, seconds a km (on a stadium from the average lap). */
+    val workPace: Double? = null,
+    /** A time trial over [RunWorkout.testMeters]: its time, seconds. */
+    val testSeconds: Int? = null,
+    /** The 12-minute test: metres run in it. */
+    val testDistanceM: Double? = null,
+)
+
 @Serializable
 sealed interface RunOutcome {
     @Serializable data class StageUp(val ladder: String, val to: Int) : RunOutcome
@@ -477,6 +494,29 @@ object RunPlan {
             else -> w.title
         }
         return w.copy(segments = segs, title = title, lapMeters = lapMeters)
+    }
+
+    /**
+     * A run entered by hand, as [after] reads a timed one: a session of reps is as complete as its reps, an easy or long
+     * run as its time against the plan (longer counts, as with the timer), a trial or a free run is complete.
+     */
+    fun manual(w: RunWorkout, m: ManualRun): RunResult {
+        val duration = (m.durationSec ?: w.totalSeconds).coerceAtLeast(60)
+        val repsKind = w.type == RunType.INTERVALS || w.type == RunType.TEMPO || w.type == RunType.GOAL_PACE
+        val reps = if (repsKind && w.reps > 0) (m.reps ?: w.reps).coerceAtLeast(0) else null
+        val completed = when {
+            w.isOpenEnded || w.type == RunType.TEST -> 1.0
+            reps != null -> reps.toDouble() / w.reps
+            else -> duration.toDouble() / w.totalSeconds.coerceAtLeast(1)
+        }.coerceIn(0.0, 1.0)
+        return RunResult(
+            completed = completed, rpe = m.rpe, durationSec = duration, distanceM = m.distanceM?.takeIf { it > 0 },
+            workPace = if (repsKind) m.workPace else null,
+            // The 12-minute test: its distance over its twelve minutes.
+            workDistanceM = m.testDistanceM?.takeIf { w.type == RunType.TEST && w.testMeters == null && it > 0 },
+            workSec = if (w.type == RunType.TEST && w.testMeters == null) w.workSeconds else null,
+            reps = reps, testSeconds = m.testSeconds?.takeIf { w.testMeters != null },
+        )
     }
 
     /** 12-minute time trial: the distance gives a fresh VDOT. */

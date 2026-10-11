@@ -21,6 +21,8 @@ sealed interface Screen {
     @Serializable data class RunSetup(val workout: RunWorkout, val kind: SessionKind?) : Screen
     @Serializable data object RunActive : Screen
     @Serializable data class RunDone(val workoutId: Long) : Screen
+    /** A run done without the phone, entered by hand. */
+    @Serializable data class RunManual(val workout: RunWorkout) : Screen
     @Serializable data class Exercise(val exerciseId: String) : Screen
     @Serializable data object History : Screen
     @Serializable data class HistoryItem(val workoutId: Long) : Screen

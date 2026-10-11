@@ -126,6 +126,7 @@ fun HistoryItemScreen(workoutId: Long) {
                 if (r.vdotAfter != null) Text("VDOT после пробежки: ${Ru.one(r.vdotAfter)}", style = T.secondary(14.sp))
             }
             val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
+            if (summary?.manual == true) Text("Внесено вручную: бег без телефона.", style = T.secondary(14.sp))
             summary?.cadence?.let { Text("Каденс: $it шагов в минуту", style = T.secondary(14.sp)) }
             if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
             if (summary != null && summary.outcomes.isNotEmpty()) {
@@ -133,7 +134,7 @@ fun HistoryItemScreen(workoutId: Long) {
                 FCard(gap = 0.dp) {
                     summary.outcomes.forEachIndexed { i, o ->
                         if (i > 0) Hairline()
-                        Text(Texts.run(o), style = T.body(14.sp), modifier = Modifier.padding(vertical = 10.dp))
+                        Text(Texts.run(o, summary.manual), style = T.body(14.sp), modifier = Modifier.padding(vertical = 10.dp))
                     }
                 }
             }

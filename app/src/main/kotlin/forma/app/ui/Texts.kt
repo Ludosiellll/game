@@ -54,7 +54,14 @@ object Texts {
         else -> 0
     }
 
-    fun run(o: RunOutcome): String = when (o) {
+    /** What a run changed; [manual]: entered by hand (no lap button to speak of). */
+    fun run(o: RunOutcome, manual: Boolean = false): String = when {
+        manual && o == RunOutcome.PaceUnknown -> "Средний круг не вписан: шаг решён по ощущениям. Впиши его в следующий раз — тогда видно, держится ли темп цели."
+        manual && o == RunOutcome.TestNotCounted -> "Время контрольного не вписано — не засчитан. Следующий — через две недели."
+        else -> run(o)
+    }
+
+    private fun run(o: RunOutcome): String = when (o) {
         is RunOutcome.StageUp -> when (o.ladder) {
             "walk" -> "Следующая тренировка: неделя ${o.to / 3 + 1}, №${o.to % 3 + 1} — бега становится больше."
             "intervals" -> "Интервалы получились — в следующий раз следующий шаг лестницы."
