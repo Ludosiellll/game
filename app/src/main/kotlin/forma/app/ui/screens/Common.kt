@@ -221,7 +221,9 @@ fun NextPlannedCard(today: LocalDate) {
     } ?: return
     val sessions = p.week.on(next.dayOfWeek.value)
     val runs by androidx.compose.runtime.produceState<Map<PlannedSession, forma.core.run.RunWorkout>>(emptyMap(), p, next) {
-        value = sessions.filter { it.isRun }.associateWith { repo.runFor(it.kind, next) }
+        // A due trial only if that day is the one it falls on (not one today still holds).
+        val trialOn = repo.trialDay(today)
+        value = sessions.filter { it.isRun }.associateWith { repo.runFor(it.kind, next, trial = next == trialOn) }
     }
     forma.app.ui.components.FCard(gap = 8.dp) {
         forma.app.ui.components.SectionLabel("Дальше по плану")

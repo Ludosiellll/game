@@ -181,7 +181,7 @@ fun TodayScreen() {
                             }
                         }
                     } else {
-                        RunCard(s, today, done, light) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
+                        RunCard(s, today, todayItem?.doneFor(s), light) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
                     }
                 }
                 // All of today done: what comes next and how to run it.
@@ -356,10 +356,13 @@ fun prescriptionShort(sets: Int, reps: Int, weight: Double?, exerciseId: String)
 }
 
 @Composable
-private fun RunCard(s: PlannedSession, today: LocalDate, done: Boolean, light: Boolean, onStart: (RunWorkout) -> Unit) {
+private fun RunCard(s: PlannedSession, today: LocalDate, doneAs: forma.app.data.WorkoutEntity?, light: Boolean, onStart: (RunWorkout) -> Unit) {
+    val done = doneAs != null
     val repo = LocalRepo.current
     val workout by produceState<RunWorkout?>(null, s.kind, today, light) { value = repo.runFor(s.kind, today, light) }
     val w = workout ?: return
+    // Another run done today in its place (a free run for a trial): said as it is, not as the plan's.
+    val other = doneAs != null && doneAs.templateId != w.type.name
     FCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Ic.run, null, tint = F.c.endurance, modifier = Modifier.size(18.dp))
@@ -367,19 +370,22 @@ private fun RunCard(s: PlannedSession, today: LocalDate, done: Boolean, light: B
             NumText("${w.totalSeconds / 60} мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
         }
         Text(w.title, style = T.title(22.sp))
-        Text(w.note, style = T.secondary(14.sp))
+        if (!other) Text(w.note, style = T.secondary(14.sp))
         val pace = w.segments.firstOrNull { it.kind == forma.core.run.SegmentKind.WORK || it.kind == forma.core.run.SegmentKind.RUN }?.pace
         val lapM = w.lapMeters
-        if (pace != null) NumText(
+        if (pace != null && !other) NumText(
             // On a stadium the lap time is what the runner checks.
             if (lapM != null) "Круг ${Ru.lapRange(forma.core.run.Track.lapSec(pace.fast.toDouble(), lapM), forma.core.run.Track.lapSec(pace.slow.toDouble(), lapM))}"
             else "Темп ${Ru.pace(pace.fast.toDouble())}–${Ru.pace(pace.slow.toDouble())} /км",
             style = T.number(14.sp, FontWeight.Bold).copy(color = F.c.text2),
         )
-        if (done) {
+        if (doneAs != null) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
-                Text("Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
+                Text(if (other) "Сделано: ${doneAs.title}" else "Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
+            }
+            if (other && s.kind == SessionKind.RUN_QUALITY) {
+                Text("«${w.title}» — в следующий тяжёлый день: план бега сдвигается только по самой тренировке.", style = T.secondary(13.sp))
             }
         } else {
             PrimaryButton("Начать пробежку", { onStart(w) }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, icon = Ic.play)

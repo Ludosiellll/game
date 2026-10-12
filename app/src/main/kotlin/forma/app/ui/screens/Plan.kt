@@ -79,6 +79,8 @@ fun PlanScreen() {
         }
 
         SectionLabel("Неделя")
+        // A due trial is the next hard day only: the hard days after it show what comes after the trial.
+        val trialOn by produceState<java.time.LocalDate?>(null, p, today) { value = repo.trialDay(today) }
         FCard(gap = 0.dp) {
             (1..7).forEach { day ->
                 if (day > 1) Hairline()
@@ -95,7 +97,7 @@ fun PlanScreen() {
                                 } else {
                                     // Each row on its own date this week: an easy run on a lifting day is shorter.
                                     val date = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).plusDays(day - 1L)
-                                    val w by produceState<RunWorkout?>(null, s.kind, date) { value = repo.runFor(s.kind, date) }
+                                    val w by produceState<RunWorkout?>(null, s.kind, date, trialOn) { value = repo.runFor(s.kind, date, trial = date == trialOn) }
                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                         Text(w?.title ?: sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
                                         // How: the lap time or pace to keep, so the week says what to do, not only what.

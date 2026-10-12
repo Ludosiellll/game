@@ -760,7 +760,11 @@ class TrainingRepository(
      * With a race goal of up to 3 km the test is the race distance itself.
      */
     /** The run of [kind] on [date]; [road]: not on the stadium this time (laps and lap times off, auto-pause on). */
-    suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false, road: Boolean = false): RunWorkout {
+    /**
+     * The run of [kind] on [date]. [trial]: a due trial may be this one — false for a hard day after the one the trial
+     * falls on ([trialDay]), which shows what comes after it instead.
+     */
+    suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false, road: Boolean = false, trial: Boolean = true): RunWorkout {
         val saved = store.runStateNow()
         val program = store.programNow()
         // The caps of the plan as it is now: after a switch to less running, runs are no longer than it allows.
@@ -777,7 +781,7 @@ class TrainingRepository(
         val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when (kind) {
             SessionKind.RUN_LONG -> if (guess != null) RunPlan.provisional(RunPlan.long(guess, cutback, date.toEpochDay())) else RunPlan.long(st, cutback, date.toEpochDay())
             SessionKind.RUN_QUALITY -> when {
-                !needsTest(st, date, goal) -> RunPlan.quality(st, cutback, goal, lap)
+                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, cutback, goal, lap)
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
                 else -> RunPlan.test(st)
             }
@@ -807,6 +811,25 @@ class TrainingRepository(
         // With a race of up to 3 km as the goal the first test is that race, whatever fitness was typed in.
         val last = st.lastTestDay ?: return st.vdot == null || goal?.middleDistance == true
         return date.toEpochDay() - last >= if (goal?.middleDistance == true) 35 else 56
+    }
+
+    /**
+     * The day a due trial falls on: the first hard day from [from] whose run is not done yet (a run of another kind done
+     * that day — a free run — takes the day; the trial goes on to the next hard day). The week shows the trial once, the
+     * hard days after it as what comes after it.
+     */
+    suspend fun trialDay(from: LocalDate = today()): LocalDate? {
+        val program = store.programNow() ?: return null
+        val settings = store.settingsNow()
+        val done = db.workouts().observeDone(from.toEpochDay(), from.toEpochDay() + 13).first()
+        for (i in 0 until 14) {
+            val d = from.plusDays(i.toLong())
+            if (paused(settings, d)) continue
+            val planned = program.week.on(d.dayOfWeek.value)
+            val item = DayItem(d, planned, done.filter { it.epochDay == d.toEpochDay() })
+            if (planned.any { it.kind == SessionKind.RUN_QUALITY && !item.isDone(it) }) return d
+        }
+        return null
     }
 
     /** A stopwatch run; on a stadium of [lapMeters] with the lap button. */

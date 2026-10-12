@@ -51,9 +51,12 @@ data class RunSummary(
 
 /** A day of the week with the plan and what was actually done. */
 data class DayItem(val date: LocalDate, val planned: List<PlannedSession>, val done: List<WorkoutEntity>) {
-    fun isDone(s: PlannedSession): Boolean {
+    fun isDone(s: PlannedSession): Boolean = doneFor(s) != null
+
+    /** The workout done that day in place of [s]: the gym for a gym session, any run for a run, in order. */
+    fun doneFor(s: PlannedSession): WorkoutEntity? {
         val sameKind = done.filter { if (s.isRun) it.kind == Kind.RUN else it.kind == Kind.LIFT }
         val index = planned.filter { it.isRun == s.isRun }.indexOf(s)
-        return index in sameKind.indices
+        return sameKind.getOrNull(index)
     }
 }
