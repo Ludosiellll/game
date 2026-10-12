@@ -236,7 +236,12 @@ class RunService : Service() {
      */
     private fun checkPace(tr: RunTracker) {
         val w = tr.workout
-        if (w.lapMeters != null || !RunSession.gpsEnabled || tr.state != RunTracker.State.RUNNING || tr.waiting(now())) return
+        if (w.lapMeters != null || !RunSession.gpsEnabled) return
+        if (tr.state != RunTracker.State.RUNNING || tr.waiting(now())) {
+            // A stop (a traffic light, a pause) starts the watch over: no "slower" the moment the run goes on.
+            paceAlarm.update(now(), null, null, null, 0)
+            return
+        }
         val tl = tr.timeline(now())
         val seg = tl.segment
         val (fast, slow, easy) = when {

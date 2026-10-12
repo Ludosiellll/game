@@ -55,3 +55,14 @@ jobs:
           path: app/build/shots/
           retention-days: 7
           if-no-files-found: ignore
+
+      # A failed test's full stack trace: the log shows only the exception and its line.
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: test-results
+          path: |
+            core/build/test-results/
+            app/build/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

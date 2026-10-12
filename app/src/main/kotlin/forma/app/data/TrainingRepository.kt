@@ -134,7 +134,9 @@ class TrainingRepository(
         val program = store.programNow() ?: return
         val profile = store.profileNow() ?: return
         if (program.planner >= ProgramGenerator.PLANNER || program.copiedFrom != null) return
-        store.setProgram(keepCycle(ProgramGenerator.generate(profile, today()), program))
+        // Runs at every start: a profile the planner cannot lay out keeps its plan rather than crash the app each time.
+        val fresh = runCatching { ProgramGenerator.generate(profile, today()) }.getOrNull() ?: return
+        store.setProgram(keepCycle(fresh, program))
         onChange()
     }
 

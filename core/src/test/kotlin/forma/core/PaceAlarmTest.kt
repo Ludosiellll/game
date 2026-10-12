@@ -32,4 +32,15 @@ class PaceAlarmTest {
         assertEquals(PaceAlarm.Alert.FAST, run(b, 0, 80, 300.0, fast = 330.0, slow = null).first().second)
         assertNull(PaceAlarm().update(0, null, 300.0, 310.0, 60_000))
     }
+
+    /** A stop (a traffic light: no pace while paused) starts the watch over: slow again after it is said only 20 s later. */
+    @Test fun aStopStartsTheWatchOver() {
+        val a = PaceAlarm()
+        run(a, 0, 40, 270.0, 265.0, 275.0)
+        assertEquals(emptyList(), run(a, 41, 55, 300.0, 265.0, 275.0))
+        // Paused at a light for a minute: the service passes no pace.
+        (56..115).forEach { sec -> assertNull(a.update(sec * 1000L, null, null, null, 0)) }
+        val said = run(a, 116, 150, 300.0, 265.0, 275.0)
+        assertEquals(listOf(136 to PaceAlarm.Alert.SLOW), said)
+    }
 }
