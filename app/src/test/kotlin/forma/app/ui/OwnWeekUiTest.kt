@@ -59,7 +59,7 @@ class OwnWeekUiTest {
     }
 
     /** Denis's profile on the profile screen, the week laid out by the app (Tuesday, Thursday, Saturday). */
-    private fun open(): TrainingRepository {
+    private fun open(doubleDays: Boolean = true): TrainingRepository {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         val store = SettingsStore(ctx, "ui-own-week")
         runBlocking { store.clear() }
@@ -68,7 +68,7 @@ class OwnWeekUiTest {
             repo.completeOnboarding(
                 Profile(
                     name = "Денис", aim = Aim(LiftFocus.MUSCLE, RunFocus.ENDURANCE, Emphasis.BALANCED), experience = Experience.ADVANCED,
-                    runLevel = RunLevel.BASE, trainingDays = setOf(2, 4, 6), bodyWeightKg = 80.0, birthYear = 2008, doubleDays = true,
+                    runLevel = RunLevel.BASE, trainingDays = setOf(2, 4, 6), bodyWeightKg = 80.0, birthYear = 2008, doubleDays = doubleDays,
                     runGoal = RunGoal(1500, 330), lapMeters = 230,
                 ),
             )
@@ -111,6 +111,24 @@ class OwnWeekUiTest {
         val p = runBlocking { repo.store.profileNow()!! }
         assertEquals(null, p.gymDays)
         assertEquals(null, p.runDays)
+        assertEquals(before, runBlocking { repo.store.programNow()!! }.week)
+    }
+
+    /**
+     * A day tapped and tapped back: the days are the app's own again, and the week stays the app's (the same days as
+     * one's own would lay out differently without "the gym and a run in one go": other templates).
+     */
+    @Test fun aDayTappedBackLeavesTheWeekAsItWas() {
+        val repo = open(doubleDays = false)
+        val before = runBlocking { repo.store.programNow()!! }.week
+        compose.onNodeWithContentDescription("Бег, понедельник").performScrollTo().performClick()
+        settle()
+        compose.onNodeWithContentDescription("Бег, понедельник").performClick()
+        settle()
+        compose.onNodeWithText("Сохранить и пересчитать план").performScrollTo().performClick()
+        settle()
+        val p = runBlocking { repo.store.profileNow()!! }
+        assertEquals(null, p.gymDays)
         assertEquals(before, runBlocking { repo.store.programNow()!! }.week)
     }
 }

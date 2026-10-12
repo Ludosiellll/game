@@ -78,4 +78,43 @@ class RoadGpsTest {
         assertNull(a.update(3.0f, 65_000, running = true))
         assertNull(a.update(0.1f, 66_000, running = true))
     }
+
+    /**
+     * The splits History shows are the ones the voice said: active time, the tracker's distance. A minute and a half at
+     * a red light is not in the kilometre it fell in; a restore keeps them.
+     */
+    @Test fun kilometreSplitsLeaveThePausesOut() {
+        val rnd = Random(3)
+        val t = RunTracker(RunWorkout(RunType.FREE, "Свободный бег", emptyList()))
+        t.start(0)
+        var x = 0.0
+        var wall = 0L
+        fun runFor(sec: Int) = repeat(sec) {
+            wall += 1000
+            x += 3.333
+            t.onFix(Fix(wall, 53.9 + rnd.nextDouble(-4.0, 4.0) / 111_195.0, 27.56 + (x + rnd.nextDouble(-4.0, 4.0)) / 65_500.0, 5f, 3.333f), wall)
+        }
+        runFor(450)
+        t.pause(wall)
+        wall += 90_000
+        t.resume(wall)
+        runFor(460)
+        assertEquals(3, t.kmSplits.size, t.kmSplits.toString())
+        assertTrue(t.kmSplits.all { abs(it - 300) <= 3 }, t.kmSplits.toString())
+        val back = RunTracker.restore(t.snapshot(wall), wall)
+        assertEquals(t.kmSplits, back.kmSplits)
+        assertEquals(t.kmSplits, t.result(wall, 5).kmSplits)
+    }
+
+    /** GPS gone under trees for a minute: no pace rather than the last one frozen (the pace alarm would nag on it). */
+    @Test fun noFreshFixesNoPace() {
+        val t = RunTracker(RunWorkout(RunType.FREE, "Свободный бег", emptyList()))
+        t.start(0)
+        for (sec in 1..90) t.onFix(Fix(sec * 1000L, 53.9, 27.56 + sec * 3.0 / 65_500.0, 5f, 3.0f), sec * 1000L)
+        assertTrue(abs(t.currentPace(90_000)!! - 333.3) < 1)
+        assertNotNull(t.currentPace(99_000))
+        assertNull(t.currentPace(105_000))
+        // Without the moment given (tests, old callers) the last pace stands.
+        assertNotNull(t.currentPace())
+    }
 }

@@ -102,6 +102,12 @@ fun ProfileScreen() {
             Text("Сначала исправь поле, подсвеченное выше: иначе оно сохранится не так, как задумано.", style = T.secondary(13.sp).copy(color = forma.app.ui.theme.F.c.bad))
         }
         PrimaryButton("Сохранить и пересчитать план", {
+            // The app's own days tapped back to as they were: still the app's week (the same days as one's own may lay out
+            // another way).
+            if (base.gymDays == null && d.gymDays == planGym && d.runDays == planRun) {
+                d.gymDays = null
+                d.runDays = null
+            }
             scope.launch {
                 repo.updateProfile(d.toProfile(base))
                 nav.back()
@@ -170,6 +176,10 @@ fun WeekGrid(d: ProfileDraft, planGym: Set<Int>, planRun: Set<Int>) {
     if (aim.lifts && gym.size > 5 || aim.runs && run.size > 6) {
         Text("Зал — не больше 5 раз в неделю, бег — не больше 6: в лишний отмеченный день плана не будет.", style = T.secondary(13.sp))
     }
+    // Until 30 minutes of running are possible every run is run/walk, three a week at most (Scheduler.limitHard).
+    if (aim.runs && d.runLevel == RunLevel.NONE && run.size > 3) {
+        Text("Пока бег с ходьбой — не больше 3 раз в неделю: в остальные отмеченные дни бега не будет.", style = T.secondary(13.sp))
+    }
 }
 
 @Composable
@@ -180,7 +190,7 @@ private fun DayRow(label: String, on: Set<Int>, color: androidx.compose.ui.graph
             val sel = day in on
             val shape = androidx.compose.foundation.shape.RoundedCornerShape(F.shape.radiusSmall)
             androidx.compose.foundation.layout.Box(
-                Modifier.weight(1f).height(44.dp).clip(shape)
+                Modifier.weight(1f).height(48.dp).clip(shape)
                     .background(if (sel) color else F.c.surface)
                     .border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, if (sel) color else F.c.line, shape)
                     .toggleable(value = sel, role = androidx.compose.ui.semantics.Role.Checkbox, onValueChange = { onToggle(day) })

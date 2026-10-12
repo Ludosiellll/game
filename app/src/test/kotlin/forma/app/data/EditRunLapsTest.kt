@@ -55,4 +55,21 @@ class EditRunLapsTest {
         repo.editRunLaps(id, LapEdit.merge(laps, 0))
         assertEquals(950.0, repo.db.runs().get(id)!!.distanceM!!, 1e-6)
     }
+
+    /**
+     * An easy run kept on past its plan, the extra minutes not counted: the distance saved is that part of the laps.
+     * Laps put right keep the same part — the distance does not jump to all the laps while the time stays the part.
+     */
+    @Test fun aRunWithTheExtraLeftOutKeepsItsPart() = runBlocking {
+        val laps = List(12) { Lap(72.0, number = it + 1) }
+        val share = 720.0 / 864.0
+        val id = repo.saveRun(repo.freeRun(230), RunResult(1.0, 4, 720, distanceM = 12 * 230 * share, laps = laps), 123_456L, emptyList()).first
+        val before = repo.db.runs().get(id)!!
+        // The same laps back (merged and split again): nothing changes.
+        repo.editRunLaps(id, LapEdit.split(LapEdit.merge(laps, 0), 0))
+        assertEquals(before.distanceM!!, repo.db.runs().get(id)!!.distanceM!!, 1.0)
+        // A lap that was two: 13 laps, the same part of them.
+        repo.editRunLaps(id, LapEdit.split(laps, 3))
+        assertEquals(13 * 230 * share, repo.db.runs().get(id)!!.distanceM!!, 1.0)
+    }
 }

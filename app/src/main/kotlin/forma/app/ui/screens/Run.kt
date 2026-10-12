@@ -225,7 +225,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
             }
         } else {
             Text(
-                if (workout.lapMeters != null) "Секундомер и круги: время каждого круга — голосом и на экране. С GPS круг засчитается сам, даже если не нажмёшь «Круг» (примерно, ±2–3 с)."
+                if (workout.lapMeters != null) "Секундомер и круги: время каждого круга — голосом и на экране."
                 else "Секундомер, дистанция и темп по GPS. Отсечки каждый километр голосом.",
                 style = T.secondary(15.sp),
             )
@@ -250,10 +250,14 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         if (track) {
             Banner(
                 "Стадион, круг ${workout.lapMeters} м. Жми «Круг», когда пересекаешь линию: приложение скажет время круга и в темпе ли ты. " +
-                    "Писк — момент, когда ты должен быть на линии. Кнопка «Круг» есть и в уведомлении." +
+                    // The pacer beeps only in reps of laps (RunTimeline: Cue.LapMark).
+                    (if (workout.reps > 0) "Писк — момент, когда ты должен быть на линии. " else "") +
+                    "Кнопка «Круг» есть и в уведомлении." +
                     when {
                         !gps -> ""
-                        workout.reps == 0 -> " С GPS круг засчитается сам, даже без нажатия: примерно, ±2–3 с."
+                        // The line is learnt from presses on it: until one, GPS has nothing to count laps from.
+                        workout.reps == 0 && settings.trackLine != null -> " С GPS круг засчитается сам, даже без нажатия: примерно, ±2–3 с. Круги считаются от линии: начал не на ней — первый раз на линии станет стартом."
+                        workout.reps == 0 -> " Нажми «Круг» на линии хотя бы раз — с GPS дальше круги засчитаются сами, примерно (±2–3 с)."
                         else -> " С GPS забытое в отрезке нажатие обычно не пропадёт: когда линия уже известна (её запоминают твои нажатия на ней), круг засчитается сам, примерно (±2–3 с)."
                     },
                 F.c.endurance, icon = Ic.info,

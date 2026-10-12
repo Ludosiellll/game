@@ -102,6 +102,8 @@ data class RunResult(
     val testSeconds: Int? = null,
     /** Steps a minute while running, from the phone's step counter. */
     val cadence: Int? = null,
+    /** Seconds of each whole kilometre (active time), as the voice said them. */
+    val kmSplits: List<Int>? = null,
 )
 
 /** A run timed without the phone (a watch, a stopwatch) and entered by hand. */

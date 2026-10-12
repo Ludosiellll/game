@@ -82,7 +82,6 @@ fun HistoryItemScreen(workoutId: Long) {
     val w by remember(workoutId) { repo.db.workouts().observe(workoutId) }.collectAsState(initial = null)
     val sets by produceState<List<SetEntity>>(emptyList(), workoutId) { value = repo.db.sets().forWorkout(workoutId) }
     val run by produceState<RunEntity?>(null, workoutId, w) { value = repo.db.runs().get(workoutId) }
-    val points by produceState<List<forma.app.data.TrackPointEntity>>(emptyList(), workoutId) { value = repo.db.runs().points(workoutId) }
     var confirm by remember { mutableStateOf(false) }
     val workout = w ?: return
     ScrollScreen {
@@ -132,9 +131,9 @@ fun HistoryItemScreen(workoutId: Long) {
             summary?.cadence?.let { Text("Каденс: $it шагов в минуту", style = T.secondary(14.sp)) }
             if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
             if (summary != null && summary.laps.any { it.rep == null }) LapsEditor(workout.id, summary.laps)
-            // On the road: the time of each kilometre from the track.
-            val splits = remember(points) { forma.core.run.Splits.byKm(points.map { forma.core.run.Splits.Point(it.t, it.lat, it.lon, it.accuracy) }) }
-            if (summary?.laps.isNullOrEmpty() && splits.size >= 2) KmSplitsCard(splits)
+            // On the road: the time of each kilometre, as the voice said it (active time, the tracker's distance).
+            val splits = summary?.kmSplits.orEmpty()
+            if (summary?.laps.isNullOrEmpty() && splits.size >= 2) KmSplitsCard(splits.map { it.toDouble() })
             if (summary != null && summary.outcomes.isNotEmpty()) {
                 SectionLabel("Что изменилось после")
                 FCard(gap = 0.dp) {

@@ -45,6 +45,8 @@ data class RunSummary(
     val cadence: Int? = null,
     /** Run without the phone (a watch, a stopwatch) and entered by hand. */
     val manual: Boolean = false,
+    /** Seconds of each whole kilometre (active time), as the voice said them. */
+    val kmSplits: List<Int> = emptyList(),
 )
 
 /** A day of the week with the plan and what was actually done. */

@@ -107,8 +107,15 @@ class ProfileDraft(p: Profile) {
     var gymDays by mutableStateOf(p.gymDays)
     var runDays by mutableStateOf(p.runDays)
 
-    /** Some day is chosen for training. */
-    val anyDay: Boolean get() = gymDays?.let { g -> (g + runDays.orEmpty()).isNotEmpty() } ?: days.isNotEmpty()
+    /** Some day is chosen for what the aim trains (a row the aim hides does not count). */
+    val anyDay: Boolean
+        get() {
+            val g = gymDays
+            val r = runDays
+            if (g == null && r == null) return days.isNotEmpty()
+            val a = aim
+            return (a.lifts && g.orEmpty().isNotEmpty()) || (a.runs && r.orEmpty().isNotEmpty())
+        }
 
     val aim: Aim get() = Aim(lift, run, emphasis).normalized()
 

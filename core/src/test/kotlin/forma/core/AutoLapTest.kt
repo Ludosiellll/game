@@ -330,8 +330,10 @@ class AutoLapTest {
         val rnd = Random(seed)
         val w = RunWorkout(forma.core.run.RunType.FREE, "Свободный бег", emptyList(), lapMeters = lapM, targetPace = target)
         val t = RunTracker(w)
+        // The line known from the presses of earlier runs on this stadium.
+        t.setLine(lat0, lon0)
         t.start(0)
-        // Starting somewhere along the back straight.
+        // Starting somewhere along the back straight: the laps begin the first time on the line.
         val s0 = 120.0
         var s = s0
         var now = 0L
@@ -359,8 +361,8 @@ class AutoLapTest {
             val laps = t.laps
             assertTrue(laps.size in 9..10, "seed $seed: ${laps.size} laps ${laps.map { it.seconds }}")
             assertTrue(laps.all { it.auto }, "seed $seed")
-            // Every lap is a lap of 72 s give or take GPS's two or three seconds (the line is one fix where the run began),
-            // and the errors do not add up: the laps together are the time run.
+            // Every lap is a lap of 72 s give or take GPS's two or three seconds, and the errors do not add up: the laps
+            // together are the time run.
             assertTrue(laps.all { abs(it.seconds - 72.0) <= 3.5 }, "seed $seed: ${laps.map { it.seconds }}")
             assertEquals(laps.size * 72.0, laps.sumOf { it.seconds }, 3.5, "seed $seed")
             assertEquals(laps.size * lapM.toDouble(), t.lapDistanceM(), 1e-9)
@@ -368,9 +370,9 @@ class AutoLapTest {
     }
 
     @Test fun aFreeRunWithATargetJudgesEachLap() {
-        // Target 75 s a lap (±1 s), run at 72: every lap is "fast".
+        // Target 75 s a lap (±1 s), run at 66: every lap is "fast" (a GPS lap only when clearly off: 2.5 s past the bound).
         val target = forma.core.run.PaceRange((74.0 / lapM * 1000).toInt(), (76.0 / lapM * 1000).toInt())
-        val (t, _) = freeRun(3, 72.0, 6, target)
+        val (t, _) = freeRun(3, 66.0, 6, target)
         assertTrue(t.laps.isNotEmpty())
         assertTrue(t.laps.all { it.verdict == -1 }, t.laps.toString())
         val (on, _) = freeRun(4, 75.0, 6, target)

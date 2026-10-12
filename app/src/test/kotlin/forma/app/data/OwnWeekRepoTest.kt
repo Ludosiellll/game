@@ -75,4 +75,28 @@ class OwnWeekRepoTest {
         repo.refreshPlan()
         assertEquals(copied, repo.store.programNow())
     }
+
+    /** A friend's program copied: their week is the week now, the own days chosen before go (the plan line, the grid). */
+    @Test fun aCopiedProgramTakesTheOwnDaysAway() = runBlocking {
+        repo.completeOnboarding(denis)
+        repo.updateProfile(denis.copy(gymDays = setOf(2, 4, 6), runDays = setOf(1, 2, 4, 6), trainingDays = setOf(1, 2, 4, 6)))
+        val friend = ProgramGenerator.generate(denis.copy(trainingDays = setOf(1, 3, 5), doubleDays = false), java.time.LocalDate.now())
+        assertTrue(repo.copyProgram(friend, "Аня"))
+        val p = repo.store.profileNow()!!
+        assertEquals(null, p.gymDays)
+        assertEquals(null, p.runDays)
+        assertEquals(setOf(1, 3, 5), p.trainingDays)
+    }
+
+    /** A run-only own week switched to the gym only, no gym day ticked: nothing to save (the run row is hidden). */
+    @Test fun hiddenDaysDoNotCount() {
+        val base = denis.copy(aim = Aim(forma.core.model.LiftFocus.NONE, RunFocus.SPEED, Emphasis.RUN), gymDays = emptySet(), runDays = setOf(2, 4), trainingDays = setOf(2, 4), doubleDays = false)
+        val d = forma.app.ui.screens.ProfileDraft(base)
+        assertTrue(d.anyDay)
+        d.lift = LiftFocus.MUSCLE
+        d.run = RunFocus.NONE
+        assertTrue(!d.anyDay, "no gym day ticked")
+        d.gymDays = setOf(3)
+        assertTrue(d.anyDay)
+    }
 }

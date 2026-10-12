@@ -177,7 +177,7 @@ object RunSession {
     internal fun publish(nowMs: Long) {
         val t = tracker ?: return
         _ui.value = RunUi(
-            t.workout, t.state, t.activeSec(nowMs), t.timeline(nowMs), t.shownDistanceM(), t.currentPace(), t.averagePace(nowMs),
+            t.workout, t.state, t.activeSec(nowMs), t.timeline(nowMs), t.shownDistanceM(), t.currentPace(nowMs), t.averagePace(nowMs),
             gpsEnabled, t.lastAccuracy, startedAtWall, restored, t.laps.lastOrNull(), t.laps.size,
             if (t.workout.lapMeters != null) t.lapClockSec(nowMs) else null,
             if (t.workout.isOpenEnded) 0 else ((t.timelineMs(nowMs) / 1000).toInt() - t.workout.totalSeconds).coerceAtLeast(0),

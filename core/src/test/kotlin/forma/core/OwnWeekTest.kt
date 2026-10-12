@@ -67,4 +67,19 @@ class OwnWeekTest {
         assertEquals(setOf(2, 4, 6), p.daysOf { true })
         assertEquals(ProgramGenerator.PLANNER, p.planner)
     }
+
+    /**
+     * Whatever days are ticked, heavy legs and a hard run never share a day: a hard run turns easy when the days leave
+     * no room (gym Tue/Wed/Fri/Sat with runs Tue–Sat used to put the long run on the legs day).
+     */
+    @Test fun noHardRunOnALegsDayWhateverTheDays() {
+        val rnd = kotlin.random.Random(7)
+        val sample = listOf(setOf(2, 3, 5, 6) to setOf(2, 3, 4, 5, 6), setOf(1, 2, 3, 4, 5) to setOf(1, 2, 4)) +
+            List(150) { (1..7).filter { rnd.nextBoolean() }.toSet() to (1..7).filter { rnd.nextBoolean() }.toSet() }
+        for ((gym, run) in sample) {
+            if ((gym + run).isEmpty()) continue
+            val p = ProgramGenerator.generate(denis(gym, run), monday)
+            for (d in 1..7) assertTrue(!(p.legsOn(d) && p.week.on(d).any { it.isHardRun }), "gym $gym run $run: ${p.week.days}")
+        }
+    }
 }

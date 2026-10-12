@@ -251,7 +251,8 @@ class RunService : Service() {
             else -> null
         } ?: Triple(null, null, false)
         val into = if (w.isOpenEnded) tr.activeMs(now()) else tl.segmentElapsed * 1000L
-        paceAlarm.update(now(), tr.currentPace(), fast, slow, into)?.let { coach?.speak(CoachText.pace(it, easy)) }
+        // No fresh pace (GPS gone a while) is no alarm: the watch starts over when it comes back.
+        paceAlarm.update(now(), tr.currentPace(now()), fast, slow, into)?.let { coach?.speak(CoachText.pace(it, easy)) }
     }
 
     private fun handle(events: List<RunEvent>) {

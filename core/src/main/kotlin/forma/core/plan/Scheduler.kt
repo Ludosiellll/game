@@ -166,6 +166,8 @@ object Scheduler {
                                 if (ri >= 0) PlannedSession(perm[ri]) else null,
                             )
                         }
+                        // Never heavy legs and a hard run on one day: a rule, not a cost to weigh.
+                        if (slots.any { legs(it.lift, templates) && it.run?.isHardRun == true }) continue
                         val sc = score(slots, templates, aim)
                         if (sc < bestScore - 1e-9) {
                             bestScore = sc
@@ -174,6 +176,16 @@ object Scheduler {
                     }
                 }
             }
+        }
+        // No layout keeps every hard run off the heavy-legs days (the person's own days leave no room): one hard run fewer,
+        // run easy instead — the speed plan keeps its intervals longest, the endurance plan its long run.
+        if (best == null && mix.quality + mix.long > 0) {
+            val speed = aim.normalized().run == RunFocus.SPEED
+            val fewer = when {
+                speed && mix.long > 0 || mix.quality == 0 -> mix.copy(long = mix.long - 1, easy = mix.easy + 1)
+                else -> mix.copy(quality = mix.quality - 1, easy = mix.easy + 1)
+            }
+            return lay(gymDays, runDaysAll, fewer, templates, aim)
         }
         val chosen = best ?: (1..7).map { Slot(it, null, null) }
         val runFirst = aim.normalized().emphasis == Emphasis.RUN

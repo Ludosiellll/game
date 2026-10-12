@@ -122,22 +122,24 @@ class TrainingRepository(
      */
     private fun keepCycle(fresh: Program, prev: Program?): Program = when {
         prev == null || prev.experience != fresh.experience -> fresh
-        prev.week == fresh.week -> fresh.copy(startEpochDay = prev.startEpochDay, createdEpochDay = prev.createdEpochDay)
+        prev.week.days == fresh.week.days -> fresh.copy(startEpochDay = prev.startEpochDay, createdEpochDay = prev.createdEpochDay)
         else -> fresh.copy(startEpochDay = prev.startEpochDay)
     }
 
     /**
      * A week laid out by an older planner is laid out again by the current one, so a fix in the planner reaches plans
      * made before it; progress and the cycle stay. A program copied from a friend is theirs and stays as it is.
+     * [notify]: tell the cloud. Not while the app is still building this repository: the cloud link is built on it, and
+     * reaching for it from inside would build a second repository and database (the app syncs at start anyway).
      */
-    suspend fun refreshPlan() {
+    suspend fun refreshPlan(notify: Boolean = true) {
         val program = store.programNow() ?: return
         val profile = store.profileNow() ?: return
         if (program.planner >= ProgramGenerator.PLANNER || program.copiedFrom != null) return
         // Runs at every start: a profile the planner cannot lay out keeps its plan rather than crash the app each time.
         val fresh = runCatching { ProgramGenerator.generate(profile, today()) }.getOrNull() ?: return
         store.setProgram(keepCycle(fresh, program))
-        onChange()
+        if (notify) onChange()
     }
 
     suspend fun logBodyWeight(kg: Double) {
@@ -659,7 +661,8 @@ class TrainingRepository(
         // Whatever the friend's phone stored, only a program that works here is taken.
         val safe = program.checked { id -> Catalog.find(id)?.archived == false } ?: return false
         val days = safe.week.days.filter { it.sessions.isNotEmpty() }.map { it.day }.toSet().ifEmpty { profile.trainingDays }
-        val updated = profile.copy(aim = safe.aim, goal = safe.aim.nearestGoal(), trainingDays = days)
+        // The friend's week is the week now: the own days chosen before are not (the plan line and the grid show these).
+        val updated = profile.copy(aim = safe.aim, goal = safe.aim.nearestGoal(), trainingDays = days, gymDays = null, runDays = null)
         val own = ProgramGenerator.generate(updated, today())
         store.setProfile(updated)
         store.setProgram(
@@ -832,7 +835,7 @@ class TrainingRepository(
         else if (workout.type == RunType.TEST) next = next.copy(lastTrialTryDay = date.toEpochDay())
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
-        val summary = RunSummary(after.outcomes, minutes, load, result.laps.orEmpty(), result.cadence, manual)
+        val summary = RunSummary(after.outcomes, minutes, load, result.laps.orEmpty(), result.cadence, manual, result.kmSplits.orEmpty())
         val avgPace = result.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
         val id = db.withTransaction {
             val id = db.workouts().insert(
@@ -869,14 +872,20 @@ class TrainingRepository(
         db.workouts().update(w.copy(summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary.copy(laps = laps))))
         val r = db.runs().get(workoutId)
         val lapM = r?.let { runCatching { AppJson.decodeFromString(RunWorkout.serializer(), it.planJson).lapMeters }.getOrNull() }
-        if (r != null && lapM != null) {
+        if (r != null && lapM != null && summary.laps.isNotEmpty()) {
             val before = summary.laps.sumOf { it.part } * lapM
             val after = laps.sumOf { it.part } * lapM
-            // On a stadium the distance is the laps or GPS, whichever is more: the laps' when it was theirs, or when
-            // the laps put right are now more than GPS saw.
-            val byLaps = r.distanceM == null || kotlin.math.abs(r.distanceM - before) < 1.0 || after > r.distanceM
-            if (byLaps && after != r.distanceM) {
-                db.runs().insert(r.copy(distanceM = after, avgPace = if (after > 50) r.movingSec / (after / 1000) else r.avgPace))
+            val d = r.distanceM
+            val next = when {
+                // The distance was the laps: it is the laps again.
+                d == null || kotlin.math.abs(d - before) < 1.0 -> after
+                // GPS saw more than the laps (the laps only in the reps): the laps or GPS, whichever is more.
+                d > before -> maxOf(d, after)
+                // Less than the laps: only part of the run was counted (the time past the plan left out) — the same part.
+                else -> d * after / before
+            }
+            if (kotlin.math.abs(next - (d ?: 0.0)) >= 0.5) {
+                db.runs().insert(r.copy(distanceM = next, avgPace = if (next > 50) r.movingSec / (next / 1000) else r.avgPace))
             }
         }
         onChange()
