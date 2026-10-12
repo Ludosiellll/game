@@ -42,6 +42,8 @@ data class RunWorkout(
     val testMeters: Int? = null,
     /** Shortened for a lighter week: done, it moves no ladder (the full step is still ahead). */
     val cutback: Boolean = false,
+    /** A free run's own target, set by the runner: its laps are judged against it and the pace is said when off it. */
+    val targetPace: PaceRange? = null,
 ) {
     /** Work reps (WORK segments) in the plan. */
     val reps: Int get() = segments.count { it.kind == SegmentKind.WORK }

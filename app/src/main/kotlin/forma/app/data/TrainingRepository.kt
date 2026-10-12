@@ -87,14 +87,7 @@ class TrainingRepository(
     suspend fun updateProfile(profile: Profile) {
         val old = store.profileNow()
         store.setProfile(profile)
-        val fresh = ProgramGenerator.generate(profile, today())
-        val prev = store.programNow()
-        // The block goes on: a saved profile changes the week, not where the lifter is in the cycle (a lighter week
-        // stays where it was due, a vacation shift stays). Another experience level has another block and starts over.
-        store.setProgram(
-            if (prev != null && prev.experience == fresh.experience) fresh.copy(startEpochDay = prev.startEpochDay, createdEpochDay = prev.createdEpochDay)
-            else fresh,
-        )
+        store.setProgram(keepCycle(ProgramGenerator.generate(profile, today()), store.programNow()))
         val raceChanged = old == null || old.raceMeters != profile.raceMeters || old.raceSeconds != profile.raceSeconds
         if (raceChanged || old.runLevel != profile.runLevel) {
             val init = ProgramGenerator.initialRunState(profile)
@@ -119,6 +112,29 @@ class TrainingRepository(
             store.setRunState(store.runStateNow().copy(goalStage = 0, goalFails = 0, testSoon = false))
         }
         if (old?.bodyWeightKg != profile.bodyWeightKg) logBodyWeight(profile.bodyWeightKg)
+        onChange()
+    }
+
+    /**
+     * The block goes on: a new week layout does not move where the lifter is in the cycle (a lighter week stays where it
+     * was due, a vacation shift stays). Another experience level has another block and starts over. A week laid out
+     * differently counts from today: what it would have had earlier this week was never shown, so it is not "missed".
+     */
+    private fun keepCycle(fresh: Program, prev: Program?): Program = when {
+        prev == null || prev.experience != fresh.experience -> fresh
+        prev.week == fresh.week -> fresh.copy(startEpochDay = prev.startEpochDay, createdEpochDay = prev.createdEpochDay)
+        else -> fresh.copy(startEpochDay = prev.startEpochDay)
+    }
+
+    /**
+     * A week laid out by an older planner is laid out again by the current one, so a fix in the planner reaches plans
+     * made before it; progress and the cycle stay. A program copied from a friend is theirs and stays as it is.
+     */
+    suspend fun refreshPlan() {
+        val program = store.programNow() ?: return
+        val profile = store.profileNow() ?: return
+        if (program.planner >= ProgramGenerator.PLANNER || program.copiedFrom != null) return
+        store.setProgram(keepCycle(ProgramGenerator.generate(profile, today()), program))
         onChange()
     }
 
@@ -839,6 +855,29 @@ class TrainingRepository(
         store.setRunState(next)
         onChange()
         id to summary
+    }
+
+    /**
+     * The laps of a saved run put right ([forma.core.run.LapEdit]): a press forgotten or doubled. On a stadium where the
+     * distance was the laps, it follows them; the plan's decisions on the run stay as they were.
+     */
+    suspend fun editRunLaps(workoutId: Long, laps: List<forma.core.run.Lap>) {
+        val w = db.workouts().get(workoutId) ?: return
+        val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() } ?: return
+        db.workouts().update(w.copy(summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary.copy(laps = laps))))
+        val r = db.runs().get(workoutId)
+        val lapM = r?.let { runCatching { AppJson.decodeFromString(RunWorkout.serializer(), it.planJson).lapMeters }.getOrNull() }
+        if (r != null && lapM != null) {
+            val before = summary.laps.sumOf { it.part } * lapM
+            val after = laps.sumOf { it.part } * lapM
+            // On a stadium the distance is the laps or GPS, whichever is more: the laps' when it was theirs, or when
+            // the laps put right are now more than GPS saw.
+            val byLaps = r.distanceM == null || kotlin.math.abs(r.distanceM - before) < 1.0 || after > r.distanceM
+            if (byLaps && after != r.distanceM) {
+                db.runs().insert(r.copy(distanceM = after, avgPace = if (after > 50) r.movingSec / (after / 1000) else r.avgPace))
+            }
+        }
+        onChange()
     }
 
     // ---------- views ----------

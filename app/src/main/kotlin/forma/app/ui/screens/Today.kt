@@ -184,6 +184,8 @@ fun TodayScreen() {
                         RunCard(s, today, done, light) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
                     }
                 }
+                // All of today done: what comes next and how to run it.
+                if (feel != Feel.SICK && todays.all { todayItem?.isDone(it) == true }) NextPlannedCard(today)
             }
         }
         val strength = remember(rows, bw) { Stats.changePct(Stats.strengthIndex(rows, bw)) }
@@ -410,17 +412,14 @@ private fun RestCard(
     FCard {
         SectionLabel("Отдых")
         Text("Сегодня день восстановления", style = T.title(22.sp))
-        Text(
-            if (next != null) "Дальше: ${dayShort(next.date.dayOfWeek)} — ${next.planned.joinToString(" + ") { sessionTitle(it, program) }}."
-            else "На этой неделе тренировок больше нет. Новая неделя — с понедельника.",
-            style = T.secondary(14.sp),
-        )
+        if (next == null) Text("На этой неделе тренировок больше нет. Новая неделя — с понедельника.", style = T.secondary(14.sp))
         Text("Лёгкая прогулка или растяжка не помешают. Если очень хочется — можно потренироваться вне плана.", style = T.secondary(13.sp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GhostButton("Пробежка", onFree, Modifier.weight(1f))
             GhostButton("Силовая", onOther, Modifier.weight(1f))
         }
     }
+    NextPlannedCard(today)
 }
 
 /** "на понедельник", "на среду": day names after «на». */

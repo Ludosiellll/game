@@ -93,6 +93,7 @@ class RunService : Service() {
 
     /** Stops the clock at a standstill on the road (easy, long and free runs) and goes on with running. */
     private val autoPause = forma.core.run.AutoPause()
+    private val paceAlarm = forma.core.run.PaceAlarm()
 
     private fun control(action: (RunTracker) -> Unit) {
         val t = RunSession.tracker ?: return
@@ -171,11 +172,13 @@ class RunService : Service() {
                 }
                 val events = tr.tick(now())
                 handle(events)
-                // A lap nobody pressed, seen by GPS crossing the line: in a rep it is said (and roughly timed).
+                // A lap nobody pressed, seen by GPS crossing the line: in a rep, or any lap of a run without reps, it is
+                // said (roughly timed, and judged when there is a target).
                 tr.autoLap(now())?.let { l ->
                     coach?.speak(CoachText.autoLap(l))
                     RunSession.save(now())
                 }
+                checkPace(tr)
                 if (events.any { (it as? RunEvent.Timeline)?.cue is Cue.ToLine }) waitSaidAt = now()
                 // Waiting on the line: a reminder every minute, in case the first one was missed.
                 if (tr.state == RunTracker.State.RUNNING && tr.waiting(now()) && now() - waitSaidAt > 60_000) {
@@ -225,6 +228,25 @@ class RunService : Service() {
             (type != base && runCatching { ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), base) }.isSuccess)
         if (!ok) stopSelf()
         return ok
+    }
+
+    /**
+     * On the road, the pace against the target of the moment: a rep's range, an easy run's fast limit, a free run's own
+     * target. Off it for a while — said ("Медленнее цели — прибавь"). Not on a stadium: there each lap is judged.
+     */
+    private fun checkPace(tr: RunTracker) {
+        val w = tr.workout
+        if (w.lapMeters != null || !RunSession.gpsEnabled || tr.state != RunTracker.State.RUNNING || tr.waiting(now())) return
+        val tl = tr.timeline(now())
+        val seg = tl.segment
+        val (fast, slow, easy) = when {
+            w.isOpenEnded -> w.targetPace?.let { Triple(it.fast.toDouble(), it.slow.toDouble(), false) }
+            seg?.kind == forma.core.run.SegmentKind.WORK -> seg.pace?.let { Triple(it.fast.toDouble(), it.slow.toDouble(), false) }
+            seg?.kind == forma.core.run.SegmentKind.RUN -> seg.pace?.let { Triple(it.fast.toDouble(), null, true) }
+            else -> null
+        } ?: Triple(null, null, false)
+        val into = if (w.isOpenEnded) tr.activeMs(now()) else tl.segmentElapsed * 1000L
+        paceAlarm.update(now(), tr.currentPace(), fast, slow, into)?.let { coach?.speak(CoachText.pace(it, easy)) }
     }
 
     private fun handle(events: List<RunEvent>) {

@@ -338,6 +338,20 @@ private fun RunTab() {
             minutes[w] += r.movingSec / 60.0
         }
     }
+    // The pace of the runs without reps, run after run: the same easy effort getting quicker is the base growing.
+    val calm = runs.filter { it.type in setOf("EASY", "LONG", "FREE") && (it.distanceM ?: 0.0) >= 1000 && (it.avgPace ?: 0.0) > 0 }.takeLast(12)
+    if (calm.size >= 2) {
+        SectionLabel("Темп пробежек")
+        FCard(gap = 6.dp) {
+            Text("Последняя — ${Ru.pace(calm.last().avgPace!!)} /км", style = T.title(18.sp))
+            LineChart(
+                listOf(Series(calm.map { it.avgPace!! }, F.c.endurance)), height = 110.dp,
+                xLabels = calm.indices.map { i -> if (i == 0 || i == calm.lastIndex) dayOf[calm[i].workoutId]?.let { shortDate(LocalDate.ofEpochDay(it)) } ?: "" else "" },
+                description = "Средний темп лёгкого, длинного и свободного бега по пробежкам",
+            )
+            Text("Лёгкий, длинный и свободный бег — без отрезков и контрольных. Ниже — быстрее; лёгкий бег быстрее при той же лёгкости — так растёт база.", style = T.secondary(12.sp))
+        }
+    }
     if (runs.isNotEmpty()) {
         SectionLabel("Объём бега по неделям")
         FCard(gap = 6.dp) {

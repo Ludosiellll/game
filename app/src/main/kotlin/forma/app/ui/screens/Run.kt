@@ -168,6 +168,11 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
     val context = LocalContext.current
     var gps by remember { mutableStateOf(settings.gps) }
     var voice by remember { mutableStateOf(settings.voice) }
+    // A free run may have the runner's own target: a lap time on a stadium, a pace on the road.
+    var targetText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    val target = if (workout.isOpenEnded) freeTarget(targetText, workout.lapMeters) else null
+    val targetBad = workout.isOpenEnded && targetText.isNotBlank() && target == null
+    val chosen = if (target != null) workout.copy(targetPace = target) else workout
     fun start() {
         // One run at a time: an unfinished or unsaved one is shown instead of starting another over it.
         val current = RunSession.tracker
@@ -181,7 +186,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
             android.widget.Toast.makeText(context, "С примерной геопозицией дистанцию не посчитать — бег по времени. Нужна точная.", android.widget.Toast.LENGTH_LONG).show()
         }
         val stride = forma.core.run.Stride.fit(settings.strideSamples.mapNotNull { if (it.size == 2) it[0] to it[1] else null })
-        RunService.start(context, workout, gps && fine, voice, settings.beeps, settings.vibration, settings.trackLine, settings.autoPause, stride)
+        RunService.start(context, chosen, gps && fine, voice, settings.beeps, settings.vibration, settings.trackLine, settings.autoPause, stride)
         nav.replaceTop(Screen.RunActive)
     }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { start() }
@@ -218,17 +223,39 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
                     }
                 }
             }
-        } else if (workout.lapMeters != null) {
-            Text("Секундомер и круги: время каждого круга — голосом и на экране.", style = T.secondary(15.sp))
         } else {
-            Text("Секундомер, дистанция и темп по GPS. Отсечки каждый километр голосом.", style = T.secondary(15.sp))
+            Text(
+                if (workout.lapMeters != null) "Секундомер и круги: время каждого круга — голосом и на экране. С GPS круг засчитается сам, даже если не нажмёшь «Круг» (примерно, ±2–3 с)."
+                else "Секундомер, дистанция и темп по GPS. Отсечки каждый километр голосом.",
+                style = T.secondary(15.sp),
+            )
+            val lapM = workout.lapMeters
+            NumberField(
+                targetText, { targetText = it },
+                if (lapM != null) "Цель круга (если хочешь)" else "Цель темпа (если хочешь)",
+                if (lapM != null) "с" else "мин/км",
+                keyboard = if (lapM != null) KeyboardType.Decimal else KeyboardType.Text,
+                placeholder = if (lapM != null) "75" else "5:30",
+            )
+            Text(
+                when {
+                    targetBad -> if (lapM != null) "Не похоже на время круга — впиши секунды, например 75." else "Не похоже на темп — впиши минуты и секунды на км, например 5:30."
+                    lapM != null -> "С целью после каждого круга скажу, быстро или медленно. Без неё — только время круга."
+                    else -> "С целью скажу, если убежишь из темпа. Без неё — только отсечки по километрам."
+                },
+                style = T.secondary(13.sp).copy(color = if (targetBad) F.c.warn else F.c.text2),
+            )
         }
         val track = workout.lapMeters != null
         if (track) {
             Banner(
                 "Стадион, круг ${workout.lapMeters} м. Жми «Круг», когда пересекаешь линию: приложение скажет время круга и в темпе ли ты. " +
                     "Писк — момент, когда ты должен быть на линии. Кнопка «Круг» есть и в уведомлении." +
-                    if (gps) " С GPS забытое в отрезке нажатие обычно не пропадёт: когда линия уже известна (её запоминают твои нажатия на ней), круг засчитается сам, примерно (±2 с)." else "",
+                    when {
+                        !gps -> ""
+                        workout.reps == 0 -> " С GPS круг засчитается сам, даже без нажатия: примерно, ±2–3 с."
+                        else -> " С GPS забытое в отрезке нажатие обычно не пропадёт: когда линия уже известна (её запоминают твои нажатия на ней), круг засчитается сам, примерно (±2–3 с)."
+                    },
                 F.c.endurance, icon = Ic.info,
             )
         }
@@ -250,7 +277,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
             )
         }
         PrimaryButton("Старт", {
-            if (!ready) return@PrimaryButton
+            if (!ready || targetBad) return@PrimaryButton
             val need = buildList {
                 // Android 12+ ignores a request for precise location that does not ask for approximate too.
                 if (gps && RunSession.tracker == null) {
@@ -269,6 +296,18 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         // Run with a watch and no phone: the numbers go in by hand and the plan moves as after a timed run.
         GhostButton("Бегал без телефона — внести", { if (ready) nav.push(Screen.RunManual(workout)) }, Modifier.fillMaxWidth())
     }
+}
+
+/**
+ * A free run's own target from what was typed: seconds a lap on a stadium ("75"), minutes and seconds a km on the road
+ * ("5:30"); a second a lap or five seconds a km either way. Null when empty or not a pace anyone runs.
+ */
+internal fun freeTarget(text: String, lapM: Int?): forma.core.run.PaceRange? {
+    if (text.isBlank()) return null
+    val perKm = if (lapM != null) parseNum(text)?.takeIf { it > 0 }?.let { it / lapM * 1000 } else parseClock(text)?.takeIf { it > 0 }
+    if (perKm == null || perKm !in forma.core.run.RunPlan.PLAUSIBLE_PACE) return null
+    val spread = if (lapM != null) 1000.0 / lapM else 5.0
+    return forma.core.run.PaceRange((perKm - spread).roundToInt(), (perKm + spread).roundToInt())
 }
 
 /** Collapses the segment list: "Ускорения 5 × 3:00" instead of ten rows; on a stadium in laps. Third: the target. */
@@ -432,7 +471,8 @@ fun RunActiveScreen() {
             // Waiting on the line, the numbers are those of the rep about to start.
             val shownIndex = if (waiting) tl.index + 1 else tl.index
             val shown = if (waiting) w.segments.getOrNull(shownIndex) else seg
-            val target = shown?.pace
+            // A free run's own target, if the runner set one.
+            val target = shown?.pace ?: w.targetPace?.takeIf { w.isOpenEnded }
             if (lapM != null) {
                 // On a stadium: the lap to run and the last one pressed, judged against its target.
                 val l = u.lastLap
@@ -444,11 +484,11 @@ fun RunActiveScreen() {
                         "Цель круга",
                         target?.let { Ru.lapRange(Track.lapSec(it.fast.toDouble(), lapM), Track.lapSec(it.slow.toDouble(), lapM)) } ?: "—",
                         when {
-                            w.isOpenEnded -> "свободный бег"
+                            w.isOpenEnded -> if (target != null) "твоя цель" else "свободный бег"
                             waiting -> "отсчёт — с нажатия"
                             repNo != null && lapsInRep != null && lapsInRep > 1 -> "круг ${minOf(lapNo, lapsInRep)} из $lapsInRep"
                             target == null -> "сейчас без темпа"
-                            shown.kind != SegmentKind.WORK -> "медленнее — нормально"
+                            shown?.kind != SegmentKind.WORK -> "медленнее — нормально"
                             else -> "писк — ты на линии"
                         },
                         F.c.text, Modifier.weight(1f),
@@ -641,6 +681,15 @@ private fun lapColor(l: Lap): Color = when (l.verdict) {
 fun LapsCard(laps: List<Lap>, test: Boolean) {
     if (laps.isEmpty()) return
     SectionLabel("Круги")
+    // The laps as bars (a half lap as a whole one's pace): an uneven run and a forgotten press are seen at a glance.
+    if (laps.size >= 3) {
+        forma.app.ui.components.BarChart(
+            laps.map { it.seconds / it.part }, F.c.endurance.copy(alpha = 0.55f), height = 90.dp,
+            floor = laps.minOf { it.seconds / it.part } * 0.85,
+            xLabels = laps.indices.map { if (it == 0 || it == laps.lastIndex) "${it + 1}" else "" },
+            description = "Время кругов по порядку: выше столбик — медленнее круг",
+        )
+    }
     FCard(gap = 0.dp) {
         val reps = laps.filter { it.rep != null }.groupBy { it.rep!! }
         reps.entries.forEachIndexed { i, (rep, ls) ->
@@ -797,7 +846,7 @@ fun RunDoneScreen(workoutId: Long) {
                 Text(
                     when {
                         testTime.isNotBlank() && typed == null -> "Не похоже на время забега — впиши минуты и секунды через двоеточие, например 5:52."
-                        result.testSeconds != null && tracker.laps.any { it.auto } -> "По кнопке «Круг» и GPS: круг без нажатия засчитан примерно (±2 с). Если засекал сам — поправь."
+                        result.testSeconds != null && tracker.laps.any { it.auto } -> "По кнопке «Круг» и GPS: круг без нажатия засчитан примерно (±2–3 с). Если засекал сам — поправь."
                         result.testSeconds != null -> "По кнопке «Круг». Если засекал сам — поправь."
                         else -> "Впиши время с секундомера: без него забег не засчитается."
                     },
@@ -896,6 +945,7 @@ fun RunDoneScreen(workoutId: Long) {
             }
             LapsCard(s.second.laps, test = s.second.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
             Text("Нагрузка: ${s.second.load.roundToInt()} (оценка × минуты).", style = T.secondary(13.sp))
+            NextPlannedCard(forma.app.ui.rememberToday(repo))
             NextToday { nav.tab(Screen.Today) }
         }
     }

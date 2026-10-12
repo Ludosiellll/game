@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -203,4 +204,44 @@ fun NextToday(onDone: () -> Unit) {
         }
     }, Modifier.fillMaxWidth())
     forma.app.ui.components.GhostButton("Готово на сегодня", onDone, Modifier.fillMaxWidth())
+}
+
+/**
+ * The next day of the plan after [today] and what it holds: the gym session, and each run with how to run it (the lap
+ * time or pace to keep) — so after a run, or on a day off, the next one is never a guess.
+ */
+@Composable
+fun NextPlannedCard(today: LocalDate) {
+    val repo = forma.app.ui.LocalRepo.current
+    val program by repo.store.program.collectAsState(initial = null)
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    val p = program ?: return
+    val next = androidx.compose.runtime.remember(p, today, settings) {
+        (1..14).map { today.plusDays(it.toLong()) }.firstOrNull { d -> !repo.paused(settings, d) && p.week.on(d.dayOfWeek.value).isNotEmpty() }
+    } ?: return
+    val sessions = p.week.on(next.dayOfWeek.value)
+    val runs by androidx.compose.runtime.produceState<Map<PlannedSession, forma.core.run.RunWorkout>>(emptyMap(), p, next) {
+        value = sessions.filter { it.isRun }.associateWith { repo.runFor(it.kind, next) }
+    }
+    forma.app.ui.components.FCard(gap = 8.dp) {
+        forma.app.ui.components.SectionLabel("Дальше по плану")
+        Text(
+            (if (next == today.plusDays(1)) "Завтра, " + DAY_FULL[next.dayOfWeek.value - 1].lowercase() else dateLine(next)),
+            style = forma.app.ui.theme.T.title(20.sp),
+        )
+        sessions.forEach { s ->
+            androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                androidx.compose.material3.Icon(
+                    if (s.isRun) forma.app.ui.theme.Ic.run else forma.app.ui.theme.Ic.dumbbell, null,
+                    tint = if (s.isRun) forma.app.ui.theme.F.c.endurance else forma.app.ui.theme.F.c.strength,
+                    modifier = Modifier.padding(top = 2.dp).size(18.dp),
+                )
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
+                    val w = runs[s]
+                    Text(w?.title ?: sessionTitle(s, p), style = forma.app.ui.theme.T.body(15.sp, androidx.compose.ui.text.font.FontWeight.SemiBold))
+                    if (w != null) Text(forma.app.ui.RunHow.short(w), style = forma.app.ui.theme.T.secondary(13.sp))
+                }
+            }
+        }
+    }
 }

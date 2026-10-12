@@ -57,40 +57,62 @@ object Scheduler {
             // days or more and the gym and running on the same days, a second easy run joins the two hard ones.
             l to if (shared && middleGoal && a.emphasis != Emphasis.GYM && n >= 4) max(r, min(n, 4)) else r
         }
-        // Endurance builds on the long run; speed on intervals and tempo, with a long run once there are three runs.
-        val (easy, quality, long) = when (a.run) {
-            RunFocus.NONE -> Triple(0, 0, 0)
-            RunFocus.HEALTH -> Triple(runs, 0, 0)
-            RunFocus.ENDURANCE -> when (runs) {
-                0 -> Triple(0, 0, 0)
-                1 -> Triple(0, 0, 1)
-                2 -> Triple(1, 0, 1)
-                3 -> Triple(1, 1, 1)
-                4 -> Triple(2, 1, 1)
-                5 -> Triple(3, 1, 1)
-                else -> Triple(runs - 3, 2, 1)
-            }
-            RunFocus.SPEED -> when {
-                runs == 0 -> Triple(0, 0, 0)
-                runs == 1 -> Triple(0, 1, 0)
-                runs == 2 -> Triple(1, 1, 0)
-                // 1500 m is mostly aerobic but specific: race pace once a week, intervals or tempo once, the rest easy.
-                middleGoal && runs <= 4 -> Triple(runs - 2, 2, 0)
-                middleGoal -> Triple(runs - 3, 2, 1)
-                runs == 3 -> Triple(1, 1, 1)
-                else -> Triple(runs - 3, 2, 1)
-            }
-        }
+        val (easy, quality, long) = kinds(a.run, runs, middleGoal)
         // Intervals and long runs need a day without lifting (never heavy legs and a hard run together): when the
         // days run out they become easy runs — the speed plan keeps its intervals, the endurance plan its long run.
-        var (e, q, l) = Triple(easy, quality, long)
         // Shared days: hard runs may also go after an upper-body session (see Templates.forWeek).
         val free = (if (n == 7) 6 else n) - lifts + if (shared) Templates.upperDays(lifts) else 0
+        return limitHard(Mix(lifts, easy, quality, long), free, a.run, runLevel)
+    }
+
+    /**
+     * Sessions of each kind for a week the person laid out: [gymDays] and [runDays] chosen day by day (a day in both
+     * holds both). As many lifts and runs as days chosen (up to 5 and 6); hard runs only as many as there are run days
+     * without the gym, plus the shared days an upper-body session can take.
+     */
+    fun mixFixed(aim: Aim, gymDays: Set<Int>, runDays: Set<Int>, runLevel: RunLevel, middleGoal: Boolean = false): Mix {
+        val a = aim.normalized()
+        val lifts = if (a.lifts) gymDays.size.coerceAtMost(5) else 0
+        val runs = if (a.runs) runDays.size.coerceAtMost(6) else 0
+        val (easy, quality, long) = kinds(a.run, runs, middleGoal)
+        val shared = if (lifts > 0) (runDays intersect gymDays).size else 0
+        val free = (runs - shared).coerceAtLeast(0) + minOf(shared, Templates.upperDays(lifts))
+        return limitHard(Mix(lifts, easy, quality, long), free, a.run, runLevel)
+    }
+
+    /** Easy, quality and long runs among [runs]. Endurance builds on the long run; speed on intervals and tempo. */
+    private fun kinds(focus: RunFocus, runs: Int, middleGoal: Boolean): Triple<Int, Int, Int> = when (focus) {
+        RunFocus.NONE -> Triple(0, 0, 0)
+        RunFocus.HEALTH -> Triple(runs, 0, 0)
+        RunFocus.ENDURANCE -> when (runs) {
+            0 -> Triple(0, 0, 0)
+            1 -> Triple(0, 0, 1)
+            2 -> Triple(1, 0, 1)
+            3 -> Triple(1, 1, 1)
+            4 -> Triple(2, 1, 1)
+            5 -> Triple(3, 1, 1)
+            else -> Triple(runs - 3, 2, 1)
+        }
+        RunFocus.SPEED -> when {
+            runs == 0 -> Triple(0, 0, 0)
+            runs == 1 -> Triple(0, 1, 0)
+            runs == 2 -> Triple(1, 1, 0)
+            // 1500 m is mostly aerobic but specific: race pace once a week, intervals or tempo once, the rest easy.
+            middleGoal && runs <= 4 -> Triple(runs - 2, 2, 0)
+            middleGoal -> Triple(runs - 3, 2, 1)
+            runs == 3 -> Triple(1, 1, 1)
+            else -> Triple(runs - 3, 2, 1)
+        }
+        }
+
+    /** Hard runs beyond [free] days for them become easy; a beginner's runs are all run/walk, three at most. */
+    private fun limitHard(mix: Mix, free: Int, focus: RunFocus, runLevel: RunLevel): Mix {
+        var (e, q, l) = Triple(mix.easy, mix.quality, mix.long)
         while (q + l > maxOf(0, free)) {
-            if (a.run == RunFocus.SPEED) { if (l > 0) l-- else q-- } else { if (q > 0) q-- else l-- }
+            if (focus == RunFocus.SPEED) { if (l > 0) l-- else q-- } else { if (q > 0) q-- else l-- }
             e++
         }
-        var m = Mix(lifts, e, q, l)
+        var m = Mix(mix.lifts, e, q, l)
         if (runLevel == RunLevel.NONE) {
             // Until 30 minutes of running are possible every run is a run/walk session, three a week at most.
             m = m.copy(easy = m.runs.coerceAtMost(3), quality = 0, long = 0)
@@ -106,18 +128,33 @@ object Scheduler {
         require(days.isNotEmpty()) { "no training days" }
         // Leave one day of the week without any session.
         val usable = if (days.size == 7) days.dropLast(1) else days
-        val lifts = mix.lifts.coerceAtMost(usable.size)
+        return lay(usable, usable, mix, templates, aim)
+    }
+
+    /**
+     * A week the person laid out: lifts only on [gymDays], runs only on [runDays]; which lift and which run goes where
+     * is chosen by the same rules as [schedule] (the hard runs away from heavy legs, the long run at the weekend).
+     */
+    fun scheduleFixed(gymDays: Set<Int>, runDays: Set<Int>, mix: Mix, templates: List<Template>, aim: Aim): WeekPlan {
+        val gym = gymDays.filter { it in 1..7 }.sorted()
+        val run = runDays.filter { it in 1..7 }.sorted()
+        require(gym.isNotEmpty() || run.isNotEmpty()) { "no training days" }
+        return lay(gym, run, mix, templates, aim)
+    }
+
+    private fun lay(gymDays: List<Int>, runDaysAll: List<Int>, mix: Mix, templates: List<Template>, aim: Aim): WeekPlan {
+        val lifts = mix.lifts.coerceAtMost(gymDays.size)
         val runKinds = buildList {
             repeat(mix.long) { add(SessionKind.RUN_LONG) }
             repeat(mix.quality) { add(SessionKind.RUN_QUALITY) }
             repeat(mix.easy) { add(SessionKind.RUN_EASY) }
-        }.take(usable.size)
+        }.take(runDaysAll.size)
 
         var best: List<Slot>? = null
         var bestScore = Double.MAX_VALUE
         val tplOrders = templateOrders(templates.take(lifts))
-        for (liftDays in combinations(usable, lifts)) {
-            for (runDays in combinations(usable, runKinds.size)) {
+        for (liftDays in combinations(gymDays, lifts)) {
+            for (runDays in combinations(runDaysAll, runKinds.size)) {
                 for (perm in distinctPermutations(runKinds)) {
                     for (order in tplOrders) {
                         val slots = (1..7).map { d ->
@@ -138,7 +175,7 @@ object Scheduler {
                 }
             }
         }
-        val chosen = best!!
+        val chosen = best ?: (1..7).map { Slot(it, null, null) }
         val runFirst = aim.normalized().emphasis == Emphasis.RUN
         val plan = chosen.filter { it.lift != null || it.run != null }.map { s ->
             // A hard run goes before an upper-body session: the legs are fresh, and a run before lifting tires only the

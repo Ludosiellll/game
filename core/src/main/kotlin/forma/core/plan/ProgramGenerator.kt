@@ -15,24 +15,33 @@ import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
 
 object ProgramGenerator {
+    /** The planner's version: a program laid out by an older one is laid out again (progress kept). */
+    const val PLANNER = 2
+
     fun generate(profile: Profile, today: LocalDate): Program {
         val aim = profile.aim.normalized()
         val days = profile.trainingDays.filter { it in 1..7 }.toSet().ifEmpty { setOf(1, 3, 5) }
         val middleGoal = profile.runGoal?.middleDistance == true && aim.run != RunFocus.NONE
         val plan = planAim(aim, middleGoal)
-        val mix = Scheduler.mix(plan, days.size, profile.experience, profile.runLevel, profile.doubleDays, middleGoal = middleGoal)
+        // The week as the person laid it out day by day, or laid out by the app over their days.
+        val gym = profile.gymDays?.filter { it in 1..7 }?.toSet()
+        val run = profile.runDays?.filter { it in 1..7 }?.toSet()
+        val own = gym != null && run != null && (gym + run).isNotEmpty()
+        val mix = if (own) Scheduler.mixFixed(plan, gym!!, run!!, profile.runLevel, middleGoal)
+        else Scheduler.mix(plan, days.size, profile.experience, profile.runLevel, profile.doubleDays, middleGoal = middleGoal)
+        val shared = if (own) (gym!! intersect run!!).isNotEmpty() else profile.doubleDays
         // Upper / lower / upper only when there are hard runs to put after the upper body; with easy runs alone the
         // full-body sessions (legs three times a week) stay.
-        val templates = Templates.forWeek(plan, profile.experience, mix.lifts, shared = profile.doubleDays && mix.quality + mix.long > 0)
+        val templates = Templates.forWeek(plan, profile.experience, mix.lifts, shared = shared && mix.quality + mix.long > 0)
             .map { Templates.fit(it, profile.sessionMinutes) }
-        val week = Scheduler.schedule(days, mix, templates, plan)
+        val week = if (own) Scheduler.scheduleFixed(gym!!, run!!, mix, templates, plan) else Scheduler.schedule(days, mix, templates, plan)
         val block = when (profile.experience) {
             Experience.NOVICE -> 0
             Experience.INTERMEDIATE -> 5
             Experience.ADVANCED -> 4
         }
         val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        return Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(plan), monday.toEpochDay(), aim, today.toEpochDay())
+        return Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(plan), monday.toEpochDay(), aim, today.toEpochDay(), planner = PLANNER)
     }
 
     /**

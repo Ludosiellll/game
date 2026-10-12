@@ -106,8 +106,19 @@ object CoachText {
         return if (frac != null) "Встань на старт ${RunPlan.startWords(frac)}" else "Встань на линию"
     }
 
-    /** A lap GPS counted because no press came: its rough time, no verdict. */
-    fun autoLap(l: Lap): String = "Круг по GPS: ${l.seconds.roundToInt()}."
+    /** A lap GPS counted because no press came: its rough time, and against the target when there is one. */
+    fun autoLap(l: Lap): String = "Круг по GPS: ${l.seconds.roundToInt()}." + when (l.verdict) {
+        0 -> " В темпе."
+        -1 -> " Быстро."
+        1 -> " Медленно."
+        else -> ""
+    }
+
+    /** Off the pace on the road for a while: in a rep, on an easy run (only too fast matters there) or a free run's target. */
+    fun pace(alert: forma.core.run.PaceAlarm.Alert, easy: Boolean): String = when (alert) {
+        forma.core.run.PaceAlarm.Alert.FAST -> if (easy) "Быстро для лёгкого бега — сбавь." else "Быстрее цели — держи темп."
+        forma.core.run.PaceAlarm.Alert.SLOW -> "Медленнее цели — прибавь."
+    }
 
     /** Said every minute while the plan waits for the start press. */
     fun waitingReminder(w: RunWorkout): String = "Жду старта: нажми «Круг», когда побежишь."

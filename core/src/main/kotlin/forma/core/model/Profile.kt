@@ -111,7 +111,16 @@ data class Profile(
     val lapMeters: Int? = null,
     /** The gym and a run may share a day (the run after the gym): three days then hold three of each. */
     val doubleDays: Boolean = false,
+    /**
+     * The week as the person laid it out, day by day: the gym on [gymDays], running on [runDays] (a day in both holds
+     * both). Null: the app lays the week out over [trainingDays] itself.
+     */
+    val gymDays: Set<Int>? = null,
+    val runDays: Set<Int>? = null,
 ) {
+    /** The person chose the gym and running days themselves. */
+    val ownWeek: Boolean get() = gymDays != null && runDays != null
+
     fun age(year: Int): Int = (year - birthYear).coerceIn(10, 100)
     val days: Set<DayOfWeek> get() = trainingDays.map { DayOfWeek.of(it) }.toSet()
 }

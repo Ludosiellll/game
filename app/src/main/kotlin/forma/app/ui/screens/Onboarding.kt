@@ -54,7 +54,7 @@ private data class DraftState(
     val runLevel: RunLevel, val days: Set<Int>, val minutes: Int, val sex: Sex, val birthYear: String, val weight: String,
     val height: String, val restingHr: String, val raceKm: Double?, val raceTime: String,
     val goalMeters: Int? = null, val goalTime: String = "", val stadium: Boolean = false, val lapMeters: String = "400",
-    val doubleDays: Boolean = false,
+    val doubleDays: Boolean = false, val gymDays: Set<Int>? = null, val runDays: Set<Int>? = null,
 )
 
 class ProfileDraft(p: Profile) {
@@ -66,6 +66,7 @@ class ProfileDraft(p: Profile) {
                     DraftState(
                         d.lift, d.run, d.emphasis, d.experience, d.runLevel, d.days, d.minutes, d.sex, d.birthYear, d.weight,
                         d.height, d.restingHr, d.raceKm, d.raceTime, d.goalMeters, d.goalTime, d.stadium, d.lapMeters, d.doubleDays,
+                        d.gymDays, d.runDays,
                     ),
                 )
             },
@@ -76,6 +77,7 @@ class ProfileDraft(p: Profile) {
                         days = s.days; minutes = s.minutes; sex = s.sex; birthYear = s.birthYear; weight = s.weight
                         height = s.height; restingHr = s.restingHr; raceKm = s.raceKm; raceTime = s.raceTime
                         goalMeters = s.goalMeters; goalTime = s.goalTime; stadium = s.stadium; lapMeters = s.lapMeters; doubleDays = s.doubleDays
+                        gymDays = s.gymDays; runDays = s.runDays
                     }
                 }
             },
@@ -101,6 +103,12 @@ class ProfileDraft(p: Profile) {
     var stadium by mutableStateOf(p.lapMeters != null)
     var lapMeters by mutableStateOf((p.lapMeters ?: 400).toString())
     var doubleDays by mutableStateOf(p.doubleDays)
+    /** The week day by day (the profile screen): the gym and running days; null — laid out by the app over [days]. */
+    var gymDays by mutableStateOf(p.gymDays)
+    var runDays by mutableStateOf(p.runDays)
+
+    /** Some day is chosen for training. */
+    val anyDay: Boolean get() = gymDays?.let { g -> (g + runDays.orEmpty()).isNotEmpty() } ?: days.isNotEmpty()
 
     val aim: Aim get() = Aim(lift, run, emphasis).normalized()
 
@@ -152,7 +160,17 @@ class ProfileDraft(p: Profile) {
             restingHr = restingHr.toIntOrNull()?.takeIf { it in 30..110 },
             raceMeters = race?.first, raceSeconds = race?.second,
             runGoal = if (racing) runGoal else null, lapMeters = lapOrNull, doubleDays = doubleDays && aim.lifts && aim.runs,
-        )
+        ).let { p ->
+            val gym = gymDays
+            val run = runDays
+            if (gym == null || run == null) p
+            else {
+                // Only what the aim trains: a week without running keeps no running days, and the other way round.
+                val g = if (aim.lifts) gym else emptySet()
+                val r = if (aim.runs) run else emptySet()
+                p.copy(gymDays = g, runDays = r, trainingDays = (g + r).ifEmpty { setOf(1, 3, 5) }, doubleDays = (g intersect r).isNotEmpty())
+            }
+        }
     }
 }
 

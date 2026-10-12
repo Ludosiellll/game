@@ -96,7 +96,11 @@ fun PlanScreen() {
                                     // Each row on its own date this week: an easy run on a lifting day is shorter.
                                     val date = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).plusDays(day - 1L)
                                     val w by produceState<RunWorkout?>(null, s.kind, date) { value = repo.runFor(s.kind, date) }
-                                    Text(w?.title ?: sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(w?.title ?: sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
+                                        // How: the lap time or pace to keep, so the week says what to do, not only what.
+                                        w?.let { Text(forma.app.ui.RunHow.short(it), style = T.secondary(13.sp)) }
+                                    }
                                 }
                             }
                         }
@@ -104,6 +108,8 @@ fun PlanScreen() {
                 }
             }
         }
+
+        GhostButton("Поменять дни зала и бега", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 48.dp)
 
         if (p.week.notes.isNotEmpty()) {
             SectionLabel("Почему так")
@@ -116,7 +122,16 @@ fun PlanScreen() {
         PauseControl()
 
         GhostButton("Изменить цель, дни и данные", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 52.dp)
-        profile?.let { Text("Дни: ${it.trainingDays.sorted().joinToString(", ") { d -> DAY_SHORT[d - 1] }} · до ${it.sessionMinutes} мин", style = T.secondary(13.sp)) }
+        profile?.let {
+            fun days(s: Set<Int>) = s.sorted().joinToString(", ") { d -> DAY_SHORT[d - 1] }
+            val gym = it.gymDays
+            val run = it.runDays
+            Text(
+                if (gym != null && run != null) "Зал: ${days(gym).ifEmpty { "—" }} · бег: ${days(run).ifEmpty { "—" }} · до ${it.sessionMinutes} мин"
+                else "Дни: ${days(it.trainingDays)} · до ${it.sessionMinutes} мин",
+                style = T.secondary(13.sp),
+            )
+        }
     }
 }
 

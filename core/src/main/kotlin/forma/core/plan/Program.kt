@@ -51,6 +51,8 @@ data class Program(
     val createdEpochDay: Long? = null,
     /** Name of the friend this program was copied from. */
     val copiedFrom: String? = null,
+    /** Version of the planner that laid this week out (see [ProgramGenerator.PLANNER]): an older one is laid out again. */
+    val planner: Int = 0,
 ) {
     fun template(id: String): Template = templates.first { it.id == id }
 

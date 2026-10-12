@@ -106,6 +106,7 @@ fun RunManualScreen(workout: RunWorkout) {
                 }
                 if (s.second.outcomes.isEmpty()) Text("Пробежка записана в историю.", style = T.body(15.sp), modifier = Modifier.padding(vertical = 12.dp))
             }
+            NextPlannedCard(today)
             NextToday { nav.tab(Screen.Today) }
             return@ScrollScreen
         }

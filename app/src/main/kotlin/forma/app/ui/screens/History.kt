@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -80,7 +81,8 @@ fun HistoryItemScreen(workoutId: Long) {
     val scope = rememberCoroutineScope()
     val w by remember(workoutId) { repo.db.workouts().observe(workoutId) }.collectAsState(initial = null)
     val sets by produceState<List<SetEntity>>(emptyList(), workoutId) { value = repo.db.sets().forWorkout(workoutId) }
-    val run by produceState<RunEntity?>(null, workoutId) { value = repo.db.runs().get(workoutId) }
+    val run by produceState<RunEntity?>(null, workoutId, w) { value = repo.db.runs().get(workoutId) }
+    val points by produceState<List<forma.app.data.TrackPointEntity>>(emptyList(), workoutId) { value = repo.db.runs().points(workoutId) }
     var confirm by remember { mutableStateOf(false) }
     val workout = w ?: return
     ScrollScreen {
@@ -129,6 +131,10 @@ fun HistoryItemScreen(workoutId: Long) {
             if (summary?.manual == true) Text("Внесено вручную: бег без телефона.", style = T.secondary(14.sp))
             summary?.cadence?.let { Text("Каденс: $it шагов в минуту", style = T.secondary(14.sp)) }
             if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
+            if (summary != null && summary.laps.any { it.rep == null }) LapsEditor(workout.id, summary.laps)
+            // On the road: the time of each kilometre from the track.
+            val splits = remember(points) { forma.core.run.Splits.byKm(points.map { forma.core.run.Splits.Point(it.t, it.lat, it.lon, it.accuracy) }) }
+            if (summary?.laps.isNullOrEmpty() && splits.size >= 2) KmSplitsCard(splits)
             if (summary != null && summary.outcomes.isNotEmpty()) {
                 SectionLabel("Что изменилось после")
                 FCard(gap = 0.dp) {
@@ -149,5 +155,66 @@ fun HistoryItemScreen(workoutId: Long) {
             confirmButton = { TextButton({ confirm = false; scope.launch { repo.deleteWorkout(workoutId); nav.back() } }) { Text("Удалить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.bad)) } },
             dismissButton = { TextButton({ confirm = false }) { Text("Отмена", style = T.body(15.sp)) } },
         )
+    }
+}
+
+/**
+ * The laps of a saved run put right: tap a lap — a press forgotten on the line (one lap of two laps' time) splits into
+ * two, a press too many merges two into one. Laps of reps stay: the plan's next step was judged on them.
+ */
+@Composable
+private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
+    val repo = LocalRepo.current
+    val scope = rememberCoroutineScope()
+    var open by remember { mutableStateOf<Int?>(null) }
+    SectionLabel("Поправить круги")
+    Text("Забыл нажать «Круг» — круг вышел вдвое длиннее: нажми на него и раздели. Нажал дважды — соедини.", style = T.secondary(13.sp))
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        laps.forEachIndexed { i, l ->
+            if (l.rep == null) {
+                forma.app.ui.components.Chip(
+                    "${l.number} · ${if (l.auto) "≈" else ""}${Ru.lap(l.seconds)}", false, { open = i },
+                    minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.ACTION,
+                )
+            }
+        }
+    }
+    val i = open ?: return
+    val l = laps.getOrNull(i) ?: return
+    fun save(next: List<forma.core.run.Lap>) {
+        open = null
+        scope.launch { repo.editRunLaps(workoutId, next) }
+    }
+    AlertDialog(
+        onDismissRequest = { open = null }, containerColor = F.c.surface,
+        title = { Text("Круг ${l.number} — ${Ru.lap(l.seconds)}", style = T.title(20.sp)) },
+        text = { Text("Что было на самом деле?", style = T.secondary(14.sp)) },
+        confirmButton = {
+            androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.End) {
+                TextButton({ save(forma.core.run.LapEdit.split(laps, i)) }) { Text("Это 2 круга — разделить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                if (forma.core.run.LapEdit.editable(laps, i + 1)) {
+                    TextButton({ save(forma.core.run.LapEdit.merge(laps, i)) }) { Text("Соединить со следующим", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                }
+                if (i > 0 && forma.core.run.LapEdit.editable(laps, i - 1)) {
+                    TextButton({ save(forma.core.run.LapEdit.merge(laps, i - 1)) }) { Text("Соединить с предыдущим", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                }
+            }
+        },
+        dismissButton = { TextButton({ open = null }) { Text("Отмена", style = T.body(15.sp)) } },
+    )
+}
+
+/** The time of each kilometre on the road, as bars and as numbers. */
+@Composable
+private fun KmSplitsCard(splits: List<Double>) {
+    SectionLabel("По километрам")
+    FCard(gap = 6.dp) {
+        forma.app.ui.components.BarChart(
+            splits, F.c.endurance.copy(alpha = 0.55f), highlight = null, floor = splits.min() * 0.85,
+            xLabels = splits.indices.map { "${it + 1}" },
+            description = "Время каждого километра: ${splits.joinToString(", ") { Ru.pace(it) }}",
+        )
+        Text(splits.mapIndexed { i, s -> "${i + 1} км — ${Ru.pace(s)}" }.joinToString(" · "), style = T.number(13.sp, FontWeight.SemiBold))
+        Text("Выше столбик — медленнее километр.", style = T.secondary(12.sp))
     }
 }

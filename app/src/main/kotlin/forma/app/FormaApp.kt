@@ -18,7 +18,8 @@ class FormaApp : Application() {
     val repository: TrainingRepository by lazy {
         TrainingRepository(FormaDatabase.create(this), SettingsStore(this), onChange = { cloud.syncSoon() })
             // Own exercises must be in the catalog before any screen shows a workout with them (a small local read).
-            .also { runBlocking { it.refreshCustom() } }
+            // A plan laid out by an older version of the app is laid out again by this one.
+            .also { runBlocking { it.refreshCustom(); it.refreshPlan() } }
     }
 
     val cloud: Cloud by lazy { Cloud(this, repository) }

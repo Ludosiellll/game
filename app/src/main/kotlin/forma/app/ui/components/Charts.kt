@@ -99,6 +99,8 @@ fun BarChart(
     highlight: Color? = null,
     xLabels: List<String> = emptyList(),
     description: String,
+    /** Bars start from this value, not from zero: lap times of 64–80 s differ visibly. */
+    floor: Double = 0.0,
 ) {
     val measurer = rememberTextMeasurer()
     val labelStyle = TextStyle(fontFamily = F.type.text, fontSize = 10.sp, color = F.c.text3)
@@ -108,12 +110,12 @@ fun BarChart(
         if (values.isEmpty()) return@Canvas
         val bottomPad = if (xLabels.isEmpty()) 2f else 18.dp.toPx()
         val h = size.height - bottomPad
-        val maxV = max(values.max(), 1e-6)
+        val maxV = max(values.max() - floor, 1e-6)
         val n = values.size
         val gap = 6.dp.toPx()
         val bw = (size.width - gap * (n - 1)) / n
         values.forEachIndexed { i, v ->
-            val bh = (v / maxV * (h - 4f)).toFloat().coerceAtLeast(if (v > 0) 3f else 0f)
+            val bh = ((v - floor) / maxV * (h - 4f)).toFloat().coerceIn(if (v > 0) 3f else 0f, h - 4f)
             val c = if (i == n - 1 && highlight != null) highlight else color
             drawRoundRect(c, Offset(i * (bw + gap), h - bh), Size(bw, bh), CornerRadius(radius.toPx()))
         }

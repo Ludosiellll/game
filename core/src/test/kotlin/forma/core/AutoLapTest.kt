@@ -325,6 +325,58 @@ class AutoLapTest {
         }
     }
 
+    /** A free run on the stadium, no line known and no button pressed: GPS times every lap from where the run began. */
+    private fun freeRun(seed: Int, lapSec: Double, laps: Int, target: forma.core.run.PaceRange? = null): Pair<RunTracker, Double> {
+        val rnd = Random(seed)
+        val w = RunWorkout(forma.core.run.RunType.FREE, "Свободный бег", emptyList(), lapMeters = lapM, targetPace = target)
+        val t = RunTracker(w)
+        t.start(0)
+        // Starting somewhere along the back straight.
+        val s0 = 120.0
+        var s = s0
+        var now = 0L
+        val v = lapM / lapSec
+        while (s < s0 + laps * lapM + 5) {
+            now += 250
+            s += v * 0.25
+            if (now % 1000 == 0L) {
+                t.onFix(fix(s, now, rnd).copy(speed = v.toFloat()), now)
+                t.autoLap(now)
+            }
+        }
+        repeat(12) {
+            now += 1000
+            s += v
+            t.onFix(fix(s, now, rnd).copy(speed = v.toFloat()), now)
+            t.autoLap(now)
+        }
+        return t to (now / 1000.0)
+    }
+
+    @Test fun aFreeRunCountsItsLapsWithoutPresses() {
+        repeat(10) { seed ->
+            val (t, _) = freeRun(seed, 72.0, 10)
+            val laps = t.laps
+            assertTrue(laps.size in 9..10, "seed $seed: ${laps.size} laps ${laps.map { it.seconds }}")
+            assertTrue(laps.all { it.auto }, "seed $seed")
+            // Every lap is a lap of 72 s give or take GPS's two or three seconds (the line is one fix where the run began),
+            // and the errors do not add up: the laps together are the time run.
+            assertTrue(laps.all { abs(it.seconds - 72.0) <= 3.5 }, "seed $seed: ${laps.map { it.seconds }}")
+            assertEquals(laps.size * 72.0, laps.sumOf { it.seconds }, 3.5, "seed $seed")
+            assertEquals(laps.size * lapM.toDouble(), t.lapDistanceM(), 1e-9)
+        }
+    }
+
+    @Test fun aFreeRunWithATargetJudgesEachLap() {
+        // Target 75 s a lap (±1 s), run at 72: every lap is "fast".
+        val target = forma.core.run.PaceRange((74.0 / lapM * 1000).toInt(), (76.0 / lapM * 1000).toInt())
+        val (t, _) = freeRun(3, 72.0, 6, target)
+        assertTrue(t.laps.isNotEmpty())
+        assertTrue(t.laps.all { it.verdict == -1 }, t.laps.toString())
+        val (on, _) = freeRun(4, 75.0, 6, target)
+        assertTrue(on.laps.count { it.verdict == 0 } >= on.laps.size - 1, on.laps.toString())
+    }
+
     @Test fun onAStadiumTheDistanceIsTheLaps() {
         val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 2), goal, lapM)
         val run = session(w, forget = emptySet(), seed = 3, line = true)

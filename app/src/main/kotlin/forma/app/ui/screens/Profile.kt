@@ -1,6 +1,16 @@
 package forma.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import forma.core.text.Ru
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -37,20 +47,21 @@ fun ProfileScreen() {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val profile by repo.store.profile.collectAsState(initial = null)
+    val program by repo.store.program.collectAsState(initial = null)
     val base = profile ?: return
     // Kept through rotation and the system closing the app in the background.
     val d = androidx.compose.runtime.saveable.rememberSaveable(base, saver = ProfileDraft.Saver) { ProfileDraft(base) }
+    // The week as the plan has it now, shown to change from. Saved untouched it stays the app's to lay out (the same
+    // days laid out as the person's own may come out another way): only a tap on a day makes the week theirs.
+    val week = program?.week
+    val planGym = androidx.compose.runtime.remember(week) {
+        week?.days?.filter { day -> day.sessions.any { it.kind == forma.core.plan.SessionKind.LIFT } }?.map { it.day }?.toSet().orEmpty()
+    }
+    val planRun = androidx.compose.runtime.remember(week) { week?.days?.filter { day -> day.sessions.any { it.isRun } }?.map { it.day }?.toSet().orEmpty() }
     ScrollScreen {
         TopBar("Цель, дни и данные", "План пересчитается, прогресс по упражнениям сохранится", onBack = { nav.back() })
         AimPicker(d)
-        SectionLabel("Дни", Modifier.padding(top = 6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            DAY_SHORT.forEachIndexed { i, name ->
-                val day = i + 1
-                Chip(name, day in d.days, { d.days = if (day in d.days) d.days - day else d.days + day }, Modifier.weight(1f), minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.TOGGLE)
-            }
-        }
-        DoubleDaysToggle(d)
+        WeekGrid(d, planGym, planRun)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(45, 60, 75, 90).forEach { m -> Chip("$m мин", d.minutes == m, { d.minutes = m }, Modifier.weight(1f)) }
         }
@@ -95,6 +106,91 @@ fun ProfileScreen() {
                 repo.updateProfile(d.toProfile(base))
                 nav.back()
             }
-        }, Modifier.fillMaxWidth().padding(top = 6.dp), enabled = d.days.isNotEmpty() && d.fieldsOk)
+        }, Modifier.fillMaxWidth().padding(top = 6.dp), enabled = d.anyDay && d.fieldsOk)
     }
 }
+
+/**
+ * The week day by day: the days of the gym and the days of running; a day with both holds both (the gym and a run in
+ * one go). Which session goes on which day the app decides by the rules (no hard run on a legs day, the long run at
+ * the weekend) — and says why on the plan screen.
+ */
+@Composable
+fun WeekGrid(d: ProfileDraft, planGym: Set<Int>, planRun: Set<Int>) {
+    val aim = d.aim
+    val gym = d.gymDays ?: planGym
+    val run = d.runDays ?: planRun
+    // The first change makes the week the person's own: both rows as shown, with the change.
+    fun own() {
+        if (d.gymDays == null) d.gymDays = gym
+        if (d.runDays == null) d.runDays = run
+    }
+    SectionLabel("Неделя", Modifier.padding(top = 6.dp))
+    Text(
+        when {
+            aim.lifts && aim.runs -> "Отметь, в какие дни зал и в какие бег. Где отмечено и то и другое — зал и бег за один заход."
+            aim.lifts -> "Отметь дни зала."
+            else -> "Отметь дни бега."
+        },
+        style = T.secondary(13.sp),
+    )
+    androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            androidx.compose.foundation.layout.Spacer(Modifier.width(44.dp))
+            DAY_SHORT.forEach { Text(it, style = T.secondary(12.sp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.weight(1f)) }
+        }
+        if (aim.lifts) {
+            DayRow("Зал", gym, F.c.strength) { day ->
+                own()
+                d.gymDays = if (day in gym) gym - day else gym + day
+            }
+        }
+        if (aim.runs) {
+            DayRow("Бег", run, F.c.endurance) { day ->
+                own()
+                d.runDays = if (day in run) run - day else run + day
+            }
+        }
+    }
+    val g = if (aim.lifts) gym.size else 0
+    val r = if (aim.runs) run.size else 0
+    val both = if (aim.lifts && aim.runs) (gym intersect run).size else 0
+    val rest = 7 - (gym.takeIf { aim.lifts }.orEmpty() + run.takeIf { aim.runs }.orEmpty()).size
+    Text(
+        listOfNotNull(
+            if (aim.lifts) "зал ${Ru.plural(g, "раз", "раза", "раз").let { "$g $it" }}" else null,
+            if (aim.runs) "бег ${Ru.plural(r, "раз", "раза", "раз").let { "$r $it" }}" else null,
+            if (both > 0) "вместе — ${Ru.plural(both, "день", "дня", "дней").let { "$both $it" }}" else null,
+            "отдых — ${Ru.plural(rest, "день", "дня", "дней").let { "$rest $it" }}",
+        ).joinToString(" · ").replaceFirstChar { it.uppercase() },
+        style = T.secondary(13.sp).copy(color = if (rest == 0) F.c.warn else F.c.text2),
+    )
+    if (rest == 0) Text("Без дня отдыха прогресс встаёт: оставь хотя бы один.", style = T.secondary(13.sp).copy(color = F.c.warn))
+    // The plan holds up to 5 lifts and 6 runs a week (Scheduler.mixFixed): a day beyond that stays without a session.
+    if (aim.lifts && gym.size > 5 || aim.runs && run.size > 6) {
+        Text("Зал — не больше 5 раз в неделю, бег — не больше 6: в лишний отмеченный день плана не будет.", style = T.secondary(13.sp))
+    }
+}
+
+@Composable
+private fun DayRow(label: String, on: Set<Int>, color: androidx.compose.ui.graphics.Color, onToggle: (Int) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Text(label, style = T.body(14.sp, FontWeight.SemiBold), modifier = Modifier.width(44.dp))
+        (1..7).forEach { day ->
+            val sel = day in on
+            val shape = androidx.compose.foundation.shape.RoundedCornerShape(F.shape.radiusSmall)
+            androidx.compose.foundation.layout.Box(
+                Modifier.weight(1f).height(44.dp).clip(shape)
+                    .background(if (sel) color else F.c.surface)
+                    .border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, if (sel) color else F.c.line, shape)
+                    .toggleable(value = sel, role = androidx.compose.ui.semantics.Role.Checkbox, onValueChange = { onToggle(day) })
+                    .semantics { contentDescription = "$label, ${DAY_FULL_LOWER[day - 1]}" },
+                contentAlignment = androidx.compose.ui.Alignment.Center,
+            ) {
+                if (sel) androidx.compose.material3.Icon(forma.app.ui.theme.Ic.check, null, tint = F.c.onData, modifier = Modifier.size(16.dp))
+            }
+        }
+    }
+}
+
+private val DAY_FULL_LOWER = listOf("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")

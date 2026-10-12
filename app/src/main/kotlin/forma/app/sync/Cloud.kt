@@ -183,8 +183,9 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         return try {
             val user = currentUser(c) ?: throw NotSignedInException()
             val result = withContext(Dispatchers.IO) { engine.run(user.id) }
-            // Own exercises may have come from another phone.
+            // Own exercises may have come from another phone, and a plan laid out by an older version of the app.
             repo.refreshCustom()
+            repo.refreshPlan()
             val now = System.currentTimeMillis()
             prefs.edit().putString(KEY_LAST_EMAIL, user.email).putBoolean(KEY_SIGNED_IN, true)
                 .putLong(KEY_LAST_SYNC, now).remove(KEY_LAST_ERROR).apply()
