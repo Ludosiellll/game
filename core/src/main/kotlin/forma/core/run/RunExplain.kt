@@ -62,7 +62,7 @@ object RunExplain {
                 how = "Быстрые первые отрезки дорого стоят последним. Ускорения в конце разминки готовят ноги к быстрому бегу — " +
                     "их не пропускай.",
                 recoveryHours = 48,
-                next = ladder(w, RunPlan.goalLadderSize, 8, pace = true) + " На верху лестницы — контрольный забег целиком.",
+                next = ladder(w, RunPlan.goalLadderSize, 8, "в темпе цели") + " На верху лестницы — контрольный забег целиком.",
             )
             RunType.INTERVALS -> Why(
                 purpose = "МПК — сколько кислорода тело может взять за минуту, «потолок» аэробной системы." +
@@ -71,7 +71,7 @@ object RunExplain {
                     "берут больше кислорода. Отдых трусцой даёт повторить столько, сколько за один отрезок не выдержать.",
                 how = "Первые быстрее плана — последние развалятся: важнее ровно, чем быстро.",
                 recoveryHours = 48,
-                next = ladder(w, RunPlan.intervalLadderSize, w.targetRpe),
+                next = ladder(w, RunPlan.intervalLadderSize, w.targetRpe, "в темпе"),
             )
             RunType.TEMPO -> Why(
                 purpose = "Порог — самая высокая скорость, на которой лактат в крови не копится: сколько его выделяется, столько " +
@@ -79,7 +79,7 @@ object RunExplain {
                 body = "Мышцы лучше используют лактат как топливо, и высокий темп держится дольше без нарастающей усталости.",
                 how = "Не превращай в гонку: смысл — долго держать темп на пороге, а не выше него.",
                 recoveryHours = 48,
-                next = ladder(w, RunPlan.tempoLadderSize, w.targetRpe),
+                next = ladder(w, RunPlan.tempoLadderSize, w.targetRpe, "в темпе"),
             )
             RunType.TEST -> Why(
                 purpose = "Замер формы. По ${measure(w)} пересчитываются темпы лёгкого бега, интервалов и темповых" +
@@ -113,13 +113,13 @@ object RunExplain {
      * A rung of a ladder of [size] and how it moves: up at an effort of [limit] or less, back after two misses. A lighter
      * week's shorter session moves no rung up (`RunOutcome.LighterWeek`); a miss counts as always.
      */
-    private fun ladder(w: RunWorkout, size: Int, limit: Int, pace: Boolean = false): String {
+    private fun ladder(w: RunWorkout, size: Int, limit: Int, pace: String): String {
         val miss = "не получится — повтор, второй раз подряд — шаг назад."
         return if (w.cutback) {
             "Шаг ${w.stage + 1} из $size, облегчённая неделя: отрезков меньше обычного. Получится — шаг остаётся до полной " +
                 "недели; $miss"
         } else {
-            "Шаг ${w.stage + 1} из $size. Получится целиком${if (pace) ", в темпе цели" else ""} и с оценкой до $limit — " +
+            "Шаг ${w.stage + 1} из $size. Получится целиком, $pace — не медленнее больше чем на 3 % — и с оценкой до $limit — " +
                 "следующий шаг; $miss"
         }
     }

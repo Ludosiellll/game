@@ -111,7 +111,7 @@ class RunExplainTest {
         val light = RunExplain.of(RunPlan.goalPace(state, goal, 230, cutback = true), goal).next
         assertTrue("облегчённая неделя" in light && "следующий шаг" !in light, light)
         val full = RunExplain.of(RunPlan.goalPace(state, goal, 230), goal).next
-        assertTrue("в темпе цели и с оценкой до 8 — следующий шаг" in full, full)
+        assertTrue("в темпе цели — не медленнее больше чем на 3 % — и с оценкой до 8 — следующий шаг" in full, full)
         assertTrue("облегчённая неделя" in RunExplain.of(RunPlan.intervals(state, cutback = true), goal).next)
         assertTrue("обычной длины" in RunExplain.of(RunPlan.easy(state), goal).next)
         assertTrue("не до конца" in RunExplain.of(RunPlan.long(state), goal).next)

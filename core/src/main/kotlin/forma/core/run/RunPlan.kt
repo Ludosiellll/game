@@ -144,6 +144,8 @@ sealed interface RunOutcome {
     @Serializable data object TrialLater : RunOutcome
     /** The reps were faster than the goal pace: a step, not two — even laps are the skill. */
     @Serializable data object TooFast : RunOutcome
+    /** The reps were measured more than 3 % slower than their target: the step is not taken, whatever the effort. */
+    @Serializable data object TooSlow : RunOutcome
     /** No lap pressed and no GPS: the pace was not measured, only the effort and the reps decided. */
     @Serializable data object PaceUnknown : RunOutcome
     /** A lighter week's shorter session: done, and the ladder stays where it is. */
@@ -701,7 +703,13 @@ object RunPlan {
                 // Reps as the runner reported them count, but only for a session run (almost) through: reps cut short
                 // by skipping are not reps done.
                 val repsDone = r.reps ?: w.reps
-                val success = r.rpe <= w.targetRpe && (r.reps?.let { it >= w.reps && r.completed >= 0.9 } ?: done)
+                // Measured (laps or GPS) more than 3 % slower than the reps' target: the paces are not held yet — no step,
+                // however the effort felt. Three misses in a row bring the paces down (below).
+                val repTarget = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.pace?.let { (it.fast + it.slow) / 2.0 }
+                val tooSlow = repTarget != null && r.workPace != null && r.workPace > repTarget * 1.03
+                if (tooSlow) out += RunOutcome.TooSlow
+                if (r.workPace == null) out += RunOutcome.PaceUnknown
+                val success = !tooSlow && r.rpe <= w.targetRpe && (r.reps?.let { it >= w.reps && r.completed >= 0.9 } ?: done)
                 // On pace: measured, not slower than the target, and with effort to spare — only that says the form
                 // has outgrown the paces.
                 val onPace = success && target != null && r.workPace != null && r.workPace <= target && r.rpe <= w.targetRpe - 1
@@ -804,6 +812,7 @@ object RunPlan {
                 val fast = target != null && pace != null && pace < target * 0.98
                 val cur = state.goalStage.coerceIn(0, GOAL.lastIndex)
                 if (pace == null) out += RunOutcome.PaceUnknown
+                if (slow) out += RunOutcome.TooSlow
                 if (enough && r.rpe <= 8 && !slow && w.cutback) {
                     // A lighter week's shorter session: done, and the ladder waits for the full step.
                     out += RunOutcome.LighterWeek("goal")
