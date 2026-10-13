@@ -108,6 +108,12 @@ data class Evaluation(val state: SlotState, val outcome: Outcome, val e1rm: Doub
 data class Adjustment(val weight: Double, val reps: Int, val heavier: Boolean)
 
 /**
+ * The next set, said after every set — not only when the weight changes (silence read as "no idea"). [reserve]: the
+ * reserve the last set really had (missed reps count below zero), null when unknown; [plus]: the next one is the "N+".
+ */
+data class NextSet(val weight: Double, val reps: Int, val change: Int, val reserve: Int?, val plannedReserve: Int, val plus: Boolean, val calibrate: Boolean)
+
+/**
  * Progression on top of an e1RM model, with feedback from the last set.
  *
  * - First session of an exercise: find the working weight. Every set goes as far as it cleanly can with 1–2 reps in
@@ -510,6 +516,24 @@ object Progression {
      * estimate and suggesting the weight it supports for the target, kept within ±10 % of the planned weight so hints
      * never compound. It speaks up only when the set was off by 2+ reps.
      */
+    /**
+     * What to do in the next set of this exercise after [done] (its sets so far): the hint's weight when there is one,
+     * else the same weight for the planned reps. Null when the planned sets are done.
+     */
+    fun nextSet(ex: Exercise, p: Prescription, done: List<DoneSet>, bodyWeight: Double = 75.0): NextSet? {
+        val last = done.lastOrNull { it.reps > 0 } ?: return null
+        if (done.size >= p.sets) return null
+        val reserve = when {
+            last.reps < p.reps -> last.rir?.let { it - (p.reps - last.reps) } ?: -(p.reps - last.reps)
+            else -> last.rir?.let { it + (last.reps - p.reps) } ?: if (last.reps > p.reps) p.rir + (last.reps - p.reps) else null
+        }
+        val plus = p.top && done.size == p.sets - 1
+        if (ex.load == LoadKind.TIMED) return NextSet(last.weight, p.reps, 0, null, p.rir, plus, p.calibrate)
+        val adj = adjustAfterSet(ex, p, last, bodyWeight, done.size - 1)
+        return if (adj != null) NextSet(adj.weight, adj.reps, if (adj.heavier) 1 else -1, reserve, p.rir, plus, p.calibrate)
+        else NextSet(last.weight, p.reps, 0, reserve, p.rir, plus, p.calibrate)
+    }
+
     fun adjustAfterSet(ex: Exercise, p: Prescription, last: DoneSet, bodyWeight: Double = 75.0, index: Int = 0): Adjustment? {
         if (ex.load == LoadKind.TIMED || last.reps <= 0) return null
         val step = ex.stepAt(last.weight)

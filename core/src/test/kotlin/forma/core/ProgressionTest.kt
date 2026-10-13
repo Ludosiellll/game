@@ -347,3 +347,26 @@ class StoppedEarlyTest {
         assertTrue(short.outcome !is Outcome.Hold || (short.outcome as Outcome.Hold).reason != HoldReason.STOPPED_EARLY)
     }
 }
+
+/** Denis, 13.10: "8 with 4 in reserve — and it does not say what to do next". After every set: the next one, and why. */
+class NextSetTest {
+    private val press = Catalog["chest_press"]
+    private val spec = SlotSpec("chest_press", sets = 3, repMin = 8, repMax = 10, rir = 2, restSec = 120, role = SlotRole.SECONDARY)
+
+    @Test fun afterEverySetTheNextOneIsSaid() {
+        val st = SlotState(weight = 80.0, reps = 8, sessions = 3, linear = false)
+        val p = Progression.prescribe(press, spec, st)
+        // 8 with 4 in reserve at a plan of 2: lighter than planned — heavier next.
+        val up = assertNotNull(Progression.nextSet(press, p, listOf(DoneSet(80.0, 8, 4)), 70.0))
+        assertEquals(1, up.change)
+        assertTrue(up.weight > 80.0)
+        assertEquals(4, up.reserve)
+        // 8 with 2: as planned — the same, said so (not silence).
+        val same = assertNotNull(Progression.nextSet(press, p, listOf(DoneSet(80.0, 8, 2)), 70.0))
+        assertEquals(0, same.change)
+        assertEquals(80.0, same.weight)
+        assertEquals(p.reps, same.reps)
+        // All the planned sets done: nothing more to say here.
+        assertNull(Progression.nextSet(press, p, List(p.sets) { DoneSet(80.0, 8, 2) }, 70.0))
+    }
+}

@@ -62,11 +62,12 @@ class PlanEditsRepoTest {
         assertTrue(repo.inPlan(id, item.position))
         assertEquals(listOf(extra), repo.store.settingsNow().added[t.id])
 
-        // The next session of the same day of the plan has it after the plan's own; another day does not.
+        // The next session of the same day of the plan has it (in its place by what it is, its position after the plan's
+        // own); another day does not.
         val next = repo.liftPlan(t.id, day().plusDays(7))
-        assertEquals(extra, next.items.last().exerciseId)
-        assertEquals(t.slots.size, next.items.last().position)
-        assertTrue(next.items.dropLast(1).none { it.addedForGood })
+        val added = next.items.single { it.addedForGood }
+        assertEquals(extra, added.exerciseId)
+        assertEquals(t.slots.size, added.position)
         repo.store.programNow()!!.templates.drop(1).forEach { other ->
             assertTrue(repo.liftPlan(other.id, day()).items.none { it.addedForGood })
         }
@@ -93,8 +94,7 @@ class PlanEditsRepoTest {
         repo.addToPlan(t.id, a)
         assertFalse(repo.addToPlan(t.id, a), "the same exercise twice is one")
         val id = repo.startLift(t.id, day())
-        val item = plan(id).items.last()
-        assertTrue(item.addedForGood)
+        val item = plan(id).items.first { it.addedForGood }
         // Replaced for good: the plan has the new one in its place, the session too.
         val alt = repo.alternativesFor(a).first { it.id != a && !it.custom }.id
         assertTrue(repo.swapExercise(id, item.position, alt, forever = true))

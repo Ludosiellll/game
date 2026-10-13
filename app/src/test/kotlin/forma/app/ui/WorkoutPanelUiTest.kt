@@ -100,6 +100,20 @@ class WorkoutPanelUiTest {
 
     private fun setsOf(repo: TrainingRepository, id: Long) = runBlocking { repo.db.sets().forWorkout(id) }
 
+    /** Denis, 13.10: after a set the app said nothing when the weight stayed. Now the next set is always said, and why. */
+    @Test fun afterASetTheNextOneIsSaid() {
+        val repo = repo("panel-next")
+        val id = start(repo)
+        show(repo, id)
+        // What the exercise is, what works, why it is here.
+        assertTrue(texts("Работают:").isNotEmpty())
+        assertTrue(texts("Главное упражнение дня").isNotEmpty())
+        compose.onNodeWithText("Подход сделан").performClick()
+        settle()
+        assertTrue(texts("Следующий подход:").isNotEmpty(), "the next set is said")
+        compose.onRoot().captureRoboImage("build/shots/carbon-workout-next.png")
+    }
+
     @Test fun aSetLoggedByMistakeIsTakenBack() {
         val repo = repo("panel-undo")
         val id = start(repo)

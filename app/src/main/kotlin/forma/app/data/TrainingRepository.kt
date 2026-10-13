@@ -214,8 +214,19 @@ class TrainingRepository(
         val extra = added.mapIndexed { j, id ->
             buildItem(t.slots.size + j, overrides(addedSpec(id), settings, addedKey(t.id, id)), date, deload).copy(planId = id, addedForGood = true)
         }
-        return LiftPlan(t.id, t.title, own + extra, deload)
+        return LiftPlan(t.id, t.title, inOrder(own + extra), deload)
     }
+
+    /**
+     * The order of a day: main lifts first while fresh, then the secondary ones, single-muscle work last; within a role,
+     * multi-joint before isolation; otherwise the plan's own order. An exercise added by hand takes its place by what it
+     * is, not the end of the list. Positions stay as they are (they key swaps and sets).
+     */
+    private fun inOrder(items: List<LiftItem>): List<LiftItem> = items.withIndex().sortedWith(
+        compareBy<IndexedValue<LiftItem>> { it.value.slot.role.ordinal }
+            .thenBy { if (Catalog[it.value.exerciseId].compound) 0 else 1 }
+            .thenBy { it.index },
+    ).map { it.value }
 
     /** Exercises added to template [templateId] for good that can still be done (an own exercise may be archived). */
     fun addedTo(templateId: String, settings: Settings): List<String> =

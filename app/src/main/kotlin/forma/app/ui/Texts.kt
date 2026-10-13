@@ -9,6 +9,53 @@ import forma.core.text.Ru
 
 /** Short Russian sentences that explain what the app changed and why. */
 object Texts {
+    /** After a set: the next one, with its numbers, and why (the reserve against the plan). */
+    fun nextSet(ex: Exercise, n: forma.core.strength.NextSet): String {
+        val target = if (ex.load == LoadKind.TIMED) "${n.reps} с" else "${weight(ex, n.weight)} × ${n.reps}"
+        val r = n.reserve
+        val why = when {
+            n.calibrate && n.change > 0 -> "Пошло легко — значит, можно тяжелее."
+            n.calibrate && n.change < 0 -> "Тяжеловато — чуть легче."
+            n.calibrate && r == null -> "Отметь «сколько ещё мог» — по запасу подберу вес."
+            n.calibrate -> "Вес подходящий."
+            n.change > 0 -> "Запас $r при плане ${n.plannedReserve} — вес лёгкий, прибавляем."
+            n.change < 0 && r != null && r < 0 -> "До цели не хватило ${-r} — вес тяжёлый, убавляем."
+            n.change < 0 -> "Запаса меньше плана — вес тяжёлый, убавляем."
+            r == null -> "Отметь «сколько ещё мог» — по запасу подскажу вес."
+            r < 0 -> "Чуть не хватило — тот же вес, попробуй добрать."
+            r > n.plannedReserve -> "Запас $r — чуть легче плана, для прибавки мало: так же."
+            r < n.plannedReserve -> "Запас $r — чуть тяжелее плана, но в норме: так же."
+            else -> "Запас $r — как задумано: так же."
+        }
+        return "Следующий подход: $target. $why"
+    }
+
+    /** "3 × 8 · 80 кг". */
+    fun prescription(ex: Exercise, p: forma.core.strength.Prescription): String = when {
+        ex.load == LoadKind.TIMED -> "${p.sets} × ${p.reps} с"
+        p.calibrate || p.weight == null -> "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}, вес подбираем"
+        else -> "${p.sets} × ${p.reps}${if (p.top) "+" else ""} · ${weight(ex, p.weight!!)}"
+    }
+
+    /** The exercise's place in the day. */
+    fun roleLine(role: forma.core.strength.SlotRole, ex: Exercise): String = when (role) {
+        forma.core.strength.SlotRole.MAIN -> "Главное упражнение дня"
+        forma.core.strength.SlotRole.SECONDARY -> "Вспомогательное"
+        forma.core.strength.SlotRole.ACCESSORY -> if (ex.compound) "Добивающее" else "Добивающее, на одну мышцу"
+    }
+
+    /** Why it stands where it does in the order. */
+    fun orderWhy(role: forma.core.strength.SlotRole, ex: Exercise): String = when (role) {
+        forma.core.strength.SlotRole.MAIN -> "— в начале, пока силы свежие: на нём растёт сила, ему нужна полная свежесть."
+        forma.core.strength.SlotRole.SECONDARY -> "— после главных: добирает объём, свежесть ему важна меньше."
+        forma.core.strength.SlotRole.ACCESSORY -> "— в конце: " + if (ex.compound) "добирает объём, когда главное сделано." else "работает одна мышца, усталость всего тела ему не мешает."
+    }
+
+    /** "Работают: грудь · помогают: трицепс, плечи". */
+    fun muscles(ex: Exercise): String =
+        "Работают: " + ex.primary.joinToString(", ") { it.ru.lowercase() } +
+            if (ex.secondary.isNotEmpty()) " · помогают: " + ex.secondary.joinToString(", ") { it.ru.lowercase() } else ""
+
     fun weight(ex: Exercise?, w: Double): String = when (ex?.load) {
         LoadKind.BODYWEIGHT_PLUS -> when {
             w > 0 -> "+${Ru.kg(w)} кг"

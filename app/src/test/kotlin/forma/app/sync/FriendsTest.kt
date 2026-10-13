@@ -129,6 +129,6 @@ class FriendsTest {
         assertEquals(0, program.blockWeeks)
         assertTrue(program.templates[0].slots.any { it.exerciseId == "custom_lm01" })
         val plan = repo.liftPlan(program.templates[0].id, LocalDate.ofEpochDay(program.startEpochDay))
-        assertEquals("Жим лэндмайн", plan.items.last().name)
+        assertTrue(plan.items.any { it.name == "Жим лэндмайн" })
     }
 }

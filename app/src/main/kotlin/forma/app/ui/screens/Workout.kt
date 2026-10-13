@@ -127,6 +127,11 @@ private val InputsSaver = listSaver<SnapshotStateMap<Int, SetInput>, Any>(
 )
 
 /** In-session weight hints, kept the same way. */
+private val AdviceSaver = listSaver<SnapshotStateMap<Int, Pair<String, Int>>, Any>(
+    save = { m -> m.flatMap { (k, v) -> listOf(k, v.first, v.second) } },
+    restore = { l -> mutableStateMapOf<Int, Pair<String, Int>>().apply { l.chunked(3).forEach { (k, t, c) -> put(k as Int, (t as String) to (c as Int)) } } },
+)
+
 private val AdjustmentsSaver = listSaver<SnapshotStateMap<Int, Adjustment>, Any>(
     save = { m -> m.flatMap { (k, a) -> listOf(k, a.weight, a.reps, a.heavier) } },
     restore = { l ->
@@ -159,6 +164,8 @@ fun WorkoutScreen(workoutId: Long) {
 
     val inputs = rememberSaveable(saver = InputsSaver) { mutableStateMapOf() }
     val adjustments = rememberSaveable(saver = AdjustmentsSaver) { mutableStateMapOf() }
+    // What to do next, said after every set (and where the next exercise starts) — not only when the weight changes.
+    val advice = rememberSaveable(saver = AdviceSaver) { mutableStateMapOf() }
     fun input(item: LiftItem): SetInput {
         inputs[item.position]?.takeIf { it.exerciseId == item.exerciseId }?.let { return it }
         // Another exercise at this position (swapped in, or added after one was taken out): its own numbers and hints,
@@ -267,6 +274,9 @@ fun WorkoutScreen(workoutId: Long) {
                         } else Pill("${p.sets} × ${p.reps} с", filled = true)
                         if (!p.calibrate) Pill("запас ${p.rir}")
                     }
+                    // What it is in this day, what works, why here in the order.
+                    Text(Texts.roleLine(item.slot.role, ex) + " " + Texts.orderWhy(item.slot.role, ex), style = T.secondary(13.sp))
+                    Text(Texts.muscles(ex), style = T.secondary(13.sp))
                     if (ex.equipment == Equipment.BARBELL && ex.bar != null && inp.weight > ex.bar!!) PlatesLine(inp.weight, ex.bar!!)
                     val last = lastReport
                     when {
@@ -353,24 +363,14 @@ fun WorkoutScreen(workoutId: Long) {
                                 undo = null
                                 if (u.startedRest) forma.app.ui.RestTimer.stop()
                                 if (u.adjBefore != null) adjustments[u.position] = u.adjBefore else adjustments.remove(u.position)
+                                advice.remove(u.position)
                                 current = u.position
                                 scope.launch { repo.deleteSet(u.setId) }
                             }) { Text("Отменить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
                         }
                     }
-                    adjustments[item.position]?.let { adj ->
-                        val next = "${Texts.weight(ex, adj.weight)} × ${adj.reps}"
-                        val text = when {
-                            item.prescription.calibrate && adj.heavier -> "Можно тяжелее. Следующий подход: $next?"
-                            item.prescription.calibrate -> "Тяжеловато. Следующий подход: $next?"
-                            adj.heavier -> "Подход был заметно легче плана. Следующий: $next?"
-                            else -> "Подход был тяжелее плана. Следующий: $next?"
-                        }
-                        Banner(text, if (adj.heavier) F.c.good else F.c.warn, icon = if (adj.heavier) Ic.up else Ic.down) {
-                            inp.weight = adj.weight
-                            inp.reps = adj.reps
-                            adjustments.remove(item.position)
-                        }
+                    advice[item.position]?.let { (text, change) ->
+                        Hint(text, when { change > 0 -> F.c.good; change < 0 -> F.c.warn; else -> F.c.strength }, when { change > 0 -> Ic.up; change < 0 -> Ic.down; else -> Ic.info })
                     }
                     SectionLabel(
                         if (n < planned) "Подход ${n + 1} из $planned" + (if (plusSet) " · ${item.prescription.reps}+" else "") else "Дополнительный подход",
@@ -426,12 +426,29 @@ fun WorkoutScreen(workoutId: Long) {
                         undo = Undo(id, logged.position, n + 1, System.currentTimeMillis(), adjustments[logged.position], settings.autoRest)
                         val adj = Progression.adjustAfterSet(ex, logged.prescription, doneSet, bw, index = n)
                         if (adj != null) adjustments[logged.position] = adj else adjustments.remove(logged.position)
+                        // The next set, with the numbers already in the fields — or, the exercise done, where to go on.
+                        val soFar = mine.map { DoneSet(it.weight, it.reps, it.rir) } + doneSet
+                        val ns = Progression.nextSet(ex, logged.prescription, soFar, bw)
+                        if (ns != null) {
+                            inp.weight = ns.weight
+                            inp.reps = ns.reps
+                            advice[logged.position] = Texts.nextSet(ex, ns) to ns.change
+                        } else {
+                            advice.remove(logged.position)
+                            val idx = plan.items.indexOfFirst { it.position == logged.position }
+                            plan.items.drop(idx + 1).firstOrNull { (doneBy[it.position]?.size ?: 0) < it.prescription.sets }?.let { nx ->
+                                val nxEx = Catalog[nx.exerciseId]
+                                advice[nx.position] = "«${logged.name}» сделано. Дальше — ${nx.name}: ${Texts.prescription(nxEx, nx.prescription)}. " +
+                                    Texts.orderWhy(nx.slot.role, nxEx) to 0
+                            }
+                        }
                         inp.rir = null
                         if (settings.autoRest) {
                             forma.app.ui.RestTimer.start(context, workoutId, logged.slot.restSec * 1000L, settings.beeps, settings.vibration)
                         }
                         if (n + 1 >= planned) {
-                            plan.items.firstOrNull { it.position > logged.position && (doneBy[it.position]?.size ?: 0) < it.prescription.sets }
+                            val idx = plan.items.indexOfFirst { it.position == logged.position }
+                            plan.items.drop(idx + 1).firstOrNull { (doneBy[it.position]?.size ?: 0) < it.prescription.sets }
                                 ?.let { current = it.position }
                         }
                     }
