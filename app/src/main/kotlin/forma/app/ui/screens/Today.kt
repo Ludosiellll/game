@@ -323,13 +323,22 @@ private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, done
         value = runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
     }
     val t = program.templates.firstOrNull { it.id == s.templateId }
+    // The time at this person's own pace in the gym, learned from their sessions.
+    val ratio by produceState(1.0) { value = repo.timeRatio() }
+    val budget = repo.store.profile.collectAsState(initial = null).value?.sessionMinutes
+    val minutes = plan?.let { forma.core.plan.SessionTime.round(forma.app.data.TrainingRepository.estimateOf(it) * ratio) } ?: t?.let { Templates.minutes(it) }
     FCard(outline = if (done) null else null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Ic.dumbbell, null, tint = F.c.strength, modifier = Modifier.size(18.dp))
             Text(labelText("  Силовая"), style = T.label().copy(color = F.c.strength), modifier = Modifier.weight(1f))
-            if (t != null) NumText("~${Templates.minutes(t)} мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
+            if (minutes != null) NumText("~$minutes мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
         }
         Text(t?.title ?: "Силовая", style = T.title(26.sp))
+        if (!done && minutes != null && budget != null && ratio != 1.0 && minutes > budget * 1.15) Text(
+            "У тебя тренировки идут дольше расчёта (×${forma.core.text.Ru.one(ratio)}): выйдет около $minutes мин при твоих $budget. " +
+                "Не успеваешь — убери подсобное упражнение в «План» или сократи отдых.",
+            style = T.secondary(12.sp).copy(color = F.c.warn),
+        )
         val items = plan?.items.orEmpty()
         Column {
             items.take(3).forEach { item ->

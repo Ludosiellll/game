@@ -152,6 +152,14 @@ object Progression {
     /** Most assistance an assisted machine or band gives: about 70 % of the moved body weight. */
     fun maxAssist(ex: Exercise, bodyWeight: Double): Double = floorTo(ex.bodyShare * bodyWeight * 0.7, ex.step)
 
+    /** The person's own factor on start-weight guesses from how far off the earlier ones were ([ratios]: found / guessed). */
+    fun ownStart(ratios: List<Double>): Double {
+        if (ratios.size < 2) return 1.0
+        val s = ratios.sorted()
+        val m = if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2
+        return m.coerceIn(0.4, 2.5)
+    }
+
     fun startHint(ex: Exercise, bodyWeight: Double, female: Boolean, trained: Double): Double? {
         if (ex.load != LoadKind.EXTERNAL) return if (ex.load == LoadKind.BODYWEIGHT_PLUS) 0.0 else null
         var w = ex.startRatio * bodyWeight * (if (female) 0.6 else 1.0) * trained

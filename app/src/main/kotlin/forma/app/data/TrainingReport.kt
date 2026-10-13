@@ -119,6 +119,7 @@ object TrainingReport {
         if (b.stats.isNotEmpty()) {
             appendLine("### Зал: расчётный максимум на 1 раз")
             appendLine()
+            forma.core.strength.RirScale.explain(TrainingRepository.rirBiasOf(b.workouts.filter { it.status == Status.DONE }, b.sets))?.let { appendLine(it); appendLine() }
             b.stats.sortedByDescending { it.e1rm }.forEach { s ->
                 val ex = Catalog.find(s.exerciseId)
                 if (ex?.load == LoadKind.TIMED) return@forEach

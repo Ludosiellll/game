@@ -72,6 +72,11 @@ data class RunState(
     val lastTrialTryDay: Long? = null,
     /** Efforts given to the last easy runs done in full (at most 8): the runner's own scale, see [rpeOffset]. */
     val easyRpes: List<Int> = emptyList(),
+    /**
+     * The last easy runs with a measured pace against the easy range (at most 6): +1 well quicker and light, −1 well
+     * slower and hard, 0 in it. Without a recent trial they move the paces ([EASY_SAYS]).
+     */
+    val easySigns: List<Int> = emptyList(),
 ) {
     val canRunContinuously: Boolean get() = walkStage < 0
 
@@ -155,6 +160,8 @@ sealed interface RunOutcome {
     @Serializable data object TooFast : RunOutcome
     /** The reps were measured more than 3 % slower than their target: the step is not taken, whatever the effort. */
     @Serializable data object TooSlow : RunOutcome
+    /** Five of the last six easy runs said the paces are off (no trial lately): VDOT moved by one. */
+    @Serializable data class EasyPaces(val from: Double, val to: Double) : RunOutcome
     /** The runner rates easy runs harder than they are meant to feel: the effort thresholds are [offset] higher. */
     @Serializable data class OwnScale(val offset: Int) : RunOutcome
     /** No lap pressed and no GPS: the pace was not measured, only the effort and the reps decided. */
@@ -672,6 +679,41 @@ object RunPlan {
      * grows by half of the extra (3–8 minutes; the 30-day cap still applies to the next one), extra reps or reps clearly
      * faster than asked at a moderate effort move a ladder two steps. [goal] is the race trained for, if any.
      */
+    /** Easy runs that agree (5 of the last 6) and no trial for six weeks: the paces follow them. */
+    const val EASY_SAYS = 5
+    private const val VDOT_MIN = 20.0
+    private const val VDOT_MAX = 85.0
+
+    /**
+     * Paces from easy runs, for someone without trials (a health runner has no hard days, so no trial ever comes; a
+     * trial missed for weeks leaves paces stale): five of the last six easy runs well quicker than the easy range
+     * (more than 3 %) and light (4 or less on the runner's own scale) — VDOT +1; five of six well slower and hard
+     * (6 or more) — −1. At most once in four weeks; a trial in the last six weeks decides instead. Easy pace is only
+     * loosely tied to VDOT (heat, hills), hence the five of six.
+     */
+    private fun easyPaceSays(s: RunState, w: RunWorkout, r: RunResult, rpe: Int, day: Long, out: MutableList<RunOutcome>): RunState {
+        val v = s.vdot ?: return s
+        val dist = r.distanceM ?: return s
+        if (dist < 1000 || r.completed < 0.95 || r.durationSec < 600) return s
+        val pace = r.durationSec / (dist / 1000.0)
+        val easy = PaceTable.forVdot(v).easy
+        val sign = when {
+            pace < easy.fast * 0.97 && rpe <= 4 -> 1
+            pace > easy.slow * 1.03 && rpe >= 6 -> -1
+            else -> 0
+        }
+        val signs = (s.easySigns + sign).takeLast(6)
+        val trialRecent = s.lastTestDay?.let { day - it < 42 } == true
+        val movedRecent = s.lastVdotUpDay?.let { day - it < 28 } == true
+        if (trialRecent || movedRecent || signs.size < EASY_SAYS) return s.copy(easySigns = signs)
+        val up = signs.count { it > 0 } >= EASY_SAYS
+        val down = signs.count { it < 0 } >= EASY_SAYS
+        if (!up && !down) return s.copy(easySigns = signs)
+        val to = (v + if (up) 1.0 else -1.0).coerceIn(VDOT_MIN, VDOT_MAX)
+        out += RunOutcome.EasyPaces(v, to)
+        return s.copy(vdot = to, lastVdotUpDay = day, easySigns = emptyList())
+    }
+
     fun after(state: RunState, w: RunWorkout, r: RunResult, caps: RunCaps, day: Long = 0, goal: RunGoal? = null): RunAfter {
         val out = mutableListOf<RunOutcome>()
         val minutes = (r.durationSec / 60.0).roundToInt()
@@ -727,6 +769,7 @@ object RunPlan {
                 if (done && rpe <= 6) s = s.copy(walkFails = 0)
             }
             RunType.EASY -> {
+                s = easyPaceSays(s, w, r, rpe, day, out)
                 // Only a run of the full usual length says it can grow: one kept short (after the gym, a cutback
                 // week, the 30-day cap) proves nothing about a longer one.
                 val full = w.workSeconds >= state.easyMinutes * 60

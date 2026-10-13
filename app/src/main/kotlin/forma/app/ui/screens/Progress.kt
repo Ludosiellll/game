@@ -53,6 +53,7 @@ import forma.core.run.RunPlan
 import forma.core.run.Vdot
 import forma.core.text.Ru
 import java.time.LocalDate
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private fun monthLabels(points: List<Point>): List<String> {
@@ -100,6 +101,26 @@ private fun StrengthTab() {
         }
         if (index.size >= 2) LineChart(listOf(Series(index.map { it.value }, F.c.strength, fill = true)), xLabels = monthLabels(index), reference = 100.0, description = "Индекс силы по неделям")
         Text("100 — твой старт. Считается по расчётному максимуму каждого упражнения.", style = T.secondary(12.sp))
+    }
+    val outgrew by androidx.compose.runtime.produceState(false, rows) { value = repo.outgrewNovice() }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    if (outgrew) FCard(gap = 6.dp) {
+        Text("Ты уже не новичок", style = T.title(18.sp))
+        Text(
+            "Большинство основных упражнений уже не растут от тренировки к тренировке — так и заканчивается период новичка. " +
+                "Дальше лучше работает план для среднего уровня: блоки с разгрузочной неделей и прибавки реже, но дольше. Прогресс по упражнениям сохранится.",
+            style = T.body(14.sp),
+        )
+        GhostButton("Перейти на средний уровень", {
+            scope.launch { repo.store.profileNow()?.let { repo.updateProfile(it.copy(experience = forma.core.model.Experience.INTERMEDIATE)) } }
+        }, Modifier.fillMaxWidth())
+    }
+    val bias by androidx.compose.runtime.produceState(0, rows) { value = repo.rirBias() }
+    forma.core.strength.RirScale.explain(bias)?.let { text ->
+        FCard(gap = 4.dp) {
+            Text("Твоя шкала запаса", style = T.secondary(13.sp))
+            Text(text, style = T.body(14.sp))
+        }
     }
     SectionLabel("Упражнения")
     FCard(gap = 0.dp) {

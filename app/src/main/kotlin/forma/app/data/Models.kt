@@ -25,6 +25,8 @@ data class LiftItem(
     val addedForGood: Boolean = false,
     /** Why there is no warm-up before it (muscles warm already, single-muscle work), when there is none. */
     val noWarmUp: String? = null,
+    /** Why the rest is longer than the plan's for this person, when it is. */
+    val restWhy: String? = null,
 )
 
 @Serializable

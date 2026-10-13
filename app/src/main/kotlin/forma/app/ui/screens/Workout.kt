@@ -156,6 +156,8 @@ fun WorkoutScreen(workoutId: Long) {
     val w = workout ?: return
     val plan = remember(w.planJson) { repo.planOf(w) } ?: return
     val bw = profile?.bodyWeightKg ?: 75.0
+    // How far this person's "reps left" run off, learned from their "+" sets.
+    val rirBias by androidx.compose.runtime.produceState(0, workoutId) { value = repo.rirBias(before = workoutId) }
 
     // Keep the screen on in the gym.
     val view = LocalView.current
@@ -280,6 +282,7 @@ fun WorkoutScreen(workoutId: Long) {
                     }
                     // What it is in this day, what works, why here in the order.
                     Text(Texts.roleLine(item.slot.role, ex) + " " + Texts.orderWhy(item.slot.role, ex), style = T.secondary(13.sp))
+                    item.restWhy?.let { Text(it, style = T.secondary(13.sp)) }
                     Text(Texts.muscles(ex), style = T.secondary(13.sp))
                     if (ex.equipment == Equipment.BARBELL && ex.bar != null && inp.weight > ex.bar!!) PlatesLine(inp.weight, ex.bar!!)
                     val last = lastReport
@@ -452,7 +455,8 @@ fun WorkoutScreen(workoutId: Long) {
                     val tap = android.os.SystemClock.elapsedRealtime()
                     if (tap - lastLogAt < 1500) return@PrimaryButton
                     lastLogAt = tap
-                    val doneSet = DoneSet(inp.weight, inp.reps, inp.rir)
+                    // The advice reads the reserve on the person's own scale; the set is saved as rated.
+                    val doneSet = DoneSet(inp.weight, inp.reps, forma.core.strength.RirScale.correct(inp.rir, rirBias))
                     val logged = item
                     scope.launch {
                         val id = repo.logSet(workoutId, logged, inp.weight, inp.reps, inp.rir)
@@ -460,7 +464,7 @@ fun WorkoutScreen(workoutId: Long) {
                         val adj = Progression.adjustAfterSet(ex, logged.prescription, doneSet, bw, index = n)
                         if (adj != null) adjustments[logged.position] = adj else adjustments.remove(logged.position)
                         // The next set, with the numbers already in the fields — or, the exercise done, where to go on.
-                        val soFar = mine.map { DoneSet(it.weight, it.reps, it.rir) } + doneSet
+                        val soFar = mine.map { DoneSet(it.weight, it.reps, forma.core.strength.RirScale.correct(it.rir, rirBias)) } + doneSet
                         val ns = Progression.nextSet(ex, logged.prescription, soFar, bw)
                         if (ns != null) {
                             inp.weight = ns.weight

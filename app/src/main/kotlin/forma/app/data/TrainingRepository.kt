@@ -28,6 +28,7 @@ import forma.core.strength.SlotRole
 import forma.core.strength.SlotSpec
 import forma.core.strength.SlotState
 import forma.core.strength.WarmUp
+import forma.core.text.Ru
 import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -82,6 +83,22 @@ class TrainingRepository(
      */
     private fun typedRace(st: forma.core.run.RunState, profile: Profile): forma.core.run.RunState =
         if (st.vdot != null && profile.runGoal?.middleDistance != true) st.copy(lastTestDay = today().toEpochDay()) else st
+
+    /**
+     * A novice who has outgrown novice rules: two thirds of the main lifts or more are past the linear phase (a weight
+     * a session no longer works) after eight weeks or more in the gym. Then planned light weeks and intermediate
+     * choices fit better; the person decides.
+     */
+    suspend fun outgrewNovice(): Boolean {
+        val profile = store.profileNow() ?: return false
+        if (profile.experience != Experience.NOVICE) return false
+        val lifts = db.workouts().allDone().filter { it.kind == Kind.LIFT }
+        val first = lifts.minOfOrNull { it.epochDay } ?: return false
+        if (today().toEpochDay() - first < 56) return false
+        val mains = store.programNow()?.templates.orEmpty().flatMap { it.slots }.filter { it.role == SlotRole.MAIN }.map { it.key }.distinct()
+        val states = mains.mapNotNull { db.state().slot(it) }
+        return states.size >= 2 && states.count { !it.linear } * 3 >= mains.size * 2
+    }
 
     /** Saves the profile and rebuilds the plan. Lifting progress is kept per exercise and rep range. */
     suspend fun updateProfile(profile: Profile) {
@@ -190,6 +207,38 @@ class TrainingRepository(
     // ---------- lifting ----------
 
     companion object {
+        /** The plan's estimate for a session as planned, minutes. */
+        fun estimateOf(plan: LiftPlan): Double = forma.core.plan.SessionTime.estimate(plan.items.map { it.slot to it.prescription.sets })
+
+        fun timeRatioOf(ws: List<WorkoutEntity>): Double = forma.core.plan.SessionTime.ratio(
+            ws.filter { it.kind == Kind.LIFT && it.status == Status.DONE }.sortedBy { it.startedAt }.mapNotNull { w ->
+                val plan = w.planJson?.let { runCatching { AppJson.decodeFromString(LiftPlan.serializer(), it) }.getOrNull() } ?: return@mapNotNull null
+                val sec = w.durationSec ?: return@mapNotNull null
+                estimateOf(plan) to sec / 60.0
+            },
+        )
+
+        /** [RirScale][forma.core.strength.RirScale] bias from finished lifting sessions and their sets. */
+        fun rirBiasOf(ws: List<WorkoutEntity>, sets: List<SetEntity>): Int {
+            val by = sets.groupBy { it.workoutId }
+            val pairs = mutableListOf<forma.core.strength.RirScale.Pair>()
+            for (w in ws.filter { it.kind == Kind.LIFT }.sortedBy { it.startedAt }.takeLast(40)) {
+                val plan = w.planJson?.let { runCatching { AppJson.decodeFromString(LiftPlan.serializer(), it) }.getOrNull() } ?: continue
+                for (item in plan.items) {
+                    val p = item.prescription
+                    if (!p.top || p.calibrate) continue
+                    val mine = by[w.id].orEmpty().filter { it.position == item.position }.sortedBy { it.doneAt }
+                    if (mine.size < 2) continue
+                    val plus = mine.last()
+                    val rated = mine[mine.size - 2]
+                    val rir = rated.rir ?: continue
+                    if (kotlin.math.abs(rated.weight - plus.weight) > 1e-6) continue
+                    pairs += forma.core.strength.RirScale.Pair(rated.reps, rir, plus.reps, plus.rir)
+                }
+            }
+            return forma.core.strength.RirScale.bias(pairs)
+        }
+
         /** The load story from finished workouts; null without any load. */
         fun storyOf(ws: List<WorkoutEntity>, today: LocalDate): forma.core.load.LoadStory.Story? {
             val loads = ws.filter { (it.load ?: 0.0) > 0 }.groupBy { LocalDate.ofEpochDay(it.epochDay) }.mapValues { (_, l) -> l.sumOf { it.load ?: 0.0 } }
@@ -358,6 +407,31 @@ class TrainingRepository(
 
 
 
+    /**
+     * How far the start-weight guesses were off for this person: the weight found in each first session against the
+     * guess as made from body weight, sex and experience (both as a one-rep estimate, the reps may differ). The median
+     * of at least two, between 0.4 and 2.5; 1 before that.
+     */
+    suspend fun startFactor(profile: Profile, trained: Double): Double {
+        val ratios = mutableListOf<Double>()
+        for (w in db.workouts().allDone().filter { it.kind == Kind.LIFT }.takeLast(30)) {
+            val plan = planOf(w) ?: continue
+            val reports = liftSummaryOf(w)?.reports ?: continue
+            for (item in plan.items) {
+                if (!item.prescription.calibrate) continue
+                val o = reports.firstOrNull { it.exerciseId == item.exerciseId }?.outcome as? Outcome.Calibrated ?: continue
+                val ex = Catalog.find(item.exerciseId) ?: continue
+                val guess = Progression.startHint(ex, profile.bodyWeightKg, profile.sex == Sex.FEMALE, trained) ?: continue
+                if (guess <= 0 || o.weight <= 0) continue
+                ratios += forma.core.strength.OneRm.estimate(o.weight, o.reps, 2) / forma.core.strength.OneRm.estimate(guess, item.prescription.reps, 2)
+            }
+        }
+        return Progression.ownStart(ratios)
+    }
+
+    /** How much longer (or shorter) this person's gym sessions are than the plan estimates ([forma.core.plan.SessionTime]). */
+    suspend fun timeRatio(): Double = timeRatioOf(db.workouts().allDone())
+
     /** One exercise of a session: today's prescription from its own progress, the stored estimate or a start hint. */
     private suspend fun buildItem(position: Int, spec: SlotSpec, date: LocalDate, deload: Boolean): LiftItem {
         val program = store.programNow() ?: error("no program")
@@ -372,8 +446,10 @@ class TrainingRepository(
         val ex = exercise(spec.exerciseId, settings)
         val slotRow = db.state().slot(spec.key)
         val st = slotRow?.toState() ?: SlotState.fresh(spec)
-        val hint = Progression.startHint(ex, profile.bodyWeightKg, profile.sex == Sex.FEMALE, trained)
         val stat = db.state().stat(ex.id)
+        // A first time: the start weight is guessed, and the guess learns from how far off it was for this person.
+        val own = if (stat == null && slotRow == null && ex.load == LoadKind.EXTERNAL) startFactor(profile, trained) else 1.0
+        val hint = Progression.startHint(ex, profile.bodyWeightKg, profile.sex == Sex.FEMALE, trained * own)
         // The last time the exercise was done in any rep range (a new range starts from the estimate).
         val lastMs = listOfNotNull(slotRow?.updatedAt, stat?.updatedAt).maxOrNull()
         val lastDay = lastMs?.let { java.time.Instant.ofEpochMilli(it).atZone(zone()).toLocalDate().toEpochDay() }
@@ -385,7 +461,17 @@ class TrainingRepository(
         val warm = if (spec.role == SlotRole.MAIN && p.weight != null && ex.load == LoadKind.EXTERNAL && !deload) {
             WarmUp.sets(p.weight!!, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
         } else emptyList()
-        return LiftItem(position, spec, ex.id, ex.name, p, warm, ex.step)
+        // Reps falling off set after set, session after session: this person needs longer rest here (unless they set it).
+        val ownRest = ex.load != LoadKind.TIMED && !deload && settings.rest.keys.none { it == spec.exerciseId || it.endsWith(":${spec.exerciseId}") } &&
+            forma.core.strength.RestAdvice.longer(
+                db.sets().history(ex.id).groupBy { it.workoutId }.values.map { l -> l.sortedBy { it.doneAt }.map { DoneSet(it.weight, it.reps, it.rir) } },
+            )
+        val rested = if (ownRest) spec.copy(restSec = (spec.restSec + forma.core.strength.RestAdvice.MORE_SEC).coerceAtMost(MAX_REST)) else spec
+        return LiftItem(
+            position, rested, ex.id, ex.name, p, warm, ex.step,
+            restWhy = if (ownRest) "Отдых ${Ru.clock(rested.restSec)} вместо ${Ru.clock(spec.restSec)}: в последних тренировках к последнему подходу " +
+                "у тебя повторы падали на 3 и больше. Дольше отдых — больше повторов в поздних подходах." else null,
+        )
     }
 
     // ---------- exercise swaps and own exercises ----------
@@ -616,6 +702,15 @@ class TrainingRepository(
         )
     }
 
+    /**
+     * How far this person's "reps left" run off, from their "+" sets ([forma.core.strength.RirScale]); 0 until there are
+     * enough. [before]: only sessions before this one.
+     */
+    suspend fun rirBias(before: Long? = null): Int {
+        val ws = db.workouts().allDone().filter { it.kind == Kind.LIFT && (before == null || it.id != before) }.takeLast(40)
+        return rirBiasOf(ws, ws.flatMap { db.sets().forWorkout(it.id) })
+    }
+
     fun planOf(w: WorkoutEntity): LiftPlan? = w.planJson?.let { runCatching { AppJson.decodeFromString(LiftPlan.serializer(), it) }.getOrNull() }
 
     suspend fun replacePlan(workoutId: Long, plan: LiftPlan) {
@@ -666,6 +761,8 @@ class TrainingRepository(
         val settings = store.settingsNow()
         val sets = db.sets().forWorkout(workoutId)
         val bw = profile.bodyWeightKg
+        // Reserves read on this person's own scale (learned before this session).
+        val bias = rirBias(before = workoutId)
         val reports = mutableListOf<SlotReport>()
         var volume = 0.0
         // One exercise twice in a session (added again with "+", or swapped to one already there) has one progress:
@@ -678,7 +775,7 @@ class TrainingRepository(
                 volume += Progression.effectiveLoad(ex, s.weight, bw) * s.reps * (if (ex.perHand) 2 else 1)
             }
             if (mine.isNotEmpty() && !evaluated.add(item.slot.key)) continue
-            val done = mine.map { DoneSet(it.weight, it.reps, it.rir) }
+            val done = mine.map { DoneSet(it.weight, it.reps, forma.core.strength.RirScale.correct(it.rir, bias)) }
             val st = db.state().slot(item.slot.key)?.toState() ?: SlotState.fresh(item.slot)
             val ev = Progression.evaluate(
                 ex, item.slot, st, item.prescription, done, bw,
@@ -712,8 +809,9 @@ class TrainingRepository(
     }
 
     /**
-     * Two or more main lifts stepping back within two weeks means fatigue is winning:
-     * the next week becomes a lighter one (half the sets, −10 %, more reps in reserve).
+     * Two or more main lifts stepping back within two weeks means fatigue is winning — or one, when the person has been
+     * below their own rest line for four days: the next week becomes a lighter one (half the sets, −10 %, more reps in
+     * reserve).
      */
     private suspend fun checkReactiveDeload(day: LocalDate) {
         val program = store.programNow() ?: return
@@ -733,7 +831,11 @@ class TrainingRepository(
         // At most one lighter week in six: a run of bad days is not a reason to deload again and again.
         val recent = state.reactiveDeloadStart?.let { day.toEpochDay() < it + 42 } == true ||
             (1L..3L).any { ProgramGenerator.isDeloadWeek(program, day.minusWeeks(it)) }
-        if (setbacks.size >= 2 && !plannedSoon && !recent) {
+        // Run down by this person's own measure: below their rest line for four days or more (the dip still on).
+        val worn = storyOf(db.workouts().allDone(), day)?.let { st ->
+            st.history && st.dips.lastOrNull()?.let { it.recovered == null && day.toEpochDay() - it.from.toEpochDay() >= 3 } == true
+        } == true
+        if ((setbacks.size >= 2 || worn && setbacks.isNotEmpty()) && !plannedSoon && !recent) {
             store.setLiftState(state.copy(reactiveDeloadStart = nextMonday.toEpochDay()))
         }
     }
