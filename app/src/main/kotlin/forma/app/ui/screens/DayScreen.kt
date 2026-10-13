@@ -39,6 +39,7 @@ import forma.core.plan.PlannedSession
 import forma.core.plan.Program
 import forma.core.plan.ProgramGenerator
 import forma.core.run.RunExplain
+import forma.core.run.RunType
 import forma.core.run.RunWorkout
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -63,6 +64,13 @@ fun DayScreen(date: LocalDate) {
     val item = week.firstOrNull { it.date == date }
     val sessions = p.week.on(date.dayOfWeek.value)
     val trialOn by produceState<LocalDate?>(null, p, today) { value = repo.trialDay(today) }
+    val runState by repo.store.runState.collectAsState(initial = null)
+    // A hard run as things stand: after a long break the hard sessions are easy runs for a while, and before running
+    // continuously every run is run/walk (as runFor builds them).
+    val hard: (PlannedSession) -> Boolean = { s ->
+        val st = runState?.let { forma.core.run.RunPlan.withBreak(it, date.toEpochDay()) }
+        s.isHardRun && (st == null || (st.canRunContinuously && !(s.kind == forma.core.plan.SessionKind.RUN_QUALITY && st.returnEasy > 0)))
+    }
     val title = when (date) {
         today -> "Сегодня"
         today.plusDays(1) -> "Завтра"
@@ -78,7 +86,7 @@ fun DayScreen(date: LocalDate) {
         if (sessions.isEmpty()) {
             FCard(gap = 6.dp) {
                 SectionLabel("Отдых")
-                Text("В этот день по плану отдыха", style = T.title(20.sp))
+                Text("По плану — отдых", style = T.title(20.sp))
                 Text(
                     "Мышцы, сердце и связки становятся сильнее не во время тренировки, а в отдыхе после неё. Прогулка или " +
                         "растяжка не помешают.",
@@ -91,10 +99,10 @@ fun DayScreen(date: LocalDate) {
             if (s.isRun) {
                 DayRunCard(s, date, done, trial = date == trialOn, goal = profile?.runGoal)
             } else {
-                DayLiftCard(s, p, date, done)
+                DayLiftCard(s, p, date, done, hardRun = sessions.any(hard))
             }
         }
-        val reasons = DayReasons.of(p, date.dayOfWeek.value)
+        val reasons = DayReasons.of(p, date.dayOfWeek.value, hard)
         if (reasons.isNotEmpty()) {
             SectionLabel("Почему в этот день")
             FCard(gap = 8.dp) { reasons.forEach { Text(it, style = T.body(15.sp)) } }
@@ -107,12 +115,38 @@ fun DayScreen(date: LocalDate) {
     }
 }
 
-/** A run of the day: as it will be, and the words behind it. Done already — what was done, one tap from its story. */
+/**
+ * A run of the day: as it will be, and the words behind it. Done already — the run as it was run that day, one tap from
+ * its story; a free run in its place — said as it is.
+ */
 @Composable
 private fun DayRunCard(s: PlannedSession, date: LocalDate, done: WorkoutEntity?, trial: Boolean, goal: forma.core.model.RunGoal?) {
     val repo = LocalRepo.current
     val nav = LocalNav.current
-    val w by produceState<RunWorkout?>(null, s.kind, date, trial) { value = repo.runFor(s.kind, date, trial = trial) }
+    // A free run done in its place (on a hard day): said as it is, as on the main screen — the planned one was not run,
+    // and which one it would have been (the trial or what follows it) has moved on with the plan.
+    if (done != null && done.templateId == RunType.FREE.name) {
+        FCard(gap = 10.dp) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Ic.run, null, tint = F.c.endurance, modifier = Modifier.size(18.dp))
+                Text(forma.app.ui.theme.labelText("  ${kindLabel(s)}"), style = T.label().copy(color = F.c.endurance), modifier = Modifier.weight(1f))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
+                Text("Сделано: ${done.title}", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
+            }
+            if (s.kind == forma.core.plan.SessionKind.RUN_QUALITY) {
+                Text("Тяжёлая тренировка перешла на следующий тяжёлый день: план бега сдвигается только по самой тренировке.", style = T.secondary(14.sp))
+            }
+            GhostButton("Как прошло — разбор", { nav.push(Screen.HistoryItem(done.id)) }, Modifier.fillMaxWidth(), height = 48.dp)
+        }
+        return
+    }
+    // Done: the run as planned that day (the plan has moved on since — it holds the next session now). Ahead: as the plan
+    // holds it now.
+    val w by produceState<RunWorkout?>(null, s.kind, date, trial, done?.id) {
+        value = done?.let { repo.runPlanOf(it.id) } ?: repo.runFor(s.kind, date, trial = trial)
+    }
     val workout = w ?: return
     val why = remember(workout, goal) { RunExplain.of(workout, goal) }
     FCard(gap = 10.dp) {
@@ -125,7 +159,7 @@ private fun DayRunCard(s: PlannedSession, date: LocalDate, done: WorkoutEntity?,
         if (done != null) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
-                Text(if (done.templateId == workout.type.name) "Сделано" else "Сделано: ${done.title}", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
+                Text("Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
             }
             GhostButton("Как прошло — разбор", { nav.push(Screen.HistoryItem(done.id)) }, Modifier.fillMaxWidth(), height = 48.dp)
         }
@@ -145,15 +179,18 @@ private fun DayRunCard(s: PlannedSession, date: LocalDate, done: WorkoutEntity?,
         }
         Explained("Зачем", why.purpose)
         Explained("Что даёт телу", why.body)
-        Explained("Как бежать", listOf(workout.note, why.how).filter { it.isNotBlank() }.joinToString(" "))
-        if (why.next.isNotBlank()) Explained("Как дальше", why.next)
-        Explained("Восстановление", "Тело обычно восстанавливается после неё за ${RunExplain.recoveryWords(why.recoveryHours)}.")
+        // How to run it and what follows: for a run ahead; a done one has its debrief and the plan's decisions.
+        if (done == null) {
+            Explained("Как бежать", listOf(workout.note, why.how).filter { it.isNotBlank() }.joinToString(" "))
+            if (why.next.isNotBlank()) Explained("Как дальше", why.next)
+        }
+        Explained("Восстановление", "Тело обычно восстанавливается после этой тренировки за ${RunExplain.recoveryWords(why.recoveryHours)}.")
     }
 }
 
 /** The gym session of the day: its exercises and weights, what the session is for, where the cycle is. */
 @Composable
-private fun DayLiftCard(s: PlannedSession, p: Program, date: LocalDate, done: WorkoutEntity?) {
+private fun DayLiftCard(s: PlannedSession, p: Program, date: LocalDate, done: WorkoutEntity?, hardRun: Boolean) {
     val repo = LocalRepo.current
     val nav = LocalNav.current
     val plan by produceState<LiftPlan?>(null, s.templateId, date) {
@@ -187,7 +224,6 @@ private fun DayLiftCard(s: PlannedSession, p: Program, date: LocalDate, done: Wo
                 }
             }
         }
-        val hardRun = p.week.on(date.dayOfWeek.value).any { it.isHardRun }
         template?.let { Explained("Зачем", focusWhy(it.focus, hardRun)) }
         Explained("Цели в зале", LIFT_FOCUS.firstOrNull { it.value == p.aim.normalized().lift }?.let { "${it.label} — ${it.text.replaceFirstChar { c -> c.lowercase() }}" } ?: "")
         cycleWords(p, date)?.let { Explained("Неделя цикла", it) }

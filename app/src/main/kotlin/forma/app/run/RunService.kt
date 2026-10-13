@@ -91,6 +91,9 @@ class RunService : Service() {
     /** When the coach last asked to press "lap" at the start while the plan waits on the line. */
     private var waitSaidAt = 0L
 
+    /** The reps' laps said, once (see [afterReps]). */
+    private var lapsSaid = false
+
     /** Stops the clock at a standstill on the road (easy, long and free runs) and goes on with running. */
     private val autoPause = forma.core.run.AutoPause()
     private val paceAlarm = forma.core.run.PaceAlarm()
@@ -156,6 +159,7 @@ class RunService : Service() {
         RunSession.attached()
         // Marks past the plan already behind (a run brought back after the app was closed) are not said again.
         overMark = ((t.timelineMs(now()) / 1000).toInt() - t.workout.totalSeconds).coerceAtLeast(0) / 300
+        lapsSaid = afterReps(t)
         coach = VoiceCoach(this, RunSession.voice, RunSession.beeps, RunSession.vibration)
         wake = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "forma:run").apply { acquire(6 * 60 * 60 * 1000L) }
@@ -172,6 +176,11 @@ class RunService : Service() {
                 }
                 val events = tr.tick(now())
                 handle(events)
+                // The reps are over: how their laps went, in a sentence — the full debrief comes with the saved run.
+                if (!lapsSaid && afterReps(tr)) {
+                    lapsSaid = true
+                    CoachText.lapsSummary(tr.workout, tr.laps)?.let { coach?.speak(it) }
+                }
                 // A lap nobody pressed, seen by GPS crossing the line: in a rep, or any lap of a run without reps, it is
                 // said (roughly timed, and judged when there is a target).
                 tr.autoLap(now())?.let { l ->
@@ -255,6 +264,17 @@ class RunService : Service() {
         paceAlarm.update(now(), tr.currentPace(now()), fast, slow, into)?.let { coach?.speak(CoachText.pace(it, easy)) }
     }
 
+    /**
+     * A quarter of a minute into what follows the last rep: the reps' laps are all in (a last press a little late still
+     * counts), and the cool-down has minutes left — said at the finish, the sentence would be cut off as the run ends.
+     */
+    private fun afterReps(tr: RunTracker): Boolean {
+        val lastWork = tr.workout.segments.indexOfLast { it.kind == forma.core.run.SegmentKind.WORK }
+        if (lastWork < 0) return false
+        val tl = tr.timeline(now())
+        return tl.index > lastWork + 1 || (tl.index == lastWork + 1 && tl.segmentElapsed >= 15)
+    }
+
     private fun handle(events: List<RunEvent>) {
         val c = coach ?: return
         val w = RunSession.tracker?.workout ?: return
@@ -269,10 +289,6 @@ class RunService : Service() {
                 }
             }
             CoachText.say(w, e)?.let { c.speak(it) }
-            // The end of a session of reps: how the laps went, in a sentence (the debrief is on the screen).
-            if (e is RunEvent.Timeline && e.cue is Cue.Finished) {
-                RunSession.tracker?.laps?.let { CoachText.lapsSummary(w, it) }?.let { c.speak(it) }
-            }
         }
     }
 

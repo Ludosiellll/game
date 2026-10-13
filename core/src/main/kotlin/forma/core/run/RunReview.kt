@@ -28,6 +28,8 @@ object RunReview {
         val trial: Pair<Int, Int>? = null,
         /** Share of the plan done, 0..1, when known. */
         val completed: Double? = null,
+        /** A trial: whether the plan counted the goal reached (`RunOutcome.GoalReached`); null when not known. */
+        val goalReached: Boolean? = null,
     )
 
     fun of(r: Run, goal: RunGoal? = null): List<Item> {
@@ -36,9 +38,26 @@ object RunReview {
         how(r, goal)?.let { out += it }
         effort(r)?.let { out += it }
         val why = RunExplain.of(w, goal)
-        out += Item("Что это даёт телу", why.body, 0)
+        if (w.type == RunType.FREE) {
+            out += Item("Что это даёт телу", freeBody(r.rpe), 0)
+            // RunPlan.after: a free run counts as running (no break, the load), but moves no ladder and no minutes.
+            out += Item(
+                "План", "Свой бег шагов плана не двигает: лестницы и длительность растут по плановым тренировкам. Он засчитан " +
+                    "как бег — перерыва нет — и в нагрузку («Свежесть»).", 0,
+            )
+        } else {
+            out += Item("Что это даёт телу", why.body, 0)
+        }
         out += recovery(r, why.recoveryHours)
         return out
+    }
+
+    /** A free run after the fact: as hard as it felt. */
+    private fun freeBody(rpe: Int?): String = when {
+        rpe == null -> "Спокойный бег действует как лёгкий — строит аэробную базу; быстрый — как тяжёлая тренировка."
+        rpe >= 8 -> "По тяжести — как тяжёлая тренировка: тренирует скорость и выносливость, но и утомляет так же."
+        rpe >= 6 -> "Бег средней тяжести: аэробную систему тренирует сильнее лёгкого, но и утомляет больше."
+        else -> "Спокойный бег — как лёгкий: строит аэробную базу почти без утомления."
     }
 
     private fun how(r: Run, goal: RunGoal?): Item? {
@@ -50,7 +69,7 @@ object RunReview {
             RunType.FREE -> free(r)
             RunType.RUN_WALK -> r.completed?.let {
                 if (it >= 0.95) Item("Как пробежал", "Все беговые отрезки сделаны.", 1)
-                else Item("Как пробежал", "Сделано ${(it * 100).roundToInt()} % тренировки: она повторится, пока не получится целиком.", 0)
+                else Item("Как пробежал", "Сделано ${(it * 100).roundToInt()} % тренировки: шаг вперёд — когда получится целиком.", 0)
             }
         }
     }
@@ -71,7 +90,9 @@ object RunReview {
             val repLaps = r.laps.filter { it.rep != null }
             val avg = repLaps.sumOf { it.seconds } / repLaps.sumOf { it.part }
             val range = target?.pace?.let { p -> lapM?.let { Track.lapSec(p.fast.toDouble(), it) to Track.lapSec(p.slow.toDouble(), it) } }
-            if (range != null) parts += "Средний круг — ${Ru.one(avg)} с при цели ${Ru.lapRange(range.first, range.second)}."
+            // Under a minute to a tenth ("49,6 с" against "50–51 с"), a minute and up as the target is written ("1:03").
+            if (range != null) parts += "Средний круг — ${if (avg < 59.95) "${Ru.one(avg)} с" else Ru.lap(avg)} при цели " +
+                "${Ru.lapRange(range.first, range.second)}."
             var tone = if (on * 5 >= judged.size * 4) 1 else 0
             // The reps from first to last: a fall-off means the start was too quick.
             val byRep = repLaps.groupBy { it.rep!! }.toSortedMap().values.map { ls -> ls.sumOf { it.seconds } / ls.sumOf { it.part } }
@@ -114,12 +135,13 @@ object RunReview {
         val limit = w.segments.firstOrNull { it.kind == SegmentKind.RUN }?.pace?.fast?.toDouble()
         val lapM = w.lapMeters
         val free = r.laps.filter { it.rep == null }
-        // On a stadium the laps say it best; else the GPS pace of the run.
-        val pace = if (lapM != null && free.size >= 2) free.sumOf { it.seconds } / free.sumOf { it.part } / lapM * 1000 else r.avgPace
+        // On a stadium the laps say it best; else the GPS pace of the run — then said a km, as measured.
+        val byLaps = lapM != null && free.size >= 2
+        val pace = if (byLaps) free.sumOf { it.seconds } / free.sumOf { it.part } / lapM!! * 1000 else r.avgPace
         pace ?: return null
-        val said = if (lapM != null && free.size >= 2) "Средний круг ${Ru.lap(Track.lapSec(pace, lapM))}" else "Средний темп ${Ru.pace(pace)}/км"
+        val said = if (byLaps) "Средний круг ${Ru.lap(Track.lapSec(pace, lapM!!))}" else "Средний темп ${Ru.pace(pace)}/км"
         if (limit == null) return Item("Как пробежал", "$said.", 0)
-        val limitWords = if (lapM != null) "не быстрее ${Ru.lap(Track.lapSec(limit, lapM))} на круг" else "не быстрее ${Ru.pace(limit)}/км"
+        val limitWords = if (byLaps) "не быстрее ${Ru.lap(Track.lapSec(limit, lapM!!))} на круг" else "не быстрее ${Ru.pace(limit)}/км"
         return if (pace < limit - 2) {
             Item("Как пробежал", "$said — быстрее лёгкого ($limitWords): это уже не лёгкий бег. Сбавь — пользы для базы " +
                 "столько же, а усталость не съест тяжёлые дни.", -1)
@@ -134,11 +156,13 @@ object RunReview {
         val parts = mutableListOf("Контрольный: $m м за ${Ru.clock(sec)}.")
         var tone = 0
         if (goal != null && abs(m - goal.meters) <= goal.meters * 0.03) {
-            // Over the goal distance at the same pace: a few metres short of 1500 are a second or so.
-            val est = (sec * goal.meters.toDouble() / m).roundToInt()
-            val gap = est - goal.seconds
-            parts += if (gap <= 0) "Это цель: ${goal.meters} м за ${Ru.clock(goal.seconds)} или быстрее!".also { tone = 1 }
-            else "До цели ${Ru.clock(goal.seconds)} — ещё около ${Ru.durationWords(gap)}. Темпы пересчитаны по этому времени."
+            // Over the goal distance at the same pace: a few metres short of 1500 are a second or so. Reached is what the
+            // plan counted (fitness against the goal's, unrounded); the seconds are only to say how far.
+            val est = sec * goal.meters.toDouble() / m
+            val reached = r.goalReached ?: (est <= goal.seconds)
+            val gap = kotlin.math.ceil(est - goal.seconds).toInt().coerceAtLeast(1)
+            parts += if (reached) "Это цель: ${goal.meters} м за ${Ru.clock(goal.seconds)} или быстрее!".also { tone = 1 }
+            else "До цели ${Ru.clock(goal.seconds)} — ещё ${if (gap < 60) "$gap с" else Ru.clock(gap)}. Темпы пересчитаны по этому времени."
         }
         val laps = r.laps.filter { it.rep != null }
         if (laps.size >= 4) {
@@ -205,6 +229,8 @@ object RunReview {
                         "Тяжесть", "Оценка $rpe — тяжелее, чем нужно для шага вперёд (до $limit): шаг не засчитан. Бывает: сон, " +
                             "еда, усталость от зала.", -1,
                     )
+                    // Race pace early on is meant at 7, but a step on counts up to 8.
+                    rpe > t -> Item("Тяжесть", "Оценка $rpe — тяжелее задуманной ($t), но шаг вперёд засчитывается до $limit.", 0)
                     rpe <= t - 2 -> Item("Тяжесть", "Оценка $rpe при задуманной $t — легче плана: запас есть.", 1)
                     else -> Item("Тяжесть", "Оценка $rpe при задуманной $t — как задумано.", 1)
                 }

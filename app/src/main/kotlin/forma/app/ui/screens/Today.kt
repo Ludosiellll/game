@@ -364,10 +364,14 @@ fun prescriptionShort(sets: Int, reps: Int, weight: Double?, exerciseId: String)
 private fun RunCard(s: PlannedSession, today: LocalDate, doneAs: forma.app.data.WorkoutEntity?, light: Boolean, onStart: (RunWorkout) -> Unit) {
     val done = doneAs != null
     val repo = LocalRepo.current
-    val workout by produceState<RunWorkout?>(null, s.kind, today, light) { value = repo.runFor(s.kind, today, light) }
+    // A free run done today in its place (for a trial): said as it is, not as the plan's. Any other run done is the
+    // plan's own (the planned one, lighter for a bad day, entered by hand): it shows as it was run, for the plan has
+    // moved on since — what it holds now is the next session.
+    val other = doneAs != null && doneAs.templateId == forma.core.run.RunType.FREE.name
+    val workout by produceState<RunWorkout?>(null, s.kind, today, light, doneAs?.id) {
+        value = doneAs?.takeIf { !other }?.let { repo.runPlanOf(it.id) } ?: repo.runFor(s.kind, today, light)
+    }
     val w = workout ?: return
-    // Another run done today in its place (a free run for a trial): said as it is, not as the plan's.
-    val other = doneAs != null && doneAs.templateId != w.type.name
     FCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Ic.run, null, tint = F.c.endurance, modifier = Modifier.size(18.dp))

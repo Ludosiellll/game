@@ -121,7 +121,7 @@ object CoachText {
     }
 
     /**
-     * At the end of a session of reps: the pressed laps on target, and the one thing to change if there is one. Null when
+     * After the last rep of a session: the pressed laps on target, and the one thing to change if there is one. Null when
      * nothing was judged (no laps pressed, no target).
      */
     fun lapsSummary(w: RunWorkout, laps: List<Lap>): String? {
@@ -136,7 +136,7 @@ object CoachText {
             slow * 10 >= judged.size * 3 -> " Много медленных — темп пока тяжёл, это нормально."
             on == judged.size -> " Ровно, как надо."
             else -> ""
-        } + " Разбор — на экране."
+        } + " Подробный разбор — после сохранения."
     }
 
     /** Said every minute while the plan waits for the start press. */

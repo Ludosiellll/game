@@ -832,6 +832,13 @@ class TrainingRepository(
         return null
     }
 
+    /**
+     * The workout a saved run was run to, as planned that day — not what the plan holds now: once a run is saved the plan
+     * moves on (the next hard session is another one), and a day already done must show what was done.
+     */
+    suspend fun runPlanOf(workoutId: Long): RunWorkout? =
+        db.runs().get(workoutId)?.let { runCatching { AppJson.decodeFromString(RunWorkout.serializer(), it.planJson) }.getOrNull() }
+
     /** A stopwatch run; on a stadium of [lapMeters] with the lap button. */
     fun freeRun(lapMeters: Int? = null): RunWorkout =
         RunWorkout(RunType.FREE, "Свободный бег", emptyList(), "Секундомер, дистанция и темп.", targetRpe = 5, lapMeters = lapMeters)

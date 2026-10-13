@@ -16,6 +16,7 @@ import forma.core.run.RunPlan
 import forma.core.run.RunReview
 import forma.core.run.RunState
 import forma.core.run.RunType
+import forma.core.run.RunWorkout
 import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -94,6 +95,55 @@ class RunExplainTest {
         assertTrue(review.first { it.title == "Восстановление" }.text.contains("2–3 дня"), "a 9 adds a day to the 48 h")
     }
 
+    /** A free run: what it was for the body by how hard it felt, and that it moves no step of the plan. */
+    @Test fun aFreeRunSaysItMovesNoStep() {
+        val w = RunWorkout(RunType.FREE, "Свободный бег", emptyList(), "", targetRpe = 5, lapMeters = 230)
+        val easy = RunReview.of(RunReview.Run(w, rpe = 4, avgPace = 330.0), goal)
+        assertTrue(easy.first { it.title == "Что это даёт телу" }.text.startsWith("Спокойный бег"))
+        assertTrue("не двигает" in easy.first { it.title == "План" }.text)
+        val hard = RunReview.of(RunReview.Run(w, rpe = 9, avgPace = 240.0), goal)
+        assertTrue(hard.first { it.title == "Что это даёт телу" }.text.startsWith("По тяжести — как тяжёлая"))
+        assertTrue("48 часов" in hard.first { it.title == "Восстановление" }.text)
+    }
+
+    /** What follows is said as RunPlan.after does it: a lighter week moves no rung, growth needs a run of the usual length. */
+    @Test fun whatFollowsIsSaidAsThePlanDoesIt() {
+        val light = RunExplain.of(RunPlan.goalPace(state, goal, 230, cutback = true), goal).next
+        assertTrue("облегчённая неделя" in light && "следующий шаг" !in light, light)
+        val full = RunExplain.of(RunPlan.goalPace(state, goal, 230), goal).next
+        assertTrue("в темпе цели и с оценкой до 8 — следующий шаг" in full, full)
+        assertTrue("облегчённая неделя" in RunExplain.of(RunPlan.intervals(state, cutback = true), goal).next)
+        assertTrue("обычной длины" in RunExplain.of(RunPlan.easy(state), goal).next)
+        assertTrue("не до конца" in RunExplain.of(RunPlan.long(state), goal).next)
+        // A trial resets the paces of training, not the goal's own; the 12 minutes are measured by their distance.
+        val trial = RunExplain.of(RunPlan.goalTest(state, goal, 230), goal).purpose
+        assertTrue("По времени" in trial && "темп цели — сама цель" in trial && "примерные" !in trial, trial)
+        assertTrue("По дистанции" in RunExplain.of(RunPlan.test(state)).purpose)
+        assertTrue("кислота" !in RunExplain.of(RunPlan.tempo(state), goal).purpose)
+        // Race pace early on: meant at 7, a step on up to 8 — an 8 is not "as meant".
+        val early = RunPlan.goalPace(state.copy(goalStage = 0), goal, 230)
+        assertEquals(7, early.targetRpe)
+        val eight = RunReview.of(RunReview.Run(early, rpe = 8), goal).first { it.title == "Тяжесть" }
+        assertTrue("тяжелее задуманной (7), но шаг вперёд засчитывается до 8" in eight.text, eight.text)
+        // Run/walk not finished: no promise of a repeat (a second miss goes a week back).
+        val walk = RunReview.of(RunReview.Run(RunPlan.runWalk(RunState()), completed = 0.6), goal).first { it.title == "Как пробежал" }
+        assertTrue("шаг вперёд — когда получится целиком" in walk.text, walk.text)
+    }
+
+    /** The reasons follow what the day holds now: after a long break the hard day is an easy run for a while. */
+    @Test fun aHardDayHoldingAnEasyRunForNowIsExplainedAsOne() {
+        val p = ProgramGenerator.generate(
+            Profile(
+                aim = Aim(LiftFocus.POWERBUILDING, RunFocus.ENDURANCE, Emphasis.BALANCED), experience = Experience.ADVANCED,
+                runLevel = RunLevel.BASE, trainingDays = setOf(1, 2, 4, 6), bodyWeightKg = 80.0, doubleDays = true, runGoal = goal,
+                lapMeters = 230, gymDays = setOf(2, 4, 6), runDays = setOf(1, 2, 4, 6),
+            ),
+            LocalDate.of(2026, 10, 12),
+        )
+        val monday = DayReasons.of(p, 1) { false }
+        assertTrue(monday.any { "Отдельный лёгкий день" in it } && monday.none { "тяжёлому бегу" in it }, monday.toString())
+    }
+
     @Test fun anEasyRunTooFastIsSaidSo() {
         val w = RunPlan.onTrack(RunPlan.easy(state), 230)
         val limit = w.segments.first().pace!!.fast
@@ -104,6 +154,9 @@ class RunExplainTest {
         assertEquals(1, ok.first { it.title == "Как пробежал" }.tone)
         assertEquals("Оценка 4 — легко, как и должно быть.", ok.first { it.title == "Тяжесть" }.text)
         assertTrue(ok.first { it.title == "Восстановление" }.text.startsWith("Такой бег проходит за сутки"))
+        // On a stadium but no laps pressed (GPS only, or entered by hand): the pace a km, against the limit a km.
+        val gps = RunReview.of(RunReview.Run(w, rpe = 4, avgPace = limit - 30.0), goal).first { it.title == "Как пробежал" }
+        assertTrue("/км" in gps.text && "на круг" !in gps.text, gps.text)
     }
 
     @Test fun aTrialIsMeasuredAgainstTheGoal() {
@@ -111,10 +164,13 @@ class RunExplainTest {
         val lapSec = w.segments.first { it.laps != null }.lapSec!!
         val laps = listOf(Lap(lapSec / 2, rep = 1, part = 0.5)) + (1..6).map { Lap(if (it <= 3) 52.0 else 55.0, rep = 1) }
         val how = RunReview.of(RunReview.Run(w, laps, rpe = 10, trial = 1495 to 348), goal).first { it.title == "Как пробежал" }
-        assertTrue("1495 м за 5:48" in how.text && "до цели 5:30 — ещё около" in how.text.lowercase(), how.text)
+        assertTrue("1495 м за 5:48" in how.text && "до цели 5:30 — ещё 20 с" in how.text.lowercase(), how.text)
         assertTrue("Вторая половина медленнее" in how.text, how.text)
         val done = RunReview.of(RunReview.Run(w, rpe = 10, trial = 1495 to 328), goal).first { it.title == "Как пробежал" }
         assertEquals(1, done.tone)
+        // 1495 m in 5:29 is 5:30.1 over 1500 m: the plan did not count the goal reached, and neither does the debrief.
+        val close = RunReview.of(RunReview.Run(w, rpe = 10, trial = 1495 to 329, goalReached = false), goal).first { it.title == "Как пробежал" }
+        assertTrue("ещё 1 с" in close.text && "Это цель" !in close.text, close.text)
         assertNotNull(RunReview.of(RunReview.Run(RunPlan.easy(state)), goal).firstOrNull { it.title == "Что это даёт телу" })
         assertTrue(RunReview.of(RunReview.Run(RunPlan.easy(state)), goal).none { it.title == "Как пробежал" }, "nothing measured, nothing judged")
         assertEquals(RunType.TEST, w.type)

@@ -81,6 +81,8 @@ fun PlanScreen() {
         SectionLabel("Неделя")
         // A due trial is the next hard day only: the hard days after it show what comes after the trial.
         val trialOn by produceState<java.time.LocalDate?>(null, p, today) { value = repo.trialDay(today) }
+        val weekMonday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val weekItems by remember(weekMonday) { repo.weekFlow(weekMonday) }.collectAsState(initial = emptyList())
         FCard(gap = 0.dp) {
             (1..7).forEach { day ->
                 if (day > 1) Hairline()
@@ -96,18 +98,31 @@ fun PlanScreen() {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (sessions.isEmpty()) Text("Отдых", style = T.body(15.sp).copy(color = F.c.text3))
                         sessions.forEach { s ->
+                            // Done this week: said so; a run as it was run (the plan has moved on since), a free run in
+                            // the place of a planned one as it is.
+                            val done = weekItems.firstOrNull { it.date == dayDate }?.doneFor(s)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Icon(if (s.kind == SessionKind.LIFT) Ic.dumbbell else Ic.run, null, tint = if (s.kind == SessionKind.LIFT) F.c.strength else F.c.endurance, modifier = Modifier.size(16.dp))
                                 if (s.kind == SessionKind.LIFT) {
-                                    Text(sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
+                                        if (done != null) Text("Сделано", style = T.secondary(13.sp).copy(color = F.c.good))
+                                    }
                                 } else {
                                     // Each row on its own date this week: an easy run on a lifting day is shorter.
-                                    val date = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).plusDays(day - 1L)
-                                    val w by produceState<RunWorkout?>(null, s.kind, date, trialOn) { value = repo.runFor(s.kind, date, trial = date == trialOn) }
+                                    val free = done != null && done.templateId == forma.core.run.RunType.FREE.name
+                                    val w by produceState<RunWorkout?>(null, s.kind, dayDate, trialOn, done?.id) {
+                                        value = when {
+                                            free -> null
+                                            done != null -> repo.runPlanOf(done.id) ?: repo.runFor(s.kind, dayDate, trial = dayDate == trialOn)
+                                            else -> repo.runFor(s.kind, dayDate, trial = dayDate == trialOn)
+                                        }
+                                    }
                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(w?.title ?: sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
+                                        Text(if (free) done!!.title else w?.title ?: sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
                                         // How: the lap time or pace to keep, so the week says what to do, not only what.
-                                        w?.let { Text(forma.app.ui.RunHow.short(it), style = T.secondary(13.sp)) }
+                                        if (done != null) Text(if (free) "Сделано вместо плановой" else "Сделано", style = T.secondary(13.sp).copy(color = F.c.good))
+                                        else w?.let { Text(forma.app.ui.RunHow.short(it), style = T.secondary(13.sp)) }
                                     }
                                 }
                             }

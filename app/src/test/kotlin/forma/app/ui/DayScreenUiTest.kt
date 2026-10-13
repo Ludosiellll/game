@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -140,6 +141,72 @@ class DayScreenUiTest {
         assertEquals(Screen.Day(monday.plusDays(3).toEpochDay()), nav.current)
         compose.onNodeWithText("Четверг").assertExists()
         compose.onNodeWithText("15 октября").assertExists()
+    }
+
+    /** Monday's hard run replaced by a free run: the day says so, as the main screen does, and the run's story is a tap away. */
+    @Test fun aHardDayDoneByAFreeRunSaysSo() {
+        val repo = repo()
+        runBlocking { repo.saveRun(repo.freeRun(230), RunResult(1.0, 5, 1500, distanceM = 4200.0), clock, emptyList(), monday) }
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Plan), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) { Box(Modifier.fillMaxSize().background(F.c.bg)) { DayScreen(monday) } }
+            }
+        }
+        settle()
+        compose.onNodeWithText("Сегодня").assertExists()
+        compose.onNodeWithText("Сделано: Свободный бег").assertExists()
+        compose.onNodeWithText("перешла на следующий тяжёлый день", substring = true).assertExists()
+        compose.onNodeWithText("Как прошло — разбор", ignoreCase = true).assertExists()
+        compose.onRoot().captureRoboImage("build/shots/carbon-day-done-other.png")
+    }
+
+    /**
+     * Monday's planned hard run done (race pace, the trial not due): the plan has moved on (the next hard one is intervals),
+     * but Monday — on the main screen, in the day and in the week — shows what was run, not the next one as "moved".
+     */
+    private fun doneMonday(): TrainingRepository {
+        val repo = repo()
+        runBlocking {
+            repo.store.setRunState(repo.store.runStateNow().copy(runs = 6, vdot = 50.0, lastTestDay = monday.toEpochDay() - 7))
+            val w = repo.runFor(SessionKind.RUN_QUALITY, monday)
+            assertEquals(forma.core.run.RunType.GOAL_PACE, w.type)
+            repo.saveRun(w, RunResult(1.0, 7, 1800, distanceM = 4000.0), clock - 1_900_000, emptyList(), monday)
+            assertEquals(forma.core.run.RunType.INTERVALS, repo.runFor(SessionKind.RUN_QUALITY, monday.plusDays(3)).type)
+        }
+        return repo
+    }
+
+    private fun show(repo: TrainingRepository, screen: @androidx.compose.runtime.Composable () -> Unit) {
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) { Box(Modifier.fillMaxSize().background(F.c.bg)) { screen() } }
+            }
+        }
+        settle()
+    }
+
+    @Test fun aDoneRunShowsOnTheMainScreenAsItWasRun() {
+        show(doneMonday()) { TodayScreen() }
+        compose.onAllNodesWithText("Темп цели", substring = true)[0].assertExists()
+        compose.onAllNodesWithText("в следующий тяжёлый день", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun aDoneRunShowsInItsDayAsItWasRun() {
+        show(doneMonday()) { DayScreen(monday) }
+        compose.onNodeWithText("Темп цели", substring = true).assertExists()
+        compose.onAllNodesWithText("Интервалы", substring = true).assertCountEquals(0)
+        compose.onAllNodesWithText("перешла на следующий тяжёлый день", substring = true).assertCountEquals(0)
+        compose.onNodeWithText("Как прошло — разбор", ignoreCase = true).assertExists()
+        compose.onRoot().captureRoboImage("build/shots/carbon-day-done.png")
+    }
+
+    @Test fun aDoneRunShowsInTheWeekAsItWasRun() {
+        show(doneMonday()) { PlanScreen() }
+        // Monday as run, Thursday what comes next.
+        compose.onNodeWithText("Темп цели", substring = true).performScrollTo()
+        compose.onNodeWithText("Интервалы", substring = true).performScrollTo()
+        compose.onAllNodesWithText("Сделано")[0].assertExists()
+        compose.onRoot().captureRoboImage("build/shots/carbon-plan-done.png")
     }
 
     /** Large font (×1.5): the day still reads — the run's parts and its reasons wrap, nothing is cut off. */

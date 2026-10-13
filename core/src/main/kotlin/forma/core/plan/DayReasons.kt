@@ -6,7 +6,11 @@ package forma.core.plan
  * what the days before and after hold.
  */
 object DayReasons {
-    fun of(program: Program, day: Int): List<String> {
+    /**
+     * [hard]: whether a run is a hard one as things stand — after a long break the hard sessions are easy runs for a while,
+     * and before running continuously every run is run/walk; the reasons follow what the day holds now.
+     */
+    fun of(program: Program, day: Int, hard: (PlannedSession) -> Boolean = { it.isHardRun }): List<String> {
         val today = program.week.on(day)
         if (today.isEmpty()) return emptyList()
         val prev = program.week.on(if (day == 1) 7 else day - 1)
@@ -18,7 +22,7 @@ object DayReasons {
         val legDay = lift != null && template(lift)?.legs != false
         val runFirst = today.first().isRun
         val out = mutableListOf<String>()
-        if (run != null && run.isHardRun) {
+        if (run != null && hard(run)) {
             out += when {
                 lift == null -> "День без зала: все силы — на бег, тяжёлому бегу нужны свежие ноги."
                 !legDay -> "Тяжёлый бег — в день верха: руки и спина ему не мешают. " +
@@ -29,7 +33,7 @@ object DayReasons {
             else "Накануне нет тренировки ног: бег будет качественнее."
             when {
                 next.isEmpty() -> out += "Завтра — отдых: тело восстановится после тяжёлой работы."
-                next.none { it.isHardRun } && !legs(next) -> out += "Завтра — ни тяжёлого бега, ни ног: ногам есть время восстановиться."
+                next.none { hard(it) } && !legs(next) -> out += "Завтра — ни тяжёлого бега, ни ног: ногам есть время восстановиться."
             }
             if (run.kind == SessionKind.RUN_LONG && day >= 6) out += "Длинная — в выходной: на неё больше времени."
         } else if (run != null) {
@@ -37,11 +41,12 @@ object DayReasons {
                 lift == null -> "Отдельный лёгкий день: аэробная база без лишней усталости."
                 legDay -> "Лёгкий бег — в день ног: тяжёлый бег в этот день не ставится, а лёгкий почти не мешает ногам " +
                     "восстанавливаться. " + if (runFirst) "Сначала бег, потом зал." else "Сначала зал, потом бег."
-                else -> "Лёгкий бег в день верха: ногам он не мешает. " + if (runFirst) "Сначала бег, потом зал." else "Сначала зал, потом бег."
+                else -> "Лёгкий бег в день верха: зал в этот день ноги не нагружает, а лёгкий бег не мешает верху. " +
+                    if (runFirst) "Сначала бег, потом зал." else "Сначала зал, потом бег."
             }
         }
         if (lift != null && run == null && legDay) {
-            out += if (next.any { it.isHardRun }) "Завтра тяжёлый бег — ноги сегодня не до отказа."
+            out += if (next.any { hard(it) }) "Завтра тяжёлый бег — ноги сегодня не до отказа."
             else "Ноги — не накануне тяжёлого бега: к нему они успеют восстановиться."
         }
         return out
