@@ -63,11 +63,11 @@ class PersonalRepoTest {
 
     @Test fun anOverRatedReserveIsReadDown() = runBlocking<Unit> {
         val base = firstItem()
-        val item = base.copy(prescription = Prescription(80.0, 8, 3, 2, calibrate = false, top = true))
-        // Says "4 more" after 8, then the "+" set at 80 goes to 9 with 1 left — six times.
-        repeat(6) { session(start.plusDays(it * 2L), item, listOf(Triple(80.0, 8, 4), Triple(80.0, 8, 4), Triple(80.0, 9, 1))) }
-        assertEquals(1, repo.rirBias())
-        assertNotNull(forma.core.strength.RirScale.explain(1))
+        val item = base.copy(prescription = Prescription(80.0, 8, 3, 2, calibrate = false))
+        // Says "4 more" after 8, and two sets later at the same weight only 7 come — five sessions.
+        repeat(5) { session(start.plusDays(it * 2L), item, listOf(Triple(80.0, 8, 4), Triple(80.0, 8, 2), Triple(80.0, 7, null))) }
+        assertEquals(2, repo.rirBias())
+        assertNotNull(forma.core.strength.RirScale.explain(2))
     }
 
     @Test fun sessionsLongerThanPlannedShowTheirTime() = runBlocking<Unit> {

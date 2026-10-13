@@ -22,7 +22,8 @@ enum class Effort {
 }
 
 /** What the person enters in "Сколько ещё мог?" (the app offers 0–4 and 5+). */
-enum class Reporting { HONEST, NONE, OPTIMISTIC }
+/** HONEST ±1 noise; NONE never rates; OPTIMISTIC says one rep more than there is; INFLATED two more. */
+enum class Reporting { HONEST, NONE, OPTIMISTIC, INFLATED }
 
 /**
  * A simulated person with a true one-rep max per exercise.
@@ -168,6 +169,7 @@ class VirtualAthlete(
             Reporting.NONE -> null
             Reporting.HONEST -> (actual + (rng.nextGaussian() * 0.7).roundToInt()).coerceIn(0, 5)
             Reporting.OPTIMISTIC -> (actual + 1).coerceIn(0, 5)
+            Reporting.INFLATED -> (actual + 2).coerceIn(0, 5)
         }
         return SetResult(reps, reported, actual)
     }

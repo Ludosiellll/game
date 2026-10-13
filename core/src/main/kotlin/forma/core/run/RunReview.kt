@@ -32,7 +32,8 @@ object RunReview {
         val goalReached: Boolean? = null,
     )
 
-    fun of(r: Run, goal: RunGoal? = null): List<Item> {
+    /** [gym]: the person also lifts (the advice between hard runs names the gym only then). */
+    fun of(r: Run, goal: RunGoal? = null, gym: Boolean = true): List<Item> {
         val w = r.workout
         val out = mutableListOf<Item>()
         how(r, goal)?.let { out += it }
@@ -48,7 +49,7 @@ object RunReview {
         } else {
             out += Item("Что это даёт телу", why.body, 0)
         }
-        out += recovery(r, why.recoveryHours)
+        out += recovery(r, why.recoveryHours, gym)
         return out
     }
 
@@ -239,7 +240,7 @@ object RunReview {
     }
 
     /** How long before the next hard session: longer after a very hard one. */
-    private fun recovery(r: Run, base: Int): Item {
+    private fun recovery(r: Run, base: Int, gym: Boolean): Item {
         val hard = (r.rpe ?: 0) >= 8
         val h = when {
             r.workout.type == RunType.FREE && hard -> 48
@@ -247,7 +248,7 @@ object RunReview {
             else -> base
         }
         val text = if (h <= 24) "Такой бег проходит за сутки: завтра можно тренироваться по плану."
-        else "Следующая тяжёлая тренировка — не раньше чем через ${RunExplain.recoveryWords(h)}. До неё — лёгкий бег, верх в зале или отдых."
+        else "Следующая тяжёлая тренировка — не раньше чем через ${RunExplain.recoveryWords(h)}. До неё — лёгкий бег${if (gym) ", верх в зале" else ""} или отдых."
         return Item("Восстановление", text, 0)
     }
 }

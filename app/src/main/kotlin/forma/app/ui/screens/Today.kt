@@ -194,12 +194,12 @@ fun TodayScreen() {
         val strength = remember(rows, bw) { Stats.changePct(Stats.strengthIndex(rows, bw)) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatTile(
-                "Свежесть", form?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—",
+                "Свежесть", form?.let { forma.core.text.Ru.pct(it) } ?: "—",
                 when {
                     form == null -> if (loads.isEmpty()) "нет данных" else "копим данные"
                     else -> when (forma.core.load.LoadStory.zone(form, restLine)) {
                         forma.core.load.LoadStory.Zone.REST -> "нужен отдых"
-                        forma.core.load.LoadStory.Zone.BUILDING -> "рабочая нагрузка"
+                        forma.core.load.LoadStory.Zone.BUILDING -> "в работе"
                         forma.core.load.LoadStory.Zone.BALANCE -> "равновесие"
                         forma.core.load.LoadStory.Zone.FRESH -> "можно грузиться"
                         forma.core.load.LoadStory.Zone.DETRAINING -> "форма уходит"
@@ -211,10 +211,17 @@ fun TodayScreen() {
                     else -> F.c.good
                 }, Modifier.weight(1f),
             )
-            StatTile("Сила", strength?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—", if (strength == null) "после 2 недель" else "с начала", F.c.strength, Modifier.weight(1f))
+            // Without the gym or without running in the aim, the week's sessions in place of an empty tile.
+            val aim = me?.aim
+            val planned = week.sumOf { it.planned.size }
+            val doneCount = week.sumOf { d -> d.planned.count { d.isDone(it) } }
+            @Composable fun weekTile() = StatTile("Неделя", "$doneCount/$planned", "тренировок сделано", F.c.text, Modifier.weight(1f))
+            if (aim?.lifts == false) weekTile()
+            else StatTile("Сила", strength?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—", if (strength == null) "после 2 недель" else "с начала", F.c.strength, Modifier.weight(1f))
             val rs = runState
             val vdot = rs?.vdot
-            StatTile(
+            if (aim?.runs == false) weekTile()
+            else StatTile(
                 if (vdot != null) "VDOT" else "Бег",
                 when {
                     vdot != null -> Ru.one(vdot)
@@ -234,7 +241,7 @@ fun TodayScreen() {
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GhostButton("Свободный бег", { nav.push(Screen.RunSetup(repo.freeRun(me?.lapMeters), null)) }, Modifier.weight(1f))
-            GhostButton("Другая силовая", { pickTemplate = true }, Modifier.weight(1f))
+            if (p.templates.isNotEmpty()) GhostButton("Другая силовая", { pickTemplate = true }, Modifier.weight(1f))
         }
     }
 

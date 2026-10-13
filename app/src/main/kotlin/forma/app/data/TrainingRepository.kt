@@ -226,14 +226,9 @@ class TrainingRepository(
                 val plan = w.planJson?.let { runCatching { AppJson.decodeFromString(LiftPlan.serializer(), it) }.getOrNull() } ?: continue
                 for (item in plan.items) {
                     val p = item.prescription
-                    if (!p.top || p.calibrate) continue
+                    if (p.calibrate) continue
                     val mine = by[w.id].orEmpty().filter { it.position == item.position }.sortedBy { it.doneAt }
-                    if (mine.size < 2) continue
-                    val plus = mine.last()
-                    val rated = mine[mine.size - 2]
-                    val rir = rated.rir ?: continue
-                    if (kotlin.math.abs(rated.weight - plus.weight) > 1e-6) continue
-                    pairs += forma.core.strength.RirScale.Pair(rated.reps, rir, plus.reps, plus.rir)
+                    forma.core.strength.RirScale.pairOf(mine.map { DoneSet(it.weight, it.reps, it.rir) }, p.reps)?.let { pairs += it }
                 }
             }
             return forma.core.strength.RirScale.bias(pairs)

@@ -43,81 +43,15 @@ class PopulationTest {
     private val weeks = 26
     private val out = File(Simulation.outDir, "population").also { it.mkdirs() }
 
-    data class Person(
-        val id: Int,
-        val profile: Profile,
-        val runner: VirtualRunner?,
-        val athlete: VirtualAthlete,
-        val miss: Double,
-        val sickFrom: Int?,
-        val sickWeeks: Int,
-        val tags: Map<String, String>,
-    )
-
-    private fun <T> Random.pick(vararg xs: T): T = xs[nextInt(xs.size)]
-    private fun Random.range(a: Double, b: Double) = a + nextDouble() * (b - a)
-
-    private fun person(id: Int): Person {
-        val r = Random(1000 + id)
-        var lift = r.pick(*LiftFocus.values())
-        var run = r.pick(*RunFocus.values())
-        if (lift == LiftFocus.NONE && run == RunFocus.NONE) run = RunFocus.ENDURANCE
-        val emphasis = r.pick(*Emphasis.values())
-        val exp = r.pick(*Experience.values())
-        val runLevel = if (run == RunFocus.NONE) RunLevel.BASE else r.pick(RunLevel.NONE, RunLevel.BASE, RunLevel.BASE, RunLevel.TRAINED)
-        val nDays = r.nextInt(2, 7)
-        val days = (1..7).shuffled(r).take(nDays).toSet()
-        val double = r.nextBoolean()
-        val own = r.nextDouble() < 0.3 && lift != LiftFocus.NONE && run != RunFocus.NONE
-        val gymDays = if (own) (1..7).shuffled(r).take(r.nextInt(2, 5)).toSet() else null
-        val runDays = if (own) (1..7).shuffled(r).take(r.nextInt(2, 6)).toSet() else null
-        val bw = r.range(55.0, 100.0)
-        val sex = if (r.nextDouble() < 0.25) Sex.FEMALE else Sex.MALE
-        // The runner's true form: 1500 m from 5:00 to 8:00 (run/walk beginners slower).
-        val start1500 = if (runLevel == RunLevel.NONE) r.range(480.0, 600.0) else r.range(300.0, 480.0)
-        val v0 = Vdot.fromRace(1500.0, start1500)
-        val goalMeters = r.pick(800, 1500, 1500, 3000, 5000, 10000)
-        val goal = if (run != RunFocus.NONE && r.nextDouble() < 0.55) {
-            val now = Vdot.predictSeconds(v0, goalMeters.toDouble())
-            RunGoal(goalMeters, (now * r.range(0.82, 0.99)).roundToInt())
-        } else null
-        val lap = if (r.nextDouble() < 0.4) null else r.pick(200, 230, 250, 400)
-        val known = run != RunFocus.NONE && runLevel != RunLevel.NONE && r.nextDouble() < 0.2
-        val profile = Profile(
-            sex = sex, bodyWeightKg = bw, birthYear = r.nextInt(1975, 2009), experience = exp, runLevel = runLevel,
-            trainingDays = days, sessionMinutes = r.pick(45, 60, 75, 90), aim = Aim(lift, run, emphasis), runGoal = goal,
-            lapMeters = lap, doubleDays = double, gymDays = gymDays, runDays = runDays,
-            raceMeters = if (known) 5000.0 else null, raceSeconds = if (known) Vdot.predictSeconds(v0, 5000.0) * r.range(0.97, 1.05) else null,
-        )
-        val bias = if (r.nextDouble() < 0.6) 0 else r.pick(-2, -1, 1, 2)
-        val fast = r.nextDouble() < 0.15
-        val runner = if (run != RunFocus.NONE) VirtualRunner(v0, id, talent = r.range(0.4, 1.8), ceilingGain = r.range(0.05, 0.25), rpeBias = bias, startsFast = fast) else null
-        val athleteExp = if (r.nextDouble() < 0.7) exp else r.pick(*Experience.values())
-        val effort = if (r.nextDouble() < 0.7) Effort.FOLLOW else r.pick(Effort.OVERSHOOT, Effort.UNDERSHOOT)
-        val reporting = r.pick(Reporting.HONEST, Reporting.HONEST, Reporting.NONE, Reporting.OPTIMISTIC)
-        val athlete = VirtualAthlete(athleteExp, bw, id, effort, reporting, endurance = r.range(0.8, 1.25), talent = r.range(0.5, 1.5), acceptsHints = r.nextDouble() < 0.85)
-        val miss = if (r.nextBoolean()) 0.0 else r.range(0.05, 0.4)
-        val sick = r.nextDouble() < 0.2
-        val tags = mapOf(
-            "lift" to lift.name, "run" to run.name, "emph" to emphasis.name, "exp" to exp.name, "level" to runLevel.name,
-            "days" to nDays.toString(), "double" to double.toString(), "own" to own.toString(),
-            "goal" to (goal?.let { "${it.meters}" } ?: "none"), "lap" to (lap?.toString() ?: "road"), "known" to known.toString(),
-            "bias" to bias.toString(), "fast" to fast.toString(), "effort" to effort.name, "rir" to reporting.name,
-            "hints" to athlete.acceptsHints.toString(), "miss" to (if (miss == 0.0) "0" else if (miss < 0.2) "<20%" else "20-40%"),
-            "sick" to sick.toString(), "athleteExp" to athleteExp.name, "sex" to sex.name,
-        )
-        return Person(id, profile, runner, athlete, miss, if (sick) r.nextInt(3, 20) else null, r.nextInt(1, 6), tags)
-    }
-
     @Test fun manyPeople() {
         val n = System.getenv("FORMA_SIM_N")?.toIntOrNull()
         assumeTrue(n != null)
         val from = System.getenv("FORMA_SIM_FROM")?.toIntOrNull() ?: 0
         val rows = File(out, "people-$from.tsv").printWriter()
         val issues = File(out, "issues-$from.txt").printWriter()
-        rows.println("id\tissues\t" + person(0).tags.keys.joinToString("\t") + "\tv0\tv1\tappV\tfailQ\tgoalTop\teasy0\teasy1\tgymP50\tgymShort\tgymGain\terror")
+        rows.println("id\tissues\t" + People.person(0).tags.keys.joinToString("\t") + "\tv0\tv1\tappV\tfailQ\tgoalTop\teasy0\teasy1\tgymP50\tgymShort\tgymGain\tzone\trestLine\tlearned\tdips\tspikes\trirBias\ttimeRatio\teasyMoves\trested\toutgrew\treportKb\terror")
         for (id in from until from + n!!) {
-            val p = person(id)
+            val p = People.person(id)
             val found = mutableListOf<String>()
             var line = ""
             try {
@@ -142,7 +76,7 @@ class PopulationTest {
                 sim.close()
             } catch (e: Throwable) {
                 found += "CRASH ${e::class.simpleName}: ${e.message?.take(200)} at ${e.stackTrace.take(4).joinToString(" < ")}"
-                line = "\t".repeat(10) + "\t" + (e.message ?: "").take(80)
+                line = "\t".repeat(21) + "\t" + (e.message ?: "").take(80)
             }
             rows.println("$id\t${found.joinToString(";") { it.substringBefore(':') }}\t" + p.tags.values.joinToString("\t") + "\t" + line)
             if (found.isNotEmpty()) issues.println("#$id ${p.tags}\n  " + found.joinToString("\n  "))
@@ -152,7 +86,7 @@ class PopulationTest {
     }
 
     /** What a good plan must never do; the numbers for the table. */
-    private fun check(p: Person, sim: Simulation, found: MutableList<String>): String {
+    private fun check(p: People.Person, sim: Simulation, found: MutableList<String>): String {
         val runs = sim.runLog
         val runner = sim.runner
         var cols = listOf("", "", "", "", "", "", "")
@@ -211,6 +145,51 @@ class PopulationTest {
             if (short > 0.2) found += "GYM_SHORT: first set short in ${(short * 100).roundToInt()} %"
             g = listOf("%.2f".format(p50), "%.2f".format(short), "%.1f".format(gain))
         }
-        return (cols + g).joinToString("\t") + "\t"
+        return (cols + g + personal(p, sim, found)).joinToString("\t") + "\t"
     }
+
+    /**
+     * The rules that learn from the person and what the person sees about it: the load story and the rest line, the
+     * exported file, the reserve scale, the session time, longer rest, paces from easy runs, outgrowing novice rules.
+     */
+    private fun personal(p: People.Person, sim: Simulation, found: MutableList<String>): List<String> = runBlocking {
+        val repo = sim.repo
+        val end = start.plusWeeks(weeks.toLong()).minusDays(1)
+        val done = repo.db.workouts().allDone()
+        val story = repo.loadStoryNow(end)
+        if (done.any { (it.load ?: 0.0) > 0 } && story == null) found += "LOAD_STORY_MISSING"
+        story?.let { st ->
+            if (st.personal.restBelow !in -45.0..-10.0) found += "REST_LINE_OUT: ${st.personal.restBelow}"
+            if (st.personal.learned && st.personal.badMedian!! >= st.personal.goodMedian!!) found += "REST_LINE_BACKWARDS: ${st.personal}"
+            if (st.history && st.zone == null) found += "ZONE_MISSING"
+            listOf(forma.core.load.LoadExplain.fitness(st), forma.core.load.LoadExplain.fatigue(st), forma.core.load.LoadExplain.freshness(st),
+                forma.core.load.LoadExplain.personal(st.personal), forma.core.load.LoadExplain.zoneText(st)).forEach { t ->
+                if (listOf("NaN", "Infinity", "null").any { it in t }) found += "LOAD_TEXT_BAD: ${t.take(80)}"
+            }
+        }
+        // The exported file: every finished session in it, nothing broken in it.
+        val text = forma.app.data.TrainingReport.build(forma.app.data.BackupManager(repo).snapshot(), end, "sim")
+        val entries = Regex("^### \\d+ [а-я]+ \\d{4}, ", RegexOption.MULTILINE).findAll(text).count()
+        if (entries != done.size) found += "REPORT_MISSES: ${done.size} sessions, $entries in the file"
+        listOf("NaN", "Infinity", "null").forEach { if (it in text) found += "REPORT_BAD: «$it» at ${text.indexOf(it).let { i -> text.substring(maxOf(0, i - 60), i + 10).replace('\n', ' ') }}" }
+        File(out, "reports").mkdirs()
+        if (p.id % 100 == 0) File(out, "reports/report-${p.id}.md").writeText(text)
+        // The reserve scale: a steady over-rater found out, an honest one left alone.
+        val bias = repo.rirBias()
+        val rep = p.athlete.reporting
+        if (rep == Reporting.HONEST && bias > 0 || rep == Reporting.NONE && bias != 0) found += "RIR_SCALE_WRONG: $rep read as +$bias"
+        val ratio = repo.timeRatio()
+        if (sim.lifts.isNotEmpty() && ratio !in 0.7..1.6) found += "TIME_RATIO_ODD: ${"%.2f".format(ratio)}"
+        val easyMoves = sim.runLog.count { r -> r.outcomes.any { "EasyPaces" in it } }
+        val program = repo.store.programNow()
+        val rested = program?.templates?.sumOf { t -> runCatching { repo.liftPlan(t.id, end).items.count { it.restWhy != null } }.getOrDefault(0) } ?: 0
+        val outgrew = repo.outgrewNovice()
+        listOf(
+            st(story) { it.zone?.name ?: "" }, st(story) { "%.0f".format(it.personal.restBelow) }, st(story) { it.personal.learned.toString() },
+            st(story) { it.dips.size.toString() }, st(story) { it.weeks.count { w -> w.level == forma.core.load.LoadStory.Level.SPIKE }.toString() },
+            "$bias", "%.2f".format(ratio), "$easyMoves", "$rested", "$outgrew", "${text.length / 1024}",
+        )
+    }
+
+    private fun st(s: forma.core.load.LoadStory.Story?, f: (forma.core.load.LoadStory.Story) -> String) = s?.let(f) ?: ""
 }

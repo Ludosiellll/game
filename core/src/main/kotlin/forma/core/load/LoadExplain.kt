@@ -111,10 +111,10 @@ object LoadExplain {
     }
 
     fun dip(d: LoadStory.Dip): String {
-        val low = "до ${Ru.pct(d.lowestPct)} (${Ru.date(d.lowestDay)})"
+        val low = if (d.from == d.to) "до ${Ru.pct(d.lowestPct)}" else "до ${Ru.pct(d.lowestPct)} (${Ru.date(d.lowestDay)})"
         val rest = if (d.restDays > 0) "дней без тренировок: ${d.restDays}" else "без дня отдыха"
         return if (d.recovered == null) "С ${Ru.date(d.from)} ты ниже линии отдыха, $low. Сейчас нужен отдых: день-два или лёгкая тренировка ($rest)."
-        else "${Ru.dates(d.from, d.to)} — свежесть падала $low, нужен был отдых. Пришёл в норму к ${Ru.date(d.recovered)}, $rest."
+        else "${Ru.dates(d.from, d.to)} свежесть падала $low — нужен был отдых. Пришёл в норму к ${Ru.date(d.recovered)}, $rest."
     }
 
     fun noDips(weeks: Int) = "За ${Ru.weeks(weeks)} ни разу не опускался ниже линии отдыха — нагрузка была по силам."

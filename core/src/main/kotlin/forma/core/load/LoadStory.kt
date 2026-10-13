@@ -165,7 +165,10 @@ object LoadStory {
             val low = part.minBy { it.formPct }
             val restTo = recovered ?: today
             val rest = window.count { !it.date.isBefore(part.first().date) && !it.date.isAfter(restTo) && it.load <= 0 }
-            dips += Dip(part.first().date, part.last().date, low.formPct, low.date, rest, recovered)
+            // A single day just under the line is noise: a dip lasts two days or goes 5 points under it.
+            if (part.size >= 2 || low.formPct <= personal.restBelow - 5 || recovered == null) {
+                dips += Dip(part.first().date, part.last().date, low.formPct, low.date, rest, recovered)
+            }
             start = null
         }
         window.forEachIndexed { i, d ->

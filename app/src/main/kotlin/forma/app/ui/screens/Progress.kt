@@ -88,6 +88,11 @@ private fun StrengthTab() {
     val bw by remember { repo.bodyWeightLookup() }.collectAsState(initial = { _: Long -> 75.0 })
     val stats by remember { repo.db.state().observeStats() }.collectAsState(initial = emptyList())
     val index = remember(rows, bw) { Stats.strengthIndex(rows, bw) }
+    val aimLifts = repo.store.profile.collectAsState(initial = null).value?.aim?.lifts
+    if (rows.isEmpty() && aimLifts == false) {
+        Empty("Зала в твоей цели нет — здесь будет пусто. Захочешь добавить силовые — «Профиль» → цель.")
+        return
+    }
     if (rows.isEmpty()) {
         Empty("Графики силы появятся после первых тренировок. Каждый подход превращается в расчётный максимум на 1 повтор — по нему видно рост, даже если вес на штанге тот же.")
         return
@@ -429,12 +434,12 @@ private fun LoadTab() {
             Metric3("Форма", now.fitness.roundToInt().toString(), F.c.endurance, Modifier.weight(1f))
             Metric3("Усталость", now.fatigue.roundToInt().toString(), F.c.load, Modifier.weight(1f))
             // A few sessions say nothing about freshness yet (one hard day reads as −100 %).
-            if (st.history) Metric3("Свежесть", (if (now.formPct >= 0) "+" else "") + now.formPct.roundToInt() + "%", if (now.formPct >= line) F.c.good else F.c.warn, Modifier.weight(1f))
+            if (st.history) Metric3("Свежесть", Ru.pct(now.formPct), if (now.formPct >= line) F.c.good else F.c.warn, Modifier.weight(1f))
             else Metric3("Свежесть", "—", F.c.text3, Modifier.weight(1f))
         }
         LineChart(
             listOf(Series(last.map { it.fitness }, F.c.endurance), Series(last.map { it.fatigue }, F.c.load, width = 2.dp)),
-            xLabels = listOf(shortDate(last.first().date), shortDate(last.last().date)), description = "Форма и усталость за 8 недель", yMin = 0.0,
+            xLabels = listOf(shortDate(last.first().date), shortDate(last.last().date)), description = "Форма и усталость за 8 недель",
         )
         Text("Синяя — форма, оранжевая — усталость. Усталость выше формы — нагружаешься больше привычного.", style = T.secondary(12.sp))
         Explained("Форма", LoadExplain.fitness(st))
@@ -506,6 +511,8 @@ private fun LoadTab() {
         LiftFocus.STRENGTH -> 6.0 to 12.0
         else -> 6.0 to 14.0
     }
+    // Nothing lifted lately: no table of zeros.
+    if (sets.values.none { (it.lastOrNull() ?: 0.0) > 0 }) return
     SectionLabel("Подходы на мышцу за неделю")
     FCard(gap = 10.dp) {
         Text("Полоса — разумный диапазон для твоей цели (${target.first.roundToInt()}–${target.second.roundToInt()}). Подход для вспомогательной мышцы считается за половину.", style = T.secondary(12.sp))
