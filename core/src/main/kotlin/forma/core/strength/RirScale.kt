@@ -11,7 +11,9 @@ import kotlin.math.max
  * ground truth is a set that ran out: fewer reps than the target, not rated as stopped with reps to spare. Set against
  * a rated set before it at the same weight (a little less for the fatigue of the sets in between), it shows how many
  * reps the rating promised that were not there. Rated against a stop by rating ("+" sets) a steady bias cancels out,
- * so those do not count.
+ * so those do not count. A set short of the target after the target was reached at the same weight is taken as run out
+ * whatever it was rated: whoever over-rates says "2 more" on that one too. Someone who stops short by choice never
+ * reaches the target first, so leaves no pair.
  */
 object RirScale {
     /** At least this many pairs before trusting it. */
@@ -25,15 +27,16 @@ object RirScale {
     data class Pair(val reps: Int, val rir: Int, val failReps: Int, val gap: Int)
 
     /**
-     * Reps the person over-rates their reserve by, from the last 8 pairs; 0 until [MIN_PAIRS]. Less than a rep is not
-     * enough to act on. Never below zero: running out says nothing about a reserve rated too low.
+     * Reps the person over-rates their reserve by, from the last 8 pairs; 0 until [MIN_PAIRS]. Under a rep and a half
+     * is the noise of honest ratings (seen in the population runs). Never below zero: running out says nothing about a
+     * reserve rated too low.
      */
     fun bias(pairs: List<Pair>): Int {
         val use = pairs.filter { it.gap >= 1 }.takeLast(8)
         if (use.size < MIN_PAIRS) return 0
         val d = use.map { (it.reps + it.rir) - it.failReps - FATIGUE * it.gap }.sorted()
         val m = if (d.size % 2 == 1) d[d.size / 2] else (d[d.size / 2 - 1] + d[d.size / 2]) / 2
-        if (m < 1) return 0
+        if (m < 1.5) return 0
         return m.toInt().coerceIn(0, MAX)
     }
 
@@ -45,7 +48,7 @@ object RirScale {
             for (j in i + 1 until sets.size) {
                 val f = sets[j]
                 if (abs(f.weight - s.weight) > 1e-6) continue
-                if (f.reps < target && f.reps > 0 && (f.rir ?: 0) == 0) return Pair(s.reps, rir, f.reps, j - i)
+                if (f.reps < target && f.reps > 0) return Pair(s.reps, rir, f.reps, j - i)
             }
         }
         return null

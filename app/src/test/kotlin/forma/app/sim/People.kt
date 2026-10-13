@@ -63,7 +63,7 @@ object People {
         )
         val bias = if (r.nextDouble() < 0.6) 0 else r.pick(-2, -1, 1, 2)
         val fast = r.nextDouble() < 0.15
-        val runner = if (run != RunFocus.NONE) VirtualRunner(v0, id, talent = r.range(0.4, 1.8), ceilingGain = r.range(0.05, 0.25), rpeBias = bias, startsFast = fast) else null
+        val runTalent = if (run != RunFocus.NONE) r.range(0.4, 1.8) to r.range(0.05, 0.25) else null
         val athleteExp = if (r.nextDouble() < 0.7) exp else r.pick(*Experience.values())
         val effort = if (r.nextDouble() < 0.7) Effort.FOLLOW else r.pick(Effort.OVERSHOOT, Effort.UNDERSHOOT)
         val reporting = r.pick(Reporting.HONEST, Reporting.HONEST, Reporting.NONE, Reporting.OPTIMISTIC, Reporting.INFLATED)
@@ -78,6 +78,11 @@ object People {
             "hints" to athlete.acceptsHints.toString(), "miss" to (if (miss == 0.0) "0" else if (miss < 0.2) "<20%" else "20-40%"),
             "sick" to sick.toString(), "athleteExp" to athleteExp.name, "sex" to sex.name,
         )
-        return Person(id, profile, runner, athlete, miss, if (sick) r.nextInt(3, 20) else null, r.nextInt(1, 6), tags)
+        val sickFrom = if (sick) r.nextInt(3, 20) else null
+        val sickWeeks = r.nextInt(1, 6)
+        // Drawn after everything else, so the people of earlier runs stay the same people.
+        val ownEasy = r.nextDouble() < 0.3
+        val runner = runTalent?.let { (t, c) -> VirtualRunner(v0, id, talent = t, ceilingGain = c, rpeBias = bias, startsFast = fast, ownEasy = ownEasy) }
+        return Person(id, profile, runner, athlete, miss, sickFrom, sickWeeks, tags + ("ownEasy" to ownEasy.toString()))
     }
 }

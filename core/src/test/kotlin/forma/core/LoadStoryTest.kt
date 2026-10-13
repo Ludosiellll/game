@@ -69,14 +69,15 @@ class LoadStoryTest {
     @Test fun theRestLineIsLearnedFromOwnBadSessions() {
         // Hard and easy weeks in turn; the sessions that went badly were the ones in tired weeks.
         val loads = mutableMapOf<LocalDate, Double>()
-        repeat(12) { w -> listOf(0, 1, 3, 5).forEach { d -> loads[start.plusDays(w * 7L + d)] = if (w % 2 == 0) 250.0 else 520.0 } }
+        repeat(12) { w -> (if (w % 2 == 0) listOf(0, 2, 4) else listOf(0, 1, 2, 3, 4, 5)).forEach { d -> loads[start.plusDays(w * 7L + d)] = if (w % 2 == 0) 200.0 else 600.0 } }
         val today = start.plusDays(83)
         val days = loads.keys.filter { it.isAfter(start.plusDays(20)) }
-        val tired = days.filter { ((it.toEpochDay() - start.toEpochDay()) / 7) % 2 == 1L && it.dayOfWeek.value >= 4 }.toSet()
+        val tired = days.filter { ((it.toEpochDay() - start.toEpochDay()) / 7) % 2 == 1L && it.dayOfWeek.value >= 3 }.toSet()
         val fine = days.toSet() - tired
         val s = LoadStory.of(loads, today, bad = tired, good = fine)
         assertTrue(s.personal.learned, s.personal.toString())
-        assertTrue(s.personal.restBelow > LoadStory.COMMON_REST, s.personal.toString())
+        assertTrue(s.personal.restBelow in -45.0..-20.0, s.personal.toString())
+        assertTrue(s.personal.badBelow * s.personal.judgedAbove >= 1.5 * s.personal.badAbove * s.personal.judgedBelow, s.personal.toString())
         assertTrue(LoadExplain.personal(s.personal).startsWith("Линия отдыха — твоя"))
         // Bad days with no link to freshness: the line stays common, and it says so.
         val random = days.filterIndexed { i, _ -> i % 3 == 0 }.toSet()

@@ -26,9 +26,13 @@ class RirScaleTest {
         assertNull(RirScale.explain(0))
     }
 
-    @Test fun aSetStoppedWithRepsToSpareIsNotFailure() {
-        // Seven reps "with 3 to spare" is a choice to stop, not running out.
-        assertNull(RirScale.pairOf(listOf(DoneSet(80.0, 8, 4), DoneSet(80.0, 7, 3)), 8))
+    @Test fun whoStopsShortByChoiceLeavesNoPair() {
+        // Seven of eight every set "with 3 to spare": never reached the target, a choice, not running out.
+        assertNull(RirScale.pairOf(listOf(DoneSet(80.0, 7, 3), DoneSet(80.0, 7, 3), DoneSet(80.0, 7, 3)), 8))
+        // Short after the target was reached is running out, however it was rated.
+        assertEquals(RirScale.Pair(8, 3, 6, 1), RirScale.pairOf(listOf(DoneSet(80.0, 8, 3), DoneSet(80.0, 6, 2)), 8))
+        // A rep over the rating is noise.
+        assertEquals(0, RirScale.bias(List(8) { RirScale.Pair(8, 2, 8, 1) }))
         // Another weight says nothing about this one.
         assertNull(RirScale.pairOf(listOf(DoneSet(80.0, 8, 4), DoneSet(85.0, 6, 0)), 8))
     }

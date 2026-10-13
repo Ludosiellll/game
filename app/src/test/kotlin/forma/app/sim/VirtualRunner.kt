@@ -37,6 +37,8 @@ class VirtualRunner(
     val rpeBias: Int = 0,
     /** Runs the first reps too fast: the same average costs more. */
     val startsFast: Boolean = false,
+    /** Runs easy runs at the pace that feels easy to them today, not the plan's: quicker as they get fitter. */
+    val ownEasy: Boolean = false,
 ) {
     private val rng = Random(seed)
     private val start = vdot
@@ -112,7 +114,8 @@ class VirtualRunner(
 
     private fun steady(w: RunWorkout, v: Double, room: Double, minutes: Double): RunResult {
         val seg = w.segments.firstOrNull { it.kind == SegmentKind.RUN }
-        val pace = seg?.pace?.let { (it.fast + it.slow) / 2.0 } ?: Vdot.paceAtFraction(v, 0.68)
+        val pace = if (ownEasy && w.type == RunType.EASY) Vdot.paceAtFraction(v, 0.70)
+        else seg?.pace?.let { (it.fast + it.slow) / 2.0 } ?: Vdot.paceAtFraction(v, 0.68)
         val r = Vdot.vo2(60_000.0 / pace) / v
         val felt = (2 + (r - 0.6) * 20 + minutes / 40 + 0.15 * fatigue + gauss() * 0.6).coerceIn(1.0, 10.0)
         gain(minutes * 0.02, room)
