@@ -58,7 +58,8 @@ fun PlanScreen() {
         val goal = aimTitle(p.aim) + (p.copiedFrom?.let { " · программа от $it" } ?: "")
         Text("$goal · ${when (p.experience) { Experience.NOVICE -> "новичок"; Experience.INTERMEDIATE -> "средний уровень"; Experience.ADVANCED -> "опытный" }}", style = T.secondary(15.sp))
 
-        FCard(gap = 6.dp) {
+        // The cycle is the gym's (sets, reserve, light weeks): without the gym there is nothing to say.
+        if (p.templates.isNotEmpty()) FCard(gap = 6.dp) {
             SectionLabel("Цикл")
             if (p.blockWeeks > 0) {
                 val pos = (weekNo - 1) % p.blockWeeks + 1
@@ -134,7 +135,7 @@ fun PlanScreen() {
         }
         Text("Нажми на день — там тренировка целиком: что, зачем и почему в этот день.", style = T.secondary(13.sp))
 
-        GhostButton("Поменять дни зала и бега", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 48.dp)
+        GhostButton(if (p.templates.isNotEmpty() && p.aim.runs) "Поменять дни зала и бега" else "Поменять дни тренировок", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 48.dp)
 
         if (p.week.notes.isNotEmpty()) {
             SectionLabel("Почему так")

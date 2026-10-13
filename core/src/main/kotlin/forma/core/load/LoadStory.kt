@@ -33,9 +33,11 @@ object LoadStory {
         /** Sessions that went badly / well, counted on days with a freshness to speak of. */
         val bad: Int,
         val good: Int,
-        /** Median freshness on those days. */
-        val badMedian: Double?,
-        val goodMedian: Double?,
+        /** Below and above the line: sessions that went badly of those judged (learned only). */
+        val badBelow: Int = 0,
+        val judgedBelow: Int = 0,
+        val badAbove: Int = 0,
+        val judgedAbove: Int = 0,
     )
 
     data class Week(
@@ -86,9 +88,10 @@ object LoadStory {
     }
 
     /**
-     * The rest line from the person's own sessions: at least three bad and three good ones on days with history, and
-     * the bad ones at least 5 points less fresh. Kept between −45 % and −10 %: a line past those says more about chance
-     * than about the person.
+     * The rest line from the person's own sessions: the least tired freshness below which their sessions go badly
+     * clearly more often — at least 1.5 times as often as above it and at least 4 in 10 — with at least 3 bad and 6
+     * judged sessions below. Searched between −45 % and −20 %: everyday productive tiredness (−10…−20 %) is never called
+     * a need to rest, and a line deeper than −45 % says more about chance. None found: the common −30 %.
      */
     fun personal(series: List<LoadDay>, bad: Set<LocalDate>, good: Set<LocalDate>, historyFrom: LocalDate?): Personal {
         // Freshness of the morning before the session: the day before's numbers (the session's own load is in today's).
@@ -96,11 +99,19 @@ object LoadStory {
         fun on(days: Set<LocalDate>) = days.filter { historyFrom != null && !it.isBefore(historyFrom) }.mapNotNull { before[it] }
         val b = on(bad)
         val g = on(good - bad)
-        val mb = median(b)
-        val mg = median(g)
-        val learned = b.size >= 3 && g.size >= 3 && mb != null && mg != null && mb <= mg - 5
-        val line = if (learned) ((mb!! + mg!!) / 2).coerceIn(-45.0, -10.0).roundToInt().toDouble() else COMMON_REST
-        return Personal(line, learned, b.size, g.size, mb, mg)
+        for (t in -20 downTo -45) {
+            val bb = b.count { it < t }
+            val gb = g.count { it < t }
+            val ba = b.size - bb
+            val ga = g.size - gb
+            val below = bb + gb
+            val above = ba + ga
+            if (bb < 3 || below < 6 || above < 6) continue
+            val rb = bb.toDouble() / below
+            val ra = ba.toDouble() / above
+            if (rb >= 0.4 && rb >= ra * 1.5) return Personal(t.toDouble(), true, b.size, g.size, bb, below, ba, above)
+        }
+        return Personal(COMMON_REST, false, b.size, g.size)
     }
 
     /**

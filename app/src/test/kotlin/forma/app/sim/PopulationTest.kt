@@ -160,7 +160,7 @@ class PopulationTest {
         if (done.any { (it.load ?: 0.0) > 0 } && story == null) found += "LOAD_STORY_MISSING"
         story?.let { st ->
             if (st.personal.restBelow !in -45.0..-10.0) found += "REST_LINE_OUT: ${st.personal.restBelow}"
-            if (st.personal.learned && st.personal.badMedian!! >= st.personal.goodMedian!!) found += "REST_LINE_BACKWARDS: ${st.personal}"
+            if (st.personal.learned && st.personal.restBelow > -20) found += "REST_LINE_TOO_HIGH: ${st.personal}"
             if (st.history && st.zone == null) found += "ZONE_MISSING"
             listOf(forma.core.load.LoadExplain.fitness(st), forma.core.load.LoadExplain.fatigue(st), forma.core.load.LoadExplain.freshness(st),
                 forma.core.load.LoadExplain.personal(st.personal), forma.core.load.LoadExplain.zoneText(st)).forEach { t ->
