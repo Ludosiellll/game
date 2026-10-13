@@ -19,6 +19,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -112,6 +113,27 @@ class WorkoutPanelUiTest {
         settle()
         assertTrue(texts("Следующий подход:").isNotEmpty(), "the next set is said")
         compose.onRoot().captureRoboImage("build/shots/carbon-workout-next.png")
+    }
+
+    /** Denis, 13.10: warm-ups were only a line of text. Now each is ticked off, or the warm-up skipped; none is logged. */
+    @Test fun warmUpsAreTickedOffOrSkipped() {
+        val repo = repo("panel-warm")
+        val id = runBlocking {
+            repo.completeOnboarding(profile)
+            val t = repo.store.programNow()!!.templates.first()
+            // A working weight known: the main lift gets its ramp.
+            val first = repo.liftPlan(t.id, java.time.LocalDate.now()).items.first()
+            repo.db.state().upsertSlot(forma.app.data.SlotStateEntity(first.slot.key, first.exerciseId, 100.0, first.slot.repMin, 0, 0, 3, 0L, false, 0, null, null))
+            repo.startLift(t.id)
+        }
+        show(repo, id)
+        compose.onAllNodesWithText("Р1")[0].performScrollTo().performClick()
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-warmup.png")
+        compose.onNodeWithText("Без разминки").performScrollTo().performClick()
+        settle()
+        assertTrue(texts("Разминка пропущена").isNotEmpty())
+        assertEquals(0, setsOf(repo, id).size, "warm-ups are not working sets")
     }
 
     @Test fun aSetLoggedByMistakeIsTakenBack() {

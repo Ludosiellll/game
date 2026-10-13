@@ -13,6 +13,16 @@ data class WarmUpSet(val weight: Double, val reps: Int)
  * with falling reps, so the lifter arrives warm but not tired.
  */
 object WarmUp {
+    /**
+     * One set before a heavy exercise whose muscles have not worked yet today (a secondary press after a different
+     * main lift): about 60 % of the working weight for 6. Empty when that is no lighter than the work itself.
+     */
+    fun single(workWeight: Double, step: Double, barWeight: Double? = null): List<WarmUpSet> {
+        var w = roundTo(workWeight * 0.6, step)
+        if (barWeight != null && w < barWeight) w = barWeight
+        return if (w <= 0 || w >= workWeight) emptyList() else listOf(WarmUpSet(w, 6))
+    }
+
     fun sets(workWeight: Double, step: Double, barWeight: Double? = 20.0): List<WarmUpSet> {
         if (workWeight <= 0) return emptyList()
         val ramp = when {

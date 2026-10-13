@@ -46,6 +46,8 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -166,6 +168,8 @@ fun WorkoutScreen(workoutId: Long) {
     val adjustments = rememberSaveable(saver = AdjustmentsSaver) { mutableStateMapOf() }
     // What to do next, said after every set (and where the next exercise starts) — not only when the weight changes.
     val advice = rememberSaveable(saver = AdviceSaver) { mutableStateMapOf() }
+    // Warm-up sets ticked off ("pos:i") or skipped ("pos:skip"): not working sets, so not in the log or the progression.
+    val warmMarks = rememberSaveable(saver = listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<String>, String>({ it.toList() }, { it.toMutableStateList() })) { mutableStateListOf() }
     fun input(item: LiftItem): SetInput {
         inputs[item.position]?.takeIf { it.exerciseId == item.exerciseId }?.let { return it }
         // Another exercise at this position (swapped in, or added after one was taken out): its own numbers and hints,
@@ -295,11 +299,40 @@ fun WorkoutScreen(workoutId: Long) {
                     }
                 }
 
-                // Warm-up.
-                if (item.warmups.isNotEmpty()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SectionLabel("Разминка", Modifier.width(92.dp))
-                        NumText(item.warmups.joinToString(" · ") { "${Ru.kg(it.weight)}×${it.reps}" }, style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
+                // Warm-up: before the first working set, ticked off or skipped — not working sets, so not counted.
+                if (mine.isEmpty()) {
+                    val skipKey = "${item.position}:skip"
+                    when {
+                        item.warmups.isNotEmpty() && skipKey in warmMarks -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Разминка пропущена", style = T.secondary(13.sp), modifier = Modifier.weight(1f))
+                            TextButton({ warmMarks.remove(skipKey) }) { Text("Вернуть", style = T.body(14.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                        }
+                        item.warmups.isNotEmpty() -> Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                SectionLabel("Разминка", Modifier.weight(1f))
+                                TextButton({ warmMarks.add(skipKey) }) { Text("Без разминки", style = T.body(14.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                            }
+                            Text("Перед рабочими подходами. Не в зачёт: на вес плана не влияет. Отмечай касанием.", style = T.secondary(12.sp))
+                            item.warmups.forEachIndexed { i, s ->
+                                val key = "${item.position}:$i"
+                                val ticked = key in warmMarks
+                                Hairline()
+                                Row(
+                                    Modifier.fillMaxWidth().clickable(onClickLabel = if (ticked) "Снять отметку" else "Отметить разминочный подход") {
+                                        if (ticked) warmMarks.remove(key) else warmMarks.add(key)
+                                    }.padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    NumText("Р${i + 1}", style = T.number(14.sp).copy(color = F.c.text3), modifier = Modifier.width(36.dp))
+                                    NumText("${Texts.weight(ex, s.weight)} × ${s.reps}", style = T.number(16.sp).copy(color = if (ticked) F.c.text3 else F.c.text2), modifier = Modifier.weight(1f))
+                                    Box(
+                                        Modifier.size(24.dp).clip(CircleShape).background(if (ticked) F.c.good else F.c.surface2),
+                                        contentAlignment = Alignment.Center,
+                                    ) { if (ticked) Icon(Ic.check, null, tint = F.c.onData, modifier = Modifier.size(14.dp)) }
+                                }
+                            }
+                        }
+                        item.noWarmUp != null -> Text(item.noWarmUp, style = T.secondary(13.sp))
                     }
                 }
 

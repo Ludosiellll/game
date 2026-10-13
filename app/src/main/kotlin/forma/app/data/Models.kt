@@ -23,6 +23,8 @@ data class LiftItem(
     val planId: String? = null,
     /** Added to the plan by the user, not one of the generated plan's own. */
     val addedForGood: Boolean = false,
+    /** Why there is no warm-up before it (muscles warm already, single-muscle work), when there is none. */
+    val noWarmUp: String? = null,
 )
 
 @Serializable

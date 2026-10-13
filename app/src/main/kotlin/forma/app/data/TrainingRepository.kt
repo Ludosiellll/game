@@ -214,7 +214,33 @@ class TrainingRepository(
         val extra = added.mapIndexed { j, id ->
             buildItem(t.slots.size + j, overrides(addedSpec(id), settings, addedKey(t.id, id)), date, deload).copy(planId = id, addedForGood = true)
         }
-        return LiftPlan(t.id, t.title, inOrder(own + extra), deload)
+        return LiftPlan(t.id, t.title, warmUps(inOrder(own + extra), deload), deload)
+    }
+
+    /**
+     * Warm-ups where they matter, in the order of the day: a ramp before a main lift (shorter when its muscles are warm
+     * already), one set before a heavy secondary exercise whose muscles have not worked yet; none before work on warm
+     * muscles or a single muscle — said why.
+     */
+    private fun warmUps(items: List<LiftItem>, deload: Boolean): List<LiftItem> {
+        val warm = mutableSetOf<forma.core.model.Muscle>()
+        return items.map { item ->
+            val ex = Catalog[item.exerciseId]
+            val p = item.prescription
+            val fresh = ex.primary.none { it in warm }
+            val bar = if (ex.equipment == Equipment.BARBELL) ex.bar else null
+            val heavy = p.weight != null && ex.load == LoadKind.EXTERNAL && ex.compound && !deload
+            val out = when {
+                item.slot.role == SlotRole.MAIN && item.warmups.isNotEmpty() -> item.copy(warmups = if (fresh) item.warmups else item.warmups.takeLast(2))
+                heavy && fresh -> item.copy(warmups = WarmUp.single(p.weight!!, ex.step, bar))
+                ex.load == LoadKind.TIMED || deload -> item
+                !ex.compound -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: упражнение на одну мышцу — первый подход сам разогреет.")
+                !fresh -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: ${ex.primary.joinToString(", ") { it.ru.lowercase() }} уже в работе после предыдущих упражнений.")
+                else -> item
+            }
+            warm += ex.primary + ex.secondary
+            out
+        }
     }
 
     /**
