@@ -328,3 +328,22 @@ class ProgressionTest {
         assertEquals(20.0, Progression.startHint(Catalog["ohp"], 50.0, female = true, trained = 1.0))
     }
 }
+
+/** Seen in a thousand simulated half-years: a lifter who stops a rep early but says so must not lose the weight. */
+class StoppedEarlyTest {
+    private val squat = Catalog["squat"]
+    private val spec = SlotSpec("squat", sets = 3, repMin = 5, repMax = 8, rir = 2, restSec = 150, role = SlotRole.MAIN)
+
+    @Test fun shortWithTheRepsInReserveKeepsTheWeight() {
+        val st = SlotState(weight = 100.0, reps = 6, sessions = 3, linear = false)
+        val p = Progression.prescribe(squat, spec, st)
+        // 5 done, "3 more" said — 6 with 2 in reserve was there: a choice, not the weight.
+        val early = Progression.evaluate(squat, spec, st, p, List(p.sets) { DoneSet(100.0, 5, 3) }, 80.0)
+        val o = assertIs<Outcome.Hold>(early.outcome)
+        assertEquals(HoldReason.STOPPED_EARLY, o.reason)
+        assertEquals(100.0, early.state.weight)
+        // 5 done with nothing left: really short — the usual path.
+        val short = Progression.evaluate(squat, spec, st, p, List(p.sets) { DoneSet(100.0, 5, 0) }, 80.0)
+        assertTrue(short.outcome !is Outcome.Hold || (short.outcome as Outcome.Hold).reason != HoldReason.STOPPED_EARLY)
+    }
+}

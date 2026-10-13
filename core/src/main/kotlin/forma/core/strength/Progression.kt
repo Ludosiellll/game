@@ -96,7 +96,11 @@ sealed interface Outcome {
 }
 
 @Serializable
-enum class HoldReason { NEAR_MISS, FIRST_MISS, FEWER_SETS, LIGHTER, CONSOLIDATE, NOT_THE_WEIGHT, AT_TOP }
+enum class HoldReason {
+    NEAR_MISS, FIRST_MISS, FEWER_SETS, LIGHTER, CONSOLIDATE, NOT_THE_WEIGHT, AT_TOP,
+    /** Short of the target, but every short set was stopped with the reps left in reserve: a choice, not the weight. */
+    STOPPED_EARLY,
+}
 
 data class Evaluation(val state: SlotState, val outcome: Outcome, val e1rm: Double?)
 
@@ -410,7 +414,14 @@ object Progression {
             return Evaluation(SlotState(to, r, 0, 0, sessions, state.linear), Outcome.AddWeight(w, to, r), e1rm)
         }
 
-        // Short of the target.
+        // Short of the target — but every set at the weight was stopped with the missing reps still in reserve (8 done,
+        // "2 more" said, 9 planned with 1 left): the lifter stopped, the weight did not stop them. Seen in half-year
+        // simulations: such a lifter's weights sank to 60–80 % of what they could lift. The weight and the target stay.
+        val atW = planned.filter { it.weight >= w - 1e-9 }
+        // Most of the sets is enough: a reported reserve is a guess, off by one now and then.
+        if (atW.isNotEmpty() && atW.count { s -> s.rir != null && s.reps + s.rir >= target + p.rir } * 2 > atW.size) {
+            return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.STOPPED_EARLY), e1rm)
+        }
         val first = planned.firstOrNull { it.weight >= w - 1e-9 }?.reps ?: 0
         val deficit = planned.sumOf { if (it.weight < w - 1e-9) 1 else max(0, target - it.reps) }
         val stalls = state.stalls + 1

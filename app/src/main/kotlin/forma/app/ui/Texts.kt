@@ -39,6 +39,7 @@ object Texts {
             HoldReason.LIGHTER -> "Подходы были легче плана — цель прежняя: ${target(ex, o.weight, o.reps)}. Нет такого веса в зале — поставь шаг веса: «План» → упражнение."
             HoldReason.CONSOLIDATE -> "Всё сделано, но без запаса — закрепляем ${target(ex, o.weight, o.reps)}."
             HoldReason.NOT_THE_WEIGHT -> "Вес уже снижали, а повторов не прибавилось — дело не в весе. Оставляем его, цель ${target(ex, o.weight, o.reps)}."
+            HoldReason.STOPPED_EARLY -> "Повторов меньше цели, но запас был — значит, вес по силам. Оставляем ${target(ex, o.weight, o.reps)}: сделай все повторы."
             HoldReason.AT_TOP -> "Это верх диапазона — держим ${target(ex, o.weight, o.reps)}. Хочешь дальше — замени на вариант сложнее."
         }
         is Outcome.Reduce -> "Вес оказался тяжёлым — ${target(ex, o.to, o.reps)} (−${Ru.kg(o.from - o.to)} кг). С этого веса снова растём."

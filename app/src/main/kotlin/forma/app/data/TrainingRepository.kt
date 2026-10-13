@@ -115,6 +115,25 @@ class TrainingRepository(
         onChange()
     }
 
+    /** A beginner who runs 30 minutes now: the profile's level and the week of a runner; the run state stays as it is. */
+    private suspend fun graduate() {
+        val profile = store.profileNow() ?: return
+        if (profile.runLevel != forma.core.model.RunLevel.NONE) return
+        val next = profile.copy(runLevel = forma.core.model.RunLevel.BASE)
+        val fresh = runCatching { ProgramGenerator.generate(next, today()) }.getOrNull() ?: return
+        store.setProfile(next)
+        if (store.programNow()?.copiedFrom == null) store.setProgram(keepCycle(fresh, store.programNow()))
+        // Not all at once: a runner's week has more runs than three run/walk sessions (seen in simulations: +60–90 % of
+        // minutes in one week). The first week stays within 10 % of the last run/walk week — the easy runs are as long
+        // as that allows — and the hard sessions come back after three easy runs.
+        val st = store.runStateNow()
+        val runs = store.programNow()!!.week.days.sumOf { d -> d.sessions.count { it.isRun } }.coerceAtLeast(1)
+        val day = today().toEpochDay()
+        val lastWeek = st.recent.filter { it.day > day - 7 }.sumOf { it.minutes }
+        val easy = if (lastWeek > 0) (lastWeek * 1.1 / runs).toInt().coerceIn(15, 30) else 20
+        store.setRunState(st.copy(easyMinutes = easy, longMinutes = minOf(st.longMinutes, easy + 10), returnEasy = maxOf(st.returnEasy, 3)))
+    }
+
     /**
      * The block goes on: a new week layout does not move where the lifter is in the cycle (a lighter week stays where it
      * was due, a vacation shift stays). Another experience level has another block and starts over. A week laid out
@@ -771,7 +790,7 @@ class TrainingRepository(
         val caps = program?.runCaps
         val st = RunPlan.withBreak(saved, date.toEpochDay()).let {
             if (caps == null) it else it.copy(easyMinutes = minOf(it.easyMinutes, caps.easyMax), longMinutes = minOf(it.longMinutes, caps.longMax))
-        }
+        }.let { s -> RunPlan.weekCap(saved, date.toEpochDay())?.let { cap -> s.copy(easyMinutes = minOf(s.easyMinutes, cap), longMinutes = minOf(s.longMinutes, cap)) } ?: s }
         val profile = store.profileNow()
         val goal = profile?.runGoal
         val lap = profile?.lapMeters?.takeIf { !road }
@@ -888,6 +907,10 @@ class TrainingRepository(
         }
         // The progress moves only once the run is safely stored.
         store.setRunState(next)
+        // 30 minutes of running reached: the week of a beginner (run/walk only) becomes a runner's week — hard sessions,
+        // a trial — with the progress kept. Seen in half-year simulations: without it a graduate had easy runs only, and
+        // no trial, for months.
+        if (after.outcomes.any { it is RunOutcome.Graduated }) graduate()
         onChange()
         id to summary
     }

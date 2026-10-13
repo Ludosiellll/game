@@ -91,8 +91,12 @@ class PlanEditsUiTest {
         val s = runBlocking { repo.store.settingsNow() }
         assertEquals(range.split("–").map { it.toInt() }, s.reps[slot.exerciseId])
         assertEquals(if (slot.restSec == 90) null else 90, s.rest[slot.exerciseId])
-        // The row shows the new numbers and what the plan had.
-        assertTrue(compose.onAllNodesWithText("в плане было", substring = true).fetchSemanticsNodes().isNotEmpty())
+        // The row shows the new numbers and what the plan had — once the plan is rebuilt in the background (a fixed wait
+        // was not always enough).
+        compose.waitUntil(10_000) {
+            shadowOf(Looper.getMainLooper()).idle()
+            compose.onAllNodesWithText("в плане было", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     @Test fun theAddButtonOfADayOpensTheLibraryForThatDay() {

@@ -117,6 +117,9 @@ class Simulation(
             val program = store.programNow() ?: error("no program")
             for (s in program.week.on(d.dayOfWeek.value)) {
                 clock = at(d, 18)
+                // The plan may change mid-day (a beginner graduating rebuilds the week): what the plan no longer has is gone.
+                val now = store.programNow()!!
+                if (s.templateId != null && now.templates.none { it.id == s.templateId }) continue
                 if (s.kind == SessionKind.LIFT) lift(s.templateId!!, d) else if ((runner?.sickDays ?: 0) == 0) run(s.kind, d)
             }
         }

@@ -121,7 +121,16 @@ class VirtualRunner(
     }
 
     private fun trial(w: RunWorkout, v: Double): RunResult {
-        val meters = (w.testMeters ?: 1500).toDouble()
+        if (w.testMeters == null) {
+            // The 12 minutes: as far as today's form goes in them.
+            var lo = 500.0
+            var hi = 6000.0
+            repeat(60) { val mid = (lo + hi) / 2; if (Vdot.predictSeconds(v, mid) < 720) lo = mid else hi = mid }
+            fatigue += 3.0
+            gain(0.8, ((ceiling - vdot) / (ceiling - start)).coerceIn(0.0, 1.0))
+            return RunResult(1.0, report(9.0), w.totalSeconds, distanceM = lo + 3500, workDistanceM = lo, workSec = 720)
+        }
+        val meters = w.testMeters!!.toDouble()
         val sec = Vdot.predictSeconds(v, meters) * (if (startsFast) 1.015 else 1.0) * (1 + gauss() * 0.005)
         fatigue += 3.0
         gain(0.8, ((ceiling - vdot) / (ceiling - start)).coerceIn(0.0, 1.0))

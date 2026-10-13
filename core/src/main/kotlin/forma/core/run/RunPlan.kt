@@ -467,6 +467,18 @@ object RunPlan {
         return max(goal.pace, current * (1 - STEP_AHEAD))
     }
 
+    /**
+     * The longest an easy or long run on [day] may be so that the last 7 days stay within 10 % of the busiest of the three
+     * weeks before (one missed week does not shrink the plan). Null without running in those weeks. Seen in simulations:
+     * a beginner graduating mid-week got a runner's runs on top of the week's run/walk — +60 % in one week.
+     */
+    fun weekCap(state: RunState, day: Long): Int? {
+        val before = (1..3).map { k -> state.recent.filter { it.day in (day - 7 * k - 6)..(day - 7 * k) }.sumOf { it.minutes } }.maxOrNull() ?: 0
+        if (before == 0) return null
+        val soFar = state.recent.filter { it.day in (day - 6) until day }.sumOf { it.minutes }
+        return maxOf(15, (before * 1.1).toInt() - soFar)
+    }
+
     /** How far ahead of the current race pace the race-pace step is. */
     const val STEP_AHEAD = 0.025
 
@@ -675,19 +687,26 @@ object RunPlan {
             returnEasy = max(0, state.returnEasy - 1),
         )
         val done = r.completed >= 0.95
+        // The week's running against the week before (this run included): a run grows only while the week stays within
+        // 10 % of the one before. Seen in simulations: +3 minutes after every easy run doubled the week in two weeks for
+        // someone running six days.
+        val thisWeek = state.recent.filter { it.day in (day - 6)..day }.sumOf { it.minutes } + minutes
+        val lastWeek = state.recent.filter { it.day in (day - 13)..(day - 7) }.sumOf { it.minutes }
+        val weekAllowsMore = lastWeek == 0 || thisWeek <= lastWeek * 1.1
         // The runner's own effort scale (from easy runs), applied to the thresholds below; said when it is not the plan's.
         val offset = state.rpeOffset
         val rpe = (r.rpe - offset).coerceAtLeast(1)
-        if (offset > 0 && w.type != RunType.TEST && w.type != RunType.RUN_WALK && w.type != RunType.FREE) out += RunOutcome.OwnScale(offset)
-        // Easy runs done in full set the scale; a lighter one for a bad day too (it is easy by design).
-        if (w.type == RunType.EASY && done) s = s.copy(easyRpes = (state.easyRpes + r.rpe).takeLast(8))
+        if (offset > 0 && w.type != RunType.TEST && w.type != RunType.FREE && (w.type != RunType.RUN_WALK || done)) out += RunOutcome.OwnScale(offset)
+        // Easy runs and run/walk done in full set the scale (both meant light to moderate); a lighter one for a bad day too.
+        if ((w.type == RunType.EASY || w.type == RunType.RUN_WALK) && done) s = s.copy(easyRpes = (state.easyRpes + r.rpe).takeLast(8))
         // A run made lighter for a bad day counts as running, but moves no ladder.
         if (w.light) return RunAfter(s, out)
         when (w.type) {
             RunType.RUN_WALK -> {
                 val stage = state.walkStage.coerceAtLeast(0)
                 s = when {
-                    done && r.rpe <= 6 -> {
+                    // Done in full: the runner's own scale counts (a whole session done is the proof).
+                    done && rpe <= 6 -> {
                         val next = stage + 1
                         if (next >= WALK_LADDER.size) {
                             out += RunOutcome.Graduated
@@ -705,7 +724,7 @@ object RunPlan {
                     }
                     else -> { out += RunOutcome.StageRepeat("walk"); s.copy(walkFails = 1) }
                 }
-                if (done && r.rpe <= 6) s = s.copy(walkFails = 0)
+                if (done && rpe <= 6) s = s.copy(walkFails = 0)
             }
             RunType.EASY -> {
                 // Only a run of the full usual length says it can grow: one kept short (after the gym, a cutback
@@ -715,7 +734,7 @@ object RunPlan {
                 val step = if (extra >= 6) (extra / 2).coerceIn(3, 8) else 3
                 s = when {
                     rpe >= 7 -> s.copy(easyMinutes = max(20, state.easyMinutes - 5)).also { out += RunOutcome.Shorter(it.easyMinutes) }
-                    done && full && rpe <= 5 && state.easyMinutes < caps.easyMax ->
+                    done && full && rpe <= 5 && state.easyMinutes < caps.easyMax && weekAllowsMore ->
                         s.copy(easyMinutes = min(caps.easyMax, state.easyMinutes + step)).also { out += RunOutcome.Longer(it.easyMinutes) }
                     else -> s.also { out += RunOutcome.Same(state.easyMinutes) }
                 }
@@ -729,7 +748,7 @@ object RunPlan {
                 val next = minOf(caps.longMax, state.longMinutes + step, (longest * 1.10).toInt())
                 s = when {
                     rpe >= 8 || !done -> s.copy(longMinutes = max(30, state.longMinutes - 5)).also { out += RunOutcome.Shorter(it.longMinutes) }
-                    rpe <= 6 && next > state.longMinutes && w.workSeconds >= state.longMinutes * 60 ->
+                    rpe <= 6 && next > state.longMinutes && w.workSeconds >= state.longMinutes * 60 && weekAllowsMore ->
                         s.copy(longMinutes = next).also { out += RunOutcome.Longer(it.longMinutes) }
                     else -> s.also { out += RunOutcome.Same(state.longMinutes) }
                 }
@@ -832,6 +851,8 @@ object RunPlan {
                             val nv = (raw * 2).roundToInt() / 2.0
                             out += RunOutcome.VdotChanged(state.vdot, nv)
                             s = s.copy(vdot = nv, testSoon = false)
+                            // A 5 or 10 km goal: the form the test measured against the goal's (it was never said before).
+                            if (goal != null && raw >= Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble())) out += RunOutcome.GoalReached
                         } else {
                             out += RunOutcome.TestDoubtful((raw * 2).roundToInt() / 2.0)
                         }
