@@ -99,4 +99,16 @@ object Ru {
     /** Distance "5,2 км" or "850 м". */
     fun distance(meters: Double): String =
         if (meters < 1000) "${meters.roundToInt()} м" else "${String.format(Locale.ROOT, "%.2f", meters / 1000).replace('.', ',')} км"
+
+    private val MONTHS = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
+
+    /** "13 октября". */
+    fun date(d: java.time.LocalDate): String = "${d.dayOfMonth} ${MONTHS[d.monthValue - 1]}"
+
+    /** "6–12 октября", "29 сентября – 5 октября". */
+    fun dates(a: java.time.LocalDate, b: java.time.LocalDate): String =
+        if (a == b) date(a) else if (a.month == b.month) "${a.dayOfMonth}–${date(b)}" else "${date(a)} – ${date(b)}"
+
+    /** "+12 %", "−8 %". */
+    fun pct(x: Double): String { val r = x.roundToInt(); return (if (r > 0) "+" else if (r < 0) "−" else "") + "${kotlin.math.abs(r)} %" }
 }

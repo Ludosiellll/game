@@ -190,6 +190,46 @@ class TrainingRepository(
     // ---------- lifting ----------
 
     companion object {
+        /** The load story from finished workouts; null without any load. */
+        fun storyOf(ws: List<WorkoutEntity>, today: LocalDate): forma.core.load.LoadStory.Story? {
+            val loads = ws.filter { (it.load ?: 0.0) > 0 }.groupBy { LocalDate.ofEpochDay(it.epochDay) }.mapValues { (_, l) -> l.sumOf { it.load ?: 0.0 } }
+            if (loads.isEmpty()) return null
+            val verdicts = ws.mapNotNull { w -> verdict(w)?.let { LocalDate.ofEpochDay(w.epochDay) to it } }
+            return forma.core.load.LoadStory.of(
+                loads, today,
+                bad = verdicts.filter { !it.second }.map { it.first }.toSet(),
+                good = verdicts.filter { it.second }.map { it.first }.toSet(),
+            )
+        }
+
+        /**
+         * Whether a session went well (true) or badly (false), from what it changed: in the gym, half the exercises or
+         * more short of their reps (held, lowered, reset); on a run, a step repeated or back, a shorter next run, reps
+         * too slow. Null: nothing to judge (a deload, a trial, a session without a summary).
+         */
+        fun verdict(w: WorkoutEntity): Boolean? {
+            val json = w.summaryJson ?: return null
+            if (w.deload) return null
+            return when (w.kind) {
+                Kind.LIFT -> {
+                    val reports = runCatching { AppJson.decodeFromString(LiftSummary.serializer(), json) }.getOrNull()?.reports ?: return null
+                    val judged = reports.filter { it.outcome !is Outcome.Calibrated && it.outcome != Outcome.NotDone && it.outcome != Outcome.Deload }
+                    if (judged.isEmpty()) return null
+                    val short = judged.count { r ->
+                        val o = r.outcome
+                        o is Outcome.Reduce || o is Outcome.Reset || o is Outcome.LowerReps ||
+                            (o is Outcome.Hold && o.reason in setOf(forma.core.strength.HoldReason.NEAR_MISS, forma.core.strength.HoldReason.FIRST_MISS, forma.core.strength.HoldReason.FEWER_SETS))
+                    }
+                    short * 2 < judged.size
+                }
+                else -> {
+                    val outcomes = runCatching { AppJson.decodeFromString(RunSummary.serializer(), json) }.getOrNull()?.outcomes ?: return null
+                    if (outcomes.isEmpty() || outcomes.any { it is RunOutcome.TestTime || it == RunOutcome.TestNotCounted || it is RunOutcome.TestDoubtful || it is RunOutcome.LighterWeek }) return null
+                    outcomes.none { it is RunOutcome.StageRepeat || it is RunOutcome.StageDown || it is RunOutcome.Shorter || it == RunOutcome.TooSlow }
+                }
+            }
+        }
+
         /** The most sets of one exercise the plan can be set to. */
         const val MAX_SETS = 8
         /** Rest between sets the plan can be set to, seconds. */
@@ -1035,6 +1075,11 @@ class TrainingRepository(
     fun dailyLoads(): Flow<Map<LocalDate, Double>> = db.workouts().observeHistory().map { ws ->
         ws.groupBy { LocalDate.ofEpochDay(it.epochDay) }.mapValues { (_, l) -> l.sumOf { it.load ?: 0.0 } }
     }
+
+    /** The load story on [today]: the person's rest line is learned from how their own sessions went. */
+    fun loadStory(today: LocalDate): Flow<forma.core.load.LoadStory.Story?> = db.workouts().observeHistory().map { ws -> storyOf(ws, today) }
+
+    suspend fun loadStoryNow(today: LocalDate): forma.core.load.LoadStory.Story? = storyOf(db.workouts().allDone(), today)
 
     suspend fun lastSetsFor(exerciseId: String): List<SetEntity> {
         val recent = db.sets().recent(exerciseId)

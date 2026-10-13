@@ -42,6 +42,8 @@ import forma.app.ui.theme.T
 import forma.core.analytics.Point
 import forma.core.analytics.SetRow
 import forma.core.analytics.Stats
+import forma.core.load.LoadExplain
+import forma.core.load.LoadStory
 import forma.core.load.TrainingLoad
 import forma.core.model.Catalog
 import forma.core.model.LiftFocus
@@ -73,6 +75,7 @@ fun ProgressScreen(initialTab: Int = 0) {
             2 -> LoadTab()
             else -> BodyTab()
         }
+        ReportCard()
     }
 }
 
@@ -375,34 +378,104 @@ private fun LoadTab() {
     val profile by repo.store.profile.collectAsState(initial = null)
     val today = forma.app.ui.rememberToday(repo)
     if (loads.isEmpty()) {
-        Empty("Нагрузка = оценка тяжести тренировки (1–10) × минуты. Из неё считаются форма (42 дня) и усталость (7 дней).")
+        Empty(LoadExplain.UNITS + " Из неё считаются форма (за ~6 недель), усталость (за неделю) и свежесть.")
         return
     }
     val series = remember(loads, today) { TrainingLoad.series(loads, today.minusDays(120), today) }
-    val history = remember(loads, today) { TrainingLoad.hasHistory(loads, today) }
+    val story by remember(today) { repo.loadStory(today) }.collectAsState(initial = null)
+    val st = story ?: return
     val last = series.takeLast(56)
-    FCard(gap = 6.dp) {
+    val line = st.personal.restBelow
+    // The verdict first: what the numbers mean for today.
+    st.zone?.let { z ->
+        FCard(gap = 6.dp) {
+            Text("Сейчас", style = T.secondary(13.sp))
+            Text(
+                LoadExplain.zoneTitle(z), style = T.title(24.sp).copy(
+                    color = when (z) {
+                        LoadStory.Zone.REST, LoadStory.Zone.DETRAINING -> F.c.warn
+                        LoadStory.Zone.FRESH -> F.c.good
+                        else -> F.c.text
+                    },
+                ),
+            )
+            Text(LoadExplain.zoneText(st), style = T.body(14.sp))
+        }
+    }
+    FCard(gap = 8.dp) {
         val now = series.last()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Metric3("Форма", now.fitness.roundToInt().toString(), F.c.endurance, Modifier.weight(1f))
             Metric3("Усталость", now.fatigue.roundToInt().toString(), F.c.load, Modifier.weight(1f))
             // A few sessions say nothing about freshness yet (one hard day reads as −100 %).
-            if (history) Metric3("Свежесть", (if (now.formPct >= 0) "+" else "") + now.formPct.roundToInt() + "%", if (now.formPct >= -30) F.c.good else F.c.warn, Modifier.weight(1f))
+            if (st.history) Metric3("Свежесть", (if (now.formPct >= 0) "+" else "") + now.formPct.roundToInt() + "%", if (now.formPct >= line) F.c.good else F.c.warn, Modifier.weight(1f))
             else Metric3("Свежесть", "—", F.c.text3, Modifier.weight(1f))
         }
         LineChart(
             listOf(Series(last.map { it.fitness }, F.c.endurance), Series(last.map { it.fatigue }, F.c.load, width = 2.dp)),
             xLabels = listOf(shortDate(last.first().date), shortDate(last.last().date)), description = "Форма и усталость за 8 недель", yMin = 0.0,
         )
-        Text("Форма — средняя нагрузка за 6 недель, усталость — за неделю. Свежесть = (форма − усталость) / форма. Ниже −30 % — пора дать телу отдых, выше +10 % — готов к тяжёлой неделе.", style = T.secondary(12.sp))
+        Text("Синяя — форма, оранжевая — усталость. Усталость выше формы — нагружаешься больше привычного.", style = T.secondary(12.sp))
+        Explained("Форма", LoadExplain.fitness(st))
+        Explained("Усталость", LoadExplain.fatigue(st))
+        Explained("Свежесть", LoadExplain.freshness(st))
     }
-    val weekly = (0 until 8).map { w -> series.filter { (today.toEpochDay() - it.date.toEpochDay()) / 7 == (7 - w).toLong() }.sumOf { it.load } }
-    SectionLabel("Нагрузка по неделям")
-    FCard(gap = 6.dp) {
-        val prev = weekly.dropLast(1).takeLast(4).filter { it > 0 }.average().takeIf { !it.isNaN() }
-        val change = prev?.let { (weekly.last() / it - 1) * 100 }
-        Text("${weekly.last().roundToInt()} за 7 дней" + (change?.let { " · ${if (it >= 0) "+" else ""}${it.roundToInt()} % к среднему" } ?: ""), style = T.title(18.sp))
-        BarChart(weekly, F.c.load.copy(alpha = 0.5f), highlight = F.c.load, description = "Нагрузка за 8 недель")
+    if (st.history) {
+        SectionLabel("Свежесть и твоя линия отдыха")
+        FCard(gap = 6.dp) {
+            // From two weeks after the first session: before that freshness is not yet a number to read.
+            val from = loads.filter { it.value > 0 }.keys.minOrNull()?.plusDays(14)
+            val fresh = last.filter { from != null && !it.date.isBefore(from) }.ifEmpty { last.takeLast(1) }
+            LineChart(
+                listOf(Series(fresh.map { it.formPct }, F.c.accent)), height = 110.dp, reference = line,
+                xLabels = listOf(shortDate(fresh.first().date), shortDate(fresh.last().date)), description = "Свежесть по дням, линия — линия отдыха",
+            )
+            Text("Серая линия — ${Ru.pct(line)}: ниже неё нужен отдых.", style = T.secondary(12.sp))
+            Text(LoadExplain.personal(st.personal), style = T.body(14.sp))
+        }
+        SectionLabel("Когда был нужен отдых")
+        FCard(gap = 6.dp) {
+            if (st.dips.isEmpty()) Text(LoadExplain.noDips(8), style = T.body(14.sp))
+            else st.dips.reversed().forEachIndexed { i, d ->
+                if (i > 0) Hairline()
+                Text(LoadExplain.dip(d), style = T.body(14.sp).copy(color = if (d.recovered == null) F.c.warn else F.c.text))
+            }
+        }
+    }
+    val weekly = st.weeks.map { it.load }
+    val cur = st.weeks.lastOrNull()
+    if (cur != null) SectionLabel("Нагрузка по неделям")
+    if (cur != null) FCard(gap = 6.dp) {
+        Text("${LoadExplain.n(cur.load)} на этой неделе · ${LoadExplain.level(cur)}", style = T.title(18.sp))
+        BarChart(
+            weekly, F.c.load.copy(alpha = 0.5f), highlight = F.c.load, description = "Нагрузка за 8 недель",
+            xLabels = st.weeks.indices.map { if (it == 0 || it == st.weeks.lastIndex) shortDate(st.weeks[it].monday) else "" },
+        )
+        LoadExplain.usual(st)?.let { Text(it, style = T.secondary(12.sp)) }
+        st.weeks.reversed().forEach { w ->
+            Hairline()
+            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(Ru.dates(w.monday, w.monday.plusDays(6)), style = T.body(14.sp, FontWeight.SemiBold), modifier = Modifier.weight(1f))
+                    Text(
+                        LoadExplain.level(w), style = T.body(13.sp, FontWeight.SemiBold).copy(
+                            color = when (w.level) {
+                                LoadStory.Level.SPIKE -> F.c.warn
+                                LoadStory.Level.MORE -> F.c.load
+                                LoadStory.Level.NONE, LoadStory.Level.LIGHT -> F.c.text2
+                                else -> F.c.text
+                            },
+                        ),
+                    )
+                }
+                Text(LoadExplain.week(w), style = T.secondary(12.sp))
+                LoadExplain.levelNote(w)?.let { Text(it, style = T.secondary(12.sp)) }
+            }
+        }
+    }
+    FCard(gap = 4.dp) {
+        Text("Откуда числа", style = T.secondary(13.sp))
+        Text(LoadExplain.UNITS, style = T.body(13.sp))
     }
     val sets = remember(rows, today) { Stats.weeklySets(rows, today, 1) }
     // Weekly hard sets per muscle that suit the gym focus (more for hypertrophy, fewer heavy ones for strength).
@@ -423,6 +496,15 @@ private fun LoadTab() {
                 NumText(Ru.one(v), style = T.number(13.sp, FontWeight.Bold), modifier = Modifier.width(36.dp))
             }
         }
+    }
+}
+
+/** A term and what it means here. */
+@Composable
+private fun Explained(term: String, text: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(term, style = T.body(14.sp, FontWeight.SemiBold))
+        Text(text, style = T.secondary(13.sp))
     }
 }
 

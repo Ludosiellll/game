@@ -118,6 +118,7 @@ fun SettingsScreen() {
             Text("Восстановление заменяет данные на телефоне. Если включено облако, копия из облака потом добавится к ним.", style = T.secondary(12.sp))
         }
         message?.let { Banner(it, F.c.accent) }
+        ReportCard()
         Text("Форма ${BuildConfig.VERSION_NAME}. Шрифты Manrope, Onest, Rubik, JetBrains Mono, Sofia Sans Extra Condensed — SIL Open Font License.", style = T.secondary(12.sp))
     }
 }

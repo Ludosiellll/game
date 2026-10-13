@@ -152,6 +152,9 @@ fun TodayScreen() {
         }
         val history = TrainingLoad.hasHistory(loads, today)
         val form = loadSeries.lastOrNull()?.takeIf { history }?.formPct
+        // The rest line is the person's own once their sessions show where things stop going well.
+        val story by remember(today) { repo.loadStory(today) }.collectAsState(initial = null)
+        val restLine = story?.personal?.restBelow ?: forma.core.load.LoadStory.COMMON_REST
         val todays = todayItem?.planned.orEmpty()
         when {
             repo.paused(settings, today) -> PauseCard(
@@ -168,7 +171,7 @@ fun TodayScreen() {
                 },
             )
             else -> {
-                if (a == null && todays.any { todayItem?.isDone(it) != true }) FeelRow(feel, tired = (form ?: 0.0) < -30) { feel = it }
+                if (a == null && todays.any { todayItem?.isDone(it) != true }) FeelRow(feel, tired = (form ?: 0.0) < restLine) { feel = it }
                 if (feel == Feel.SICK) {
                     SickCard { feel = Feel.UNSET }
                 } else todays.forEach { s ->
@@ -194,13 +197,17 @@ fun TodayScreen() {
                 "Свежесть", form?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—",
                 when {
                     form == null -> if (loads.isEmpty()) "нет данных" else "копим данные"
-                    form > 10 -> "можно грузиться"
-                    form < -30 -> "нужен отдых"
-                    else -> "рабочий режим"
+                    else -> when (forma.core.load.LoadStory.zone(form, restLine)) {
+                        forma.core.load.LoadStory.Zone.REST -> "нужен отдых"
+                        forma.core.load.LoadStory.Zone.BUILDING -> "рабочая нагрузка"
+                        forma.core.load.LoadStory.Zone.BALANCE -> "равновесие"
+                        forma.core.load.LoadStory.Zone.FRESH -> "можно грузиться"
+                        forma.core.load.LoadStory.Zone.DETRAINING -> "форма уходит"
+                    }
                 },
                 when {
                     form == null -> F.c.text2
-                    form < -30 -> F.c.warn
+                    form < restLine -> F.c.warn
                     else -> F.c.good
                 }, Modifier.weight(1f),
             )
