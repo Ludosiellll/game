@@ -23,6 +23,8 @@ sealed interface Screen {
     @Serializable data class RunDone(val workoutId: Long) : Screen
     /** A run done without the phone, entered by hand. */
     @Serializable data class RunManual(val workout: RunWorkout) : Screen
+    /** A day of the plan in full: each session, why it is there and why on that day. */
+    @Serializable data class Day(val epochDay: Long) : Screen
     @Serializable data class Exercise(val exerciseId: String) : Screen
     @Serializable data object History : Screen
     @Serializable data class HistoryItem(val workoutId: Long) : Screen

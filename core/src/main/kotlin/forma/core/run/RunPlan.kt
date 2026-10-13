@@ -238,6 +238,8 @@ object RunPlan {
     )
 
     val goalLadderSize: Int get() = GOAL.size
+    val intervalLadderSize: Int get() = INTERVALS.size
+    val tempoLadderSize: Int get() = TEMPO.size
 
     /**
      * A race-pace rep of [meters] in laps of [lapMeters], always longer than a shorter rep of the ladder gets there: on a

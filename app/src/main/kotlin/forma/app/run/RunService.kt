@@ -269,6 +269,10 @@ class RunService : Service() {
                 }
             }
             CoachText.say(w, e)?.let { c.speak(it) }
+            // The end of a session of reps: how the laps went, in a sentence (the debrief is on the screen).
+            if (e is RunEvent.Timeline && e.cue is Cue.Finished) {
+                RunSession.tracker?.laps?.let { CoachText.lapsSummary(w, it) }?.let { c.speak(it) }
+            }
         }
     }
 

@@ -120,6 +120,25 @@ object CoachText {
         forma.core.run.PaceAlarm.Alert.SLOW -> "Медленнее цели — прибавь."
     }
 
+    /**
+     * At the end of a session of reps: the pressed laps on target, and the one thing to change if there is one. Null when
+     * nothing was judged (no laps pressed, no target).
+     */
+    fun lapsSummary(w: RunWorkout, laps: List<Lap>): String? {
+        if (w.type != RunType.GOAL_PACE && w.type != RunType.INTERVALS && w.type != RunType.TEMPO) return null
+        val judged = laps.filter { it.rep != null && !it.auto && (it.fast != null || it.slow != null) }
+        if (judged.size < 2) return null
+        val on = judged.count { it.verdict == 0 }
+        val fast = judged.count { it.verdict == -1 }
+        val slow = judged.count { it.verdict == 1 }
+        return "Кругов в темпе: $on из ${judged.size}." + when {
+            fast * 10 >= judged.size * 3 -> " Много быстрых — в следующий раз ровнее, по писку."
+            slow * 10 >= judged.size * 3 -> " Много медленных — темп пока тяжёл, это нормально."
+            on == judged.size -> " Ровно, как надо."
+            else -> ""
+        } + " Разбор — на экране."
+    }
+
     /** Said every minute while the plan waits for the start press. */
     fun waitingReminder(w: RunWorkout): String = "Жду старта: нажми «Круг», когда побежишь."
 

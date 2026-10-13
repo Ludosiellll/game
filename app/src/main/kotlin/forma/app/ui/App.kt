@@ -138,6 +138,7 @@ private fun ScreenFor(screen: Screen) {
         Screen.RunActive -> RunActiveScreen()
         is Screen.RunDone -> RunDoneScreen(screen.workoutId)
         is Screen.RunManual -> forma.app.ui.screens.RunManualScreen(screen.workout)
+        is Screen.Day -> forma.app.ui.screens.DayScreen(java.time.LocalDate.ofEpochDay(screen.epochDay))
         is Screen.Exercise -> ExerciseScreen(screen.exerciseId)
         Screen.History -> HistoryScreen()
         is Screen.HistoryItem -> HistoryItemScreen(screen.workoutId)

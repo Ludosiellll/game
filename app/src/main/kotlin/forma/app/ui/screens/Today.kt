@@ -270,12 +270,17 @@ fun TodayScreen() {
 
 @Composable
 private fun WeekStrip(week: List<DayItem>, today: LocalDate, program: Program) {
+    val nav = LocalNav.current
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         week.forEach { d ->
             val isToday = d.date == today
             val shape = RoundedCornerShape(if (F.shape.pill) 14.dp else F.shape.radiusSmall)
             val doneAll = d.planned.isNotEmpty() && d.planned.all { d.isDone(it) }
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // A tap opens the day in full: the session as it will be, what it is for, why on this day.
+            Column(
+                Modifier.weight(1f).clip(shape).clickable(onClickLabel = "Подробнее о дне") { nav.push(Screen.Day(d.date.toEpochDay())) },
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Text(labelText(dayShort(d.date.dayOfWeek)), style = T.label().copy(color = if (isToday) F.c.accent else F.c.text3))
                 var m = Modifier.fillMaxWidth().height(56.dp).clip(shape)
                 m = when {

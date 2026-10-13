@@ -129,6 +129,7 @@ fun HistoryItemScreen(workoutId: Long) {
             val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
             if (summary?.manual == true) Text("Внесено вручную: бег без телефона.", style = T.secondary(14.sp))
             summary?.cadence?.let { Text("Каденс: $it шагов в минуту", style = T.secondary(14.sp)) }
+            if (r != null) RunDebrief(workout, r, summary)
             if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
             if (summary != null && summary.laps.any { it.rep == null }) LapsEditor(workout.id, summary.laps)
             // On the road: the time of each kilometre, as the voice said it (active time, the tracker's distance).
@@ -215,5 +216,44 @@ private fun KmSplitsCard(splits: List<Double>) {
         )
         Text(splits.mapIndexed { i, s -> "${i + 1} км — ${Ru.pace(s)}" }.joinToString(" · "), style = T.number(13.sp, FontWeight.SemiBold))
         Text("Выше столбик — медленнее километр.", style = T.secondary(12.sp))
+    }
+}
+
+/**
+ * The run talked through: how it went against what it was for (laps on target and how even, the easy pace kept, the
+ * trial against the goal), the effort against the plan, what it trains and how long before the next hard day.
+ */
+@Composable
+fun RunDebrief(workout: forma.app.data.WorkoutEntity, run: RunEntity, summary: RunSummary?) {
+    val repo = LocalRepo.current
+    val profile by repo.store.profile.collectAsState(initial = null)
+    val plan = remember(run.planJson) { runCatching { AppJson.decodeFromString(forma.core.run.RunWorkout.serializer(), run.planJson) }.getOrNull() } ?: return
+    val items = remember(plan, run, summary, workout.rpe, profile?.runGoal) {
+        val trial = summary?.outcomes?.filterIsInstance<forma.core.run.RunOutcome.TestTime>()?.firstOrNull()?.let { it.meters to it.seconds }
+        forma.core.run.RunReview.of(
+            forma.core.run.RunReview.Run(
+                plan, summary?.laps.orEmpty(), workout.rpe, run.movingSec, run.avgPace, run.workPace, trial, run.completed,
+            ),
+            profile?.runGoal,
+        )
+    }
+    if (items.isEmpty()) return
+    SectionLabel("Разбор")
+    FCard(gap = 0.dp) {
+        items.forEachIndexed { i, it ->
+            if (i > 0) Hairline()
+            Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    it.title, style = T.body(15.sp, FontWeight.Bold).copy(
+                        color = when (it.tone) {
+                            1 -> F.c.good
+                            -1 -> F.c.warn
+                            else -> F.c.text
+                        },
+                    ),
+                )
+                Text(it.text, style = T.body(15.sp))
+            }
+        }
     }
 }

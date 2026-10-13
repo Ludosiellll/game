@@ -85,7 +85,13 @@ fun PlanScreen() {
             (1..7).forEach { day ->
                 if (day > 1) Hairline()
                 val sessions = p.week.on(day)
-                Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.Top) {
+                val dayDate = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).plusDays(day - 1L)
+                // A tap opens the day in full: what each session is, what it is for, why on this day.
+                Row(
+                    Modifier.fillMaxWidth().clickable(onClickLabel = "Подробнее о дне") { nav.push(Screen.Day(dayDate.toEpochDay())) }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
                     Text(DAY_SHORT[day - 1], style = T.body(15.sp, FontWeight.ExtraBold).copy(color = if (sessions.isEmpty()) F.c.text3 else F.c.text), modifier = Modifier.width(40.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (sessions.isEmpty()) Text("Отдых", style = T.body(15.sp).copy(color = F.c.text3))
@@ -107,9 +113,11 @@ fun PlanScreen() {
                             }
                         }
                     }
+                    Icon(Ic.chevron, null, tint = F.c.text3, modifier = Modifier.padding(top = 2.dp).size(18.dp))
                 }
             }
         }
+        Text("Нажми на день — там тренировка целиком: что, зачем и почему в этот день.", style = T.secondary(13.sp))
 
         GhostButton("Поменять дни зала и бега", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 48.dp)
 

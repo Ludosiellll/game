@@ -315,7 +315,7 @@ internal fun freeTarget(text: String, lapM: Int?): forma.core.run.PaceRange? {
 }
 
 /** Collapses the segment list: "Ускорения 5 × 3:00" instead of ten rows; on a stadium in laps. Third: the target. */
-private fun groupSegments(w: RunWorkout): List<Triple<String, String, String?>> {
+internal fun groupSegments(w: RunWorkout): List<Triple<String, String, String?>> {
     val out = mutableListOf<Triple<String, String, String?>>()
     val lapM = w.lapMeters
     fun target(s: forma.core.run.Segment): String? {
@@ -939,7 +939,13 @@ fun RunDoneScreen(workoutId: Long) {
             ) { Text("Не сохранять", style = T.secondary(14.sp)) }
         } else if (s != null) {
             Text("Сохранено", style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
-            SectionLabel("Что дальше")
+            // How it went and why, from what was saved.
+            val w by remember(s.first) { repo.db.workouts().observe(s.first) }.collectAsState(initial = null)
+            val run by androidx.compose.runtime.produceState<forma.app.data.RunEntity?>(null, s.first) { value = repo.db.runs().get(s.first) }
+            val savedW = w
+            val savedRun = run
+            if (savedW != null && savedRun != null) RunDebrief(savedW, savedRun, s.second)
+            SectionLabel("Что дальше в плане")
             FCard(gap = 0.dp) {
                 s.second.outcomes.forEachIndexed { i, o ->
                     if (i > 0) Hairline()
