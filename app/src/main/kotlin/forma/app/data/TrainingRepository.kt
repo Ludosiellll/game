@@ -198,6 +198,52 @@ class TrainingRepository(
 
         /** Where the sets, reps and rest of an exercise added to day [templateId] for good are kept. */
         fun addedKey(templateId: String, exerciseId: String) = "$templateId:$exerciseId"
+
+        /** Sets, reps and rest of an exercise added to a session: 3 sets in a range that suits it. */
+        internal fun addedSpec(exerciseId: String): SlotSpec {
+            val ex = Catalog[exerciseId]
+            return when {
+                ex.load == LoadKind.TIMED -> SlotSpec(ex.id, 3, 20, 60, 1, 60, SlotRole.ACCESSORY)
+                ex.compound -> SlotSpec(ex.id, 3, 6, 10, 2, 120, SlotRole.SECONDARY)
+                else -> SlotSpec(ex.id, 3, 10, 15, 2, 75, SlotRole.ACCESSORY)
+            }
+        }
+
+        /** The plan's slot as the user set it for good: its sets, reps and rest, the exercise put in its place. */
+        internal fun tuned(spec: SlotSpec, settings: Settings): SlotSpec = swapped(overrides(spec, settings), settings)
+
+        /**
+         * Sets, rep range and rest the user set for good under [id]: the plan's exercise id, or [addedKey] for one added to a
+         * day (the same exercise added to two days, or also in another day's plan, keeps its own numbers on each).
+         */
+        internal fun overrides(spec: SlotSpec, settings: Settings, id: String = spec.exerciseId): SlotSpec {
+            val sets = settings.sets[id]?.coerceIn(1, MAX_SETS) ?: spec.sets
+            val reps = settings.reps[id]?.takeIf { it.size == 2 && it[0] >= 1 && it[0] <= it[1] && it[1] <= 100 }
+            val rest = settings.rest[id]?.coerceIn(MIN_REST, MAX_REST) ?: spec.restSec
+            return spec.copy(sets = sets, repMin = reps?.get(0) ?: spec.repMin, repMax = reps?.get(1) ?: spec.repMax, restSec = rest)
+        }
+
+        /** The plan's slot with the exercise the user put in its place for good, if any. */
+        internal fun swapped(spec: SlotSpec, settings: Settings): SlotSpec {
+            val id = settings.swaps[spec.exerciseId]?.let { Catalog.moved[it] ?: it }?.takeIf { Catalog.find(it)?.archived == false } ?: return spec
+            return spec.copy(exerciseId = id, increment = null)
+        }
+
+        /** Exercises added to template [templateId] for good that can still be done (an own exercise may be archived). */
+        internal fun addedFor(templateId: String, settings: Settings): List<String> =
+            settings.added[templateId].orEmpty().map { Catalog.moved[it] ?: it }.filter { Catalog.find(it)?.archived == false }
+
+        /**
+         * [program] with [Program.shared]: its templates as done with [settings] — what a friend copying it gets. The
+         * same rules as a session's plan: taken out for good stay out (never all), swaps and own numbers in, added ones after.
+         */
+        fun shareable(program: Program, settings: Settings): Program = program.copy(
+            shared = program.templates.map { t ->
+                val added = addedFor(t.id, settings)
+                val kept = t.slots.filter { it.exerciseId !in settings.removed }.ifEmpty { if (added.isEmpty()) t.slots else emptyList() }
+                t.copy(slots = kept.map { tuned(it, settings) } + added.map { overrides(addedSpec(it), settings, addedKey(t.id, it)) })
+            },
+        )
     }
 
     suspend fun liftPlan(templateId: String, date: LocalDate, forceDeload: Boolean = false): LiftPlan {
@@ -258,15 +304,7 @@ class TrainingRepository(
     fun addedTo(templateId: String, settings: Settings): List<String> =
         settings.added[templateId].orEmpty().map { Catalog.moved[it] ?: it }.filter { Catalog.find(it)?.archived == false }
 
-    /** Sets, reps and rest of an exercise added to a session: 3 sets in a range that suits it. */
-    private fun addedSpec(exerciseId: String): SlotSpec {
-        val ex = Catalog[exerciseId]
-        return when {
-            ex.load == LoadKind.TIMED -> SlotSpec(ex.id, 3, 20, 60, 1, 60, SlotRole.ACCESSORY)
-            ex.compound -> SlotSpec(ex.id, 3, 6, 10, 2, 120, SlotRole.SECONDARY)
-            else -> SlotSpec(ex.id, 3, 10, 15, 2, 75, SlotRole.ACCESSORY)
-        }
-    }
+
 
     private suspend fun deloadOn(date: LocalDate, force: Boolean): Boolean {
         val program = store.programNow() ?: return force
@@ -274,25 +312,11 @@ class TrainingRepository(
         return force || ProgramGenerator.isDeloadWeek(program, date) || (reactive != null && date.toEpochDay() in reactive until reactive + 7)
     }
 
-    /** The plan's slot as the user set it for good: its sets, reps and rest, the exercise put in its place. */
-    private fun tuned(spec: SlotSpec, settings: Settings): SlotSpec = swapped(overrides(spec, settings), settings)
 
-    /**
-     * Sets, rep range and rest the user set for good under [id]: the plan's exercise id, or [addedKey] for one added to a
-     * day (the same exercise added to two days, or also in another day's plan, keeps its own numbers on each).
-     */
-    private fun overrides(spec: SlotSpec, settings: Settings, id: String = spec.exerciseId): SlotSpec {
-        val sets = settings.sets[id]?.coerceIn(1, MAX_SETS) ?: spec.sets
-        val reps = settings.reps[id]?.takeIf { it.size == 2 && it[0] >= 1 && it[0] <= it[1] && it[1] <= 100 }
-        val rest = settings.rest[id]?.coerceIn(MIN_REST, MAX_REST) ?: spec.restSec
-        return spec.copy(sets = sets, repMin = reps?.get(0) ?: spec.repMin, repMax = reps?.get(1) ?: spec.repMax, restSec = rest)
-    }
 
-    /** The plan's slot with the exercise the user put in its place for good, if any. */
-    private fun swapped(spec: SlotSpec, settings: Settings): SlotSpec {
-        val id = settings.swaps[spec.exerciseId]?.let { Catalog.moved[it] ?: it }?.takeIf { Catalog.find(it)?.archived == false } ?: return spec
-        return spec.copy(exerciseId = id, increment = null)
-    }
+
+
+
 
     /** One exercise of a session: today's prescription from its own progress, the stored estimate or a start hint. */
     private suspend fun buildItem(position: Int, spec: SlotSpec, date: LocalDate, deload: Boolean): LiftItem {
@@ -714,8 +738,10 @@ class TrainingRepository(
     suspend fun copyProgram(program: Program, from: String, exercises: List<Exercise> = emptyList()): Boolean {
         importExercises(exercises)
         val profile = store.profileNow() ?: return false
-        // Whatever the friend's phone stored, only a program that works here is taken.
-        val safe = program.checked { id -> Catalog.find(id)?.archived == false } ?: return false
+        // As the friend does it (their swaps, sets... put in on their phone) when their phone sent that; whatever it stored,
+        // only a program that works here is taken.
+        val asDone = program.copy(templates = program.shared ?: program.templates, shared = null)
+        val safe = asDone.checked { id -> Catalog.find(id)?.archived == false } ?: return false
         val days = safe.week.days.filter { it.sessions.isNotEmpty() }.map { it.day }.toSet().ifEmpty { profile.trainingDays }
         // The friend's week is the week now: the own days chosen before are not (the plan line and the grid show these).
         val updated = profile.copy(aim = safe.aim, goal = safe.aim.nearestGoal(), trainingDays = days, gymDays = null, runDays = null)
@@ -727,6 +753,8 @@ class TrainingRepository(
                 createdEpochDay = today().toEpochDay(), copiedFrom = from.take(40), runCaps = own.runCaps,
             ),
         )
+        // The own edits of the plan before belong to that plan: the friend's exercises are taken as they are.
+        updateSettings { it.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap()) }
         onChange()
         return true
     }

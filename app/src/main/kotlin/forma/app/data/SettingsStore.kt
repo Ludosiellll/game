@@ -107,7 +107,12 @@ class SettingsStore(context: Context, name: String = "forma") {
     /** Raw JSON of every stored document that the cloud copies. */
     suspend fun syncDocs(): Map<String, String> {
         val p = store.data.first()
-        return synced.mapNotNull { (cloudKey, v) -> p[v.first]?.let { cloudKey to it } }.toMap()
+        return synced.mapNotNull { (cloudKey, v) -> p[v.first]?.let { cloudKey to it } }.toMap().let { docs ->
+            // The program goes up with its templates as done here (swaps, own sets...): a friend copying it gets those.
+            val program = docs["program"]?.let { runCatching { AppJson.decodeFromString(Program.serializer(), it) }.getOrNull() }
+            if (program == null) docs
+            else docs + ("program" to AppJson.encodeToString(Program.serializer(), TrainingRepository.shareable(program, settingsNow())))
+        }
     }
 
     /** Stores a document that came from the cloud. False when the key is unknown or the JSON does not fit the type. */

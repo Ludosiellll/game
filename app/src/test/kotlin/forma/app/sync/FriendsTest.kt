@@ -117,6 +117,32 @@ class FriendsTest {
         assertTrue(repo.finishLift(id, 7).reports.isNotEmpty())
     }
 
+    /**
+     * Denis and Egor, 13.10: Egor copied Denis's program and got other exercises — Denis's swaps (the chest press for the
+     * bench...) lived in his phone's settings, never in the program. The program now goes up with them put in.
+     */
+    @Test fun aCopiedProgramHasTheExercisesTheFriendDoes() = runBlocking {
+        val theirs = friendProgram()
+        val t = theirs.templates[0]
+        val first = t.slots[0].exerciseId
+        val dropped = t.slots[1].exerciseId
+        val friendSettings = forma.app.data.Settings(swaps = mapOf(first to "chest_press"), removed = setOf(dropped), sets = mapOf(first to 5))
+        // What the friend's phone uploads.
+        val uploaded = TrainingRepository.shareable(theirs, friendSettings)
+        val json = AppJson.encodeToString(forma.core.plan.Program.serializer(), uploaded)
+        // Own edits made before on this phone: they must not land on the friend's exercises.
+        repo.updateSettings { it.copy(swaps = mapOf("chest_press" to "bench"), removed = setOf("chest_press")) }
+        assertTrue(repo.copyProgram(AppJson.decodeFromString(forma.core.plan.Program.serializer(), json), "Денис", listOf(landmine)))
+        val program = repo.store.programNow()!!
+        val copied = program.templates[0].slots
+        assertEquals("chest_press", copied[0].exerciseId)
+        assertEquals(5, copied[0].sets)
+        assertTrue(copied.none { it.exerciseId == dropped })
+        val plan = repo.liftPlan(program.templates[0].id, LocalDate.ofEpochDay(program.startEpochDay))
+        assertTrue(plan.items.any { it.exerciseId == "chest_press" }, plan.items.map { it.exerciseId }.toString())
+        assertTrue(repo.store.settingsNow().swaps.isEmpty())
+    }
+
     @Test fun aFriendsProgramBecomesOwn() = runBlocking {
         repo.copyProgram(friendProgram(), "Иван", listOf(landmine))
         val program = repo.store.programNow()!!

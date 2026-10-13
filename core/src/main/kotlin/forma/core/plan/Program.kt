@@ -53,6 +53,12 @@ data class Program(
     val copiedFrom: String? = null,
     /** Version of the planner that laid this week out (see [ProgramGenerator.PLANNER]): an older one is laid out again. */
     val planner: Int = 0,
+    /**
+     * The templates as their owner does them — swaps, exercises taken out or added, sets, reps and rest of the phone's
+     * settings put in — written on upload for friends who copy the program (the settings themselves are not shared).
+     * Null on programs uploaded before it.
+     */
+    val shared: List<Template>? = null,
 ) {
     fun template(id: String): Template = templates.first { it.id == id }
 
