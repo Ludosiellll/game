@@ -53,7 +53,7 @@ object RunExplain {
                     "длиннее самой длинной пробежки за месяц и до потолка плана. Тяжело (8 и выше) или не до конца — на 5 минут короче.",
             )
             RunType.GOAL_PACE -> Why(
-                purpose = (if (middle) "Темп забега: ${goal!!.meters} м за ${Ru.clock(goal.seconds)} — ${paceWords(w, goal)}. " else "Темп забега. ") +
+                purpose = (if (middle) stepWords(w, goal!!) else "Темп забега. ") +
                     "Отрезки короче забега и с отдыхом: темп держится, и навык ровного бега закрепляется без перегрузки. " +
                     "От тренировки к тренировке отрезков больше, потом отдых короче, потом отрезки длиннее — до забега из двух " +
                     "частей, потом контрольный.",
@@ -140,6 +140,21 @@ object RunExplain {
         val lapM = w.lapMeters
         return if (lapM != null) "Круг — не быстрее ${Ru.lap(Track.lapSec(pace.fast.toDouble(), lapM))}. "
         else "Не быстрее ${Ru.pace(pace.fast.toDouble())} на км. "
+    }
+
+    /**
+     * The pace of the reps against the goal: the goal's own once within reach; before that a step toward it (the race pace
+     * of the current form a little faster), said with both times.
+     */
+    private fun stepWords(w: RunWorkout, goal: RunGoal): String {
+        val pace = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.pace?.let { (it.fast + it.slow) / 2.0 } ?: goal.pace
+        val goalWords = "${goal.meters} м за ${Ru.clock(goal.seconds)} — ${paceWords(w, goal)}"
+        if (pace <= goal.pace + 1.0) return "Темп забега: $goalWords. "
+        val lapM = w.lapMeters
+        val step = if (lapM != null) "круг за ${Ru.lap(Track.lapSec(pace, lapM))}" else "${Ru.pace(pace)} на км"
+        return "Ступень к цели: темп забега ${goal.meters} м за ${Ru.clock((pace * goal.meters / 1000).roundToInt())}, $step — " +
+            "на 2,5 % быстрее твоей формы по последнему контрольному. Цель — $goalWords: отрезки в темпе цели сейчас не " +
+            "держались бы, а ступень тяжёлая, но по силам. После каждого контрольного ступень ближе к цели. "
     }
 
     /** The goal pace as the runner checks it: the lap time on a stadium, the pace a km on the road. */

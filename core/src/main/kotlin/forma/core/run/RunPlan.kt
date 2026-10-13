@@ -70,8 +70,17 @@ data class RunState(
     val testSoon: Boolean = false,
     /** A test was run on this day but could not be counted (no time): the next one waits two weeks, not one. */
     val lastTrialTryDay: Long? = null,
+    /** Efforts given to the last easy runs done in full (at most 8): the runner's own scale, see [rpeOffset]. */
+    val easyRpes: List<Int> = emptyList(),
 ) {
     val canRunContinuously: Boolean get() = walkStage < 0
+
+    /**
+     * How far the runner's effort scale runs above the plan's: easy runs are meant to feel light to moderate (up to 5); a
+     * median of 6–7 over five or more of them is a scale that rates everything harder (seen in half-year simulations: such
+     * a runner never got past the first rungs while holding every pace). 0–2, added to the plan's effort thresholds.
+     */
+    val rpeOffset: Int get() = easyRpes.takeIf { it.size >= 5 }?.sorted()?.let { it[it.size / 2] - 5 }?.coerceIn(0, 2) ?: 0
 
     /** Longest run in the 30 days before [day], minutes; null if there was none. */
     fun longestRecent(day: Long): Int? = recent.filter { it.day in (day - 30) until day }.maxOfOrNull { it.minutes }
@@ -146,6 +155,8 @@ sealed interface RunOutcome {
     @Serializable data object TooFast : RunOutcome
     /** The reps were measured more than 3 % slower than their target: the step is not taken, whatever the effort. */
     @Serializable data object TooSlow : RunOutcome
+    /** The runner rates easy runs harder than they are meant to feel: the effort thresholds are [offset] higher. */
+    @Serializable data class OwnScale(val offset: Int) : RunOutcome
     /** No lap pressed and no GPS: the pace was not measured, only the effort and the reps decided. */
     @Serializable data object PaceUnknown : RunOutcome
     /** A lighter week's shorter session: done, and the ladder stays where it is. */
@@ -394,7 +405,7 @@ object RunPlan {
         var reps: List<Double> = if (last) listOf(goal.meters * 2 / 3.0, goal.meters / 3.0) else step.reps.map { it * scale }
         // A lighter week: a quarter fewer reps (never the two parts of the race).
         if (cutback && !last) reps = reps.dropLast(max(1, reps.size / 4))
-        val pace = goal.pace
+        val pace = stepPace(state, goal)
         val range = PaceRange((pace - 3).roundToInt(), (pace + 3).roundToInt())
         val lapSec = lapMeters?.let { Track.lapSec(pace, it) }
         val p = paces(state)
@@ -429,13 +440,35 @@ object RunPlan {
                 "Нажимай «Круг» на линии — по кругам приложение решит, что дальше." +
                 (work.lastOrNull()?.laps?.takeIf { it % 1.0 != 0.0 }?.let { " Отрезок в ${Ru.laps(it)} начни ${startWords(it % 1.0)}." } ?: "")
         } else {
-            "Отрезки в темпе цели, ${Ru.pace(pace)} на км: ровно, не быстрее. Между ними $rest шагом или трусцой."
+            "Отрезки в темпе ${if (pace > goal.pace + 0.5) "ступени" else "цели"}, ${Ru.pace(pace)} на км: ровно, не быстрее. " +
+                "Между ними $rest шагом или трусцой."
+        }.let { n ->
+            // Far from the goal: the step toward it, said with both times.
+            if (pace > goal.pace + 0.5) {
+                "Ступень к цели: темп забега ${goal.meters} м за ${Ru.clock((pace * goal.meters / 1000).roundToInt())} " +
+                    "(цель — ${Ru.clock(goal.seconds)}). После каждого контрольного ступень ближе к цели. $n"
+            } else n
         }
         return RunWorkout(
             RunType.GOAL_PACE, title, segs, note, targetRpe = if (stage <= 2) 7 else 8, stage = stage, lapMeters = lapMeters,
             cutback = reps.size < (if (last) 2 else step.reps.size),
         )
     }
+
+    /**
+     * The pace of race-pace reps: a step toward the goal. Far from it, reps at the goal's own pace fail session after session
+     * (seen in half-year simulations: a 6:40 runner stayed on the first rung all along); a coach runs them at the race pace
+     * of the current form a little faster — about what one block of training adds (2.5 %) — so they are hard but held, and
+     * the step catches up with the goal with every trial. Within reach, and before any trial, the goal's own pace.
+     */
+    fun stepPace(state: RunState, goal: RunGoal): Double {
+        val v = state.vdot ?: return goal.pace
+        val current = Vdot.predictSeconds(v, goal.meters.toDouble()) / (goal.meters / 1000.0)
+        return max(goal.pace, current * (1 - STEP_AHEAD))
+    }
+
+    /** How far ahead of the current race pace the race-pace step is. */
+    const val STEP_AHEAD = 0.025
 
     /**
      * Time trial over the goal distance, run evenly: the beeps give the lap time of the current fitness (or of the goal
@@ -642,6 +675,12 @@ object RunPlan {
             returnEasy = max(0, state.returnEasy - 1),
         )
         val done = r.completed >= 0.95
+        // The runner's own effort scale (from easy runs), applied to the thresholds below; said when it is not the plan's.
+        val offset = state.rpeOffset
+        val rpe = (r.rpe - offset).coerceAtLeast(1)
+        if (offset > 0 && w.type != RunType.TEST && w.type != RunType.RUN_WALK && w.type != RunType.FREE) out += RunOutcome.OwnScale(offset)
+        // Easy runs done in full set the scale; a lighter one for a bad day too (it is easy by design).
+        if (w.type == RunType.EASY && done) s = s.copy(easyRpes = (state.easyRpes + r.rpe).takeLast(8))
         // A run made lighter for a bad day counts as running, but moves no ladder.
         if (w.light) return RunAfter(s, out)
         when (w.type) {
@@ -675,8 +714,8 @@ object RunPlan {
                 val extra = minutes - w.workSeconds / 60
                 val step = if (extra >= 6) (extra / 2).coerceIn(3, 8) else 3
                 s = when {
-                    r.rpe >= 7 -> s.copy(easyMinutes = max(20, state.easyMinutes - 5)).also { out += RunOutcome.Shorter(it.easyMinutes) }
-                    done && full && r.rpe <= 5 && state.easyMinutes < caps.easyMax ->
+                    rpe >= 7 -> s.copy(easyMinutes = max(20, state.easyMinutes - 5)).also { out += RunOutcome.Shorter(it.easyMinutes) }
+                    done && full && rpe <= 5 && state.easyMinutes < caps.easyMax ->
                         s.copy(easyMinutes = min(caps.easyMax, state.easyMinutes + step)).also { out += RunOutcome.Longer(it.easyMinutes) }
                     else -> s.also { out += RunOutcome.Same(state.easyMinutes) }
                 }
@@ -689,8 +728,8 @@ object RunPlan {
                 val step = if (extra >= 10) (extra / 2).coerceIn(5, 10) else 5
                 val next = minOf(caps.longMax, state.longMinutes + step, (longest * 1.10).toInt())
                 s = when {
-                    r.rpe >= 8 || !done -> s.copy(longMinutes = max(30, state.longMinutes - 5)).also { out += RunOutcome.Shorter(it.longMinutes) }
-                    r.rpe <= 6 && next > state.longMinutes && w.workSeconds >= state.longMinutes * 60 ->
+                    rpe >= 8 || !done -> s.copy(longMinutes = max(30, state.longMinutes - 5)).also { out += RunOutcome.Shorter(it.longMinutes) }
+                    rpe <= 6 && next > state.longMinutes && w.workSeconds >= state.longMinutes * 60 ->
                         s.copy(longMinutes = next).also { out += RunOutcome.Longer(it.longMinutes) }
                     else -> s.also { out += RunOutcome.Same(state.longMinutes) }
                 }
@@ -709,10 +748,12 @@ object RunPlan {
                 val tooSlow = repTarget != null && r.workPace != null && r.workPace > repTarget * 1.03
                 if (tooSlow) out += RunOutcome.TooSlow
                 if (r.workPace == null) out += RunOutcome.PaceUnknown
-                val success = !tooSlow && r.rpe <= w.targetRpe && (r.reps?.let { it >= w.reps && r.completed >= 0.9 } ?: done)
+                // The runner's own scale counts only where the pace was measured and held: the pace is the proof.
+                val rq = if (r.workPace != null && !tooSlow) rpe else r.rpe
+                val success = !tooSlow && rq <= w.targetRpe && (r.reps?.let { it >= w.reps && r.completed >= 0.9 } ?: done)
                 // On pace: measured, not slower than the target, and with effort to spare — only that says the form
                 // has outgrown the paces.
-                val onPace = success && target != null && r.workPace != null && r.workPace <= target && r.rpe <= w.targetRpe - 1
+                val onPace = success && target != null && r.workPace != null && r.workPace <= target && rq <= w.targetRpe - 1
                 var stage = cur
                 var fails = state.qualityFails
                 var streak = state.qualityOnPace
@@ -813,11 +854,12 @@ object RunPlan {
                 val cur = state.goalStage.coerceIn(0, GOAL.lastIndex)
                 if (pace == null) out += RunOutcome.PaceUnknown
                 if (slow) out += RunOutcome.TooSlow
-                if (enough && r.rpe <= 8 && !slow && w.cutback) {
+                val rq = if (pace != null && !slow) rpe else r.rpe
+                if (enough && rq <= 8 && !slow && w.cutback) {
                     // A lighter week's shorter session: done, and the ladder waits for the full step.
                     out += RunOutcome.LighterWeek("goal")
                     s = s.copy(goalFails = 0)
-                } else if (enough && r.rpe <= 8 && !slow) {
+                } else if (enough && rq <= 8 && !slow) {
                     // Extra reps at the goal pace: the next step is too small. Faster than the goal is not a reason to
                     // jump: even laps are the skill of this distance, and the note asks for exactly that.
                     if (fast) out += RunOutcome.TooFast

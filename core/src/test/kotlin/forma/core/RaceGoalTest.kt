@@ -146,7 +146,8 @@ class RaceGoalTest {
         val st = RunState(walkStage = -1, vdot = 44.0)
         val w = RunPlan.goalPace(st, goal, lap)
         fun after(s: RunState, r: RunResult) = RunPlan.after(s, w, r, caps, day = 10, goal = goal)
-        val target = goal.pace
+        // The reps' own pace: a step toward the goal while the form is below it.
+        val target = w.segments.first { it.kind == SegmentKind.WORK }.pace!!.let { (it.fast + it.slow) / 2.0 }
         // All six on pace at 7: next step.
         assertEquals(1, after(st, RunResult(1.0, 7, 1800, workPace = target, reps = 6)).state.goalStage)
         // Two extra reps: two steps.
@@ -369,7 +370,7 @@ class RaceGoalTest {
     @Test fun repsFasterThanTheGoalAreOneStepAndAHintNotTwoSteps() {
         val st = RunState(walkStage = -1, vdot = 45.0, goalStage = 2, runs = 4)
         val w = RunPlan.goalPace(st, goal, lap)
-        val target = goal.pace
+        val target = w.segments.first { it.kind == SegmentKind.WORK }.pace!!.let { (it.fast + it.slow) / 2.0 }
         // 2.5 % faster at a moderate effort: one step, and "keep the lap time".
         val fast = RunPlan.after(st, w, RunResult(1.0, 7, w.totalSeconds, workPace = target * 0.975), caps, day = 30, goal = goal)
         assertEquals(3, fast.state.goalStage)

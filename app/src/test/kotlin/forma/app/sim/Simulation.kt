@@ -19,6 +19,23 @@ import java.time.ZoneId
 import kotlin.math.abs
 import kotlin.math.max
 
+/** One run as the app planned it and the runner ran it; the plan's state after. */
+data class RunRecord(
+    val day: LocalDate,
+    val type: forma.core.run.RunType,
+    val title: String,
+    val stage: Int,
+    val cutback: Boolean,
+    val result: RunResult,
+    val appVdot: Double?,
+    val trueVdot: Double?,
+    /** Demanded over holdable for a session of reps (>1: could not hold the pace). */
+    val x: Double?,
+    val outcomes: List<String>,
+    val easyMinutes: Int,
+    val longMinutes: Int,
+)
+
 /** One exercise in one simulated session. */
 data class LiftRecord(
     val day: LocalDate,
@@ -59,6 +76,8 @@ class Simulation(
     val start: LocalDate = LocalDate.of(2026, 1, 5),
     /** Reference run: every set at the ideal weight for the person's true strength (what a perfect coach would give). */
     private val oracle: Boolean = false,
+    /** Runs as a virtual runner runs them (else: done as planned at the planned effort). */
+    val runner: VirtualRunner? = null,
 ) {
     private val zone = ZoneId.of("Europe/Moscow")
     private var clock = start.atTime(8, 0).atZone(zone).toInstant().toEpochMilli()
@@ -70,6 +89,7 @@ class Simulation(
         private set
     var runsDone = 0
         private set
+    val runLog = mutableListOf<RunRecord>()
 
     suspend fun setUp() {
         store.clear()
@@ -92,11 +112,12 @@ class Simulation(
             val d = from.plusDays(i.toLong())
             beforeDay(d)
             athlete.newDay(d.toEpochDay())
+            runner?.newDay(d.toEpochDay())
             if (!trains(d)) continue
             val program = store.programNow() ?: error("no program")
             for (s in program.week.on(d.dayOfWeek.value)) {
                 clock = at(d, 18)
-                if (s.kind == SessionKind.LIFT) lift(s.templateId!!, d) else run(s.kind, d)
+                if (s.kind == SessionKind.LIFT) lift(s.templateId!!, d) else if ((runner?.sickDays ?: 0) == 0) run(s.kind, d)
             }
         }
     }
@@ -104,6 +125,7 @@ class Simulation(
     private suspend fun lift(templateId: String, d: LocalDate) {
         val id = repo.startLift(templateId, d)
         val plan = repo.planOf(db.workouts().get(id)!!)!!
+        if (store.programNow()!!.templates.first { it.id == templateId }.legs) runner?.legs(d.toEpochDay())
         val records = mutableListOf<LiftRecord>()
         for (item in plan.items) {
             val ex = Catalog[item.exerciseId]
@@ -148,7 +170,10 @@ class Simulation(
 
     private suspend fun run(kind: SessionKind, d: LocalDate) {
         val w = repo.runFor(kind, d)
-        repo.saveRun(w, RunResult(1.0, w.targetRpe, w.totalSeconds), at(d, 7), emptyList(), d)
+        val r = runner?.perform(w, d.toEpochDay()) ?: RunResult(1.0, w.targetRpe, w.totalSeconds)
+        val (_, summary) = repo.saveRun(w, r, at(d, 7), emptyList(), d)
+        val st = store.runStateNow()
+        runLog += RunRecord(d, w.type, w.title, w.stage, w.cutback, r, st.vdot, runner?.vdot, runner?.quality?.lastOrNull()?.takeIf { w.type in setOf(forma.core.run.RunType.GOAL_PACE, forma.core.run.RunType.INTERVALS, forma.core.run.RunType.TEMPO) }?.second, summary.outcomes.map { it.toString() }, st.easyMinutes, st.longMinutes)
         runsDone++
     }
 
