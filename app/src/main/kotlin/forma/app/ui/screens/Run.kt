@@ -711,8 +711,9 @@ fun RunActiveScreen() {
                     style = T.secondary(14.sp),
                 )
             }
-            // The key reaches the app only while its screen is on (see LapKey): said, not found out on the line.
-            if (lapM != null && !finished) Text("Круг — кнопкой громкости вниз, пока экран включён.", style = T.secondary(13.sp))
+            // A headset's button works with the screen off too (HeadsetLap); the volume key reaches the app only while its
+            // screen is on (LapKey): said, not found out on the line.
+            if (lapM != null && !finished) Text("Круг — кнопкой гарнитуры; громкостью вниз — пока экран включён.", style = T.secondary(13.sp))
         }
 
         Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
