@@ -47,10 +47,15 @@ fun BodyScreen() {
     var value by remember(list.isEmpty()) { mutableStateOf(list.lastOrNull()?.kg?.let { Ru.kg(it) } ?: "") }
     ScrollScreen {
         TopBar("Вес тела", "Лучше утром, натощак, раз в неделю", onBack = { nav.back() })
-        NumberField(value, { value = it }, "Сегодня", "кг")
+        var saved by remember { mutableStateOf(false) }
+        NumberField(value, { value = it; saved = false }, "Сегодня", "кг", placeholder = "70")
+        val kg = parseNum(value)?.takeIf { it in 30.0..250.0 }
+        // Not believable: said in red, and the button waits (it used to do nothing without a word).
+        if (value.isNotBlank() && kg == null) BadHint("Вес — от 30 до 250 кг, например 72,5.")
+        if (saved) Text("Записано.", style = T.secondary(13.sp).copy(color = F.c.good))
         PrimaryButton("Записать", {
-            parseNum(value)?.takeIf { it in 30.0..250.0 }?.let { kg -> scope.launch { repo.logBodyWeight(kg) } }
-        }, Modifier.fillMaxWidth())
+            if (kg != null) scope.launch { repo.logBodyWeight(kg); saved = true }
+        }, Modifier.fillMaxWidth(), enabled = kg != null)
         Estimates(list.lastOrNull()?.kg)
         if (list.size >= 2) {
             FCard {

@@ -1,7 +1,5 @@
 package forma.app.ui.screens
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,19 +24,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import forma.app.BuildConfig
-import forma.app.data.BackupManager
 import forma.app.data.Settings
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.LocalSettings
-import forma.app.ui.components.Banner
 import forma.app.ui.components.FCard
-import forma.app.ui.components.GhostButton
 import forma.app.ui.components.Hairline
 import forma.app.ui.components.SectionLabel
 import forma.app.ui.components.TopBar
@@ -46,7 +40,6 @@ import forma.app.ui.theme.F
 import forma.app.ui.theme.Looks
 import forma.app.ui.theme.T
 import kotlinx.coroutines.launch
-import java.time.LocalDate
 
 @Composable
 fun SettingsScreen() {
@@ -54,20 +47,7 @@ fun SettingsScreen() {
     val nav = LocalNav.current
     val s = LocalSettings.current
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    var message by remember { mutableStateOf<String?>(null) }
     fun save(f: (Settings) -> Settings) = scope.launch { repo.updateSettings(f) }
-    val backup = remember { BackupManager(repo) }
-    val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) scope.launch {
-            message = runCatching { backup.export(context, uri); "Копия сохранена." }.getOrElse { "Не получилось сохранить: ${it.message}" }
-        }
-    }
-    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            message = runCatching { "Восстановлено тренировок: ${backup.import(context, uri)}." }.getOrElse { "Файл не подошёл: ${it.message}" }
-        }
-    }
     ScrollScreen {
         TopBar("Оформление и звук", onBack = { nav.back() })
         SectionLabel("Стиль")
@@ -108,16 +88,12 @@ fun SettingsScreen() {
             Hairline()
             Toggle("Автопауза на остановках", "Лёгкий, длинный и свободный бег по улице: на светофоре время встаёт само. На стадионе — нет", s.autoPause) { v -> save { it.copy(autoPause = v) } }
         }
-        SectionLabel("Резервная копия")
-        FCard {
-            Text("Все тренировки, прогресс и настройки — в одном файле. Сохрани в облако или отправь себе.", style = T.secondary(14.sp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GhostButton("Сохранить", { exporter.launch("forma-${LocalDate.now()}.json") }, Modifier.weight(1f))
-                GhostButton("Восстановить", { importer.launch(arrayOf("application/json", "text/plain", "*/*")) }, Modifier.weight(1f))
-            }
-            Text("Восстановление заменяет данные на телефоне. Если включено облако, копия из облака потом добавится к ним.", style = T.secondary(12.sp))
+        SectionLabel("Данные")
+        FCard(gap = 0.dp) {
+            forma.app.ui.components.ListRow(
+                "Резервная копия и облако", "Сохранить всё в файл, восстановить, аккаунт", icon = forma.app.ui.theme.Ic.cloud, iconTint = F.c.accent,
+            ) { nav.push(forma.app.ui.Screen.Cloud) }
         }
-        message?.let { Banner(it, F.c.accent) }
         ReportCard()
         Text("Форма ${BuildConfig.VERSION_NAME}. Шрифты Manrope, Onest, Rubik, JetBrains Mono, Sofia Sans Extra Condensed — SIL Open Font License.", style = T.secondary(12.sp))
     }

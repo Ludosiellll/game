@@ -105,7 +105,7 @@ class FriendsTest {
         val id = assertNotNull(repo.startCopiedLift(theirs, "Иван", listOf(landmine), day))
         val plan = repo.planOf(db.workouts().get(id)!!)!!
         assertEquals(COPIED_TEMPLATE, plan.templateId)
-        assertTrue(plan.title.endsWith("как у Иван"))
+        assertTrue(plan.title.endsWith("· копия: Иван"), plan.title)
         assertEquals(theirs.items.map { it.exerciseId }, plan.items.map { it.exerciseId })
         assertTrue(plan.items.all { it.prescription.weight != 100.0 || it.prescription.calibrate })
         assertEquals("Жим лэндмайн", Catalog["custom_lm01"].name)
@@ -141,6 +141,120 @@ class FriendsTest {
         val plan = repo.liftPlan(program.templates[0].id, LocalDate.ofEpochDay(program.startEpochDay))
         assertTrue(plan.items.any { it.exerciseId == "chest_press" }, plan.items.map { it.exerciseId }.toString())
         assertTrue(repo.store.settingsNow().swaps.isEmpty())
+    }
+
+    private fun planOf(items: List<forma.core.strength.SlotSpec>, deload: Boolean) = LiftPlan("upper_a", "Верх А", items.mapIndexed { i, s ->
+        forma.app.data.LiftItem(i, s, s.exerciseId, Catalog.find(s.exerciseId)?.name ?: "Тяга друга",
+            forma.core.strength.Prescription(100.0, s.repMin, s.sets, s.rir, calibrate = false), emptyList(), 2.5)
+    }, deload = deload)
+
+    /**
+     * Egor copies Denis's session: in Egor's own lighter week it is a lighter session (fewer sets), Denis's lighter
+     * session stays lighter too; what cannot be done here is named; of Denis's own exercises only the session's come.
+     */
+    @Test fun aCopyFollowsTheLighterWeekAndNamesWhatIsLeftOut() = runBlocking {
+        val day = LocalDate.of(2025, 10, 9)
+        val slots = friendProgram().templates[0].slots
+        val unknown = slots.first().copy(exerciseId = "custom_zz99")
+        val other = Catalog.makeCustom("custom_ot02", "Жим друга", Equipment.DUMBBELL, Muscle.CHEST, LoadKind.EXTERNAL)
+        val theirs = planOf(slots + unknown, deload = false)
+        // Egor's own lighter week (the app scheduled it after setbacks).
+        repo.store.setLiftState(forma.app.data.LiftState(reactiveDeloadStart = LocalDate.of(2025, 10, 6).toEpochDay()))
+        val id = assertNotNull(repo.startCopiedLift(theirs, "Денис", listOf(landmine, other), day))
+        val plan = repo.planOf(db.workouts().get(id)!!)!!
+        assertTrue(plan.deload && db.workouts().get(id)!!.deload)
+        assertTrue(plan.items.zip(slots).all { (item, s) -> item.prescription.sets <= (s.sets + 1) / 2 }, plan.items.map { it.prescription.sets }.toString())
+        assertEquals("Верх А · копия: Денис", plan.title)
+        assertEquals(listOf("Тяга друга"), repo.copiedLeftOut(theirs))
+        assertNotNull(Catalog.find(landmine.id))
+        assertNull(Catalog.find(other.id), "a friend's exercise not in the session is not taken over")
+        repo.cancelWorkout(id)
+
+        // Not Egor's lighter week, but Denis's session was a lighter one: it stays lighter.
+        repo.store.setLiftState(forma.app.data.LiftState())
+        val id2 = assertNotNull(repo.startCopiedLift(planOf(slots, deload = true), "Денис", emptyList(), day))
+        assertTrue(repo.planOf(db.workouts().get(id2)!!)!!.deload)
+        repo.cancelWorkout(id2)
+        // A plain session in a plain week is a plain one.
+        val id3 = assertNotNull(repo.startCopiedLift(planOf(slots, deload = false), "Денис", emptyList(), day))
+        assertTrue(!repo.planOf(db.workouts().get(id3)!!)!!.deload)
+        // More than 12 exercises: the ones after the twelfth are named.
+        val many = (slots + slots + slots).take(14)
+        assertEquals(many.drop(12).map { Catalog.find(it.exerciseId)?.name ?: "Тяга друга" }, repo.copiedLeftOut(planOf(many, deload = false)))
+    }
+
+    /** Egor takes Denis's program and later wants his own back: the program, days and his swaps return as they were. */
+    @Test fun theOwnProgramComesBackWithItsEdits() = runBlocking {
+        val ownProgram = repo.store.programNow()!!
+        val ownProfile = repo.store.profileNow()!!
+        val first = ownProgram.templates[0].slots[0].exerciseId
+        repo.updateSettings { it.copy(swaps = mapOf(first to "chest_press"), sets = mapOf(first to 5), rest = mapOf(first to 150)) }
+        assertTrue(repo.copyProgram(friendProgram(), "Денис", listOf(landmine)))
+        assertEquals("Денис", repo.store.programNow()!!.copiedFrom)
+        assertTrue(repo.store.settingsNow().swaps.isEmpty())
+        // A second friend's program: the own one stays the one put aside.
+        assertTrue(repo.copyProgram(friendProgram(), "Аня"))
+        assertEquals(ownProgram.templates, repo.store.settingsNow().ownPlan!!.program.templates)
+
+        repo.restoreOwnProgram()
+        val back = repo.store.programNow()!!
+        assertNull(back.copiedFrom)
+        assertEquals(ownProgram.templates, back.templates)
+        assertEquals(ownProgram.week, back.week)
+        assertEquals(ownProfile.aim, repo.store.profileNow()!!.aim)
+        assertEquals(ownProfile.trainingDays, repo.store.profileNow()!!.trainingDays)
+        val s = repo.store.settingsNow()
+        assertEquals(mapOf(first to "chest_press"), s.swaps)
+        assertEquals(mapOf(first to 5), s.sets)
+        assertEquals(mapOf(first to 150), s.rest)
+        assertNull(s.ownPlan)
+    }
+
+    /** Leaving a friend's program by saving the profile: the own edits put aside come back with the own plan. */
+    @Test fun savingTheProfileAfterACopyBringsTheOwnEditsBack() = runBlocking {
+        val first = repo.store.programNow()!!.templates[0].slots[0].exerciseId
+        repo.updateSettings { it.copy(swaps = mapOf(first to "chest_press")) }
+        repo.copyProgram(friendProgram(), "Денис")
+        repo.updateProfile(repo.store.profileNow()!!.copy(trainingDays = setOf(1, 3, 5)))
+        assertNull(repo.store.programNow()!!.copiedFrom)
+        assertEquals(mapOf(first to "chest_press"), repo.store.settingsNow().swaps)
+        assertNull(repo.store.settingsNow().ownPlan)
+    }
+
+    /** The name for friends goes up only to a friends profile created just now; a name changed for friends stays. */
+    @Test fun theNameIsSentOnlyToANewFriendsProfile() = runBlocking {
+        class Api(var name: String) : FriendsApi {
+            val sent = mutableListOf<String>()
+            override suspend fun me(name: String?): FriendMe {
+                if (name != null) { sent += name; this.name = name }
+                return FriendMe(this.name, "K7QM4XZ2")
+            }
+            override suspend fun setSharing(activity: Boolean, body: Boolean) = me()
+            override suspend fun add(code: String) = AddResult.NOT_FOUND
+            override suspend fun answer(userId: String, accept: Boolean) {}
+            override suspend fun remove(userId: String) {}
+            override suspend fun list() = emptyList<Friend>()
+            override suspend fun feed(before: String?, limit: Int, userId: String?) = emptyList<FeedItem>()
+            override suspend fun progress(userId: String) = FriendProgress("x", shared = false)
+        }
+        // Renamed for friends to "Егор К." earlier: opening the screen again does not put the profile's name back.
+        val named = Api("Егор К.")
+        val ui = forma.app.ui.screens.loadFriends(named, "Егор")
+        assertEquals(emptyList(), named.sent)
+        assertEquals("Егор К.", ui.me?.name)
+        assertTrue(!ui.fresh)
+        // A friends profile just created (no name yet): the profile's name goes up once.
+        val fresh = Api("")
+        val first = forma.app.ui.screens.loadFriends(fresh, "Егор")
+        assertEquals(listOf("Егор"), fresh.sent)
+        assertTrue(first.fresh)
+        forma.app.ui.screens.loadFriends(fresh, "Егор")
+        assertEquals(listOf("Егор"), fresh.sent)
+    }
+
+    /** Offline, a friends call says so (and that nothing changed) instead of the sync's "will retry by itself". */
+    @Test fun offlineFriendsCallsSaySo() {
+        assertTrue(describeFriends(java.io.IOException("no network")).startsWith("Нет связи с сервером: ничего не изменилось"))
     }
 
     @Test fun aFriendsProgramBecomesOwn() = runBlocking {

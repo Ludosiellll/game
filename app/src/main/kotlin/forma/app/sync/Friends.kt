@@ -180,5 +180,7 @@ fun describeFriends(e: Throwable): String = when {
     e is io.github.jan.supabase.exceptions.RestException && (e.statusCode == 404 || e.error.contains("PGRST202")) ->
         "Друзья ещё не включены на сервере: нужно применить миграцию friends в проекте Supabase."
     e is io.github.jan.supabase.exceptions.RestException && e.error.contains("not friends") -> "Вы больше не друзья."
+    e is io.github.jan.supabase.exceptions.HttpRequestException || e is io.ktor.client.plugins.HttpRequestTimeoutException || e is java.io.IOException ->
+        "Нет связи с сервером: ничего не изменилось. Проверь интернет и попробуй ещё раз."
     else -> Cloud.describe(e)
 }

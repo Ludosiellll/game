@@ -54,6 +54,8 @@ data class Settings(
     val reps: Map<String, List<Int>> = emptyMap(),
     /** Rest between sets of an exercise for good: plan exercise id → seconds, instead of the plan's. */
     val rest: Map<String, Int> = emptyMap(),
+    /** The own plan put aside when a friend's program was copied: "Вернуть мою программу" brings it back as it was. */
+    val ownPlan: OwnPlan? = null,
     /** The start line of the stadium (lat, lon) learnt from the lap presses: GPS laps count from the first one next time. */
     val trackLine: List<Double>? = null,
     /** (cadence, stride m) pairs measured where GPS was good: the stride model for distance by steps. */
@@ -61,6 +63,32 @@ data class Settings(
     /** Run type → how many times its "what it gives the body" was shown after a run: read a few times, it folds away. */
     val bodySeen: Map<String, Int> = emptyMap(),
 )
+
+/**
+ * One's own program as it was before a friend's was copied: the days and aim of the profile, the program, and the
+ * edits of the plan made on it (swaps, removed and added exercises, sets, reps, rest).
+ */
+@Serializable
+data class OwnPlan(
+    val profile: Profile,
+    val program: Program,
+    val swaps: Map<String, String> = emptyMap(),
+    val sets: Map<String, Int> = emptyMap(),
+    val removed: Set<String> = emptySet(),
+    val added: Map<String, List<String>> = emptyMap(),
+    val reps: Map<String, List<Int>> = emptyMap(),
+    val rest: Map<String, Int> = emptyMap(),
+) {
+    /** [s] with these edits back in and nothing put aside any more. */
+    fun editsInto(s: Settings): Settings =
+        s.copy(swaps = swaps, sets = sets, removed = removed, added = added, reps = reps, rest = rest, ownPlan = null)
+
+    companion object {
+        /** The own plan of [profile] and [program] with the edits in [s]. */
+        fun of(profile: Profile, program: Program, s: Settings) =
+            OwnPlan(profile, program, s.swaps, s.sets, s.removed, s.added, s.reps, s.rest)
+    }
+}
 
 /** Lifting state that is not per exercise. */
 @Serializable

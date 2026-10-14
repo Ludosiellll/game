@@ -46,7 +46,6 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import kotlin.math.roundToInt
 
-/** Profile editor shared by the first launch and the profile screen. */
 /** The answers as plain values, so a half-done questionnaire survives rotation and the like. */
 @kotlinx.serialization.Serializable
 private data class DraftState(
@@ -57,7 +56,11 @@ private data class DraftState(
     val doubleDays: Boolean = false, val gymDays: Set<Int>? = null, val runDays: Set<Int>? = null,
 )
 
-class ProfileDraft(p: Profile) {
+/**
+ * Profile editor shared by the first launch and the profile screen. [blankBody]: the first launch — birth year and
+ * weight start empty (the fields show an example), so nothing is saved that the person did not type.
+ */
+class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     companion object {
         val Saver: androidx.compose.runtime.saveable.Saver<ProfileDraft, String> = androidx.compose.runtime.saveable.Saver(
             save = { d ->
@@ -82,6 +85,9 @@ class ProfileDraft(p: Profile) {
                 }
             },
         )
+
+        /** Race distances a recent result can be typed for, km. */
+        val RACES = listOf(0.8 to "800 м", 1.0 to "1 км", 1.5 to "1,5 км", 3.0 to "3 км", 5.0 to "5 км", 10.0 to "10 км", 21.0975 to "21,1 км")
     }
 
     var lift by mutableStateOf(p.aim.lift)
@@ -92,8 +98,8 @@ class ProfileDraft(p: Profile) {
     var days by mutableStateOf(p.trainingDays)
     var minutes by mutableStateOf(p.sessionMinutes)
     var sex by mutableStateOf(p.sex)
-    var birthYear by mutableStateOf(p.birthYear.toString())
-    var weight by mutableStateOf(forma.core.text.Ru.kg(p.bodyWeightKg))
+    var birthYear by mutableStateOf(if (blankBody) "" else p.birthYear.toString())
+    var weight by mutableStateOf(if (blankBody) "" else forma.core.text.Ru.kg(p.bodyWeightKg))
     var height by mutableStateOf(p.heightCm?.toString() ?: "")
     var restingHr by mutableStateOf(p.restingHr?.toString() ?: "")
     var raceKm by mutableStateOf(p.raceMeters?.let { it / 1000.0 })
@@ -122,6 +128,12 @@ class ProfileDraft(p: Profile) {
     /** A race goal needs hard runs: the speed or endurance focus. */
     val racing: Boolean get() = run == RunFocus.SPEED || run == RunFocus.ENDURANCE
 
+    /** Running is in the aim: its level, the stadium and the race fields are on the screen. */
+    val runsShown: Boolean get() = run != RunFocus.NONE
+
+    /** The recent race is asked of those who run already (not of those starting with run/walk). */
+    val raceShown: Boolean get() = runsShown && runLevel != RunLevel.NONE
+
     /** The stadium lap, if running on one and the length makes sense. */
     val lapOrNull: Int? get() = if (stadium) lapMeters.toIntOrNull()?.takeIf { it in 100..1000 } else null
 
@@ -143,30 +155,80 @@ class ProfileDraft(p: Profile) {
         return (km * 1000 to sec).takeIf { sec / km in forma.core.run.RunPlan.PLAUSIBLE_PACE }
     }
 
-    /** A race distance picked and a time typed that is not one. */
-    val raceTimeBad: Boolean get() = raceKm != null && raceTime.isNotBlank() && race == null
+    /** A race distance picked and a time typed that is not one (only while the race is on the screen). */
+    val raceTimeBad: Boolean get() = raceShown && raceKm != null && raceTime.isNotBlank() && race == null
 
     /** A goal distance picked without a believable time: saving would quietly drop the goal and its progress. */
     val goalBad: Boolean get() = racing && goalMeters != null && runGoal == null
 
-    /** On a stadium with a lap length that is not one. */
-    val lapBad: Boolean get() = stadium && lapOrNull == null
+    /** On a stadium with a lap length that is not one (only while running is in the aim). */
+    val lapBad: Boolean get() = runsShown && stadium && lapOrNull == null
+
+    val birthYearValue: Int? get() = birthYear.trim().toIntOrNull()?.takeIf { it in 1930..LocalDate.now().year - 10 }
+    val weightValue: Double? get() = parseNum(weight)?.takeIf { it in 30.0..250.0 }
+    private val heightValue: Int? get() = height.trim().toIntOrNull()?.takeIf { it in 120..230 }
+    private val restingHrValue: Int? get() = restingHr.trim().toIntOrNull()?.takeIf { it in 30..110 }
+
+    /** Typed and not believable: 1880 or 08 for a year, 7 kg (a weight of 7 would have quietly become 30). */
+    val birthYearBad: Boolean get() = birthYear.isNotBlank() && birthYearValue == null
+    val weightBad: Boolean get() = weight.isNotBlank() && weightValue == null
+    val heightBad: Boolean get() = height.isNotBlank() && heightValue == null
+    val restingHrBad: Boolean get() = restingHr.isNotBlank() && restingHrValue == null
+
+    /** The goal step: the race goal and the stadium as shown. */
+    val goalProblem: String? get() = when {
+        goalBad && goalTime.isBlank() -> "Впиши время забега-цели или сними выбор дистанции."
+        goalBad -> "Время цели не похоже на время: минуты и секунды через двоеточие, например 5:30."
+        lapBad -> "Впиши длину круга от 100 до 1000 м или выбери «Улица, парк»."
+        else -> null
+    }
+
+    /** The recent race, when it is on the screen. */
+    val raceProblem: String? get() = if (raceTimeBad) "Время забега не похоже на время: впиши минуты и секунды через двоеточие или сними выбор дистанции." else null
+
+    /** The week laid out day by day: each side in the aim needs a day. */
+    val weekProblem: String? get() {
+        val g = gymDays
+        val r = runDays
+        val a = aim
+        return when {
+            g == null || r == null -> if (days.isEmpty()) "Отметь хотя бы один день." else null
+            a.lifts && g.isEmpty() -> "Отметь хотя бы один день зала или выбери «Без зала»."
+            a.runs && r.isEmpty() -> "Отметь хотя бы один день бега или выбери «Без бега»."
+            else -> null
+        }
+    }
+
+    /** About oneself: birth year and weight are needed, height and resting pulse may stay empty. */
+    val aboutProblem: String? get() = when {
+        birthYear.isBlank() -> "Впиши год рождения."
+        birthYearBad -> "Год рождения — четыре цифры, например 2008."
+        weight.isBlank() -> "Впиши вес: от него стартовые веса в зале."
+        weightBad -> "Вес — от 30 до 250 кг."
+        heightBad -> "Рост — от 120 до 230 см, или оставь поле пустым."
+        restingHrBad -> "Пульс в покое — от 30 до 110 ударов, или оставь поле пустым."
+        else -> null
+    }
+
+    /** What stops saving, of everything on the screen: hidden fields are neither checked nor saved. */
+    val problem: String? get() = goalProblem ?: raceProblem ?: weekProblem ?: aboutProblem
 
     /** Nothing typed that would be lost or misread on saving. */
-    val fieldsOk: Boolean get() = !raceTimeBad && !goalBad && !lapBad
+    val fieldsOk: Boolean get() = problem == null
 
     fun toProfile(base: Profile): Profile {
-        val race = race
+        val race = if (raceShown) race else null
         val aim = aim
         return base.copy(
             goal = aim.nearestGoal(), aim = aim, experience = experience, runLevel = runLevel, trainingDays = days.ifEmpty { setOf(1, 3, 5) },
             sessionMinutes = minutes, sex = sex,
-            birthYear = birthYear.toIntOrNull()?.coerceIn(1930, LocalDate.now().year - 10) ?: base.birthYear,
-            bodyWeightKg = parseNum(weight)?.coerceIn(30.0, 250.0) ?: base.bodyWeightKg,
-            heightCm = if (height.isBlank()) null else height.toIntOrNull()?.takeIf { it in 120..230 } ?: base.heightCm,
-            restingHr = restingHr.toIntOrNull()?.takeIf { it in 30..110 },
+            birthYear = birthYearValue ?: base.birthYear,
+            bodyWeightKg = weightValue ?: base.bodyWeightKg,
+            heightCm = if (height.isBlank()) null else heightValue ?: base.heightCm,
+            restingHr = restingHrValue,
             raceMeters = race?.first, raceSeconds = race?.second,
-            runGoal = if (racing) runGoal else null, lapMeters = lapOrNull, doubleDays = doubleDays && aim.lifts && aim.runs,
+            runGoal = if (racing) runGoal else null, lapMeters = if (runsShown) lapOrNull else null,
+            doubleDays = doubleDays && aim.lifts && aim.runs,
         ).let { p ->
             val gym = gymDays
             val run = runDays
@@ -186,10 +248,18 @@ fun OnboardingScreen() {
     val repo = LocalRepo.current
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
-    val draft = androidx.compose.runtime.saveable.rememberSaveable(saver = ProfileDraft.Saver) { ProfileDraft(Profile()) }
+    val draft = androidx.compose.runtime.saveable.rememberSaveable(saver = ProfileDraft.Saver) { ProfileDraft(Profile(), blankBody = true) }
     var step by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(0) }
     val last = 4
     val cloud = LocalCloud.current
+    // Each step checks only what it shows: a field of another step (or one hidden by a choice) never greys out "Дальше".
+    val problem = when (step) {
+        0 -> draft.goalProblem
+        1 -> draft.raceProblem
+        2 -> draft.weekProblem
+        3 -> draft.aboutProblem
+        else -> draft.problem
+    }
     ScrollScreen(gap = 18.dp, bottomInset = true) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
             repeat(last + 1) { i ->
@@ -211,6 +281,8 @@ fun OnboardingScreen() {
             else -> SummaryStep(draft)
         }
         Spacer(Modifier.height(4.dp))
+        // Why the button is grey, always in sight next to it.
+        if (problem != null) Text(problem, style = T.secondary(13.sp).copy(color = F.c.bad))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (step > 0) GhostButton("Назад", { step-- }, Modifier.weight(1f), height = 54.dp)
             PrimaryButton(
@@ -220,7 +292,7 @@ fun OnboardingScreen() {
                         nav.replaceAll(Screen.Today)
                     }
                 },
-                Modifier.weight(2f), enabled = draft.fieldsOk && (step != 2 || draft.days.isNotEmpty()),
+                Modifier.weight(2f), enabled = problem == null,
             )
         }
     }
@@ -263,24 +335,47 @@ private fun ExperienceStep(d: ProfileDraft) {
     Option("Пока не пробегу 20 минут", "Начнём с бега чередуя с ходьбой", d.runLevel == RunLevel.NONE) { d.runLevel = RunLevel.NONE }
     Option("Пробегу 20–30 минут", "Лёгкий бег есть, интервалов не было", d.runLevel == RunLevel.BASE) { d.runLevel = RunLevel.BASE }
     Option("Бегаю регулярно", "Есть интервалы, длинные пробежки", d.runLevel == RunLevel.TRAINED) { d.runLevel = RunLevel.TRAINED }
-    if (d.runLevel != RunLevel.NONE) {
+    if (d.raceShown) {
         SectionLabel("Лучший результат за последние 2 месяца (необязательно)", Modifier.padding(top = 6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(3.0 to "3 км", 5.0 to "5 км", 10.0 to "10 км", 21.0975 to "21,1").forEach { (km, label) ->
-                Chip(label, d.raceKm == km, { d.raceKm = if (d.raceKm == km) null else km }, Modifier.weight(1f))
-            }
-        }
-        if (d.raceKm != null) {
-            NumberField(d.raceTime, { d.raceTime = it }, "Время", "мм:сс", keyboard = KeyboardType.Text, placeholder = "25:30")
-            RaceTimeHint(d)
+        RaceFields(d, "Время")
+    }
+}
+
+/** The recent race: its distance (800 m to the half marathon) and time. */
+@Composable
+fun RaceFields(d: ProfileDraft, label: String) {
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ProfileDraft.RACES.forEach { (km, name) ->
+            Chip(name, d.raceKm == km, { d.raceKm = if (d.raceKm == km) null else km })
         }
     }
+    if (d.raceKm != null) {
+        NumberField(d.raceTime, { d.raceTime = it }, label, "мм:сс", keyboard = KeyboardType.Text, placeholder = raceExample(d.raceKm!!))
+        RaceTimeHint(d)
+    }
+}
+
+/** A believable time for the example in the empty field. */
+private fun raceExample(km: Double): String = when {
+    km <= 0.8 -> "2:40"
+    km <= 1.0 -> "3:30"
+    km <= 1.5 -> "5:40"
+    km <= 3.0 -> "12:30"
+    km <= 5.0 -> "25:30"
+    km <= 10.0 -> "52:00"
+    else -> "1:55:00"
 }
 
 /** Under the race time: what a typo there would do. */
 @Composable
 fun RaceTimeHint(d: ProfileDraft) {
-    if (d.raceTimeBad) Text("Не похоже на время забега: впиши минуты и секунды через двоеточие, например 25:30.", style = T.secondary(13.sp).copy(color = F.c.bad))
+    if (d.raceTimeBad) Text("Не похоже на время забега: впиши минуты и секунды через двоеточие, например ${raceExample(d.raceKm ?: 5.0)}.", style = T.secondary(13.sp).copy(color = F.c.bad))
+}
+
+/** A red line under a field whose value is not believable. */
+@Composable
+fun BadHint(text: String) {
+    Text(text, style = T.secondary(13.sp).copy(color = F.c.bad))
 }
 
 @Composable
@@ -289,48 +384,86 @@ private fun DaysStep(d: ProfileDraft) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         DAY_SHORT.forEachIndexed { i, name ->
             val day = i + 1
-            Chip(name, day in d.days, { d.days = if (day in d.days) d.days - day else d.days + day }, Modifier.weight(1f), minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.TOGGLE)
+            Chip(name, day in d.days, {
+                d.days = if (day in d.days) d.days - day else d.days + day
+                // Other days: the week laid out by hand before is laid out again.
+                d.gymDays = null
+                d.runDays = null
+            }, Modifier.weight(1f), minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.TOGGLE)
         }
     }
     Text("Выбрано дней: ${d.days.size}", style = T.secondary(14.sp))
-    DoubleDaysToggle(d)
+    if (d.gymDays == null) DoubleDaysToggle(d)
+    SessionMinutes(d)
+}
+
+/** How long one session may be, with what the choice is about. */
+@Composable
+fun SessionMinutes(d: ProfileDraft) {
     SectionLabel("Сколько времени на одну тренировку", Modifier.padding(top = 6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(45, 60, 75, 90).forEach { m -> Chip("$m мин", d.minutes == m, { d.minutes = m }, Modifier.weight(1f)) }
     }
 }
 
+/** Birth year, weight, height and resting pulse: examples in the empty fields, a red line under what is not believable. */
+@Composable
+fun BodyFields(d: ProfileDraft, onboarding: Boolean) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        NumberField(d.birthYear, { d.birthYear = it.filter(Char::isDigit) }, "Год рождения", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number, placeholder = "2005")
+        NumberField(d.weight, { d.weight = it }, "Вес", "кг", Modifier.weight(1f), placeholder = "70")
+    }
+    if (d.birthYearBad) BadHint("Год рождения — четыре цифры, например 2008.")
+    if (d.weightBad) BadHint("Вес — от 30 до 250 кг.")
+    NumberField(d.height, { d.height = it.filter(Char::isDigit) }, if (onboarding) "Рост (для расхода энергии и ИМТ, необязательно)" else "Рост", "см", keyboard = KeyboardType.Number, placeholder = "178")
+    if (d.heightBad) BadHint("Рост — от 120 до 230 см, или оставь поле пустым.")
+    NumberField(
+        d.restingHr, { d.restingHr = it.filter(Char::isDigit) },
+        if (onboarding) "Пульс в покое утром — для калькулятора пульса (необязательно)" else "Пульс в покое (для калькулятора пульса)",
+        "уд/мин", keyboard = KeyboardType.Number, placeholder = "60",
+    )
+    if (d.restingHrBad) BadHint("Пульс в покое — от 30 до 110 ударов, или оставь поле пустым.")
+}
+
 @Composable
 private fun AboutStep(d: ProfileDraft) {
-    StepTitle("О себе", "Для стартовых весов, пульсовых зон, расхода энергии и относительной силы.")
+    StepTitle("О себе", "Вес нужен для стартовых весов в зале, год рождения и рост — для расчёта расхода энергии.")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Chip("Мужчина", d.sex == Sex.MALE, { d.sex = Sex.MALE }, Modifier.weight(1f))
         Chip("Женщина", d.sex == Sex.FEMALE, { d.sex = Sex.FEMALE }, Modifier.weight(1f))
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        NumberField(d.birthYear, { d.birthYear = it }, "Год рождения", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number)
-        NumberField(d.weight, { d.weight = it }, "Вес", "кг", Modifier.weight(1f))
-    }
-    NumberField(d.height, { d.height = it }, "Рост (для расхода энергии и ИМТ)", "см", keyboard = KeyboardType.Number, placeholder = "178")
-    NumberField(d.restingHr, { d.restingHr = it }, "Пульс в покое утром (необязательно)", "уд/мин", keyboard = KeyboardType.Number, placeholder = "60")
+    BodyFields(d, onboarding = true)
 }
 
 @Composable
 private fun SummaryStep(d: ProfileDraft) {
     val profile = d.toProfile(Profile())
-    val program = remember(profile) { ProgramGenerator.generate(profile, LocalDate.now()) }
+    val program = remember(profile) { runCatching { ProgramGenerator.generate(profile, LocalDate.now()) }.getOrNull() }
+    var editWeek by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(d.gymDays != null) }
     StepTitle("Твоя неделя", "Так выглядит план. Веса подберём на первых тренировках, дальше приложение будет подстраивать их само.")
-    FCard(gap = 0.dp) {
-        (1..7).forEach { day ->
-            val sessions = program.week.on(day)
-            Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(DAY_SHORT[day - 1], style = T.body(15.sp, FontWeight.ExtraBold).copy(color = if (sessions.isEmpty()) F.c.text3 else F.c.text), modifier = Modifier.padding(end = 4.dp))
-                Text(
-                    if (sessions.isEmpty()) "Отдых" else sessions.joinToString(" + ") { sessionTitle(it, program) },
-                    style = T.body(15.sp).copy(color = if (sessions.isEmpty()) F.c.text3 else F.c.text),
-                )
+    if (program != null) {
+        FCard(gap = 0.dp) {
+            (1..7).forEach { day ->
+                val sessions = program.week.on(day)
+                Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(DAY_SHORT[day - 1], style = T.body(15.sp, FontWeight.ExtraBold).copy(color = if (sessions.isEmpty()) F.c.text3 else F.c.text), modifier = Modifier.padding(end = 4.dp))
+                    Text(
+                        if (sessions.isEmpty()) "Отдых" else sessions.joinToString(" + ") { sessionTitle(it, program) },
+                        style = T.body(15.sp).copy(color = if (sessions.isEmpty()) F.c.text3 else F.c.text),
+                    )
+                }
             }
         }
+        if ((1..7).all { program.week.on(it).isNotEmpty() }) {
+            Text("В неделе нет дня отдыха: без него прогресс встаёт. Оставь хотя бы один свободный день.", style = T.secondary(14.sp).copy(color = F.c.warn))
+        }
+        program.week.notes.forEach { Text("• $it", style = T.secondary(14.sp)) }
     }
-    program.week.notes.forEach { Text("• $it", style = T.secondary(14.sp)) }
+    if (!editWeek) {
+        GhostButton("Поменять дни зала и бега", { editWeek = true }, Modifier.fillMaxWidth())
+    } else if (program != null) {
+        val planGym = remember(program) { program.week.days.filter { day -> day.sessions.any { it.kind == forma.core.plan.SessionKind.LIFT } }.map { it.day }.toSet() }
+        val planRun = remember(program) { program.week.days.filter { day -> day.sessions.any { it.isRun } }.map { it.day }.toSet() }
+        WeekGrid(d, planGym, planRun)
+    }
 }

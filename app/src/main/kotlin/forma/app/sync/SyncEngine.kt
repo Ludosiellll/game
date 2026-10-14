@@ -47,7 +47,9 @@ class SyncEngine internal constructor(
     constructor(api: CloudApi, db: FormaDatabase, store: SettingsStore) : this(api, db.sync(), SyncTables(db, store).all)
 
     suspend fun run(userId: String): SyncResult = DataLock.mutex.withLock {
-        val owner = dao.cursor(ACCOUNT)
+        val synced = dao.cursor(ACCOUNT)
+        // Restored from a file, the data has not been synced since, but whose it is stays known.
+        val owner = synced ?: dao.cursor(OWNER)
         if (owner != null && owner != userId) throw AccountMismatchException()
         var uploaded = 0
         var downloaded = 0
@@ -62,7 +64,7 @@ class SyncEngine internal constructor(
         suspend fun download(which: (SyncTable<*>) -> Boolean) {
             for (t in tables) if (which(t)) downloaded += t.pull(api, dao)
         }
-        if (owner == null) {
+        if (synced == null) {
             download { true }
             // Downloaded once: a retry after a failed upload is a normal sync, not another first one.
             dao.putCursor(SyncCursorEntity(ACCOUNT, userId))
@@ -75,11 +77,19 @@ class SyncEngine internal constructor(
         SyncResult(uploaded, downloaded, removed)
     }
 
-    /** The account this phone's data was synced with, if any. */
-    suspend fun owner(): String? = dao.cursor(ACCOUNT)
+    /** The account this phone's data belongs to, if known: the one it synced with or, after a restore, the one before. */
+    suspend fun owner(): String? = owner(dao)
 
     companion object {
         /** A cursor row that is not a table: the account the phone belongs to (cleared with the other cursors). */
         const val ACCOUNT = "~account"
+
+        /**
+         * A cursor row that is not a table: the account the phone's data belongs to while it has not been synced since
+         * a restore from a file. The next sync is a first one (the cloud copy merges in first), but only to this account.
+         */
+        const val OWNER = "~owner"
+
+        suspend fun owner(dao: SyncDao): String? = dao.cursor(ACCOUNT) ?: dao.cursor(OWNER)
     }
 }

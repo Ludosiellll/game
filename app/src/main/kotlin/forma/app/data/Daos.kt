@@ -99,18 +99,22 @@ interface BackupDao {
     @Insert suspend fun insertSlots(x: List<SlotStateEntity>)
     @Insert suspend fun insertStats(x: List<ExerciseStatEntity>)
     @Insert suspend fun insertBodyWeights(x: List<BodyWeightEntity>)
+    @Upsert suspend fun putCursors(x: List<SyncCursorEntity>)
 
     /**
      * The file's rows instead of the phone's, in one transaction. What the cloud has seen is forgotten in the same
-     * transaction: the next sync merges the cloud copy in first and never takes the file's gaps for deletions.
+     * transaction (the next sync merges the cloud copy in first and never takes the file's gaps for deletions); [keep] —
+     * the marks of whose data this is — are put back, so the restored data can only go to that account.
      */
     @Transaction
     suspend fun replaceAll(
         workouts: List<WorkoutEntity>, sets: List<SetEntity>, runs: List<RunEntity>, points: List<TrackPointEntity>,
         slots: List<SlotStateEntity>, stats: List<ExerciseStatEntity>, bodyWeights: List<BodyWeightEntity>,
+        keep: List<SyncCursorEntity>,
     ) {
         clearWorkouts(); clearSlots(); clearStats(); clearBodyWeights(); clearSyncRows(); clearSyncCursors()
         insertWorkouts(workouts); insertSets(sets); insertRuns(runs); insertPoints(points)
         insertSlots(slots); insertStats(stats); insertBodyWeights(bodyWeights)
+        if (keep.isNotEmpty()) putCursors(keep)
     }
 }
