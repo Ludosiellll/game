@@ -15,6 +15,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -41,7 +42,10 @@ import forma.core.model.Goal
 import forma.core.model.Profile
 import forma.core.model.RunLevel
 import forma.core.strength.DoneSet
+import forma.core.strength.HoldReason
+import forma.core.strength.NextSet
 import forma.core.strength.OneRm
+import forma.core.strength.Outcome
 import forma.core.text.Ru
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -50,6 +54,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowAlarmManager
 import java.time.LocalDate
 import kotlin.math.floor
 import kotlin.test.assertEquals
@@ -213,7 +218,7 @@ class GymFlowUiTest {
         show(repo) { LiftDoneScreen(id) }
         assertTrue(texts("Сделано").isNotEmpty())
         val reps = first.prescription.reps
-        assertTrue(texts("${Texts.weight(Catalog[first.exerciseId], weightOf(first))} × $reps, $reps").isNotEmpty())
+        assertTrue(texts(Texts.weightReps(Catalog[first.exerciseId], weightOf(first), "$reps, $reps")).isNotEmpty())
     }
 
     /** A plank to the stopwatch: "Засечь время", get into position, then the seconds count. */
@@ -359,5 +364,155 @@ class GymFlowUiTest {
         settle()
         assertEquals(Screen.Exercise(slot.exerciseId), nav.current)
         assertFalse(texts("Отдых между подходами").isNotEmpty(), "the sheet closed")
+    }
+
+    /** Dumbbells with reps read once: "по 20 кг × 10", never "20 кг ×2 × 10"; the weight alone and the record keep "×2". */
+    @Test fun dumbbellsWithRepsReadOnce() {
+        val db = Catalog["db_curl"]
+        val bench = Catalog["bench"]
+        assertEquals("по 20 кг × 10", Texts.weightReps(db, 20.0, 10))
+        assertEquals("по 20 кг × 10, 10, 9", Texts.weightReps(db, 20.0, "10, 10, 9"))
+        assertEquals("60 кг × 5", Texts.weightReps(bench, 60.0, 5))
+        assertEquals("30 с", Texts.weightReps(Catalog["plank"], 0.0, 30))
+        assertEquals("30 кг ×2", Texts.oneRm(db, 30.1))
+        assertEquals("100,5 кг", Texts.oneRm(bench, 100.4))
+        val next = Texts.nextSet(db, NextSet(22.0, 10, 1, 4, 2, plus = false, calibrate = false))
+        assertTrue(next.startsWith("Следующий подход: по 22 кг × 10."), next)
+        listOf(Outcome.AddWeight(20.0, 22.0, 10), Outcome.Reset(24.0, 22.0, 10), Outcome.Hold(22.0, 10, HoldReason.NEAR_MISS)).forEach { o ->
+            val t = Texts.outcome(o, db)
+            assertTrue("по 22 кг × 10" in t, t)
+            assertFalse("×2 ×" in t || "до по" in t, t)
+        }
+    }
+
+    /** A plank has no weight and no reserve to mark: after a hold it is not asked for "сколько ещё мог". */
+    @Test fun aHoldHasItsOwnHint() {
+        assertEquals(
+            "Следующий подход: 30 с. Удержишь во всех подходах — в следующий раз дольше.",
+            Texts.nextSet(Catalog["plank"], NextSet(0.0, 30, 0, null, 2, plus = false, calibrate = false)),
+        )
+    }
+
+    /** The very last set of the session can be a record too: said, though nothing comes after it. */
+    @Test fun aRecordOnTheLastSetOfTheSessionIsSaid() {
+        val repo = repo("gym-record-last")
+        val id = startWithWeight(repo, 60.0)
+        val all = items(repo, id)
+        val first = all.first()
+        all.drop(1).forEach { log(repo, id, it, it.prescription.sets) }
+        log(repo, id, first, first.prescription.sets - 1)
+        runBlocking { repo.db.state().upsertStat(ExerciseStatEntity(first.exerciseId, 20.0, 20.0, 0L)) }
+        show(repo) { WorkoutScreen(id) }
+        // Heavier than the sets before it today.
+        repeat(2) { compose.onNodeWithContentDescription("Больше вес").performClick() }
+        settle()
+        compose.onNodeWithText("Подход сделан").performClick()
+        settle()
+        assertEquals(all.sumOf { it.prescription.sets }, setsOf(repo, id).size, "the last set of the session")
+        assertTrue(texts("Рекорд!").isNotEmpty())
+    }
+
+    /** Each hold has its own stopwatch: one started on the plank does not carry over to the side plank. */
+    @Test fun eachHoldHasItsOwnStopwatch() {
+        val repo = repo("gym-holds")
+        val id = startWithWeight(repo)
+        runBlocking {
+            assertTrue(repo.addToWorkout(id, "plank"))
+            assertTrue(repo.addToWorkout(id, "side_plank"))
+        }
+        show(repo) { WorkoutScreen(id) }
+        compose.onAllNodesWithText(Catalog["plank"].name)[0].performScrollTo().performClick()
+        settle()
+        compose.onNodeWithText("Засечь время", ignoreCase = true).performScrollTo().performClick()
+        settle()
+        assertTrue(texts("Приготовься").isNotEmpty())
+        compose.onAllNodesWithText(Catalog["side_plank"].name)[0].performScrollTo().performClick()
+        settle()
+        compose.onNodeWithText("Засечь время", ignoreCase = true).assertExists()
+    }
+
+    /**
+     * The end of a rest with the app not on the screen (the screen off, the phone in a pocket): a notification of its own
+     * that sounds, once; none while the app is on the screen, where its own beep is heard.
+     */
+    @Test fun theEndOfARestBehindTheScreenSoundsByItself() {
+        shadowOf(ctx).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        fun alerts() = shadowOf(nm).allNotifications.filter { it.channelId == RestTimer.END_CHANNEL }
+        fun end(at: Long) = RestReceiver().onReceive(ctx, android.content.Intent(ctx, RestReceiver::class.java).setAction(RestTimer.ACTION_END).putExtra("end", at))
+        val was = RestTimer.onScreen
+        try {
+            RestTimer.onScreen = { false }
+            RestTimer.start(ctx, 42, 60_000, beep = true, vibrate = true)
+            val countdown = shadowOf(nm).allNotifications.single()
+            assertTrue(countdown.timeoutAfter > 0, "the countdown goes by itself after the rest, even with the app closed")
+            val endAt = RestTimer.rest.value!!.endAt
+            end(endAt)
+            assertEquals("Отдых окончен", alerts().single().extras.getString(android.app.Notification.EXTRA_TITLE))
+            val channel = nm.getNotificationChannel(RestTimer.END_CHANNEL)
+            assertEquals(NotificationManager.IMPORTANCE_HIGH, channel.importance)
+            assertNotNull(channel.sound, "it sounds by itself")
+            // Once: the app and the alarm both getting to the end.
+            nm.cancelAll()
+            end(endAt)
+            assertTrue(alerts().isEmpty())
+            // "+15" after the end: a new end, the signal of the old one is gone.
+            RestTimer.start(ctx, 42, 60_000, beep = true, vibrate = true)
+            end(RestTimer.rest.value!!.endAt)
+            assertEquals(1, alerts().size)
+            RestReceiver().onReceive(ctx, android.content.Intent(ctx, RestReceiver::class.java).setAction(RestTimer.ACTION_PLUS))
+            assertTrue(alerts().isEmpty())
+
+            // On the screen: the app's own beep, no notification over it.
+            RestTimer.onScreen = { true }
+            RestTimer.start(ctx, 42, 60_000, beep = true, vibrate = true)
+            end(RestTimer.rest.value!!.endAt)
+            assertTrue(RestTimer.rest.value!!.rang)
+            assertTrue(alerts().isEmpty())
+        } finally {
+            RestTimer.onScreen = was
+        }
+    }
+
+    /** A rest goes with its session: one finished or deleted while the app was closed is cleared at the start, as is an old one. */
+    @Test fun theRestGoesWithItsSession() {
+        RestTimer.start(ctx, 42, 90_000, beep = false, vibrate = false)
+        RestTimer.forget()
+        runBlocking { RestTimer.restore(ctx) { true } }
+        assertNotNull(RestTimer.rest.value, "the session still going: the rest comes back")
+        RestTimer.forget()
+        runBlocking { RestTimer.restore(ctx) { false } }
+        assertNull(RestTimer.rest.value)
+        RestTimer.forget()
+        RestTimer.restore(ctx)
+        assertNull(RestTimer.rest.value, "cleared, not only hidden")
+
+        // Ended long ago: cleared at the start.
+        RestTimer.start(ctx, 42, -(RestTimer.OVER_SHOWN_MS + 60_000), beep = false, vibrate = false)
+        RestTimer.forget()
+        runBlocking { RestTimer.restore(ctx) { true } }
+        assertNull(RestTimer.rest.value)
+
+        // Finished or deleted from a screen: only its own session's rest stops.
+        RestTimer.start(ctx, 42, 90_000, beep = false, vibrate = false)
+        RestTimer.stopFor(ctx, 7)
+        assertNotNull(RestTimer.rest.value)
+        RestTimer.stopFor(ctx, 42)
+        assertNull(RestTimer.rest.value)
+    }
+
+    /** Exact alarms allowed in the settings during a rest: back on the screen, its end is set again, exact. */
+    @Test fun exactAlarmsAllowedDuringARestSetItsEndAgain() {
+        val am = ctx.getSystemService(AlarmManager::class.java)
+        try {
+            ShadowAlarmManager.setCanScheduleExactAlarms(false)
+            RestTimer.start(ctx, 42, 90_000, beep = false, vibrate = false)
+            assertEquals(ShadowAlarmManager.WINDOW_HEURISTIC, shadowOf(am).peekNextScheduledAlarm()!!.windowLengthMs)
+            ShadowAlarmManager.setCanScheduleExactAlarms(true)
+            RestTimer.reschedule(ctx)
+            assertEquals(ShadowAlarmManager.WINDOW_EXACT, shadowOf(am).scheduledAlarms.single().windowLengthMs)
+        } finally {
+            ShadowAlarmManager.setCanScheduleExactAlarms(true)
+        }
     }
 }

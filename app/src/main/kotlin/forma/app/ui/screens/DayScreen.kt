@@ -71,14 +71,11 @@ fun DayScreen(date: LocalDate) {
     val runState by repo.store.runState.collectAsState(initial = null)
     // A missed session of this week that today (a free day) can take: offered on its own day too.
     val catchUp by produceState<forma.core.plan.CatchUp.Suggestion?>(null, week, settings, today) { value = repo.catchUp(today) }
+    // Never into an unfinished session of another day or another session: asked about first.
+    val startLift = rememberLiftStart(today, nav::push)
     fun doToday(s: PlannedSession) {
-        scope.launch {
-            if (s.isRun) nav.push(Screen.RunSetup(repo.runFor(s.kind, today), s.kind))
-            else {
-                // Never over an unfinished session: that one opens instead.
-                nav.push(Screen.Workout(repo.db.workouts().active()?.id ?: repo.startLift(s.templateId!!, today)))
-            }
-        }
+        if (s.isRun) scope.launch { nav.push(Screen.RunSetup(repo.runFor(s.kind, today), s.kind)) }
+        else startLift(s.templateId!!, false)
     }
     // A hard run as things stand: after a long break the hard sessions are easy runs for a while, and before running
     // continuously every run is run/walk (as runFor builds them).

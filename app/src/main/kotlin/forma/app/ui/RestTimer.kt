@@ -2,6 +2,7 @@ package forma.app.ui
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -45,6 +46,11 @@ object RestTimer {
     private const val PREFS = "rest_timer"
     private const val CHANNEL = "rest"
     private const val NOTIFICATION_ID = 7302
+    /** "Отдых окончен" with the app not on the screen: a channel of its own that sounds, and a notification of its own. */
+    internal const val END_CHANNEL = "rest_end"
+    private const val END_ID = 7303
+    /** How long that notification stays: the countdown's own one goes on saying how long the rest has run over. */
+    private const val END_SHOWN_MS = 2 * 60_000L
     internal const val ACTION_END = "forma.rest.END"
     internal const val ACTION_PLUS = "forma.rest.PLUS"
     internal const val ACTION_SKIP = "forma.rest.SKIP"
@@ -52,6 +58,13 @@ object RestTimer {
 
     /** The clock; fixed in tests. */
     internal var clock: () -> Long = System::currentTimeMillis
+
+    /** The app is on the screen: its own beep and buzz are heard then. Fixed in tests. */
+    internal var onScreen: () -> Boolean = {
+        val info = ActivityManager.RunningAppProcessInfo()
+        runCatching { ActivityManager.getMyMemoryState(info) }
+        info.importance in 1..ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+    }
 
     private val scope = MainScope()
     private var job: Job? = null
@@ -77,6 +90,20 @@ object RestTimer {
         follow(c, r)
     }
 
+    /**
+     * At the start of the app: the saved rest is cleared when its session is no longer going ([going] false: finished or
+     * deleted while the app was closed), then [restore] brings back the one still on (and clears one ended long ago).
+     */
+    suspend fun restore(context: Context, going: suspend (workoutId: Long) -> Boolean) {
+        val c = context.applicationContext
+        val r = _rest.value ?: read(c)
+        if (r != null && !going(r.workoutId) && (_rest.value ?: read(c))?.endAt == r.endAt) {
+            app = c
+            stop()
+        }
+        restore(c)
+    }
+
     fun start(context: Context, workoutId: Long, ms: Long, beep: Boolean, vibrate: Boolean) =
         set(context, Rest(workoutId, clock() + ms, ms, beep, vibrate))
 
@@ -95,6 +122,18 @@ object RestTimer {
         app?.let { clear(it) }
     }
 
+    /** The session [workoutId] finished or deleted: its rest stops (a rest of another one goes on). */
+    fun stopFor(context: Context, workoutId: Long) {
+        restore(context)
+        if (_rest.value?.workoutId == workoutId) stop()
+    }
+
+    /** The end set again: exact alarms allowed in the settings while the rest was on make it come on time. */
+    fun reschedule(context: Context) {
+        val r = _rest.value?.takeIf { !it.rang && it.endAt > clock() } ?: return
+        schedule(context.applicationContext, r)
+    }
+
     private fun set(context: Context, r: Rest) {
         val c = context.applicationContext
         app = c
@@ -102,6 +141,8 @@ object RestTimer {
         _rest.value = r
         save(c, r)
         schedule(c, r)
+        // A new end: the signal of the one before is no longer true.
+        runCatching { c.getSystemService(NotificationManager::class.java)?.cancel(END_ID) }
         notify(c, r)
         follow(c, r)
     }
@@ -127,8 +168,40 @@ object RestTimer {
         val done = r.copy(rang = true)
         _rest.value = done
         save(c, done)
-        Feedback.restOver(c, r.beep, r.vibrate)
+        // On the screen the app's own beep is enough. Not on it (the screen off, the phone in a pocket): a notification
+        // that sounds by itself, as the system may freeze the app a moment later, and a buzz as an alarm's, which the
+        // system lets through from the background.
+        val front = onScreen()
+        val sounded = !front && r.beep && endAlert(c)
+        Feedback.restOver(c, r.beep && !sounded, r.vibrate, alarm = !front)
         notify(c, done)
+    }
+
+    /** "Отдых окончен" on a channel that sounds (the buzz is the app's own, by its setting); false when it cannot be shown. */
+    private fun endAlert(c: Context): Boolean {
+        val nm = c.getSystemService(NotificationManager::class.java) ?: return false
+        if (!notificationsAllowed(c) || !nm.areNotificationsEnabled()) return false
+        if (nm.getNotificationChannel(END_CHANNEL) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(END_CHANNEL, "Конец отдыха", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Сигнал в конце отдыха, когда приложение не на экране"
+                    enableVibration(false)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                },
+            )
+        }
+        if (nm.getNotificationChannel(END_CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE) return false
+        val b = NotificationCompat.Builder(c, END_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_rest)
+            .setContentTitle("Отдых окончен")
+            .setContentText("Пора к следующему подходу")
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setContentIntent(openApp(c))
+            .setAutoCancel(true)
+            .setTimeoutAfter(END_SHOWN_MS)
+        return runCatching { nm.notify(END_ID, b.build()) }.isSuccess
     }
 
     // ---------- the alarm: the end on time with the screen off, or after the system closed the app ----------
@@ -168,10 +241,6 @@ object RestTimer {
             )
         }
         if (!notificationsAllowed(c)) return
-        val open = PendingIntent.getActivity(
-            c, 0, Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
         val b = NotificationCompat.Builder(c, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_rest)
             .setOngoing(true)
@@ -179,10 +248,12 @@ object RestTimer {
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_WORKOUT)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setContentIntent(open)
+            .setContentIntent(openApp(c))
             .setShowWhen(true)
             .setUsesChronometer(true)
             .setWhen(r.endAt)
+            // Gone by itself with the rest, even when the system closed the app before it could take it away.
+            .setTimeoutAfter((r.endAt + OVER_SHOWN_MS - clock()).coerceAtLeast(1))
         if (r.rang || r.endAt <= clock()) {
             // Counting up from the end: how long the rest has run over.
             b.setContentTitle("Отдых окончен").setContentText("Пора к следующему подходу").setChronometerCountDown(false)
@@ -193,6 +264,11 @@ object RestTimer {
         b.addAction(0, "Пропустить", action(c, ACTION_SKIP))
         runCatching { nm.notify(NOTIFICATION_ID, b.build()) }
     }
+
+    private fun openApp(c: Context) = PendingIntent.getActivity(
+        c, 0, Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     private fun action(c: Context, a: String) = PendingIntent.getBroadcast(
         c, a.hashCode(), Intent(c, RestReceiver::class.java).setAction(a), PendingIntent.FLAG_IMMUTABLE,
@@ -222,6 +298,7 @@ object RestTimer {
         prefs(c).edit { remove("workout").remove("end").remove("total").remove("beep").remove("vibrate").remove("rang") }
         runCatching { c.getSystemService(AlarmManager::class.java)?.cancel(endIntent(c, null)) }
         runCatching { c.getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID) }
+        runCatching { c.getSystemService(NotificationManager::class.java)?.cancel(END_ID) }
     }
 
     /** The person said no to the hint about the signal with the screen off: not shown again. */
