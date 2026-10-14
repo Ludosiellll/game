@@ -265,6 +265,36 @@ class RunFieldTest {
         assertEquals(53.9 to 27.56, t.line)
     }
 
+    /**
+     * The kept line is 28 m before where he presses: every lap GPS closes there and his press comes 9 s later. Once is a
+     * late press; twice at the same spot is the line, and it moves there.
+     */
+    @Test fun latePressesAtTheSameSpotMoveAWrongLine() {
+        val r = lapM / (2 * Math.PI)
+        val v = 3.07
+        fun at(sec: Double): Pair<Double, Double> {
+            val a = v * sec / r
+            return (53.9 + r * (1 - Math.cos(a)) / 111_195.0) to (27.56 + r * Math.sin(a) / (111_195.0 * Math.cos(Math.toRadians(53.9))))
+        }
+        val t = RunTracker(RunWorkout(RunType.FREE, "Свободный бег", emptyList(), lapMeters = lapM))
+        t.setLine(53.9, 27.56)
+        t.start(0)
+        val lap = lapM / v
+        val presses = mutableListOf<Pair<Double, Double>>()
+        for (sec in 1..170) {
+            val (la, lo) = at(sec.toDouble())
+            t.onFix(Fix(sec * 1000L, la, lo, 5f, v.toFloat()), sec * 1000L)
+            t.autoLap(sec * 1000L)
+            if (sec == (lap + 9).toInt() || sec == (2 * lap + 9).toInt()) {
+                assertIs<Press.Done>(t.press(sec * 1000L))
+                presses += la to lo
+                if (presses.size == 1) assertEquals(53.9 to 27.56, t.line, "one late press moves nothing")
+            }
+        }
+        val line = assertNotNull(t.line)
+        assertTrue(Geo.haversine(line.first, line.second, presses.last().first, presses.last().second) < 5.0, "line $line, presses $presses")
+    }
+
     @Test fun stepsGiveTheDistanceOnlyWithAKnownStride() {
         assertTrue(easyRun().stepsGiveDistance())
         val t = RunTracker(RunWorkout(RunType.EASY, "Лёгкий бег", listOf(Segment(SegmentKind.RUN, 1800, PaceRange(330, 360)))))

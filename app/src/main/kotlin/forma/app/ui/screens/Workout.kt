@@ -175,6 +175,8 @@ fun WorkoutScreen(workoutId: Long) {
     val settings = LocalSettings.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // Opened to be finished («Закончить»): taken at once, so it is never left set for a later opening.
+    val finishAsked = remember(workoutId) { (finishOnOpen == workoutId).also { if (it) finishOnOpen = null } }
     // A rest saved before the system closed the app comes back with its time.
     LaunchedEffect(Unit) { forma.app.ui.RestTimer.restore(context) }
     // Back from the system's settings with exact alarms allowed: the end of the rest going on is set again, on time.
@@ -275,7 +277,7 @@ fun WorkoutScreen(workoutId: Long) {
     var tick by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) { while (true) { tick = System.currentTimeMillis(); delay(1000) } }
 
-    var finishing by remember { mutableStateOf((finishOnOpen == workoutId).also { if (it) finishOnOpen = null }) }
+    var finishing by remember { mutableStateOf(finishAsked) }
     var lastLogAt by remember { mutableLongStateOf(Long.MIN_VALUE / 2) }
     var undo by remember { mutableStateOf<Undo?>(null) }
     var removing by remember { mutableStateOf<Int?>(null) }

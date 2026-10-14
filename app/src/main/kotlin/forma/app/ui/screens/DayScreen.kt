@@ -67,8 +67,8 @@ fun DayScreen(date: LocalDate) {
     val paused = repo.paused(settings, date)
     // A pause day holds no sessions: the plan stands.
     val sessions = if (paused) emptyList() else item?.planned ?: p.week.on(date.dayOfWeek.value)
-    val trialOn by produceState<LocalDate?>(null, p, today) { value = repo.trialDay(today) }
     val runState by repo.store.runState.collectAsState(initial = null)
+    val trialOn by produceState<LocalDate?>(null, p, today, runState) { value = repo.trialDay(today) }
     // A missed session of this week that today (a free day) can take: offered on its own day too.
     val catchUp by produceState<forma.core.plan.CatchUp.Suggestion?>(null, week, settings, today) { value = repo.catchUp(today) }
     // Never into an unfinished session of another day or another session: asked about first.

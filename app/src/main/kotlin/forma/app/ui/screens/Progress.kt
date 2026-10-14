@@ -149,7 +149,13 @@ private fun StrengthTab() {
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(ex.name, style = T.body(15.sp, FontWeight.SemiBold))
-                    Text(if (ex.load == forma.core.model.LoadKind.TIMED) "время удержания" else "максимум на 1 раз, расчёт", style = T.secondary(12.sp))
+                    Text(
+                        when {
+                            ex.load == forma.core.model.LoadKind.TIMED -> "время удержания"
+                            ex.perHand && ex.load == forma.core.model.LoadKind.EXTERNAL -> "максимум на 1 раз, расчёт, на гантель"
+                            else -> "максимум на 1 раз, расчёт"
+                        }, style = T.secondary(12.sp),
+                    )
                 }
                 Sparkline(series.map { it.value }, F.c.strength, Modifier.size(64.dp, 24.dp).padding(end = 8.dp))
                 Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(80.dp)) {

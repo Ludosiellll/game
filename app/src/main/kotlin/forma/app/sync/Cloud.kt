@@ -252,7 +252,8 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
      * No sync meanwhile: the background ones are cancelled and new ones refused before the call, and one going on
      * finishes first (the lock). Not deleted (or not known whether), the background sync comes back.
      */
-    suspend fun deleteAccount() {
+    // Not cancelled with the screen it was asked on: once the request is out, the phone's side must be finished too.
+    suspend fun deleteAccount() = withContext(kotlinx.coroutines.NonCancellable) {
         val c = client ?: throw IllegalStateException("cloud is not configured")
         currentUser(c) ?: throw NotSignedInException()
         deleting = true
@@ -262,6 +263,9 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
             try {
                 forma.app.data.DataLock.mutex.withLock { c.postgrest.rpc("delete_my_account", JsonObject(emptyMap())) }
             } catch (e: Exception) {
+                // No answer may still mean deleted: nothing on the phone counts as uploaded any more, so a later "replace
+                // with this account's data" warns about every workout instead of wiping them silently.
+                forma.app.data.DataLock.mutex.withLock { repo.db.sync().reset() }
                 schedulePeriodic()
                 syncSoon()
                 throw e

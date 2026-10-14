@@ -638,8 +638,8 @@ class RunTracker(
         lineDistM = distanceM
         lineT = t
         // Only a press that closes a lap is surely on the line: a start may be half a lap before it (6.5 laps). A press
-        // that times a lap GPS closed comes seconds after the line.
-        if (p is Press.Done && retimed == null) learnLine(active, p.lap)
+        // that times a lap GPS closed comes seconds after the line it knows: late, or that line is not where he presses.
+        if (p is Press.Done) if (retimed == null) learnLine(active, p.lap) else lateLine(active, p.lap)
         return p
     }
 
@@ -833,6 +833,24 @@ class RunTracker(
     private var farPress: Pair<Double, Double>? = null
 
     /**
+     * A press that timed a lap GPS had closed at the known line, seconds before. Late once (the button hard to find) it
+     * lands anywhere; two in a row at the same spot (within [LATE_AGREE_M]) mean the line is there, not where it was kept.
+     */
+    private fun lateLine(active: Long, lap: Lap) {
+        if (workout.lapMeters == null) return
+        val f = lastRaw ?: return
+        if (active - lastRawActive > 3_000 || f.accuracy > LINE_ACCURACY || !onTime(lap)) return
+        val first = latePress
+        latePress = f.lat to f.lon
+        if (first == null || Geo.haversine(first.first, first.second, f.lat, f.lon) > LATE_AGREE_M) return
+        latePress = null
+        line = (first.first + f.lat) / 2 to (first.second + f.lon) / 2
+    }
+
+    /** The last late press (see [lateLine]). */
+    private var latePress: Pair<Double, Double>? = null
+
+    /**
      * The lap [l] (the last one in the list) took about the time expected: within [LINE_LAP] of its target, or without one
      * of the laps pressed before it. A touch mid-lap gives a share of a lap, and the press on the line after it the rest.
      * With nothing to judge by (the first laps of a run without a target) it counts.
@@ -1011,6 +1029,8 @@ class RunTracker(
 
         /** Fixes worse than this neither move the line nor count as passing it. */
         const val LINE_ACCURACY = 20f
+        /** Two late presses this close together: the line is where he presses (see lateLine). */
+        const val LATE_AGREE_M = 12.0
 
         /** A press moves the line only when its lap is within this share of the lap expected (see [onTime]). */
         const val LINE_LAP = 0.25

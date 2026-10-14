@@ -574,7 +574,7 @@ class TrainingRepository(
         val settings = store.settingsNow()
         // The days before a lighter week the app set itself are not the block's peak: the reserve as planned.
         val lighterNext = store.liftStateNow().reactiveDeloadStart?.let { date.toEpochDay() in it - 7 until it } == true
-        val rirOffset = if (deload || lighterNext) 0 else ProgramGenerator.rirOffset(program, date)
+        val rirOffset = if (deload) 0 else ProgramGenerator.rirOffset(program, date).let { if (lighterNext) max(0, it) else it }
         val trained = when (profile.experience) {
             Experience.NOVICE -> 1.0
             Experience.INTERMEDIATE -> 1.35
@@ -637,6 +637,8 @@ class TrainingRepository(
         val w = db.workouts().get(workoutId) ?: return false
         val plan = planOf(w) ?: return false
         val old = plan.items.firstOrNull { it.position == position } ?: return false
+        // The exercise already in place picked again: nothing changes, today or for good.
+        if (newId == old.exerciseId) return true
         if (db.sets().forWorkout(workoutId).any { it.position == position }) return false
         val settings = store.settingsNow()
         val own = ownSlot(plan.templateId, old)
@@ -673,7 +675,7 @@ class TrainingRepository(
      */
     suspend fun swapChange(workoutId: Long, position: Int, newId: String): Pair<SlotSpec, SlotSpec>? {
         val plan = db.workouts().get(workoutId)?.let { planOf(it) } ?: return null
-        val old = plan.items.firstOrNull { it.position == position } ?: return null
+        val old = plan.items.firstOrNull { it.position == position }?.takeIf { it.exerciseId != newId } ?: return null
         val base = originalOf(plan, old, ownSlot(plan.templateId, old), store.settingsNow()) ?: old.slot
         return if (demotes(base, newId)) base to swapSpec(base, newId) else null
     }
@@ -1022,7 +1024,8 @@ class TrainingRepository(
             store.setLiftState(state.copy(reactiveDeloadStart = nextMonday.toEpochDay()))
             // The lighter week becomes the block's last one and a new block follows it: the planned one does not come a
             // week or two later, the weeks keep their count (no week 1 three times), the runs are lighter that week too.
-            store.setProgram(ProgramGenerator.lighterWeekAt(program, nextMonday))
+            // Without blocks (novices) the count of lighter running weeks stays as it is.
+            if (program.blockWeeks > 0) store.setProgram(ProgramGenerator.lighterWeekAt(program, nextMonday))
         }
     }
 
@@ -1127,7 +1130,12 @@ class TrainingRepository(
      */
     suspend fun pause(from: LocalDate, until: LocalDate) {
         store.setSettings(store.settingsNow().withPause(from.toEpochDay(), until.toEpochDay()))
-        if (until.toEpochDay() - from.toEpochDay() + 1 >= 7) restartBlock(until.plusDays(1))
+        if (until.toEpochDay() - from.toEpochDay() + 1 >= 7) {
+            restartBlock(until.plusDays(1))
+            // A week or more away is rest enough: a lighter week the app set before it is not needed any more.
+            val lift = store.liftStateNow()
+            if (lift.reactiveDeloadStart?.let { it + 7 > from.toEpochDay() } == true) store.setLiftState(lift.copy(reactiveDeloadStart = null))
+        }
         onChange()
     }
 
@@ -1269,8 +1277,11 @@ class TrainingRepository(
      */
     private suspend fun goalLater(program: Program?, date: LocalDate): Boolean {
         if (program == null || !legsBefore(program, date)) return false
+        // Owed for two weeks (the fresh days were missed): race pace now, tired legs or not.
+        if (store.runStateNow().goalDeferredOn?.let { date.toEpochDay() - it >= 14 } == true) return false
+        val settings = store.settingsNow()
         val fresh = (1L..4L).map { date.plusDays(it) }.firstOrNull { d ->
-            program.week.on(d.dayOfWeek.value).any { it.kind == SessionKind.RUN_QUALITY } && !legsBefore(program, d)
+            program.week.on(d.dayOfWeek.value).any { it.kind == SessionKind.RUN_QUALITY } && !legsBefore(program, d) && !paused(settings, d)
         } ?: return false
         return trialDay(date) != fresh
     }

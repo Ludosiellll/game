@@ -74,7 +74,8 @@ fun PlanScreen() {
 
         SectionLabel("Неделя")
         // A due trial is the next hard day only: the hard days after it show what comes after the trial.
-        val trialOn by produceState<java.time.LocalDate?>(null, p, today) { value = repo.trialDay(today) }
+        val runState by repo.store.runState.collectAsState(initial = null)
+        val trialOn by produceState<java.time.LocalDate?>(null, p, today, runState) { value = repo.trialDay(today) }
         val weekMonday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
         val weekItems by remember(weekMonday) { repo.weekFlow(weekMonday) }.collectAsState(initial = emptyList())
         FCard(gap = 0.dp) {

@@ -93,7 +93,9 @@ object TrainingReport {
             prog.copiedFrom?.let { appendLine("Скопирован у: $it.") }
             // After a pause the block starts again from the week of return, which may be ahead.
             val start = LocalDate.ofEpochDay(prog.startEpochDay)
-            appendLine((if (start.isAfter(today)) "Новый блок — с ${Ru.date(start)}." else "Начат ${Ru.date(start)}.") +
+            // Made on: the block's count may start before it (a lighter week the app set itself ends a block early).
+            val made = LocalDate.ofEpochDay(prog.createdEpochDay ?: prog.startEpochDay)
+            appendLine((if (start.isAfter(today)) "Новый блок — с ${Ru.date(start)}." else "Начат ${Ru.date(made)}.") +
                 if (prog.blockWeeks > 0) " Блок ${prog.blockWeeks} нед., последняя — разгрузка." else " Разгрузка — по необходимости.")
             appendLine()
             prog.week.days.sortedBy { it.day }.forEach { d ->
@@ -157,7 +159,9 @@ object TrainingReport {
                 val next = b.slots.filter { it.exerciseId == s.exerciseId }.maxByOrNull { it.updatedAt }
                 // Pull-ups and dips: the maximum is of the body with the extra weight; the next target is the extra weight ("+12,5 кг").
                 val withBody = if (ex?.load == LoadKind.BODYWEIGHT_PLUS) ", с весом тела" else ""
-                appendLine("- ${name(s.exerciseId)}: ${half(s.e1rm)} кг (лучший ${half(s.best)}$withBody)" +
+                // Dumbbells: the estimate is of one, as the sets say it ("30 кг ×2").
+                val pair = if (ex?.perHand == true && ex.load == LoadKind.EXTERNAL) " ×2" else ""
+                appendLine("- ${name(s.exerciseId)}: ${half(s.e1rm)} кг$pair (лучший ${half(s.best)}$withBody)" +
                     (next?.weight?.let { w -> "; следующая цель ${Texts.weightReps(ex, w, next.reps)}" } ?: ""))
             }
             appendLine()

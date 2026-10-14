@@ -50,7 +50,7 @@ class FreshLegsTest {
         assertEquals(6, types.count { it == RunType.GOAL_PACE })
         assertEquals(4, types.count { it == RunType.TEMPO })
         assertEquals(2, types.count { it == RunType.INTERVALS })
-        assertTrue(!st.goalDeferred)
+        assertEquals(null, st.goalDeferredOn)
     }
 
     @Test fun aTempoStepOverTheWeeksShareIsCutToItNotFarBelow() {
@@ -140,5 +140,30 @@ class FreshLegsTest {
         assertEquals(a.state.weight, b.state.weight)
         // Not rated: a "+" set before a hard run is taken as stopped with 2 in reserve.
         assertEquals(2, Progression.assumedRir(DoneSet(100.0, 7), 2, beforeRun))
+    }
+
+    /** Thursday missed after race pace was put off on Monday: next Monday is still not race pace, Thursday is. */
+    @Test fun aMissedFreshDayDoesNotPutRacePaceOnTheTiredDay() {
+        var st = RunState(walkStage = -1, vdot = 49.0, runs = 10, qualityCount = 0)
+        val mon = RunPlan.quality(st, goal = goal, lapMeters = 230, goalLater = true)
+        assertEquals(RunType.TEMPO, mon.type)
+        st = RunPlan.after(st, mon, RunResult(1.0, 6, mon.totalSeconds), caps, day = 100, goal = goal).state
+        assertEquals(100L, st.goalDeferredOn)
+        // Thursday missed; next Monday, tired again: the cycle's own session, race pace still owed.
+        val mon2 = RunPlan.quality(st, goal = goal, lapMeters = 230, goalLater = true)
+        assertTrue(mon2.type != RunType.GOAL_PACE, mon2.type.toString())
+        st = RunPlan.after(st, mon2, RunResult(1.0, 6, mon2.totalSeconds), caps, day = 107, goal = goal).state
+        assertEquals(100L, st.goalDeferredOn)
+        val thu = RunPlan.quality(st, goal = goal, lapMeters = 230)
+        assertEquals(RunType.GOAL_PACE, thu.type)
+        st = RunPlan.after(st, thu, RunResult(1.0, 6, thu.totalSeconds), caps, day = 110, goal = goal).state
+        assertEquals(null, st.goalDeferredOn)
+    }
+
+    /** A session of the plan before a mid-week change (before [firstDay]) closes no later day as done ahead. */
+    @Test fun aSessionOfTheOldPlanIsNotDoneAhead() {
+        val lift = PlannedSession(SessionKind.LIFT, "upper_a")
+        val week = listOf(CatchUp.Day(1, emptyList(), listOf(lift)), CatchUp.Day(4, listOf(lift), emptyList()))
+        assertEquals(emptyList(), CatchUp.closes(week, firstDay = 3, today = 5))
     }
 }

@@ -69,7 +69,9 @@ object CatchUp {
         }
         for ((doneDay, doneIndex) in spare.sortedBy { it.first }) {
             val s = week.first { it.day == doneDay }.done[doneIndex]
-            val match = pick(s, open.filter { it.first < doneDay }) ?: pick(s, open.filter { it.first in doneDay + 1 until today }) ?: continue
+            // Ahead only from this plan's days: a session of the plan before a mid-week change closes nothing later.
+            val ahead = if (doneDay >= firstDay) open.filter { it.first in doneDay + 1 until today } else emptyList()
+            val match = pick(s, open.filter { it.first < doneDay }) ?: pick(s, ahead) ?: continue
             open.remove(match)
             out += Close(match.first, match.second, doneDay, doneIndex)
         }

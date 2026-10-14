@@ -78,10 +78,10 @@ data class RunState(
      */
     val easySigns: List<Int> = emptyList(),
     /**
-     * Race pace was put off from a hard day too soon after the legs to a fresher one later in the week (the next type of
-     * the cycle was run instead): the next hard session is race pace.
+     * The day race pace was put off from a hard day too soon after the legs to a fresher one later in the week (the next
+     * type of the cycle was run instead): race pace is owed until it is run.
      */
-    val goalDeferred: Boolean = false,
+    val goalDeferredOn: Long? = null,
 ) {
     val canRunContinuously: Boolean get() = walkStage < 0
 
@@ -411,8 +411,8 @@ object RunPlan {
         var n = if (cutback && n0 > 1) n0 - 1 else n0
         var workSec = if (cutback && n0 == 1) (work * 0.75).roundToInt() else work
         if (cap != null && n * workSec > cap) {
-            // Over the week's share: shorter reps of the same number while they stay 5 minutes or more (2 × 12 → 2 × 10),
-            // so a higher step never holds less tempo than the one before; else fewer reps, one at most the cap.
+            // Over the week's share: shorter reps of the same number while they stay 5 minutes or more (2 × 12 → 2 × 10,
+            // 3 × 8 → 3 × 6 in whole minutes), so a step holds about the share, not one rep of it; else fewer reps.
             val each = (cap / n / 60) * 60
             if (each >= 5 * 60) workSec = each
             else {
@@ -669,9 +669,12 @@ object RunPlan {
             // Tempo twice for every intervals: fading after 800 m is the threshold more than VO2max.
             goal != null && goal.middleDistance -> {
                 val pos = state.qualityCount % 6
+                // Race pace when it is due or owed, unless the legs are tired and a fresher day comes; else the cycle's
+                // other session (the next one when race pace was due).
+                val other = if (pos % 2 == 0) pos + 1 else pos
                 when {
-                    state.goalDeferred || pos % 2 == 0 && !goalLater -> goalPace(state, goal, lapMeters, cutback)
-                    pos == 3 || pos == 2 -> intervals(state, cutback)
+                    !goalLater && (state.goalDeferredOn != null || pos % 2 == 0) -> goalPace(state, goal, lapMeters, cutback)
+                    other == 3 -> intervals(state, cutback)
                     else -> tempo(state, cutback)
                 }
             }
@@ -910,7 +913,7 @@ object RunPlan {
                 s = if (w.type == RunType.INTERVALS) s.copy(intervalStage = stage) else s.copy(tempoStage = stage)
                 s = s.copy(qualityCount = state.qualityCount + 1, qualityFails = fails, qualityOnPace = streak)
                 // Run in place of race pace put off to a fresher day: race pace comes next.
-                if (goal?.middleDistance == true && state.qualityCount % 2 == 0 && !state.goalDeferred) s = s.copy(goalDeferred = true)
+                if (goal?.middleDistance == true && state.qualityCount % 2 == 0 && state.goalDeferredOn == null) s = s.copy(goalDeferredOn = day)
                 val v = s.vdot
                 // Paces held a month (Daniels raises them after about four weeks); with a race goal the time trial measures
                 // the form instead, and its first half must not be paced from a guess.
@@ -1030,7 +1033,7 @@ object RunPlan {
                     out += RunOutcome.StageRepeat("goal")
                     s = s.copy(goalFails = 1)
                 }
-                s = s.copy(qualityCount = state.qualityCount + 1, goalDeferred = false)
+                s = s.copy(qualityCount = state.qualityCount + 1, goalDeferredOn = null)
             }
             RunType.FREE -> Unit
         }

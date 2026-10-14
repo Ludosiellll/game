@@ -215,4 +215,36 @@ class DenisWeekRepoTest {
         val slots = program.templates.first { it.id == "lower_a" }.slots
         assertEquals(slots.map { it.exerciseId to it.sets }, lower.items.map { it.slot.exerciseId to it.slot.sets }.filter { (id, _) -> slots.any { it.exerciseId == id } })
     }
+
+    /** A week or more away is rest enough: the lighter week set before it goes. */
+    @Test fun aLongPauseTakesThePlannedLighterWeekAway() = runBlocking<Unit> {
+        val repo = setbacks(denis, "deload-pause", 1)
+        assertNotNull(repo.store.liftStateNow().reactiveDeloadStart)
+        repo.pause(monday.plusDays(3), monday.plusDays(12))
+        assertEquals(null, repo.store.liftStateNow().reactiveDeloadStart)
+    }
+
+    /** Novices have no blocks: the app's lighter week is the gym's only, the count of lighter running weeks stays. */
+    @Test fun aNovicesLighterWeekLeavesTheirWeeksAsTheyAre() = runBlocking<Unit> {
+        val novice = Profile(
+            aim = Aim(LiftFocus.STRENGTH, RunFocus.NONE, Emphasis.GYM), experience = Experience.NOVICE, runLevel = RunLevel.BASE,
+            trainingDays = setOf(1, 3, 5), bodyWeightKg = 75.0,
+        )
+        val repo = setbacks(novice, "deload-novice", 2)
+        assertEquals(monday.plusWeeks(1).toEpochDay(), repo.store.liftStateNow().reactiveDeloadStart)
+        assertEquals(monday.minusWeeks(2).toEpochDay(), repo.store.programNow()!!.startEpochDay)
+    }
+
+    /** The exercise already in place picked again in a session: nothing changes, today or in the plan. */
+    @Test fun theSameExercisePickedAgainInASessionChangesNothing() = runBlocking<Unit> {
+        val repo = repo(denis, "denis-same-in-session")
+        repo.updateSettings { it.copy(swaps = mapOf("bulgarian" to "leg_ext")) }
+        val id = repo.startLift("lower_a", monday.plusDays(5))
+        val before = repo.planOf(db.workouts().get(id)!!)!!.items.first { it.exerciseId == "leg_ext" }
+        assertEquals(null, repo.swapChange(id, before.position, "leg_ext"))
+        assertTrue(repo.swapExercise(id, before.position, "leg_ext", forever = true))
+        val after = repo.planOf(db.workouts().get(id)!!)!!.items.first { it.exerciseId == "leg_ext" }
+        assertEquals(before.slot, after.slot)
+        assertTrue("bulgarian" !in repo.store.settingsNow().demoted)
+    }
 }

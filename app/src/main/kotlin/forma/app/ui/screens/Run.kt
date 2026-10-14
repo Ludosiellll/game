@@ -227,7 +227,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
             title = { Text("Силовая ещё открыта — закончить её сейчас?") },
             text = { Text("Иначе время пробежки попадёт в силовую: она закончится, когда ты её закроешь.") },
             confirmButton = {
-                androidx.compose.material3.TextButton({ askLift = false; nav.push(Screen.Workout(openLift.id)) }) { Text("Закончить", color = F.c.accent) }
+                androidx.compose.material3.TextButton({ askLift = false; finishOnOpen = openLift.id; nav.push(Screen.Workout(openLift.id)) }) { Text("Закончить", color = F.c.accent) }
             },
             dismissButton = { androidx.compose.material3.TextButton({ askLift = false; go() }) { Text("Позже") } },
             containerColor = F.c.surface, titleContentColor = F.c.text, textContentColor = F.c.text2,

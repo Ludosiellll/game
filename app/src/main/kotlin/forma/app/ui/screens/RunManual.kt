@@ -101,9 +101,11 @@ fun RunManualScreen(workout: RunWorkout) {
         )
     // A run without reps typed lap by lap is all its laps: the distance, when not typed.
     val lapsDist = if (lapM != null && workout.reps == 0) laps.sumOf { it.part } * lapM else 0.0
+    // The laps against the time: the laps of the whole run in it, or not all of them typed.
+    val lapsShort = dist == null && lapsDist > 0 && timeSec != null && timeSec / (lapsDist / 1000) !in WALKED_LAP
     val trialBad = trial.isNotBlank() && trialSec == null
     val testBad = testKm.isNotBlank() && (testDist == null || testDist !in 800.0..5_500.0)
-    val ok = rpe > 0 && !timeBad && !kmBad && !paceBad && !lapBad && !lapsBad && !trialBad && !testBad && (!timeNeeded || timeSec != null)
+    val ok = rpe > 0 && !timeBad && !kmBad && !paceBad && !lapBad && !lapsBad && !lapsShort && !trialBad && !testBad && (!timeNeeded || timeSec != null)
 
     // Once saved, back leads home: the screen before would offer to start this run again.
     val leave = { if (saved != null) nav.tab(Screen.Today) else nav.back() }
@@ -213,6 +215,7 @@ fun RunManualScreen(workout: RunWorkout) {
             kmBad -> Text("Не похоже на дистанцию — впиши километры, например 6,2.", style = T.secondary(13.sp).copy(color = F.c.warn))
             paceBad -> Text("Темп ${Ru.pace(pace!!)} на км — так не бегают: проверь время и дистанцию.", style = T.secondary(13.sp).copy(color = F.c.warn))
             pace != null -> Text("Средний темп ${Ru.pace(pace)} на км.", style = T.secondary(13.sp))
+            lapsShort -> Text("Кругов на ${Ru.distance(lapsDist)} за ${Ru.clock(timeSec!!)} — похоже, вписаны не все: впиши все круги или дистанцию.", style = T.secondary(13.sp).copy(color = F.c.warn))
             lapsDist > 0 -> Text("Не впишешь — посчитаю по кругам: ${Ru.distance(lapsDist)}.", style = T.secondary(13.sp))
         }
 
