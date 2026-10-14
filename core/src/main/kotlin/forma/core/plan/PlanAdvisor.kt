@@ -238,8 +238,9 @@ object PlanAdvisor {
             val ex = find(i.exerciseId) ?: continue
             // Before the race the legs get nothing new.
             if (raceSoon && ex.lowerBody) continue
-            val present = d.items.map { it.exerciseId }.toSet()
-            val alts = VARIATIONS[ex.id].orEmpty().filter(usable).filter { it !in present }
+            // Another variation, not one done in the week already (stuck there too, or the same work twice).
+            val present = days.flatMap { d2 -> d2.items.map { it.exerciseId } }.toSet()
+            val alts = VARIATIONS[ex.id].orEmpty().filter(usable).filter { it !in present && (input.stalled[it] ?: 0) < STALL_WEEKS }
             if (alts.isEmpty()) continue
             changes += Change(
                 "stall:${d.templateId}:${i.planId}", Kind.SWAP, d.templateId, d.title, i.planId, i.exerciseId, alts, null, null, null, null,

@@ -78,6 +78,9 @@ class PlanAdvisorTest {
         assertEquals(1, first.priority)
         assertEquals("pause_bench", first.to)
         assertTrue("6 недель" in first.why, first.why)
+        // Not a variation done on another day already: the shoulder press is stuck, the standing press is on Верх · Б.
+        val shoulders = PlanAdvisor.advise(input(denis()).copy(stalled = mapOf("db_shoulder" to 6))).changes.first { it.id.startsWith("stall:") }
+        assertEquals(listOf("arnold_press", "machine_shoulder_press"), shoulders.options)
         // Two weeks is not a stall.
         assertTrue(a.changes.none { it.id.startsWith("stall:") && it.planId == "squat" })
     }
