@@ -1265,6 +1265,105 @@ class TrainingRepository(
     }
 
     /**
+     * «Идеальный план» ([forma.core.plan.PlanAdvisor]): the gym plan as it is done now (swaps, sets, exercises taken out
+     * and added, all as on the plan screen) weighed with the person's focus, experience, running, session time and own
+     * pace, lifts without a new best, how tired they have been, a race coming. Null without a program.
+     */
+    suspend fun planAdvice(): forma.core.plan.PlanAdvisor.Advice? {
+        val program = store.programNow() ?: return null
+        val profile = store.profileNow() ?: return null
+        val settings = store.settingsNow()
+        val today = today()
+        val sessions = program.week.days.flatMap { it.sessions }
+        val times = sessions.filter { it.kind == SessionKind.LIFT }.groupingBy { it.templateId }.eachCount()
+        val days = program.templates.filter { (times[it.id] ?: 0) > 0 }.map { t -> forma.core.plan.PlanAdvisor.Day(t.id, t.title, adviceItems(t, settings), times.getValue(t.id)) }
+        // Tired often: "so-so" on 3 days of the last three weeks, below the rest line now, or a lighter week the app set lately.
+        val lows = (1..21).count { settings.feelOn(today.minusDays(it.toLong())) == Feel.LOW }
+        val zone = loadStoryNow(today)?.takeIf { it.history }?.zone
+        val lighter = store.liftStateNow().reactiveDeloadStart?.let { today.toEpochDay() - it in 0..28 } == true
+        return forma.core.plan.PlanAdvisor.advise(
+            forma.core.plan.PlanAdvisor.Input(
+                days, program.aim, program.experience,
+                runs = sessions.count { it.isRun }, sessionMinutes = profile.sessionMinutes, timeRatio = timeRatio(),
+                stalled = weeksWithoutBest(today), tiredOften = lows >= 3 || zone == forma.core.load.LoadStory.Zone.REST || lighter,
+                daysToRace = daysToRace(today), find = Catalog::find,
+            ),
+        )
+    }
+
+    /** The exercises of [t] as every session has them now, with the numbers set for good (no lighter week, no progress). */
+    private fun adviceItems(t: forma.core.plan.Template, settings: Settings): List<forma.core.plan.PlanAdvisor.Item> {
+        val added = addedTo(t.id, settings)
+        val kept = t.slots.filter { it.exerciseId !in settings.removed }.ifEmpty { if (added.isEmpty()) t.slots else emptyList() }
+        val own = kept.map { spec ->
+            val s = tuned(spec, settings)
+            forma.core.plan.PlanAdvisor.Item(s.exerciseId, spec.exerciseId, s.sets, s.repMin, s.repMax, s.restSec, s.role)
+        }
+        val extra = added.map { id ->
+            val s = overrides(addedSpec(id), settings, addedKey(t.id, id))
+            forma.core.plan.PlanAdvisor.Item(id, id, s.sets, s.repMin, s.repMax, s.restSec, s.role, added = true)
+        }
+        return own + extra
+    }
+
+    /**
+     * Exercise → weeks from its last new best estimate to its last session, for the exercises done 4+ times over 5+
+     * weeks of the last 12 and done in the last two (a lift left long ago or just begun says nothing yet).
+     */
+    private suspend fun weeksWithoutBest(today: LocalDate): Map<String, Int> {
+        val from = today.toEpochDay() - 84
+        val by = mutableMapOf<String, MutableList<Pair<Long, Double>>>()
+        for (w in db.workouts().allDone().filter { it.kind == Kind.LIFT && it.epochDay >= from }) {
+            val s = liftSummaryOf(w) ?: continue
+            for (r in s.reports) r.e1rm?.let { by.getOrPut(r.exerciseId) { mutableListOf() } += w.epochDay to it }
+        }
+        return by.mapNotNull { (id, xs) ->
+            val sorted = xs.sortedBy { it.first }
+            val last = sorted.last().first
+            if (sorted.size < 4 || last - sorted.first().first < 35 || today.toEpochDay() - last > 14) return@mapNotNull null
+            var best = 0.0
+            var bestDay = sorted.first().first
+            for ((d, e) in sorted) if (e > best * 1.005) { best = e; bestDay = d }
+            id to ((last - bestDay) / 7).toInt()
+        }.toMap()
+    }
+
+    /**
+     * Takes the changes of the «Идеальный план» the person ticked, each with the option they picked, through the same
+     * edits as the plan screen (so each one is seen and undone there); nothing else changes.
+     */
+    suspend fun applyPlanAdvice(chosen: List<forma.core.plan.PlanAdvisor.Change>) {
+        val program = store.programNow() ?: return
+        for (c in chosen) {
+            val to = c.to ?: continue
+            val planId = c.planId
+            when (c.kind) {
+                forma.core.plan.PlanAdvisor.Kind.SWAP -> when {
+                    planId == null -> Unit
+                    c.added -> replaceAdded(c.templateId, planId, to)
+                    else -> setSwap(planId, to)
+                }
+                forma.core.plan.PlanAdvisor.Kind.ADD -> {
+                    if (!addToPlan(c.templateId, to)) continue
+                    val planned = addedSpec(to)
+                    if (c.setsTo != null || c.repsTo != null || c.restSec != null) tunePlan(
+                        addedKey(c.templateId, to), planned, c.setsTo ?: planned.sets,
+                        c.repsTo ?: (planned.repMin to planned.repMax), c.restSec ?: planned.restSec,
+                    )
+                }
+                forma.core.plan.PlanAdvisor.Kind.SETS -> {
+                    if (planId == null || c.setsTo == null) continue
+                    if (c.added) setPlanSets(addedKey(c.templateId, planId), c.setsTo, addedSpec(planId).sets)
+                    else {
+                        val spec = program.templates.flatMap { it.slots }.firstOrNull { it.exerciseId == planId } ?: continue
+                        setPlanSets(planId, c.setsTo, plannedFor(spec, store.settingsNow()).sets)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * A day with the gym and a run: which goes first and why ([forma.core.plan.SessionOrder]) — from the run as it stands
      * that day, what the gym session does to the legs exercise by exercise (swaps and all), the person's freshness and
      * feel today, the legs of the last two days, a lighter gym session. Null on a day without both (or a pause day).

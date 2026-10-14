@@ -137,6 +137,29 @@ fun PlanScreen() {
         }
 
         SectionLabel("Силовые")
+        // «Идеальный план»: what could be better in the gym plan and why — taken only by choice.
+        if (p.templates.isNotEmpty()) {
+            val edits by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+            val advice by produceState<forma.core.plan.PlanAdvisor.Advice?>(null, p, lifting, edits) { value = runCatching { repo.planAdvice() }.getOrNull() }
+            FCard(onClick = { nav.push(Screen.IdealPlan) }, gap = 6.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        SectionLabel("Идеальный план")
+                        val n = advice?.changes?.size
+                        Text(
+                            when (n) {
+                                null -> "Разбор твоего зала"
+                                0 -> "План уже хорошо собран"
+                                else -> "$n ${Ru.plural(n, "идея", "идеи", "идей")}, как сделать план лучше"
+                            },
+                            style = T.body(16.sp, FontWeight.SemiBold),
+                        )
+                        Text("Как есть и каким может быть — с причинами. Меняется только то, что выберешь.", style = T.secondary(13.sp))
+                    }
+                    Icon(Ic.chevron, null, tint = F.c.text3, modifier = Modifier.size(18.dp))
+                }
+            }
+        }
         p.templates.forEach { t -> TemplateCard(t) }
 
         PauseControl()

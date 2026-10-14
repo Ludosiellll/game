@@ -70,6 +70,7 @@ class PopulationTest {
                     s
                 }
                 line = check(p, sim, found)
+                advice(sim, found)
                 if (System.getenv("FORMA_SIM_TRACE") != null) File(out, "trace-$id.txt").writeText(sim.runLog.joinToString("\n") { r ->
                     "${r.day} ${r.type} st${r.stage + 1} ${r.title} rpe=${r.result.rpe} done=${r.result.completed} appV=${r.appVdot} trueV=${"%.1f".format(r.trueVdot)} ${r.outcomes}"
                 })
@@ -83,6 +84,42 @@ class PopulationTest {
             rows.flush(); issues.flush()
         }
         rows.close(); issues.close()
+    }
+
+    /**
+     * «Идеальный план» for this person at the end: nothing nonsensical proposed, and the plan after taking every change
+     * through the repository is the one the screen shows ("С выбранным"); taken changes are not proposed again.
+     */
+    private fun advice(sim: Simulation, found: MutableList<String>) = runBlocking {
+        val repo = sim.repo
+        val before = repo.store.settingsNow()
+        val a = try {
+            repo.planAdvice()
+        } catch (e: Throwable) {
+            found += "ADVICE_CRASH: ${e::class.simpleName} ${e.message?.take(120)}"
+            return@runBlocking
+        } ?: return@runBlocking
+        if (repo.store.settingsNow() != before) found += "ADVICE_CHANGED_PLAN: looking changed the settings"
+        if (a.changes.size > 8) found += "ADVICE_MANY: ${a.changes.size} changes ${a.changes.map { it.id }}"
+        for (c in a.changes) {
+            val day = a.days.firstOrNull { it.templateId == c.templateId }
+            when (c.kind) {
+                forma.core.plan.PlanAdvisor.Kind.SETS -> if (c.setsTo == null || c.setsTo!! < 1 || c.setsTo == c.setsFrom) found += "ADVICE_BAD_SETS: ${c.id} ${c.setsFrom}→${c.setsTo}"
+                forma.core.plan.PlanAdvisor.Kind.ADD -> if (day?.items?.any { it.exerciseId == c.to } == true) found += "ADVICE_ADD_PRESENT: ${c.id} ${c.to}"
+                forma.core.plan.PlanAdvisor.Kind.SWAP -> if (c.to == c.from) found += "ADVICE_SWAP_SAME: ${c.id}"
+            }
+            if (c.why.isBlank() || "null" in c.why || "NaN" in c.why) found += "ADVICE_TEXT: ${c.id} ${c.why.take(80)}"
+        }
+        if (a.changes.isEmpty()) return@runBlocking
+        fun rows(days: List<forma.core.plan.PlanAdvisor.Day>) =
+            days.flatMap { d -> d.items.map { "${d.templateId}:${it.exerciseId}:${it.sets}:${it.repMin}-${it.repMax}" } }.sorted()
+        val shown = rows(forma.core.plan.PlanAdvisor.apply(a.days, a.changes))
+        repo.applyPlanAdvice(a.changes)
+        val after = repo.planAdvice() ?: return@runBlocking
+        val done = rows(after.days)
+        if (shown != done) found += "ADVICE_MISMATCH: shown ${shown - done.toSet()} done ${done - shown.toSet()}"
+        val again = after.changes.map { it.id }.filter { id -> a.changes.any { it.id == id } }
+        if (again.isNotEmpty()) found += "ADVICE_AGAIN: $again"
     }
 
     /** What a good plan must never do; the numbers for the table. */

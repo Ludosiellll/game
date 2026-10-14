@@ -38,6 +38,8 @@ sealed interface Screen {
     @Serializable data class Library(val mode: LibraryMode = LibraryMode.Browse) : Screen
     @Serializable data object Friends : Screen
     @Serializable data class Friend(val userId: String, val name: String) : Screen
+    /** «Идеальный план»: the gym plan as it is and as it could be, changes on choice. */
+    @Serializable data object IdealPlan : Screen
 }
 
 /** What the exercise library was opened for. */

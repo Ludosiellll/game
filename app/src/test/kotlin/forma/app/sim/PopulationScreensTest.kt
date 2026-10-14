@@ -119,6 +119,7 @@ class PopulationScreensTest {
                 lastLift?.let { add("lift-done" to { HistoryItemScreen(it) }) }
                 lastRun?.let { add("run-done" to { HistoryItemScreen(it) }) }
                 add("plan" to { PlanScreen() })
+                if (program?.templates?.isNotEmpty() == true) add("ideal" to { forma.app.ui.screens.IdealPlanScreen() })
                 add("day" to { DayScreen(end) })
                 add("settings" to { SettingsScreen() })
             }
