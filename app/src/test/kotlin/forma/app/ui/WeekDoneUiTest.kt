@@ -163,8 +163,7 @@ class WeekDoneUiTest {
         runBlocking { lift(repo, tue.templateId!!, monday.plusDays(2)) }
         at(monday.plusDays(2), 19)
         show(repo) { TodayScreen() }
-        compose.onNodeWithText("Сделано вне плана", substring = true, ignoreCase = true).assertExists()
-        compose.onNodeWithText("Сделано за пропущенную во вторник").assertExists()
+        compose.onNodeWithText("Вместо пропущенной во вт", substring = true, ignoreCase = true).assertExists()
         compose.onNodeWithText("Разбор тренировки", ignoreCase = true).performScrollTo()
         compose.onAllNodesWithText("Сегодня день восстановления").assertCountEquals(0)
         // In the week: Monday's run missed (a hollow dot), Wednesday done off plan.

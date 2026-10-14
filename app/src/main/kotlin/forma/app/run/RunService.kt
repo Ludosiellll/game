@@ -97,12 +97,20 @@ class RunService : Service() {
      * The process was killed mid-run and the system started the service again: the run saved on disk (loaded by
      * [RunSession.init]) goes on — from now, and the time missed as far as the steps cover it ([RunTracker.fillGap]).
      * Without the foreground (refused in the background on newer Android) nothing can run: the runner is told loudly.
+     * Brought back over [MAX_GAP_MS] later, the run most likely ended out there: it stays as saved, paused, for the
+     * runner to finish or save in the app — told by the notification, not by a voice in the pocket.
      */
     private fun restart() {
         if (ticker != null) return
         val t = RunSession.tracker
         val gap = RunSession.gap
         if (t == null || t.state == RunTracker.State.FINISHED) {
+            stopSelf()
+            return
+        }
+        val gapMs = gap?.savedAtWall?.takeIf { it > 0 }?.let { (System.currentTimeMillis() - it).coerceAtLeast(0) }
+        if (gap != null && gapMs != null && gapMs > MAX_GAP_MS) {
+            if (gap.running) RunAlerts.interrupted(this)
             stopSelf()
             return
         }
@@ -113,9 +121,12 @@ class RunService : Service() {
         }
         if (gap?.running == true) {
             t.resume(now())
-            if (gap.savedAtWall > 0) pendingGap = (System.currentTimeMillis() - gap.savedAtWall).coerceIn(0, MAX_GAP_MS) to gap
+            if (gapMs != null) pendingGap = gapMs to gap
         }
         coach?.speak(if (t.state == RunTracker.State.RUNNING) "Пробежка восстановлена, продолжаем." else "Пробежка восстановлена, она на паузе.")
+        // On the road GPS may not come back with the run (Android may refuse it to a service started in the background):
+        // no fix within a minute is said.
+        if (RunSession.gpsEnabled && t.workout.lapMeters == null) gpsWatch.await(now())
         RunSession.publish(now())
         RunSession.save(now())
         notifyNow()
@@ -313,15 +324,12 @@ class RunService : Service() {
 
     /**
      * On the road, GPS lost for a while and back, said once each way: the distance goes on by steps meanwhile (when the
-     * stride is known), or stands. Not on a stadium, where the laps are the button's.
+     * stride is known), or stands. After a restart by the system, no fix at all within a minute is said too. Not on a
+     * stadium, where the laps are the button's.
      */
     private fun checkGps(tr: RunTracker) {
         if (tr.workout.lapMeters != null || !RunSession.gpsEnabled) return
-        when (gpsWatch.tick(now(), tr.state == RunTracker.State.RUNNING)) {
-            forma.core.run.GpsWatch.Say.LOST -> coach?.speak(if (tr.cadence() != null) "GPS потерян, считаю по шагам." else "GPS потерян.")
-            forma.core.run.GpsWatch.Say.BACK -> coach?.speak("GPS снова есть.")
-            null -> Unit
-        }
+        gpsWatch.tick(now(), tr.state == RunTracker.State.RUNNING)?.let { coach?.speak(CoachText.gps(it, tr.stepsGiveDistance())) }
     }
 
     /**
@@ -561,7 +569,7 @@ class RunService : Service() {
         private const val CHANNEL = "run"
         private const val NOTIFICATION_ID = 42
 
-        /** A gap longer than this after a kill is not filled: the run most likely ended out there. */
+        /** Brought back by the system longer than this after a kill, the run does not go on: it most likely ended out there. */
         private const val MAX_GAP_MS = 30 * 60_000L
 
         const val START_REFUSED = "Телефон не дал запустить пробежку. Попробуй ещё раз; если повторится — сними для «Формы» ограничения батареи."

@@ -307,11 +307,15 @@ fun RunDebrief(workout: forma.app.data.WorkoutEntity, run: RunEntity, summary: R
         )
     }
     // "What it gives the body" says the same after every run of a type: read a few times, it folds away. Counted once
-    // per showing; the count as it was when the screen opened decides (the count going up must not fold it while read).
+    // per run shown, a turn of the phone or a step back to the screen not again; the count as it was when the screen
+    // opened decides (the count going up must not fold it while read).
     val key = plan.type.name
     val seenNow = forma.app.ui.LocalSettings.current.bodySeen[key] ?: 0
-    val seen = remember(workout.id) { seenNow }
+    val seen = androidx.compose.runtime.saveable.rememberSaveable(workout.id) { seenNow }
+    var counted by androidx.compose.runtime.saveable.rememberSaveable(workout.id) { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(workout.id) {
+        if (counted) return@LaunchedEffect
+        counted = true
         runCatching { repo.updateSettings { it.copy(bodySeen = it.bodySeen + (key to (it.bodySeen[key] ?: 0) + 1)) } }
     }
     var bodyOpen by remember(workout.id) { mutableStateOf(false) }

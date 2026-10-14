@@ -15,8 +15,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -25,6 +27,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import forma.app.data.AppJson
 import forma.app.data.FormaDatabase
+import forma.app.data.RunEntity
 import forma.app.data.RunSummary
 import forma.app.data.Settings
 import forma.app.data.SettingsStore
@@ -40,6 +43,7 @@ import forma.app.ui.screens.SAVE_FAILED
 import forma.app.ui.screens.boardDistance
 import forma.app.ui.screens.deniedWarning
 import forma.app.ui.screens.formLine
+import forma.app.ui.screens.runResult
 import forma.app.ui.theme.F
 import forma.app.ui.theme.FormaTheme
 import forma.app.ui.theme.Looks
@@ -54,7 +58,10 @@ import forma.core.model.RunLevel
 import forma.core.plan.SessionKind
 import forma.core.run.RunExplain
 import forma.core.run.RunTracker
+import forma.core.run.PaceRange
 import forma.core.run.RunType
+import forma.core.run.RunWorkout
+import forma.core.run.Segment
 import forma.core.run.SegmentKind
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -216,6 +223,7 @@ class RunFieldUiTest {
         assertTrue(texts("дистанция по шагам").isNotEmpty())
         // A road run: the volume key is the volume.
         assertNull(LapKey.onLap)
+        assertTrue(texts("кнопкой громкости").isEmpty())
     }
 
     @Test fun onTheStadiumTheVolumeKeyPressesLap() {
@@ -229,6 +237,8 @@ class RunFieldUiTest {
         RunSession.publish(60_000)
         show(repo) { RunActiveScreen() }
         assertNotNull(LapKey.onLap)
+        // It works only while the screen is on: said on the screen, not found out on the line.
+        assertTrue(texts("Круг — кнопкой громкости вниз, пока экран включён").isNotEmpty())
         assertTrue(LapKey.down(KeyEvent.KEYCODE_VOLUME_DOWN, null))
         assertTrue(LapKey.up(KeyEvent.KEYCODE_VOLUME_DOWN))
         assertTrue(!LapKey.down(KeyEvent.KEYCODE_VOLUME_UP, null))
@@ -299,6 +309,88 @@ class RunFieldUiTest {
         assertTrue(texts(body).isEmpty())
         click("Что это даёт телу ›")
         assertTrue(texts(body).isNotEmpty())
+    }
+
+    @Test fun theLockHoldsThroughATurnOfThePhone() {
+        val repo = repo("ui-field-lock")
+        val easy = runBlocking { repo.runFor(SessionKind.RUN_EASY, repo.today()) }
+        val t = RunTracker(easy)
+        t.start(0)
+        RunSession.tracker = t
+        RunSession.gpsEnabled = false
+        RunSession.publish(60_000)
+        val tester = StateRestorationTester(compose)
+        tester.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) { Box(Modifier.fillMaxSize().background(F.c.bg)) { RunActiveScreen() } }
+            }
+        }
+        settle()
+        compose.onNodeWithContentDescription("Заблокировать экран").performClick()
+        settle()
+        tester.emulateSavedInstanceStateRestore()
+        settle()
+        assertTrue(texts("Заблокировано всё, кроме «Круг»").isNotEmpty())
+    }
+
+    @Test fun whatItGivesTheBodyIsCountedOncePerRun() {
+        val repo = repo("ui-field-body-once")
+        val easy = runBlocking { repo.runFor(SessionKind.RUN_EASY, repo.today()) }
+        val t = RunTracker(easy)
+        t.start(0)
+        t.finish(easy.totalSeconds * 1000L)
+        val id = runBlocking { repo.saveRun(easy, t.result(easy.totalSeconds * 1000L, 4), System.currentTimeMillis(), emptyList()) }.first
+        val tester = StateRestorationTester(compose)
+        tester.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) { Box(Modifier.fillMaxSize().background(F.c.bg)) { HistoryItemScreen(id) } }
+            }
+        }
+        settle()
+        assertEquals(1, runBlocking { repo.store.settingsNow() }.bodySeen[RunType.EASY.name])
+        // A turn of the phone is the same reading.
+        tester.emulateSavedInstanceStateRestore()
+        settle()
+        assertEquals(1, runBlocking { repo.store.settingsNow() }.bodySeen[RunType.EASY.name])
+    }
+
+    @Test fun onXiaomiTheAutostartStaysOfferedUntilItIsOn() {
+        org.robolectric.shadows.ShadowBuild.setManufacturer("Xiaomi")
+        val repo = repo("ui-field-autostart")
+        val easy = runBlocking { repo.runFor(SessionKind.RUN_EASY, repo.today()) }
+        shadowOf(ctx.getSystemService(PowerManager::class.java)).setIgnoringBatteryOptimizations(ctx.packageName, true)
+        var round by mutableStateOf(0)
+        show(repo) { key(round) { RunSetupScreen(easy, SessionKind.RUN_EASY) } }
+        // The battery is free already; the autostart, which brings a closed run back, is still offered.
+        assertTrue(texts("усыпить таймер").isEmpty())
+        assertTrue(texts("Включи «Форме» автозапуск").isNotEmpty())
+        compose.onAllNodesWithText("Уже включён", ignoreCase = true)[0].performScrollTo().performClick()
+        settle()
+        assertTrue(texts("Включи «Форме» автозапуск").isEmpty())
+        round++
+        settle()
+        assertTrue(texts("Включи «Форме» автозапуск").isEmpty())
+        // Another phone: nothing about autostart.
+        org.robolectric.shadows.ShadowBuild.reset()
+        ctx.getSharedPreferences("forma_run", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        round++
+        settle()
+        assertTrue(texts("автозапуск").isEmpty())
+    }
+
+    @Test fun aRunsResultShowsTheRepsLapAndTheRoadsPace() {
+        val goal = RunWorkout(
+            RunType.GOAL_PACE, "6 × 2 круга",
+            listOf(Segment(SegmentKind.WARMUP, 720), Segment(SegmentKind.WORK, 101, PaceRange(218, 222), laps = 2.0, lapSec = 50.6), Segment(SegmentKind.COOLDOWN, 600)),
+            lapMeters = 230,
+        )
+        fun entity(w: RunWorkout, avgPace: Double, workPace: Double?) =
+            RunEntity(1, w.type.name, AppJson.encodeToString(RunWorkout.serializer(), w), 1.0, 1800, 4000.0, avgPace, null, workPace, null)
+        // The session's average (the warm-up and the rests in it) would make a 75-second lap of the 50-second ones.
+        assertEquals("4,00 км · 30:00 · круг 50,6 с", runResult(entity(goal, 326.0, 220.0), 230))
+        // On the road: the pace a km, not a lap of the stadium in the profile.
+        val road = RunWorkout(RunType.EASY, "Лёгкий бег", listOf(Segment(SegmentKind.RUN, 1800, PaceRange(330, 360))))
+        assertEquals("4,00 км · 30:00 · 7:30 /км", runResult(entity(road, 450.0, 450.0), 230))
     }
 
     @Test fun theWordsAroundTheRun() {

@@ -139,6 +139,16 @@ object CoachText {
         } + " Подробный разбор — после сохранения."
     }
 
+    /**
+     * GPS gone on the road ([forma.core.run.GpsWatch]): lost for a while, or none at all since the system brought the run
+     * back. The steps go on with the distance only when they give it ([bySteps]: the stride known, running cadence).
+     */
+    fun gps(say: forma.core.run.GpsWatch.Say, bySteps: Boolean): String = when (say) {
+        forma.core.run.GpsWatch.Say.LOST -> if (bySteps) "GPS потерян, считаю по шагам." else "GPS потерян."
+        forma.core.run.GpsWatch.Say.NONE -> if (bySteps) "GPS не отвечает, считаю по шагам." else "GPS не отвечает, дистанция пока не считается."
+        forma.core.run.GpsWatch.Say.BACK -> "GPS снова есть."
+    }
+
     /** Said every minute while the plan waits for the start press. */
     fun waitingReminder(w: RunWorkout): String = "Жду старта: нажми «Круг», когда побежишь."
 

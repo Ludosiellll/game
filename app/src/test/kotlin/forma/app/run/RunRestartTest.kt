@@ -31,6 +31,7 @@ import java.util.Locale
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -140,6 +141,44 @@ class RunRestartTest {
         RunSession.init(store, SystemClock.elapsedRealtime())
         RunAlerts.checkNow(app)
         assertNull(alert())
+    }
+
+    /** The process gone at 18:30, the run finished on the watch, the system brings the service back at 20:00. */
+    @Test fun aRunBroughtBackHoursLaterStaysAsSaved() {
+        killedRun(ago = 90 * 60_000L)
+        val controller = Robolectric.buildService(RunService::class.java).create()
+        controller.get().onStartCommand(null, 0, 1)
+        shadowOf(Looper.getMainLooper()).idle()
+        val t = assertNotNull(RunSession.tracker)
+        // Not going on: paused where it was saved, waiting in the app to be finished or saved; no foreground, no voice.
+        assertEquals(RunTracker.State.PAUSED, t.state)
+        assertEquals(300_000, t.activeMs(SystemClock.elapsedRealtime()))
+        assertTrue(RunSession.interrupted())
+        assertNull(shadowOf(controller.get()).lastForegroundNotification)
+        assertTrue(shadowOf(controller.get()).isStoppedBySelf)
+        assertEquals(RunAlerts.TITLE, assertNotNull(alert()).extras.getCharSequence("android.title").toString())
+    }
+
+    @Test fun theNoticeThatTheRunStoppedSoundsOnce() {
+        killedRun(ago = 20_000)
+        val controller = Robolectric.buildService(RunService::class.java).create()
+        shadowOf(controller.get()).setThrowInStartForeground(IllegalStateException("not allowed from the background"))
+        controller.get().onStartCommand(null, 0, 1)
+        val first = assertNotNull(alert())
+        assertTrue(first.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE != 0)
+        // The check a few seconds after the process started finds it up already: not posted again.
+        val am = app.getSystemService(ActivityManager::class.java)
+        shadowOf(am).setProcesses(
+            listOf(
+                ActivityManager.RunningAppProcessInfo().apply {
+                    pid = android.os.Process.myPid()
+                    processName = app.packageName
+                    importance = ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED
+                },
+            ),
+        )
+        RunAlerts.checkNow(app)
+        assertSame(first, alert())
     }
 
     @Test fun aLapTimeCutsInFrontOfALongSentence() {

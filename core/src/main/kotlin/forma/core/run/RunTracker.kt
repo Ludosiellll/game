@@ -232,6 +232,9 @@ class RunTracker(
         return addDistance(delta * (s.first + s.second * c).coerceIn(0.5, 2.2), active)
     }
 
+    /** Where GPS gives none, the steps give the distance: the stride is known and the counter shows a running cadence. */
+    fun stepsGiveDistance(): Boolean = stride != null && (cadence() ?: 0) >= 120
+
     /** Steps a minute over the last half minute (at least 10 s of steps), or null. */
     fun cadence(): Int? {
         if (stepWindow.size < 2) return null
@@ -623,7 +626,8 @@ class RunTracker(
         val last = lastPressMs
         if (last != null && active - last < MIN_LAP_MS) return Press.Ignored
         val t = timelineMs(nowMs)
-        val p = retimeAuto(t) ?: pressAt(t, auto = false)
+        val retimed = retimeAuto(t)
+        val p = retimed ?: pressAt(t, auto = false)
         if (p == Press.Ignored) {
             // A touch in the pocket, far too early for a lap: as if it never came (a press on the line seconds later
             // still counts, and a lap GPS sees is not taken for its press).
@@ -633,8 +637,9 @@ class RunTracker(
         lastPressMs = active
         lineDistM = distanceM
         lineT = t
-        // Only a press that closes a lap is surely on the line: a start may be half a lap before it (6.5 laps).
-        if (p is Press.Done) learnLine(active)
+        // Only a press that closes a lap is surely on the line: a start may be half a lap before it (6.5 laps). A press
+        // that times a lap GPS closed comes seconds after the line.
+        if (p is Press.Done && retimed == null) learnLine(active, p.lap)
         return p
     }
 
@@ -802,16 +807,43 @@ class RunTracker(
         return l.seconds < SHORT_LAP * ref
     }
 
-    /** A press is made on the line: the fix of that moment moves the line toward it (a far one starts a new stadium). */
-    private fun learnLine(active: Long) {
+    /**
+     * A press is made on the line: the fix of that moment moves the line toward it. Only a press whose [lap] took about
+     * the time expected ([onTime]): a touch in the pocket mid-lap would move the line off, for this run and the next
+     * ones. A press far from the line starts a new stadium once the next one agrees (one alone may be a stray touch).
+     */
+    private fun learnLine(active: Long, lap: Lap) {
         if (workout.lapMeters == null) return
         val f = lastRaw ?: return
-        if (active - lastRawActive > 3_000 || f.accuracy > LINE_ACCURACY) return
+        if (active - lastRawActive > 3_000 || f.accuracy > LINE_ACCURACY || !onTime(lap)) return
         val ln = line
-        line = when {
-            ln == null || Geo.haversine(ln.first, ln.second, f.lat, f.lon) > 60.0 -> f.lat to f.lon
-            else -> (ln.first + (f.lat - ln.first) * 0.3) to (ln.second + (f.lon - ln.second) * 0.3)
+        if (ln != null && Geo.haversine(ln.first, ln.second, f.lat, f.lon) > 60.0) {
+            val first = farPress
+            farPress = f.lat to f.lon
+            if (first == null || Geo.haversine(first.first, first.second, f.lat, f.lon) > 30.0) return
+            farPress = null
+            line = (first.first + f.lat) / 2 to (first.second + f.lon) / 2
+            return
         }
+        farPress = null
+        line = if (ln == null) f.lat to f.lon else (ln.first + (f.lat - ln.first) * 0.3) to (ln.second + (f.lon - ln.second) * 0.3)
+    }
+
+    /** A press far from the known line, waiting for the next one there to start a new stadium (see [learnLine]). */
+    private var farPress: Pair<Double, Double>? = null
+
+    /**
+     * The lap [l] (the last one in the list) took about the time expected: within [LINE_LAP] of its target, or without one
+     * of the laps pressed before it. A touch mid-lap gives a share of a lap, and the press on the line after it the rest.
+     * With nothing to judge by (the first laps of a run without a target) it counts.
+     */
+    private fun onTime(l: Lap): Boolean {
+        val before = lapList.dropLast(1).filter { !it.auto && it.part == 1.0 }.map { it.seconds }.sorted()
+        val usual = before.takeIf { it.size >= 2 }?.let { it[it.size / 2] * l.part }
+        // An easy run has only a fast limit: slower is fine, so its own laps (when there are) say how slow.
+        val lo = l.fast ?: l.slow ?: usual ?: return true
+        val hi = l.slow ?: usual ?: l.fast ?: return true
+        return l.seconds in lo * (1 - LINE_LAP)..hi * (1 + LINE_LAP)
     }
 
     /**
@@ -979,6 +1011,9 @@ class RunTracker(
 
         /** Fixes worse than this neither move the line nor count as passing it. */
         const val LINE_ACCURACY = 20f
+
+        /** A press moves the line only when its lap is within this share of the lap expected (see [onTime]). */
+        const val LINE_LAP = 0.25
 
         /**
          * The run as it was at [s]. A run that was going is paused at that point: what happened after it was not tracked,
