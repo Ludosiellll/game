@@ -134,7 +134,8 @@ class WeekDoneUiTest {
         runBlocking { lift(repo, p.week.on(4).first { it.kind == SessionKind.LIFT }.templateId!!, thursday) }
         val light = runBlocking { repo.runFor(run.kind, thursday, light = true).title }
         show(repo) { Column { NextToday {} } }
-        compose.onNodeWithText("Дальше: $light").assertExists()
+        // The next session is worked out after the screen appears; under load it can take a few frames more.
+        compose.waitUntil(10_000) { settle(); compose.onAllNodesWithText("Дальше: $light").fetchSemanticsNodes().isNotEmpty() }
     }
 
     @Test fun sickOffersAPauseOfThreeDays() {
