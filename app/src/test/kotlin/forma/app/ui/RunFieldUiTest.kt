@@ -221,9 +221,9 @@ class RunFieldUiTest {
         show(repo) { RunActiveScreen() }
         assertTrue(texts("км по шагам").isNotEmpty())
         assertTrue(texts("дистанция по шагам").isNotEmpty())
-        // A road run: the volume key is the volume.
+        // A road run: the volume key is the volume, the headset's button the music's.
         assertNull(LapKey.onLap)
-        assertTrue(texts("кнопкой громкости").isEmpty())
+        assertTrue(texts("кнопкой гарнитуры").isEmpty())
     }
 
     @Test fun onTheStadiumTheVolumeKeyPressesLap() {
@@ -237,8 +237,9 @@ class RunFieldUiTest {
         RunSession.publish(60_000)
         show(repo) { RunActiveScreen() }
         assertNotNull(LapKey.onLap)
-        // It works only while the screen is on: said on the screen, not found out on the line.
-        assertTrue(texts("Круг — кнопкой громкости вниз, пока экран включён").isNotEmpty())
+        // The volume key works only while the screen is on, the headset's button with it off too: said on the screen,
+        // not found out on the line.
+        assertTrue(texts("Круг — кнопкой гарнитуры; громкостью вниз — пока экран включён").isNotEmpty())
         assertTrue(LapKey.down(KeyEvent.KEYCODE_VOLUME_DOWN, null))
         assertTrue(LapKey.up(KeyEvent.KEYCODE_VOLUME_DOWN))
         assertTrue(!LapKey.down(KeyEvent.KEYCODE_VOLUME_UP, null))

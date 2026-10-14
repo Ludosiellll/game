@@ -68,6 +68,18 @@ class RunService : Service() {
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
     }
 
+    /** A headset's button presses "lap" on a stadium run, with the screen off too: the notification's "Круг" ([lap]). */
+    internal val headset = HeadsetLap(this) { lap() }
+
+    /**
+     * The headset's button is held exactly while the notification has "Круг": a stadium run going on in this service.
+     * Paused, finished or stopped — and on the road — the media buttons stay the music's.
+     */
+    private fun syncHeadset() {
+        val t = RunSession.tracker
+        headset.hold(ticker != null && t != null && t.workout.lapMeters != null && t.state == RunTracker.State.RUNNING)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -130,6 +142,7 @@ class RunService : Service() {
         RunSession.publish(now())
         RunSession.save(now())
         notifyNow()
+        syncHeadset()
     }
 
     private fun now() = SystemClock.elapsedRealtime()
@@ -153,6 +166,7 @@ class RunService : Service() {
         RunSession.publish(now())
         RunSession.save(now())
         if (ticker != null) notifyNow()
+        syncHeadset()
     }
 
     /** The runner crossed the line: the lap's time is said and judged against the target; on the start line — "Старт". */
@@ -253,6 +267,7 @@ class RunService : Service() {
                     coach?.speak(CoachText.waitingReminder(tr.workout))
                 }
                 RunSession.publish(now())
+                syncHeadset()
                 val idx = tr.timeline(now()).index
                 if (idx != lastNotifiedIndex || now() - lastNotifyAt > 10_000) notifyNow()
                 if (now() - lastSavedAt > 5_000) {
@@ -275,6 +290,7 @@ class RunService : Service() {
                     RunSession.publish(now())
                     RunSession.save(now())
                     notifyNow()
+                    syncHeadset()
                     // Let the coach finish the last sentence, then leave the foreground.
                     delay(4000)
                     leave()
@@ -283,6 +299,7 @@ class RunService : Service() {
                 delay(250)
             }
         }
+        syncHeadset()
         return true
     }
 
@@ -460,6 +477,7 @@ class RunService : Service() {
     private fun leave() {
         ticker?.cancel()
         ticker = null
+        headset.release()
         stopSteps()
         locationManager?.removeUpdates(listener)
         locationManager = null
@@ -473,6 +491,7 @@ class RunService : Service() {
 
     override fun onDestroy() {
         RunSession.tracker?.let { RunSession.save(now()) }
+        headset.release()
         stopSteps()
         locationManager?.removeUpdates(listener)
         wake?.let { if (it.isHeld) it.release() }
