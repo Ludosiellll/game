@@ -44,6 +44,9 @@ import kotlin.math.roundToInt
 /** Template id of sessions copied from a friend (not part of the own plan). */
 const val COPIED_TEMPLATE = "copy"
 
+/** "Верх А · копия: Денис" — the friend's name after a colon, so it never has to be declined. */
+fun copiedTitle(title: String, from: String): String = "${title.take(60)} · копия: ${from.take(40)}"
+
 class TrainingRepository(
     val db: FormaDatabase,
     val store: SettingsStore,
@@ -129,6 +132,30 @@ class TrainingRepository(
             store.setRunState(store.runStateNow().copy(goalStage = 0, goalFails = 0, testSoon = false))
         }
         if (old?.bodyWeightKg != profile.bodyWeightKg) logBodyWeight(profile.bodyWeightKg)
+        // Leaving a friend's program for an own one: the own edits put aside when copying belong to it again.
+        store.settingsNow().ownPlan?.let { own -> store.setSettings(own.editsInto(store.settingsNow())) }
+        onChange()
+    }
+
+    /**
+     * Back from a friend's program to one's own as it was before copying: the aim and days of the profile, the program
+     * and its edits (swaps, sets, rest...). Copied before the own plan was kept: the own one is built from the profile.
+     */
+    suspend fun restoreOwnProgram() {
+        val profile = store.profileNow() ?: return
+        val own = store.settingsNow().ownPlan ?: return updateProfile(profile)
+        val p = own.profile
+        val restored = profile.copy(
+            aim = p.aim, goal = p.goal, trainingDays = p.trainingDays, gymDays = p.gymDays, runDays = p.runDays,
+            doubleDays = p.doubleDays, sessionMinutes = p.sessionMinutes,
+        )
+        store.setProfile(restored)
+        // A program of another experience level than the profile's now is built anew (the edits apply to it all the same).
+        val program = if (own.program.experience == restored.experience) own.program
+        else keepCycle(ProgramGenerator.generate(restored, today()), own.program)
+        // What this week held under the friend's program was never asked of the own one: not "missed".
+        store.setProgram(program.copy(createdEpochDay = today().toEpochDay()))
+        store.setSettings(own.editsInto(store.settingsNow()))
         onChange()
     }
 
@@ -854,42 +881,68 @@ class TrainingRepository(
         onChange()
     }
 
+    /** Most exercises a copied session takes. */
+    private val copiedMax = 12
+
+    /** The exercises of a friend's session that this phone can do, in order, at most [copiedMax]. */
+    private fun copiable(plan: LiftPlan): List<SlotSpec> =
+        plan.items.map { it.slot }.filter { Catalog.find(it.exerciseId)?.archived == false }.take(copiedMax)
+
+    /**
+     * What a copy of a friend's session leaves out, by name: exercises this phone does not know and those beyond
+     * [copiedMax]. Asked after [startCopiedLift] (the friend's own exercises are known by then).
+     */
+    fun copiedLeftOut(plan: LiftPlan): List<String> {
+        val taken = copiable(plan).map { it.exerciseId }.toMutableList()
+        return plan.items.filter { item -> !taken.remove(item.exerciseId) }.map { it.name }
+    }
+
     /**
      * Starts a session with a friend's exercises, sets and rep ranges; the weights are this user's own (progress,
-     * estimate or the first-time search). Exercises this phone cannot know are left out. Null while another session runs.
+     * estimate or the first-time search). Exercises this phone cannot know are left out ([copiedLeftOut] names them).
+     * In this user's lighter week — or when the friend's session was a lighter one — it is done as a lighter session:
+     * fewer sets, lighter weights. Of the friend's own exercises only those in the session are taken over. Null while
+     * another session runs.
      */
     suspend fun startCopiedLift(plan: LiftPlan, from: String, exercises: List<Exercise> = emptyList(), date: LocalDate = today()): Long? = sessionLock.withLock {
         if (db.workouts().active() != null) return@withLock null
-        importExercises(exercises)
-        val specs = plan.items.map { it.slot }.filter { Catalog.find(it.exerciseId)?.archived == false }
+        val used = plan.items.map { it.exerciseId }.toSet()
+        importExercises(exercises.filter { it.id in used })
+        val specs = copiable(plan)
             .map { it.copy(sets = it.sets.coerceIn(1, 10), repMin = it.repMin.coerceIn(1, 100), repMax = it.repMax.coerceIn(it.repMin.coerceIn(1, 100), 100), rir = it.rir.coerceIn(0, 5), restSec = it.restSec.coerceIn(0, 600)) }
-            .take(12)
         if (specs.isEmpty()) return@withLock null
-        val items = specs.mapIndexed { i, spec -> buildItem(i, spec.copy(increment = null), date, deload = false) }
-        val copy = LiftPlan(COPIED_TEMPLATE, "${plan.title.take(60)} · как у $from", items, deload = false)
+        val deload = plan.deload || deloadOn(date, false)
+        val items = specs.mapIndexed { i, spec -> buildItem(i, spec.copy(increment = null), date, deload) }
+        val copy = LiftPlan(COPIED_TEMPLATE, copiedTitle(plan.title, from), items, deload = deload)
         db.workouts().insert(
             WorkoutEntity(
                 epochDay = date.toEpochDay(), kind = Kind.LIFT, templateId = COPIED_TEMPLATE, title = copy.title,
-                startedAt = now(), status = Status.ACTIVE, deload = false, planJson = AppJson.encodeToString(LiftPlan.serializer(), copy),
+                startedAt = now(), status = Status.ACTIVE, deload = deload, planJson = AppJson.encodeToString(LiftPlan.serializer(), copy),
             ),
         )
     }
 
     /**
      * Takes a friend's program as one's own: the same days, sessions and exercises; this user's weights, block length
-     * and progress per exercise. The profile follows (aim and days); changing the profile later builds one's own again.
+     * and progress per exercise. The profile follows (aim and days). The own program before it is put aside with its
+     * edits: [restoreOwnProgram] brings it back. Of the friend's own exercises only those in the program are taken over.
      */
     suspend fun copyProgram(program: Program, from: String, exercises: List<Exercise> = emptyList()): Boolean {
-        importExercises(exercises)
         val profile = store.profileNow() ?: return false
         // As the friend does it (their swaps, sets... put in on their phone) when their phone sent that; whatever it stored,
         // only a program that works here is taken.
         val asDone = program.copy(templates = program.shared ?: program.templates, shared = null)
+        val used = asDone.templates.flatMap { t -> t.slots.map { it.exerciseId } }.toSet()
+        importExercises(exercises.filter { it.id in used })
         val safe = asDone.checked { id -> Catalog.find(id)?.archived == false } ?: return false
         val days = safe.week.days.filter { it.sessions.isNotEmpty() }.map { it.day }.toSet().ifEmpty { profile.trainingDays }
         // The friend's week is the week now: the own days chosen before are not (the plan line and the grid show these).
         val updated = profile.copy(aim = safe.aim, goal = safe.aim.nearestGoal(), trainingDays = days, gymDays = null, runDays = null)
         val own = ProgramGenerator.generate(updated, today())
+        val before = store.programNow()
+        val settings = store.settingsNow()
+        // One's own program is put aside once: copying from a second friend keeps the own one, not the first friend's.
+        val keep = settings.ownPlan ?: before?.takeIf { it.copiedFrom == null }?.let { OwnPlan.of(profile, it, settings) }
         store.setProfile(updated)
         store.setProgram(
             safe.copy(
@@ -897,8 +950,8 @@ class TrainingRepository(
                 createdEpochDay = today().toEpochDay(), copiedFrom = from.take(40), runCaps = own.runCaps,
             ),
         )
-        // The own edits of the plan before belong to that plan: the friend's exercises are taken as they are.
-        updateSettings { it.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap()) }
+        // The own edits of the plan before belong to that plan (kept with it): the friend's exercises are taken as they are.
+        updateSettings { it.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap(), ownPlan = keep) }
         onChange()
         return true
     }

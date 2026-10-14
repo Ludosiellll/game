@@ -31,6 +31,7 @@ import forma.app.sync.Friend
 import forma.app.sync.FriendMe
 import forma.app.sync.FriendProgress
 import forma.app.sync.FriendsApi
+import forma.app.sync.NotSignedInException
 import forma.app.sync.describeFriends
 import forma.app.ui.LocalCloud
 import forma.app.ui.LocalNav
@@ -57,7 +58,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import kotlin.math.roundToInt
 
-/** Everything the friends screen shows. */
+/** Everything the friends screen shows. [fresh]: the friends profile was just created (what friends see is explained). */
 data class FriendsUi(
     val signedIn: Boolean = true,
     val loading: Boolean = false,
@@ -66,7 +67,20 @@ data class FriendsUi(
     val me: FriendMe? = null,
     val friends: List<Friend> = emptyList(),
     val feed: List<FeedItem> = emptyList(),
+    val fresh: Boolean = false,
 )
+
+/**
+ * The friends screen from the server. The profile's name goes up only when the server has none — a friends profile
+ * created just now: a name changed for friends is never overwritten by opening the screen.
+ */
+suspend fun loadFriends(api: FriendsApi, localName: String?, message: String? = null): FriendsUi {
+    var me = api.me()
+    val fresh = me.name.isBlank()
+    val name = localName?.trim().orEmpty()
+    if (fresh && name.isNotEmpty()) me = api.me(name)
+    return FriendsUi(signedIn = true, me = me, friends = api.list(), feed = api.feed(limit = 30), message = message, fresh = fresh)
+}
 
 @Composable
 fun FriendsScreen() {
@@ -78,6 +92,7 @@ fun FriendsScreen() {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var ui by remember { mutableStateOf(FriendsUi(signedIn = cloudState?.email != null, loading = true)) }
+    var ask by remember { mutableStateOf<Pair<FeedItem, List<String>>?>(null) }
 
     suspend fun reload() {
         if (api == null || cloudState?.email == null) {
@@ -85,12 +100,18 @@ fun FriendsScreen() {
             return
         }
         ui = ui.copy(loading = true, error = null)
-        ui = runCatching {
-            val me = api.me(repo.store.profileNow()?.name?.takeIf { it.isNotBlank() && ui.me == null })
-            FriendsUi(signedIn = true, me = me, friends = api.list(), feed = api.feed(limit = 30), message = ui.message)
-        }.getOrElse { FriendsUi(signedIn = true, error = describeFriends(it)) }
+        ui = runCatching { loadFriends(api, repo.store.profileNow()?.name, ui.message).let { it.copy(fresh = it.fresh || ui.fresh) } }
+            .getOrElse { FriendsUi(signedIn = true, error = describeFriends(it)) }
     }
     LaunchedEffect(cloudState?.email) { reload() }
+
+    /** A call that changes friends: on failure (offline) the error shows and the screen stays as it was. */
+    fun change(call: suspend (FriendsApi) -> Unit) {
+        val a = api ?: return
+        scope.launch {
+            runCatching { call(a) }.onSuccess { reload() }.onFailure { ui = ui.copy(error = describeFriends(it), message = null) }
+        }
+    }
 
     FriendsContent(
         ui,
@@ -99,9 +120,14 @@ fun FriendsScreen() {
             val text = "Добавь меня в друзья в «Форме»: код $code"
             context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), null))
         },
-        onRename = { name -> scope.launch { runCatching { api?.me(name) }.onSuccess { m -> ui = ui.copy(me = m ?: ui.me, message = "Имя сохранено") } } },
+        onRename = { name ->
+            scope.launch {
+                runCatching { api?.me(name) }.onSuccess { m -> ui = ui.copy(me = m ?: ui.me, message = "Имя сохранено", error = null) }
+                    .onFailure { ui = ui.copy(error = describeFriends(it)) }
+            }
+        },
         onSharing = { activity, body ->
-            scope.launch { runCatching { api?.setSharing(activity, body) }.onSuccess { m -> ui = ui.copy(me = m ?: ui.me) }.onFailure { ui = ui.copy(error = describeFriends(it)) } }
+            scope.launch { runCatching { api?.setSharing(activity, body) }.onSuccess { m -> ui = ui.copy(me = m ?: ui.me, error = null) }.onFailure { ui = ui.copy(error = describeFriends(it)) } }
         },
         onAdd = { code ->
             scope.launch {
@@ -110,12 +136,18 @@ fun FriendsScreen() {
                 reload()
             }
         },
-        onAnswer = { f, accept -> scope.launch { runCatching { api?.answer(f.userId, accept) }; reload() } },
-        onRemove = { f -> scope.launch { runCatching { api?.remove(f.userId) }; reload() } },
+        onAnswer = { f, accept -> change { it.answer(f.userId, accept) } },
+        onRemove = { f -> change { it.remove(f.userId) } },
         onOpen = { f -> nav.push(Screen.Friend(f.userId, f.name)) },
-        onCopy = { item -> scope.launch { ui = ui.copy(message = copyWorkout(api, repo, nav, item)) } },
+        onCopy = { item -> scope.launch { copyAsked(api, repo, nav, item, { ask = item to it }) { m -> ui = ui.copy(message = m) } } },
         onBack = { nav.back() },
     )
+    ask?.let { (item, names) ->
+        LeftOutDialog(names, onCancel = { ask = null }) {
+            ask = null
+            scope.launch { ui = ui.copy(message = startCopy(repo, nav, item)) }
+        }
+    }
 }
 
 private fun addText(r: AddResult) = when (r) {
@@ -126,16 +158,51 @@ private fun addText(r: AddResult) = when (r) {
     AddResult.SELF -> "Это твой собственный код."
 }
 
-/** Starts today's session as the friend did it; returns a line for the screen when it cannot. */
-private suspend fun copyWorkout(api: FriendsApi?, repo: TrainingRepository, nav: Navigator, item: FeedItem): String? {
-    val plan = item.liftPlan() ?: return "Эту тренировку нельзя повторить: в ней нет плана."
-    if (repo.db.workouts().active() != null) return "Сначала закончи начатую тренировку."
+/**
+ * "Сделать так же": the friend's own exercises of that session come first (only those), then the session starts — or,
+ * when some exercises cannot be done here, [ask] gets their names to ask first. [say]: a line for the screen.
+ */
+private suspend fun copyAsked(api: FriendsApi?, repo: TrainingRepository, nav: Navigator, item: FeedItem, ask: (List<String>) -> Unit, say: (String?) -> Unit) {
+    val plan = item.liftPlan() ?: return say("Эту тренировку нельзя повторить: в ней нет плана.")
+    if (repo.db.workouts().active() != null) return say("Сначала закончи начатую тренировку.")
+    val used = plan.items.map { it.exerciseId }.toSet()
     val own = runCatching { api?.progress(item.userId)?.customExercises() }.getOrNull().orEmpty()
-    val id = repo.startCopiedLift(plan, item.name, own)
+    repo.importExercises(own.filter { it.id in used })
+    val left = repo.copiedLeftOut(plan)
+    when {
+        left.size >= plan.items.size -> say("Упражнений из этой тренировки нет на телефоне — повторить её не получится.")
+        left.isNotEmpty() -> ask(left)
+        else -> say(startCopy(repo, nav, item))
+    }
+}
+
+/** Starts today's session as the friend did it; returns a line for the screen when it cannot. */
+private suspend fun startCopy(repo: TrainingRepository, nav: Navigator, item: FeedItem): String? {
+    val plan = item.liftPlan() ?: return "Эту тренировку нельзя повторить: в ней нет плана."
+    val id = repo.startCopiedLift(plan, item.name)
         ?: return if (repo.db.workouts().active() != null) "Сначала закончи начатую тренировку."
         else "Упражнений из этой тренировки нет на телефоне — повторить её не получится."
     nav.push(Screen.Workout(id))
     return null
+}
+
+/** Before a copy without some of the friend's exercises: which ones, and why. */
+@Composable
+private fun LeftOutDialog(names: List<String>, onCancel: () -> Unit, onStart: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = F.c.surface,
+        title = { Text("Повторить без части упражнений?", style = T.title(20.sp)) },
+        text = {
+            Text(
+                "Не войдут: ${names.joinToString(", ")}. Их нет на этом телефоне (своё упражнение друга не скачалось — нужен интернет) " +
+                    "или в тренировке больше 12 упражнений.",
+                style = T.secondary(14.sp),
+            )
+        },
+        confirmButton = { TextButton(onStart) { Text("Начать без них", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
+        dismissButton = { TextButton(onCancel) { Text("Отмена", style = T.body(15.sp)) } },
+    )
 }
 
 @Composable
@@ -167,6 +234,9 @@ fun FriendsContent(
         ui.message?.let { Text(it, style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.accent)) }
 
         val me = ui.me
+        if (me != null && ui.fresh && me.shareActivity) {
+            Banner("Друзья увидят твои тренировки, веса, пробежки и программу. Не хочешь — выключи «Тренировки и прогресс» ниже.", F.c.accent)
+        }
         if (me != null) {
             FCard(gap = 10.dp) {
                 SectionLabel("Твой код")
@@ -179,7 +249,15 @@ fun FriendsContent(
                     TextInput(name, { name = it }, "Имя для друзей", Modifier.weight(1f), maxLength = 40, placeholder = "Как тебя называть")
                     if (name.trim() != me.name) GhostButton("Сохранить", { onRename(name.trim()) }, height = 54.dp)
                 }
-                Hairline()
+            }
+            // What friends see, in sight right away: sharing is on from the start.
+            FCard(gap = 6.dp) {
+                SectionLabel("Что видят друзья")
+                Text(
+                    if (me.shareActivity) "Сейчас друзья видят все твои тренировки и пробежки, веса, расчётные максимумы и программу — и могут их повторить."
+                    else "Сейчас друзья не видят твоих тренировок: только имя.",
+                    style = T.secondary(13.sp),
+                )
                 Toggle("Тренировки и прогресс", "Что делал, веса, пробежки, программа", me.shareActivity) { onSharing(it, me.shareBody) }
                 Toggle("Вес тела", "График веса за полгода", me.shareBody) { onSharing(me.shareActivity, it) }
                 Text("Маршруты пробежек, возраст, пульс и заметки друзья не видят никогда.", style = T.secondary(12.sp))
@@ -307,6 +385,7 @@ fun FriendScreen(userId: String, name: String) {
     var items by remember { mutableStateOf<List<FeedItem>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var ask by remember { mutableStateOf<Pair<FeedItem, List<String>>?>(null) }
     LaunchedEffect(userId) {
         if (api == null) return@LaunchedEffect
         runCatching { progress = api.progress(userId); items = api.feed(limit = 20, userId = userId) }.onFailure { error = describeFriends(it) }
@@ -324,10 +403,22 @@ fun FriendScreen(userId: String, name: String) {
                 }
             }
         },
-        onCopy = { item -> scope.launch { message = copyWorkout(api, repo, nav, item) } },
-        onRemove = { scope.launch { runCatching { api?.remove(userId) }; nav.back() } },
+        onCopy = { item -> scope.launch { copyAsked(api, repo, nav, item, { ask = item to it }) { m -> message = m } } },
+        // Offline the friend stays: the error shows and the screen stays open.
+        onRemove = {
+            scope.launch {
+                runCatching { (api ?: throw NotSignedInException()).remove(userId) }
+                    .onSuccess { nav.back() }.onFailure { error = describeFriends(it) }
+            }
+        },
         onBack = { nav.back() },
     )
+    ask?.let { (item, names) ->
+        LeftOutDialog(names, onCancel = { ask = null }) {
+            ask = null
+            scope.launch { message = startCopy(repo, nav, item) }
+        }
+    }
 }
 
 @Composable
@@ -409,7 +500,8 @@ fun FriendContent(
             text = {
                 Text(
                     "Твоя программа заменится: те же дни, тренировки и упражнения. Веса — твои: прогресс по каждому упражнению " +
-                        "сохранится, новые подберутся на первой тренировке. Вернуть свою — поменяй цель или дни в профиле.",
+                        "сохранится, новые подберутся на первой тренировке. Твоя программа с заменами упражнений, подходами и отдыхом " +
+                        "сохранится: вернуть её — кнопка «Вернуть мою программу» в разделе «Цель, дни и данные».",
                     style = T.secondary(14.sp),
                 )
             },
