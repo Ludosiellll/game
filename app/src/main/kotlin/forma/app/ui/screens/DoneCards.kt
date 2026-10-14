@@ -127,8 +127,8 @@ fun runResult(r: RunEntity, lapM: Int?): String {
 }
 
 /**
- * A workout done beyond the plan of its day: a missed session caught up ([forDay]: the day it was planned on) or one
- * extra — shown as done, with its result.
+ * A workout done beyond the plan of its day: a missed session caught up or one done ahead ([forDay]: the day it was
+ * planned on), or one extra — shown as done, with its result.
  */
 @Composable
 fun OffPlanCard(w: WorkoutEntity, forDay: LocalDate?) {
@@ -138,7 +138,12 @@ fun OffPlanCard(w: WorkoutEntity, forDay: LocalDate?) {
             Icon(if (lift) Ic.dumbbell else Ic.run, null, tint = if (lift) F.c.strength else F.c.endurance, modifier = Modifier.size(18.dp))
             // In place of a missed one, or beyond the plan: the header says which, the line under the title that it is done.
             SectionLabel(
-                "  " + if (forDay != null) "Вместо пропущенной ${onDayShort(forDay.dayOfWeek)}" else "Вне плана",
+                "  " + when {
+                    forDay == null -> "Вне плана"
+                    // Done ahead of its day (that day then passed without it).
+                    forDay.toEpochDay() > w.epochDay -> "Заранее — за ${dayShort(forDay.dayOfWeek).lowercase()}"
+                    else -> "Вместо пропущенной ${onDayShort(forDay.dayOfWeek)}"
+                },
                 color = if (lift) F.c.strength else F.c.endurance,
             )
         }
