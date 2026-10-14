@@ -159,10 +159,11 @@ class LiftStartUiTest {
         compose.onNodeWithText("Удалить и начать").performClick()
         // Laying out a session takes a moment under Robolectric.
         val now = assertNotNull(waitFor { runBlocking { repo.db.workouts().active() } })
+        // The workout screen is pushed by the same coroutine a moment after the session is stored: waited for too.
         assertEquals(liftOn(p, 4), now.templateId)
         assertEquals(thursday.toEpochDay(), now.epochDay)
         assertNull(runBlocking { repo.db.workouts().get(old) })
-        assertEquals(Screen.Workout(now.id), nav.current)
+        assertEquals(Screen.Workout(now.id), waitFor { nav.current.takeIf { it is Screen.Workout } } ?: nav.current)
         assertNull(RestTimer.rest.value, "the rest of the deleted session went with it")
     }
 
@@ -183,7 +184,7 @@ class LiftStartUiTest {
         settle()
         compose.onNodeWithText("Закончить «${titleOf(p, liftOn(p, 2))}»").performClick()
         settle()
-        assertEquals(Screen.Workout(old), nav.current)
+        assertEquals(Screen.Workout(old), waitFor { nav.current.takeIf { it is Screen.Workout } } ?: nav.current)
         assertTrue(texts("Как тяжело было в целом?").isNotEmpty())
     }
 
@@ -197,7 +198,7 @@ class LiftStartUiTest {
         show(repo, nav) { TodayScreen() }
         compose.onNodeWithText("Начать тренировку").performScrollTo().performClick()
         settle()
-        assertEquals(Screen.Workout(open), nav.current)
+        assertEquals(Screen.Workout(open), waitFor { nav.current.takeIf { it is Screen.Workout } } ?: nav.current)
         assertTrue(texts("Удалить и начать").isEmpty())
 
         val w = WorkoutEntity(epochDay = tuesday.toEpochDay(), kind = Kind.LIFT, templateId = "a", title = "А", startedAt = 0L, status = Status.ACTIVE)
