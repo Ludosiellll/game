@@ -49,22 +49,57 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import kotlin.math.roundToInt
 
+/** Which workouts the history shows. */
+enum class HistoryFilter(val label: String) { ALL("Все"), GYM("Зал"), RUN("Бег"), TRIALS("Контрольные") }
+
+/** A trial: a test run, or one whose outcome is a trial time. */
+fun isTrial(w: forma.app.data.WorkoutEntity): Boolean = w.kind == Kind.RUN && (
+    w.templateId == forma.core.run.RunType.TEST.name ||
+        w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
+            ?.outcomes?.any { it is forma.core.run.RunOutcome.TestTime } == true
+    )
+
+/** A gym session with a record of any exercise in it. */
+fun hasRecord(w: forma.app.data.WorkoutEntity): Boolean = w.kind == Kind.LIFT &&
+    w.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }?.reports?.any { it.record } == true
+
+/** "12 октября · 45 мин · нагрузка 342 · рекорд": a line of the history. */
+fun historyLine(w: forma.app.data.WorkoutEntity): String = listOfNotNull(
+    shortDate(LocalDate.ofEpochDay(w.epochDay)),
+    "${(w.durationSec ?: 0) / 60} мин",
+    w.load?.takeIf { it > 0 }?.let { "нагрузка ${it.roundToInt()}" },
+    if (isTrial(w)) "контрольный" else null,
+    if (hasRecord(w)) "рекорд" else null,
+).joinToString(" · ")
+
 @Composable
 fun HistoryScreen() {
     val repo = LocalRepo.current
     val nav = LocalNav.current
-    val list by remember { repo.db.workouts().observeHistory() }.collectAsState(initial = emptyList())
+    val all by remember { repo.db.workouts().observeHistory() }.collectAsState(initial = emptyList())
+    var filter by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(HistoryFilter.ALL) }
+    val list = remember(all, filter) {
+        when (filter) {
+            HistoryFilter.ALL -> all
+            HistoryFilter.GYM -> all.filter { it.kind == Kind.LIFT }
+            HistoryFilter.RUN -> all.filter { it.kind == Kind.RUN }
+            HistoryFilter.TRIALS -> all.filter(::isTrial)
+        }
+    }
     ScrollScreen {
-        TopBar("История", "${list.size} ${Ru.plural(list.size, "тренировка", "тренировки", "тренировок")}", onBack = { nav.back() })
-        if (list.isEmpty()) Empty("Здесь будут все тренировки и пробежки.")
+        TopBar("История", "${all.size} ${Ru.plural(all.size, "тренировка", "тренировки", "тренировок")}", onBack = { nav.back() })
+        if (all.isEmpty()) Empty("Здесь будут все тренировки и пробежки.")
+        else androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            HistoryFilter.entries.forEach { f -> forma.app.ui.components.Chip(f.label, filter == f, { filter = f }) }
+        }
+        if (all.isNotEmpty() && list.isEmpty()) Empty(if (filter == HistoryFilter.TRIALS) "Контрольных забегов ещё не было." else "Таких тренировок ещё не было.")
         list.groupBy { LocalDate.ofEpochDay(it.epochDay).withDayOfMonth(1) }.forEach { (month, items) ->
             SectionLabel("${MONTH_SHORT[month.monthValue - 1]} ${month.year}")
             FCard(gap = 0.dp) {
                 items.forEachIndexed { i, w ->
                     if (i > 0) Hairline()
                     ListRow(
-                        w.title, "${shortDate(LocalDate.ofEpochDay(w.epochDay))} · ${(w.durationSec ?: 0) / 60} мин",
-                        trailing = w.load?.roundToInt()?.toString(),
+                        w.title, historyLine(w),
                         icon = if (w.kind == Kind.LIFT) Ic.dumbbell else Ic.run,
                         iconTint = if (w.kind == Kind.LIFT) F.c.strength else F.c.endurance,
                     ) { nav.push(Screen.HistoryItem(w.id)) }
@@ -92,17 +127,28 @@ fun HistoryItemScreen(workoutId: Long) {
             StatTile("Нагрузка", "${workout.load?.roundToInt() ?: "—"}", null, F.c.load, Modifier.weight(1f))
         }
         if (workout.kind == Kind.LIFT) {
-            sets.groupBy { it.position }.forEach { (_, s) ->
+            val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
+            val plan = repo.planOf(workout)
+            sets.groupBy { it.position }.forEach { (pos, s) ->
                 val ex = Catalog.find(s.first().exerciseId)
+                val planned = plan?.items?.firstOrNull { it.position == pos }?.takeIf { it.exerciseId == s.first().exerciseId }
+                val record = summary?.reports?.any { it.exerciseId == s.first().exerciseId && it.record } == true
                 FCard(gap = 4.dp) {
-                    Text(ex?.name ?: s.first().exerciseId, style = T.body(16.sp, FontWeight.Bold))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(ex?.name ?: s.first().exerciseId, style = T.body(16.sp, FontWeight.Bold), modifier = Modifier.weight(1f))
+                        if (record) Text(forma.app.ui.theme.labelText("Рекорд"), style = T.label().copy(color = F.c.good))
+                    }
+                    // Plan against what was done, each set with the reserve left ("запас 2": two more reps were there).
+                    if (planned != null && ex != null) Text("План: ${Texts.prescription(ex, planned.prescription)}", style = T.secondary(13.sp))
                     NumText(
-                        s.joinToString("   ") { if (ex?.load == LoadKind.TIMED) "${it.reps} с" else "${Texts.weight(ex, it.weight)}×${it.reps}" },
+                        s.joinToString("   ") { set ->
+                            (if (ex?.load == LoadKind.TIMED) "${set.reps} с" else "${Texts.weight(ex, set.weight)}×${set.reps}") +
+                                (set.rir?.let { " (запас $it)" } ?: "")
+                        },
                         style = T.number(15.sp, FontWeight.SemiBold),
                     )
                 }
             }
-            val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
             if (summary != null) {
                 SectionLabel("Что изменилось после")
                 FCard(gap = 0.dp) {
@@ -136,11 +182,12 @@ fun HistoryItemScreen(workoutId: Long) {
             val splits = summary?.kmSplits.orEmpty()
             if (summary?.laps.isNullOrEmpty() && splits.size >= 2) KmSplitsCard(splits.map { it.toDouble() })
             if (summary != null && summary.outcomes.isNotEmpty()) {
+                val planned = r?.let { runCatching { AppJson.decodeFromString(forma.core.run.RunWorkout.serializer(), it.planJson) }.getOrNull() }
                 SectionLabel("Что изменилось после")
                 FCard(gap = 0.dp) {
                     summary.outcomes.forEachIndexed { i, o ->
                         if (i > 0) Hairline()
-                        Text(Texts.run(o, summary.manual), style = T.body(14.sp), modifier = Modifier.padding(vertical = 10.dp))
+                        Text(Texts.run(o, summary.manual, planned), style = T.body(14.sp), modifier = Modifier.padding(vertical = 10.dp))
                     }
                 }
             }

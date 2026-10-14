@@ -57,9 +57,25 @@ data class RunSummary(
     val kmSplits: List<Int> = emptyList(),
 )
 
-/** A day of the week with the plan and what was actually done. */
-data class DayItem(val date: LocalDate, val planned: List<PlannedSession>, val done: List<WorkoutEntity>) {
-    fun isDone(s: PlannedSession): Boolean = doneFor(s) != null
+/** How the person feels today: decides between the planned session, a lighter one and rest. */
+enum class Feel { UNSET, GOOD, LOW, SICK }
+
+/**
+ * A day of the week with the plan and what was actually done. [doneLater]: planned sessions of this day caught up on a
+ * later day of the week (index in [planned] → the workout); [catchUps]: workouts of this day that closed a missed session
+ * of an earlier day (workout id → that day) — as [forma.core.plan.CatchUp.closes] decides. [paused]: a day of a pause,
+ * nothing expected ([planned] is empty).
+ */
+data class DayItem(
+    val date: LocalDate,
+    val planned: List<PlannedSession>,
+    val done: List<WorkoutEntity>,
+    val doneLater: Map<Int, WorkoutEntity> = emptyMap(),
+    val catchUps: Map<Long, LocalDate> = emptyMap(),
+    val paused: Boolean = false,
+) {
+    /** Done, on this day or caught up later in the week. */
+    fun isDone(s: PlannedSession): Boolean = doneFor(s) != null || doneLaterFor(s) != null
 
     /** The workout done that day in place of [s]: the gym for a gym session, any run for a run, in order. */
     fun doneFor(s: PlannedSession): WorkoutEntity? {
@@ -67,4 +83,18 @@ data class DayItem(val date: LocalDate, val planned: List<PlannedSession>, val d
         val index = planned.filter { it.isRun == s.isRun }.indexOf(s)
         return sameKind.getOrNull(index)
     }
+
+    /** The workout done on a later day of the week for [s] missed here. */
+    fun doneLaterFor(s: PlannedSession): WorkoutEntity? = doneLater[planned.indexOf(s)]
+
+    /** Workouts of this day that stand for none of its planned sessions: a missed one caught up, or one extra. */
+    val offPlan: List<WorkoutEntity>
+        get() {
+            val lifts = done.filter { it.kind == Kind.LIFT }.drop(planned.count { !it.isRun })
+            val runs = done.filter { it.kind == Kind.RUN }.drop(planned.count { it.isRun })
+            return done.filter { it in lifts || it in runs }
+        }
+
+    /** Planned and not done, on a day already over. */
+    fun missed(today: LocalDate): List<PlannedSession> = if (date.isBefore(today)) planned.filter { !isDone(it) } else emptyList()
 }

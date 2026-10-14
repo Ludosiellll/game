@@ -134,7 +134,7 @@ fun RunGoalPicker(d: ProfileDraft) {
                 goal == null -> "Не похоже на время: впиши минуты и секунды, например ${goalExample(meters)}."
                 else -> buildString {
                     append("Темп ${Ru.pace(goal.pace)} на км")
-                    if (lap != null) append(", " + Ru.nobreak("круг $lap м — за ${Ru.lap(Track.lapSec(goal.pace, lap))}"))
+                    if (lap != null) append(", " + Ru.nobreak("круг $lap м — за ${lapTenth(Track.lapSec(goal.pace, lap))}"))
                     append(". ")
                     if (goal.middleDistance) {
                         // "Endurance" for 1500 m is built by race pace and intervals: the goal plans the running.

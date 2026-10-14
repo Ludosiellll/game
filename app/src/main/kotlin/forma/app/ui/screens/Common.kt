@@ -162,7 +162,7 @@ fun kindLabel(s: PlannedSession): String = when (s.kind) {
 
 /**
  * After a session on a day with two (the gym and the stadium): the other one, ready to start — "Готово" becomes the
- * second button. Nothing when the day is done.
+ * second button. Nothing when the day is done. The day's "so-so" holds for it too: the lighter gym, the lighter run.
  */
 @Composable
 fun NextToday(onDone: () -> Unit) {
@@ -174,11 +174,13 @@ fun NextToday(onDone: () -> Unit) {
     val week by androidx.compose.runtime.remember(monday) { repo.weekFlow(monday) }.collectAsState(initial = emptyList())
     val program by repo.store.program.collectAsState(initial = null)
     val active by androidx.compose.runtime.remember { repo.db.workouts().observeActive() }.collectAsState(initial = null)
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    val light = settings.feelOn(today) == forma.app.data.Feel.LOW
     val day = week.firstOrNull { it.date == today }
     val next = day?.planned?.firstOrNull { !day.isDone(it) }
     // The run is named as it will be (race pace, intervals, a test), not by its kind.
-    val runTitle by androidx.compose.runtime.produceState<String?>(null, next) {
-        value = next?.takeIf { it.isRun }?.let { repo.runFor(it.kind, today).title }
+    val runTitle by androidx.compose.runtime.produceState<String?>(null, next, light) {
+        value = next?.takeIf { it.isRun }?.let { repo.runFor(it.kind, today, light).title }
     }
     var starting by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     if (next == null || next.isRun && runTitle == null) {
@@ -192,10 +194,10 @@ fun NextToday(onDone: () -> Unit) {
         scope.launch {
             try {
                 if (next.isRun) {
-                    nav.replaceTop(forma.app.ui.Screen.RunSetup(repo.runFor(next.kind, today), next.kind))
+                    nav.replaceTop(forma.app.ui.Screen.RunSetup(repo.runFor(next.kind, today, light), next.kind))
                 } else {
                     val a = active
-                    val id = if (a != null && a.templateId == next.templateId) a.id else repo.startLift(next.templateId!!, today)
+                    val id = if (a != null && a.templateId == next.templateId) a.id else repo.startLift(next.templateId!!, today, forceDeload = light)
                     nav.replaceTop(forma.app.ui.Screen.Workout(id))
                 }
             } finally {

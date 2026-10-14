@@ -234,6 +234,25 @@ class TrainingRepository(
             return forma.core.strength.RirScale.bias(pairs)
         }
 
+        /** What a finished workout stands for in the weekly plan. */
+        fun sessionOf(w: WorkoutEntity): PlannedSession = when {
+            w.kind == Kind.LIFT -> PlannedSession(SessionKind.LIFT, w.templateId)
+            w.templateId == RunType.LONG.name -> PlannedSession(SessionKind.RUN_LONG)
+            w.templateId in setOf(RunType.INTERVALS.name, RunType.TEMPO.name, RunType.TEST.name, RunType.GOAL_PACE.name) -> PlannedSession(SessionKind.RUN_QUALITY)
+            else -> PlannedSession(SessionKind.RUN_EASY)
+        }
+
+        /**
+         * Whether a lift worked the legs when its template cannot say: a friend's copied workout, by its exercises (the
+         * thighs or glutes as main muscles). Null: as its template says (and for runs).
+         */
+        fun legsOf(w: WorkoutEntity): Boolean? {
+            if (w.kind != Kind.LIFT || w.templateId != COPIED_TEMPLATE) return null
+            val plan = w.planJson?.let { runCatching { AppJson.decodeFromString(LiftPlan.serializer(), it) }.getOrNull() } ?: return null
+            val legs = setOf(forma.core.model.Muscle.QUADS, forma.core.model.Muscle.HAMSTRINGS, forma.core.model.Muscle.GLUTES)
+            return plan.items.any { item -> Catalog.find(item.exerciseId)?.primary?.any { it in legs } == true }
+        }
+
         /** The load story from finished workouts; null without any load. */
         fun storyOf(ws: List<WorkoutEntity>, today: LocalDate): forma.core.load.LoadStory.Story? {
             val loads = ws.filter { (it.load ?: 0.0) > 0 }.groupBy { LocalDate.ofEpochDay(it.epochDay) }.mapValues { (_, l) -> l.sumOf { it.load ?: 0.0 } }
@@ -942,12 +961,20 @@ class TrainingRepository(
     }
 
     /** What a finished workout stands for in the weekly plan. */
-    private fun asSession(w: WorkoutEntity): PlannedSession = when {
-        w.kind == Kind.LIFT -> PlannedSession(SessionKind.LIFT, w.templateId)
-        w.templateId == RunType.LONG.name -> PlannedSession(SessionKind.RUN_LONG)
-        w.templateId in setOf(RunType.INTERVALS.name, RunType.TEMPO.name, RunType.TEST.name, RunType.GOAL_PACE.name) -> PlannedSession(SessionKind.RUN_QUALITY)
-        else -> PlannedSession(SessionKind.RUN_EASY)
-    }
+    private fun asSession(w: WorkoutEntity): PlannedSession = sessionOf(w)
+
+    /** The catch-up's week of [monday]: planned (none on pause days) and done, a copied workout's legs by its exercises. */
+    private fun catchUpWeek(program: Program?, settings: Settings, monday: LocalDate, done: List<WorkoutEntity>): List<CatchUp.Day> =
+        (1..7).map { d ->
+            val date = monday.plusDays(d - 1L)
+            val planned = if (program == null || paused(settings, date)) emptyList() else program.week.on(d)
+            val mine = done.filter { it.epochDay == date.toEpochDay() }.sortedBy { it.startedAt }
+            CatchUp.Day(d, planned, mine.map(::asSession), mine.map(::legsOf))
+        }
+
+    /** The first day of [monday]'s week the plan held (catch-up ignores what was planned before it). */
+    private fun firstDay(program: Program?, monday: LocalDate): Int =
+        program?.createdEpochDay?.let { (it - monday.toEpochDay() + 1).toInt().coerceIn(1, 8) } ?: 1
 
     /** A session missed earlier this week that fits [day] — never while paused, never from before the plan existed. */
     suspend fun catchUp(day: LocalDate = today()): CatchUp.Suggestion? {
@@ -956,13 +983,7 @@ class TrainingRepository(
         if (paused(settings, day)) return null
         val monday = mondayOf(day)
         val done = db.workouts().allDone().filter { it.epochDay in monday.toEpochDay()..monday.toEpochDay() + 6 }
-        val week = (1..7).map { d ->
-            val date = monday.plusDays(d - 1L)
-            val planned = if (paused(settings, date)) emptyList() else program.week.on(d)
-            CatchUp.Day(d, planned, done.filter { it.epochDay == date.toEpochDay() }.map(::asSession))
-        }
-        val first = program.createdEpochDay?.let { (it - monday.toEpochDay() + 1).toInt().coerceIn(1, 8) } ?: 1
-        return CatchUp.suggest(program, day.dayOfWeek.value, week, first)
+        return CatchUp.suggest(program, day.dayOfWeek.value, catchUpWeek(program, settings, monday, done), firstDay(program, monday))
     }
 
     /** Average training energy per week over the last four weeks (or since the first session), kcal. */
@@ -1155,11 +1176,23 @@ class TrainingRepository(
 
     // ---------- views ----------
 
+    /**
+     * The week of [monday] as planned and as done: no sessions on pause days; a session done on a later day for a missed
+     * one closes it, as the catch-up counts it (a lift of any template, a friend's copied workout too).
+     */
     fun weekFlow(monday: LocalDate): Flow<List<DayItem>> =
-        combine(store.program, db.workouts().observeDone(monday.toEpochDay(), monday.toEpochDay() + 6)) { program, done ->
-            (0 until 7).map { i ->
-                val d = monday.plusDays(i.toLong())
-                DayItem(d, program?.week?.on(d.dayOfWeek.value).orEmpty(), done.filter { it.epochDay == d.toEpochDay() })
+        combine(store.program, store.settings, db.workouts().observeDone(monday.toEpochDay(), monday.toEpochDay() + 6)) { program, settings, done ->
+            val week = catchUpWeek(program, settings, monday, done)
+            val byDay = week.associate { d -> d.day to done.filter { it.epochDay == monday.plusDays(d.day - 1L).toEpochDay() }.sortedBy { it.startedAt } }
+            val later = CatchUp.closes(week, firstDay(program, monday)).filter { it.doneDay != it.day }
+            week.map { d ->
+                val date = monday.plusDays(d.day - 1L)
+                DayItem(
+                    date, d.planned, byDay[d.day].orEmpty(),
+                    doneLater = later.filter { it.day == d.day }.associate { it.index to byDay.getValue(it.doneDay)[it.doneIndex] },
+                    catchUps = later.filter { it.doneDay == d.day }.associate { byDay.getValue(d.day)[it.doneIndex].id to monday.plusDays(it.day - 1L) },
+                    paused = paused(settings, date),
+                )
             }
         }
 

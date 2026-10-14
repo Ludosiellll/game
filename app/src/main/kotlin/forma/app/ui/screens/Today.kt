@@ -22,17 +22,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import forma.app.data.DayItem
+import forma.app.data.Feel
+import forma.app.data.WorkoutEntity
 import forma.app.data.LiftPlan
 import forma.app.data.LiftState
 import forma.app.run.RunSession
@@ -113,13 +116,21 @@ fun TodayScreen() {
         }
     }
     val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
-    var feel by rememberSaveable(today) { mutableStateOf(Feel.UNSET) }
+    // Kept for the day in the settings: the second session of the day and a return to this screen follow it too.
+    val feel = settings.feelOn(today)
+    fun setFeel(f: Feel) {
+        scope.launch { repo.updateSettings { it.withFeel(today, f) } }
+    }
     val catchUp by produceState<CatchUp.Suggestion?>(null, week, settings, today) { value = repo.catchUp(today) }
+    val trialOn by produceState<LocalDate?>(null, program, today, week) { value = repo.trialDay(today) }
 
     val p = program ?: return
     val weekNo = ProgramGenerator.weekIndex(p, today)
     val deload = ProgramGenerator.isDeloadWeek(p, today) ||
         (liftState.reactiveDeloadStart?.let { today.toEpochDay() in it until it + 7 } == true)
+    val gym = p.week.days.any { d -> d.sessions.any { it.kind == SessionKind.LIFT } }
+    val runs = p.week.days.any { d -> d.sessions.any { it.isRun } }
+    val runCutback = runs && ProgramGenerator.isRunCutbackWeek(p, today)
     val todayItem = week.firstOrNull { it.date == today }
 
     ScrollScreen {
@@ -142,9 +153,9 @@ fun TodayScreen() {
                 Banner("Пробежка прервалась на ${Ru.clock(r.elapsedSec)} — продолжить или закончить", F.c.warn, icon = Ic.run) { nav.push(Screen.RunActive) }
             else -> Banner("Идёт пробежка · ${Ru.clock(r.elapsedSec)}", F.c.endurance, icon = Ic.run) { nav.push(Screen.RunActive) }
         }
-        if (deload) Banner("Разгрузочная неделя: вдвое меньше подходов и вес −10 %. Восстановление — тоже тренировка.", F.c.warn)
+        deloadText(deload && gym, runCutback)?.let { Banner(it, F.c.warn) }
 
-        WeekStrip(week, today, p)
+        WeekStrip(week, today, p.createdEpochDay)
 
         // The same window as on Progress → Нагрузка, so "Свежесть" reads the same number on both screens.
         val loadSeries = remember(loads, today) {
@@ -156,11 +167,17 @@ fun TodayScreen() {
         val story by remember(today) { repo.loadStory(today) }.collectAsState(initial = null)
         val restLine = story?.personal?.restBelow ?: forma.core.load.LoadStory.COMMON_REST
         val todays = todayItem?.planned.orEmpty()
+        val extra = todayItem?.offPlan.orEmpty()
         when {
             repo.paused(settings, today) -> PauseCard(
                 java.time.LocalDate.ofEpochDay(settings.pauseUntil!!),
                 restarts = settings.pauseUntil!! - (settings.pauseFrom ?: settings.pauseUntil!!) + 1 >= 7,
             ) { scope.launch { repo.resume(today) } }
+            todays.isEmpty() && extra.isNotEmpty() -> {
+                // A rest day trained on anyway (a missed session caught up, or one extra): said as done, not as rest.
+                extra.forEach { w -> OffPlanCard(w, todayItem?.catchUps?.get(w.id)) }
+                NextPlannedCard(today)
+            }
             todays.isEmpty() -> RestCard(
                 week, today, p, catchUp, onFree = { nav.push(Screen.RunSetup(repo.freeRun(me?.lapMeters), null)) }, onOther = { pickTemplate = true },
                 onCatchUp = { s ->
@@ -171,14 +188,13 @@ fun TodayScreen() {
                 },
             )
             else -> {
-                if (a == null && todays.any { todayItem?.isDone(it) != true }) FeelRow(feel, tired = (form ?: 0.0) < restLine) { feel = it }
+                if (a == null && todays.any { todayItem?.isDone(it) != true }) FeelRow(feel, tired = (form ?: 0.0) < restLine) { setFeel(it) }
                 if (feel == Feel.SICK) {
-                    SickCard { feel = Feel.UNSET }
+                    SickCard(today, onTrainAnyway = { setFeel(Feel.UNSET) }, onPause = { scope.launch { repo.pause(today, today.plusDays(SICK_PAUSE_DAYS - 1L)) } })
                 } else todays.forEach { s ->
-                    val done = todayItem?.isDone(s) == true
                     val light = feel == Feel.LOW
                     if (s.kind == SessionKind.LIFT) {
-                        LiftCard(s, p, today, done, light) {
+                        LiftCard(s, p, today, todayItem?.doneFor(s), light) {
                             scope.launch {
                                 startLift(s.templateId!!, light)
                             }
@@ -187,37 +203,44 @@ fun TodayScreen() {
                         RunCard(s, today, todayItem?.doneFor(s), light) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
                     }
                 }
+                extra.forEach { w -> OffPlanCard(w, todayItem?.catchUps?.get(w.id)) }
                 // All of today done: what comes next and how to run it.
                 if (feel != Feel.SICK && todays.all { todayItem?.isDone(it) == true }) NextPlannedCard(today)
             }
         }
         val strength = remember(rows, bw) { Stats.changePct(Stats.strengthIndex(rows, bw)) }
+        fun toProgress(tab: Int) {
+            progressTabRequest = tab
+            nav.tab(Screen.Progress)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val zone = form?.let { forma.core.load.LoadStory.zone(it, restLine) }
             StatTile(
                 "Свежесть", form?.let { forma.core.text.Ru.pct(it) } ?: "—",
-                when {
-                    form == null -> if (loads.isEmpty()) "нет данных" else "копим данные"
-                    else -> when (forma.core.load.LoadStory.zone(form, restLine)) {
-                        forma.core.load.LoadStory.Zone.REST -> "нужен отдых"
-                        forma.core.load.LoadStory.Zone.BUILDING -> "в работе"
-                        forma.core.load.LoadStory.Zone.BALANCE -> "равновесие"
-                        forma.core.load.LoadStory.Zone.FRESH -> "можно грузиться"
-                        forma.core.load.LoadStory.Zone.DETRAINING -> "форма уходит"
-                    }
+                when (zone) {
+                    null -> if (loads.isEmpty()) "нет данных" else "копим данные"
+                    forma.core.load.LoadStory.Zone.REST -> "нужен отдых"
+                    forma.core.load.LoadStory.Zone.BUILDING -> "в работе"
+                    forma.core.load.LoadStory.Zone.BALANCE -> "равновесие"
+                    forma.core.load.LoadStory.Zone.FRESH -> "можно грузиться"
+                    forma.core.load.LoadStory.Zone.DETRAINING -> "долгий отдых"
                 },
-                when {
-                    form == null -> F.c.text2
-                    form < restLine -> F.c.warn
-                    else -> F.c.good
-                }, Modifier.weight(1f),
+                zoneColor(zone), Modifier.weight(1f).clickable(onClickLabel = "Нагрузка и свежесть") { toProgress(2) },
             )
             // Without the gym or without running in the aim, the week's sessions in place of an empty tile.
             val aim = me?.aim
             val planned = week.sumOf { it.planned.size }
             val doneCount = week.sumOf { d -> d.planned.count { d.isDone(it) } }
-            @Composable fun weekTile() = StatTile("Неделя", "$doneCount/$planned", "тренировок сделано", F.c.text, Modifier.weight(1f))
+            val extras = week.sumOf { d -> d.offPlan.count { it.id !in d.catchUps } }
+            @Composable fun weekTile() = StatTile(
+                "Неделя", "$doneCount/$planned", if (extras > 0) "+$extras вне плана" else "сделано", F.c.text,
+                Modifier.weight(1f).clickable(onClickLabel = "План недели") { nav.tab(Screen.Plan) },
+            )
             if (aim?.lifts == false) weekTile()
-            else StatTile("Сила", strength?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—", if (strength == null) "после 2 недель" else "с начала", F.c.strength, Modifier.weight(1f))
+            else StatTile(
+                "Сила", strength?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—", if (strength == null) "после 2 недель" else "с начала",
+                F.c.strength, Modifier.weight(1f).clickable(onClickLabel = "Прогресс силы") { toProgress(0) },
+            )
             val rs = runState
             val vdot = rs?.vdot
             if (aim?.runs == false) weekTile()
@@ -229,13 +252,12 @@ fun TodayScreen() {
                     else -> "—"
                 },
                 when {
-                    vdot != null && runGoal != null ->
-                        "${goalDistance(runGoal.meters)} ≈ ${Ru.clock(Vdot.predictSeconds(vdot, runGoal.meters.toDouble()).roundToInt())}"
+                    vdot != null && runGoal != null -> goalGap(Vdot.predictSeconds(vdot, runGoal.meters.toDouble()), runGoal.seconds)
                     vdot != null -> "5 км ≈ ${Ru.clock(Vdot.predictSeconds(vdot, 5000.0).roundToInt())}"
                     rs != null && !rs.canRunContinuously -> "неделя бега с ходьбой"
-                    else -> "после теста"
+                    else -> trialOn?.let { "тест ${soonDay(it, today)}" } ?: "после теста"
                 },
-                F.c.endurance, Modifier.weight(1f),
+                F.c.endurance, Modifier.weight(1f).clickable(onClickLabel = "Прогресс бега") { toProgress(1) },
             )
         }
 
@@ -256,7 +278,7 @@ fun TodayScreen() {
                             t.title, style = T.body(17.sp, FontWeight.SemiBold),
                             modifier = Modifier.fillMaxWidth().clickable {
                                 pickTemplate = false
-                                startLift(t.id)
+                                startLift(t.id, feel == Feel.LOW)
                             }.padding(vertical = 12.dp),
                         )
                     }
@@ -282,14 +304,76 @@ fun TodayScreen() {
     }
 }
 
+/** Days a pause from the sick card lasts: today and the two after. */
+const val SICK_PAUSE_DAYS = 3
+
+/**
+ * The lighter week's banner: the gym's deload ([gym]) and the shorter runs ([runs]) said together when they fall on the
+ * same week, each alone otherwise; null in an ordinary week.
+ */
+fun deloadText(gym: Boolean, runs: Boolean): String? = when {
+    gym && runs -> "Разгрузочная неделя: в зале вдвое меньше подходов и вес −10 %, пробежки короче. Восстановление — тоже тренировка."
+    gym -> "Разгрузочная неделя: вдвое меньше подходов и вес −10 %. Восстановление — тоже тренировка."
+    runs -> "Облегчённая неделя бега: пробежки короче, шаг лестницы не двигается. Восстановление — тоже тренировка."
+    else -> null
+}
+
+/** The colour of a freshness zone, the same on the main screen and in Progress: rest and a long break warn. */
 @Composable
-private fun WeekStrip(week: List<DayItem>, today: LocalDate, program: Program) {
+fun zoneColor(z: forma.core.load.LoadStory.Zone?): Color = when (z) {
+    null -> F.c.text2
+    forma.core.load.LoadStory.Zone.REST, forma.core.load.LoadStory.Zone.DETRAINING -> F.c.warn
+    forma.core.load.LoadStory.Zone.FRESH -> F.c.good
+    else -> F.c.text
+}
+
+/** "цель 5:30 · запас 3 с" when the forecast is within the goal, "до цели 9 с" when not yet. */
+fun goalGap(forecast: Double, goal: Int): String {
+    val gap = (forecast - goal).roundToInt()
+    fun sec(x: Int) = if (x < 60) "$x с" else Ru.clock(x)
+    return if (gap <= 0) "цель ${Ru.clock(goal)} · запас ${sec(-gap)}" else "до цели ${sec(gap)}"
+}
+
+/** "сегодня", "завтра", "16 окт". */
+fun soonDay(d: LocalDate, today: LocalDate): String = when (d) {
+    today -> "сегодня"
+    today.plusDays(1) -> "завтра"
+    else -> "${d.dayOfMonth} ${MONTH_SHORT[d.monthValue - 1]}"
+}
+
+/** A hollow dot: a session that was planned and not done. */
+@Composable
+private fun Ring(color: Color, size: androidx.compose.ui.unit.Dp = 6.dp) {
+    Box(Modifier.size(size).clip(androidx.compose.foundation.shape.CircleShape).border(1.5.dp, color, androidx.compose.foundation.shape.CircleShape))
+}
+
+/**
+ * What a day of the strip says: done, partly, missed, done off plan, paused, ahead. Days before [since] (the plan's first,
+ * epoch day) are never "missed".
+ */
+fun dayState(d: DayItem, today: LocalDate, since: Long? = null): String {
+    val over = d.date.isBefore(today) && (since == null || d.date.toEpochDay() >= since)
+    return when {
+        d.paused -> "пауза"
+        d.planned.isNotEmpty() && d.planned.all { d.isDone(it) } -> if (d.offPlan.isNotEmpty()) "сделано, и ещё вне плана" else "сделано"
+        d.planned.any { d.isDone(it) } -> if (over) "сделано частично, остальное пропущено" else "сделано частично"
+        d.planned.isNotEmpty() && over -> "пропущено"
+        d.offPlan.isNotEmpty() -> "сделано вне плана"
+        d.planned.isNotEmpty() -> if (d.date.isBefore(today)) "до начала плана" else "впереди"
+        else -> "отдых"
+    }
+}
+
+@Composable
+private fun WeekStrip(week: List<DayItem>, today: LocalDate, since: Long?) {
     val nav = LocalNav.current
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         week.forEach { d ->
             val isToday = d.date == today
+            val past = d.date.isBefore(today) && (since == null || d.date.toEpochDay() >= since)
             val shape = RoundedCornerShape(if (F.shape.pill) 14.dp else F.shape.radiusSmall)
             val doneAll = d.planned.isNotEmpty() && d.planned.all { d.isDone(it) }
+            val trained = d.planned.isNotEmpty() || d.offPlan.isNotEmpty()
             // A tap opens the day in full: the session as it will be, what it is for, why on this day.
             Column(
                 Modifier.weight(1f).clip(shape).clickable(onClickLabel = "Подробнее о дне") { nav.push(Screen.Day(d.date.toEpochDay())) },
@@ -299,22 +383,37 @@ private fun WeekStrip(week: List<DayItem>, today: LocalDate, program: Program) {
                 var m = Modifier.fillMaxWidth().height(56.dp).clip(shape)
                 m = when {
                     isToday -> m.background(F.c.accent)
-                    d.planned.isNotEmpty() -> m.background(F.c.surface).border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
+                    trained -> m.background(F.c.surface).border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
                     else -> m.border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
                 }
                 Column(m, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     NumText(
                         d.date.dayOfMonth.toString(),
-                        style = T.number(16.sp).copy(color = if (isToday) F.c.onAccent else if (d.planned.isEmpty()) F.c.text3 else F.c.text),
+                        style = T.number(16.sp).copy(color = if (isToday) F.c.onAccent else if (!trained) F.c.text3 else F.c.text),
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), modifier = Modifier.padding(top = 4.dp).height(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (doneAll) {
-                            Icon(Ic.check, "Сделано", tint = if (isToday) F.c.onAccent else F.c.good, modifier = Modifier.size(12.dp))
-                        } else {
-                            d.planned.forEach { s ->
-                                val c = if (s.kind == SessionKind.LIFT) F.c.strength else F.c.endurance
-                                Dot(if (isToday) F.c.onAccent.copy(alpha = if (s.isRun) 0.5f else 1f) else c)
+                    val state = dayState(d, today, since)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 4.dp).height(12.dp).semantics { contentDescription = state },
+                    ) {
+                        val runColor = if (isToday) F.c.onAccent.copy(alpha = 0.5f) else F.c.endurance
+                        val liftColor = if (isToday) F.c.onAccent else F.c.strength
+                        fun kindColor(run: Boolean) = if (run) runColor else liftColor
+                        when {
+                            d.paused -> Text("—", style = T.secondary(11.sp))
+                            doneAll -> Icon(Ic.check, null, tint = if (isToday) F.c.onAccent else F.c.good, modifier = Modifier.size(12.dp))
+                            else -> d.planned.forEach { s ->
+                                when {
+                                    d.isDone(s) -> Icon(Ic.check, null, tint = if (isToday) F.c.onAccent else F.c.good, modifier = Modifier.size(10.dp))
+                                    // Missed: a hollow red dot, never like one still ahead.
+                                    past -> Ring(F.c.bad)
+                                    else -> Dot(kindColor(s.isRun))
+                                }
                             }
+                        }
+                        // Done beyond the plan of the day (caught up, extra): a tick in the colour of its kind.
+                        if (!d.paused) d.offPlan.forEach { w ->
+                            Icon(Ic.check, null, tint = kindColor(w.kind == forma.app.data.Kind.RUN), modifier = Modifier.size(10.dp))
                         }
                     }
                 }
@@ -324,24 +423,37 @@ private fun WeekStrip(week: List<DayItem>, today: LocalDate, program: Program) {
 }
 
 @Composable
-private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, done: Boolean, light: Boolean, onStart: () -> Unit) {
+private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, doneAs: WorkoutEntity?, light: Boolean, onStart: () -> Unit) {
     val repo = LocalRepo.current
-    val plan by produceState<LiftPlan?>(null, s.templateId, today, light) {
-        value = runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
+    val done = doneAs != null
+    // Done: what was done (its own plan and sets), not what the plan holds now — that is the next session.
+    val plan by produceState<LiftPlan?>(null, s.templateId, today, light, done) {
+        value = if (done) null else runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
     }
     val t = program.templates.firstOrNull { it.id == s.templateId }
     // The time at this person's own pace in the gym, learned from their sessions.
     val ratio by produceState(1.0) { value = repo.timeRatio() }
     val budget = repo.store.profile.collectAsState(initial = null).value?.sessionMinutes
-    val minutes = plan?.let { forma.core.plan.SessionTime.round(forma.app.data.TrainingRepository.estimateOf(it) * ratio) } ?: t?.let { Templates.minutes(it) }
-    FCard(outline = if (done) null else null) {
+    val minutes = if (doneAs != null) doneAs.durationSec?.let { it / 60 } else plan?.let { forma.core.plan.SessionTime.round(forma.app.data.TrainingRepository.estimateOf(it) * ratio) } ?: t?.let { Templates.minutes(it) }
+    FCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Ic.dumbbell, null, tint = F.c.strength, modifier = Modifier.size(18.dp))
             Text(labelText("  Силовая"), style = T.label().copy(color = F.c.strength), modifier = Modifier.weight(1f))
-            if (minutes != null) NumText("~$minutes мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
+            if (minutes != null) NumText(if (done) "$minutes мин" else "~$minutes мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
         }
         Text(t?.title ?: "Силовая", style = T.title(26.sp))
-        if (!done && minutes != null && budget != null && ratio != 1.0 && minutes > budget * 1.15) Text(
+        if (doneAs != null) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
+                Text(
+                    if (doneAs.templateId != s.templateId) "Сделано: ${doneAs.title}" else "Сделано",
+                    style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good),
+                )
+            }
+            DoneLiftDetails(doneAs, max = 3)
+            return@FCard
+        }
+        if (minutes != null && budget != null && ratio != 1.0 && minutes > budget * 1.15) Text(
             "У тебя тренировки идут дольше расчёта (×${forma.core.text.Ru.one(ratio)}): выйдет около $minutes мин при твоих $budget. " +
                 "Не успеваешь — убери подсобное упражнение в «План» или сократи отдых.",
             style = T.secondary(12.sp).copy(color = F.c.warn),
@@ -361,15 +473,8 @@ private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, done
             }
         }
         val calib = items.count { it.prescription.calibrate }
-        if (calib > 0 && !done) Text("Первая тренировка с этими упражнениями: начни с подсказанного веса — после первого подхода приложение подберёт рабочий.", style = T.secondary(13.sp))
-        if (done) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
-                Text("Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
-            }
-        } else {
-            PrimaryButton(if (light) "Начать лёгкую тренировку" else "Начать тренировку", onStart, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
-        }
+        if (calib > 0) Text("Первая тренировка с этими упражнениями: начни с подсказанного веса — после первого подхода приложение подберёт рабочий.", style = T.secondary(13.sp))
+        PrimaryButton(if (light) "Начать лёгкую тренировку" else "Начать тренировку", onStart, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
     }
 }
 
@@ -419,6 +524,7 @@ private fun RunCard(s: PlannedSession, today: LocalDate, doneAs: forma.app.data.
             if (other && s.kind == SessionKind.RUN_QUALITY) {
                 Text("«${w.title}» — в следующий тяжёлый день: план бега сдвигается только по самой тренировке.", style = T.secondary(13.sp))
             }
+            DoneRunDetails(doneAs)
         } else {
             PrimaryButton("Начать пробежку", { onStart(w) }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, icon = Ic.play)
         }
@@ -463,9 +569,6 @@ private fun RestCard(
 /** "на понедельник", "на среду": day names after «на». */
 private val DAY_ACCUSATIVE = listOf("понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье")
 
-/** How the person feels today: decides between the planned session, a lighter one and rest. */
-enum class Feel { UNSET, GOOD, LOW, SICK }
-
 @Composable
 private fun FeelRow(feel: Feel, tired: Boolean, onPick: (Feel) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -485,14 +588,18 @@ private fun FeelRow(feel: Feel, tired: Boolean, onPick: (Feel) -> Unit) {
 }
 
 @Composable
-private fun SickCard(onTrainAnyway: () -> Unit) {
+private fun SickCard(today: LocalDate, onTrainAnyway: () -> Unit, onPause: () -> Unit) {
     FCard {
         SectionLabel("Отдых")
         Text("Сегодня выздоравливаем", style = T.title(22.sp))
         Text(
             "При температуре, ломоте или кашле — никаких тренировок, пока не пройдёт. Пропущенное можно будет сделать в свободный " +
-                "день, а после перерыва первые тренировки станут легче сами.",
+                "день, а после перерыва первые тренировки станут легче сами. Болезнь на несколько дней — поставь паузу: " +
+                "пропуски не будут висеть.",
             style = T.secondary(14.sp),
+        )
+        PrimaryButton(
+            "Пауза на $SICK_PAUSE_DAYS дня — до ${shortDate(today.plusDays(SICK_PAUSE_DAYS - 1L))}", onPause, Modifier.fillMaxWidth(),
         )
         GhostButton("Всё равно тренироваться", onTrainAnyway, Modifier.fillMaxWidth())
     }

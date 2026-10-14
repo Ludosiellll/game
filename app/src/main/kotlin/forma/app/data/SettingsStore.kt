@@ -58,7 +58,27 @@ data class Settings(
     val trackLine: List<Double>? = null,
     /** (cadence, stride m) pairs measured where GPS was good: the stride model for distance by steps. */
     val strideSamples: List<List<Double>> = emptyList(),
-)
+    /**
+     * How the person felt on a day, by epoch day ([Feel] names): every session of that day follows it (a lighter one for
+     * "so-so"), and the export shows it. The last [FEEL_DAYS] days are kept.
+     */
+    val feels: Map<Long, String> = emptyMap(),
+) {
+    /** How the person said they felt on [day]; [Feel.UNSET] when they did not. */
+    fun feelOn(day: java.time.LocalDate): Feel =
+        feels[day.toEpochDay()]?.let { name -> Feel.entries.firstOrNull { it.name == name } } ?: Feel.UNSET
+
+    /** The same settings with [feel] for [day] (unset: forgotten), older days than [FEEL_DAYS] dropped. */
+    fun withFeel(day: java.time.LocalDate, feel: Feel): Settings {
+        val d = day.toEpochDay()
+        val kept = feels.filterKeys { it > d - FEEL_DAYS && it != d }
+        return copy(feels = if (feel == Feel.UNSET) kept else kept + (d to feel.name))
+    }
+
+    companion object {
+        const val FEEL_DAYS = 180
+    }
+}
 
 /** Lifting state that is not per exercise. */
 @Serializable

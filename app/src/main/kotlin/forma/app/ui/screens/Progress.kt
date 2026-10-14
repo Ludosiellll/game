@@ -64,9 +64,12 @@ private fun monthLabels(points: List<Point>): List<String> {
     return listOf(shortDate(a), shortDate(m), shortDate(b))
 }
 
+/** The tab Progress opens on next, asked for by a tile of the main screen; taken once. */
+internal var progressTabRequest: Int? = null
+
 @Composable
 fun ProgressScreen(initialTab: Int = 0) {
-    var tab by rememberSaveable { mutableIntStateOf(initialTab) }
+    var tab by rememberSaveable { mutableIntStateOf(progressTabRequest?.also { progressTabRequest = null } ?: initialTab) }
     ScrollScreen {
         Text(if (F.type.capsTitles) "ПРОГРЕСС" else "Прогресс", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         Segmented(listOf("Сила", "Бег", "Нагрузка", "Тело"), tab, { tab = it })
@@ -149,13 +152,18 @@ private fun StrengthTab() {
                     Text(if (ex.load == forma.core.model.LoadKind.TIMED) "время удержания" else "максимум на 1 раз, расчёт", style = T.secondary(12.sp))
                 }
                 Sparkline(series.map { it.value }, F.c.strength, Modifier.size(64.dp, 24.dp).padding(end = 8.dp))
-                Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(64.dp)) {
-                    val unit = if (timed) " с" else ""
+                Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(80.dp)) {
+                    val unit = if (timed) " с" else " кг"
                     NumText(cur?.let { (if (timed) "${it.roundToInt()}" else Ru.kg((it * 2).roundToInt() / 2.0)) + unit } ?: "—", style = T.number(17.sp))
-                    if (delta != null) NumText(
-                        (if (delta >= 0) "▲ +" else "▼ ") + (if (timed) "${kotlin.math.abs(delta).roundToInt()}" else Ru.kg((kotlin.math.abs(delta) * 2).roundToInt() / 2.0)) + unit,
-                        style = T.number(11.sp, FontWeight.Bold).copy(color = if (delta >= 0) F.c.good else F.c.warn),
-                    )
+                    if (delta != null) {
+                        // Shown as rounded: what reads as no change is not coloured as growth.
+                        val shown = if (timed) kotlin.math.abs(delta).roundToInt().toDouble() else (kotlin.math.abs(delta) * 2).roundToInt() / 2.0
+                        val zero = shown == 0.0
+                        NumText(
+                            (if (zero) "= " else if (delta > 0) "▲ +" else "▼ −") + (if (timed) "${shown.roundToInt()}" else Ru.kg(shown)) + unit,
+                            style = T.number(11.sp, FontWeight.Bold).copy(color = if (zero) F.c.text2 else if (delta > 0) F.c.good else F.c.warn),
+                        )
+                    }
                 }
             }
         }
@@ -172,7 +180,7 @@ private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState
         Text("Цель", style = T.secondary(13.sp))
         Text("${goalDistance(goal.meters)} за ${Ru.clock(goal.seconds)}", style = T.title(26.sp).copy(color = F.c.endurance))
         Text(
-            "Темп ${Ru.pace(goal.pace)} /км" + (lap?.let { " · " + Ru.nobreak("круг $it м — ${Ru.lap(forma.core.run.Track.lapSec(goal.pace, it))}") } ?: ""),
+            "Темп ${Ru.pace(goal.pace)} /км" + (lap?.let { " · " + Ru.nobreak("круг $it м — ${lapTenth(forma.core.run.Track.lapSec(goal.pace, it))}") } ?: ""),
             style = T.body(15.sp, FontWeight.SemiBold),
         )
         when {
@@ -197,8 +205,6 @@ private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState
     }
 }
 
-/** A lap time to a tenth: "51,4 с" (the goal is often a few tenths a lap away). */
-private fun lapTenth(sec: Double): String = if (sec < 59.95) "${Ru.one(sec)} с" else Ru.clock(sec.roundToInt())
 
 /** The way to the goal: trials over its distance, then the average lap and the laps on pace in the goal-pace sessions. */
 @Composable
@@ -404,7 +410,7 @@ private fun LoadTab() {
     val profile by repo.store.profile.collectAsState(initial = null)
     val today = forma.app.ui.rememberToday(repo)
     if (loads.isEmpty()) {
-        Empty(LoadExplain.UNITS + " Из неё считаются форма (за ~6 недель), усталость (за неделю) и свежесть.")
+        Empty(LoadExplain.UNITS + " Из неё считаются тренированность (за ~6 недель), усталость (за неделю) и свежесть.")
         return
     }
     val series = remember(loads, today) { TrainingLoad.series(loads, today.minusDays(120), today) }
@@ -418,11 +424,7 @@ private fun LoadTab() {
             Text("Сейчас", style = T.secondary(13.sp))
             Text(
                 LoadExplain.zoneTitle(z), style = T.title(24.sp).copy(
-                    color = when (z) {
-                        LoadStory.Zone.REST, LoadStory.Zone.DETRAINING -> F.c.warn
-                        LoadStory.Zone.FRESH -> F.c.good
-                        else -> F.c.text
-                    },
+                    color = zoneColor(z),
                 ),
             )
             Text(LoadExplain.zoneText(st), style = T.body(14.sp))
@@ -431,18 +433,18 @@ private fun LoadTab() {
     FCard(gap = 8.dp) {
         val now = series.last()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Metric3("Форма", now.fitness.roundToInt().toString(), F.c.endurance, Modifier.weight(1f))
+            Metric3("Тренированность", now.fitness.roundToInt().toString(), F.c.endurance, Modifier.weight(1f))
             Metric3("Усталость", now.fatigue.roundToInt().toString(), F.c.load, Modifier.weight(1f))
             // A few sessions say nothing about freshness yet (one hard day reads as −100 %).
-            if (st.history) Metric3("Свежесть", Ru.pct(now.formPct), if (now.formPct >= line) F.c.good else F.c.warn, Modifier.weight(1f))
+            if (st.history) Metric3("Свежесть", Ru.pct(now.formPct), zoneColor(LoadStory.zone(now.formPct, line)), Modifier.weight(1f))
             else Metric3("Свежесть", "—", F.c.text3, Modifier.weight(1f))
         }
         LineChart(
             listOf(Series(last.map { it.fitness }, F.c.endurance), Series(last.map { it.fatigue }, F.c.load, width = 2.dp)),
-            xLabels = listOf(shortDate(last.first().date), shortDate(last.last().date)), description = "Форма и усталость за 8 недель",
+            xLabels = listOf(shortDate(last.first().date), shortDate(last.last().date)), description = "Тренированность и усталость за 8 недель",
         )
-        Text("Синяя — форма, оранжевая — усталость. Усталость выше формы — нагружаешься больше привычного.", style = T.secondary(12.sp))
-        Explained("Форма", LoadExplain.fitness(st))
+        Text("Синяя — тренированность, оранжевая — усталость. Усталость выше тренированности — нагружаешься больше привычного.", style = T.secondary(12.sp))
+        Explained("Тренированность", LoadExplain.fitness(st))
         Explained("Усталость", LoadExplain.fatigue(st))
         Explained("Свежесть", LoadExplain.freshness(st))
     }
@@ -488,7 +490,7 @@ private fun LoadTab() {
                             color = when (w.level) {
                                 LoadStory.Level.SPIKE -> F.c.warn
                                 LoadStory.Level.MORE -> F.c.load
-                                LoadStory.Level.NONE, LoadStory.Level.LIGHT -> F.c.text2
+                                LoadStory.Level.NONE, LoadStory.Level.LIGHT, LoadStory.Level.ONGOING -> F.c.text2
                                 else -> F.c.text
                             },
                         ),
@@ -503,7 +505,7 @@ private fun LoadTab() {
         Text("Откуда числа", style = T.secondary(13.sp))
         Text(LoadExplain.UNITS, style = T.body(13.sp))
     }
-    val sets = remember(rows, today) { Stats.weeklySets(rows, today, 1) }
+    val sets = remember(rows, today) { Stats.setsLast7Days(rows, today) }
     // Weekly hard sets per muscle that suit the gym focus (more for hypertrophy, fewer heavy ones for strength).
     val target = when (profile?.aim?.lift) {
         LiftFocus.MUSCLE -> 10.0 to 20.0
@@ -512,12 +514,12 @@ private fun LoadTab() {
         else -> 6.0 to 14.0
     }
     // Nothing lifted lately: no table of zeros.
-    if (sets.values.none { (it.lastOrNull() ?: 0.0) > 0 }) return
-    SectionLabel("Подходы на мышцу за неделю")
+    if (sets.values.none { it > 0 }) return
+    SectionLabel("Подходы на мышцу за 7 дней")
     FCard(gap = 10.dp) {
-        Text("Полоса — разумный диапазон для твоей цели (${target.first.roundToInt()}–${target.second.roundToInt()}). Подход для вспомогательной мышцы считается за половину.", style = T.secondary(12.sp))
+        Text("За последние 7 дней, сегодня тоже. Полоса — разумный диапазон в неделю для твоей цели (${target.first.roundToInt()}–${target.second.roundToInt()}). Подход для вспомогательной мышцы считается за половину.", style = T.secondary(12.sp))
         Muscle.entries.forEach { m ->
-            val v = sets[m]?.last() ?: 0.0
+            val v = sets[m] ?: 0.0
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(m.ru, style = T.body(13.sp), modifier = Modifier.width(110.dp))
                 RangeBar(v, 24.0, target.first, target.second, F.c.strength, Modifier.weight(1f))
