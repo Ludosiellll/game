@@ -58,6 +58,8 @@ data class Settings(
     val trackLine: List<Double>? = null,
     /** (cadence, stride m) pairs measured where GPS was good: the stride model for distance by steps. */
     val strideSamples: List<List<Double>> = emptyList(),
+    /** Run type → how many times its "what it gives the body" was shown after a run: read a few times, it folds away. */
+    val bodySeen: Map<String, Int> = emptyMap(),
 )
 
 /** Lifting state that is not per exercise. */

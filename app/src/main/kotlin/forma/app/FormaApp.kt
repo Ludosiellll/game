@@ -13,6 +13,8 @@ class FormaApp : Application() {
         super.onCreate()
         // A run the system closed together with the app comes back paused at its last save.
         forma.app.run.RunSession.init(forma.app.run.RunStore(filesDir), android.os.SystemClock.elapsedRealtime())
+        // Closed mid-run and not carried on by the run service within seconds: the runner is told by a loud notification.
+        forma.app.run.RunAlerts.checkAfterStart(this)
     }
 
     val repository: TrainingRepository by lazy {

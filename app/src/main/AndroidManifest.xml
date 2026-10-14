@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- The step counter on a run: cadence, and the distance where GPS is lost. -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- Asks once to be left out of battery optimization: a run's timer must not be put to sleep with the screen off. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 

@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import forma.app.data.AppJson
 import forma.app.data.RunSummary
 import forma.app.data.TrackPointEntity
@@ -164,8 +165,15 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
 @Composable
 private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composable () -> Unit)?) {
     val nav = LocalNav.current
+    val repo = LocalRepo.current
     val settings = LocalSettings.current
     val context = LocalContext.current
+    // A gym session still open (the gym, then the stadium the same day): the run's time must not end up inside it.
+    val open by remember { repo.db.workouts().observeActive() }.collectAsState(initial = null)
+    val openLift = open?.takeIf { it.kind == forma.app.data.Kind.LIFT }
+    var askLift by remember { mutableStateOf(false) }
+    // What will not work without a permission refused, said before the start (the run starts all the same).
+    var denied by remember { mutableStateOf<String?>(null) }
     var gps by remember { mutableStateOf(settings.gps) }
     var voice by remember { mutableStateOf(settings.voice) }
     // A free run may have the runner's own target: a lap time on a stadium, a pace on the road.
@@ -189,7 +197,58 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         RunService.start(context, chosen, gps && fine, voice, settings.beeps, settings.vibration, settings.trackLine, settings.autoPause, stride)
         nav.replaceTop(Screen.RunActive)
     }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { start() }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
+        val warn = deniedWarning(
+            gps, granted(Manifest.permission.ACCESS_FINE_LOCATION),
+            Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS),
+        )
+        if (warn != null && RunSession.tracker == null) denied = warn else start()
+    }
+    fun go() {
+        val need = buildList {
+            // Android 12+ ignores a request for precise location that does not ask for approximate too.
+            if (gps && RunSession.tracker == null) {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            }
+            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+            // The step counter: cadence, and the distance where GPS is lost.
+            if (Build.VERSION.SDK_INT >= 29 && RunSession.tracker == null) add(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+        val missing = need.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isEmpty() || ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
+            missing.all { it == Manifest.permission.ACCESS_COARSE_LOCATION }
+        ) start() else launcher.launch(need.toTypedArray())
+    }
+    if (askLift && openLift != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { askLift = false },
+            title = { Text("Силовая ещё открыта — закончить её сейчас?") },
+            text = { Text("Иначе время пробежки попадёт в силовую: она закончится, когда ты её закроешь.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton({ askLift = false; nav.push(Screen.Workout(openLift.id)) }) { Text("Закончить", color = F.c.accent) }
+            },
+            dismissButton = { androidx.compose.material3.TextButton({ askLift = false; go() }) { Text("Позже") } },
+            containerColor = F.c.surface, titleContentColor = F.c.text, textContentColor = F.c.text2,
+        )
+    }
+    denied?.let { warn ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { denied = null },
+            title = { Text("Не всё будет работать") },
+            text = { Text(warn) },
+            confirmButton = { androidx.compose.material3.TextButton({ denied = null; start() }) { Text("Начать", color = F.c.accent) } },
+            dismissButton = { androidx.compose.material3.TextButton({ denied = null; openAppSettings(context) }) { Text("Настройки") } },
+            containerColor = F.c.surface, titleContentColor = F.c.text, textContentColor = F.c.text2,
+        )
+    }
+    // Asked again each time the screen comes back (from the system's settings): the banner goes once it is done.
+    var batteryFree by remember { mutableStateOf(batteryUnrestricted(context)) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        batteryFree = batteryUnrestricted(context)
+        onPauseOrDispose {}
+    }
     // No Russian voice in the phone: said here, not discovered on the track by the silence.
     var speaks by remember { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(voice) { if (voice) forma.app.run.VoiceCoach.checkRussian(context) { speaks = it } }
@@ -271,34 +330,77 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
             Hairline()
             ToggleRow("Голосовые подсказки", if (track) "Начало отрезков, время каждого круга, финиш" else "Начало отрезков, километры, финиш", voice) { voice = it }
         }
-        Banner(
-            "Чтобы таймер не засыпал с выключенным экраном (особенно на Xiaomi), сними для «Формы» ограничения фоновой работы и экономии батареи. Нажми, чтобы открыть настройки приложения.",
-            F.c.text2,
-        ) {
-            context.startActivity(
-                android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null))
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-        }
+        if (!batteryFree) BatteryCard()
         PrimaryButton("Старт", {
             if (!ready || targetBad) return@PrimaryButton
-            val need = buildList {
-                // Android 12+ ignores a request for precise location that does not ask for approximate too.
-                if (gps && RunSession.tracker == null) {
-                    add(Manifest.permission.ACCESS_FINE_LOCATION)
-                    add(Manifest.permission.ACCESS_COARSE_LOCATION)
-                }
-                if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-                // The step counter: cadence, and the distance where GPS is lost.
-                if (Build.VERSION.SDK_INT >= 29 && RunSession.tracker == null) add(Manifest.permission.ACTIVITY_RECOGNITION)
-            }
-            val missing = need.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
-            if (missing.isEmpty() || ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
-                missing.all { it == Manifest.permission.ACCESS_COARSE_LOCATION }
-            ) start() else launcher.launch(need.toTypedArray())
+            if (openLift != null && RunSession.tracker == null) askLift = true else go()
         }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, icon = Ic.play, height = 60.dp)
         // Run with a watch and no phone: the numbers go in by hand and the plan moves as after a timed run.
         GhostButton("Бегал без телефона — внести", { if (ready) nav.push(Screen.RunManual(workout)) }, Modifier.fillMaxWidth())
+    }
+}
+
+/**
+ * What will not work with a permission refused, in a sentence or two; null when nothing is missing. [gpsWanted]: GPS was
+ * left on for this run.
+ */
+internal fun deniedWarning(gpsWanted: Boolean, location: Boolean, notifications: Boolean): String? {
+    val parts = buildList {
+        if (gpsWanted && !location) add("Без доступа к геопозиции не будет дистанции и темпа по GPS — только время, круги и шаги.")
+        if (!notifications) add("Без уведомлений не будет таймера и кнопки «Круг» на экране блокировки.")
+    }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" ")
+}
+
+private fun openAppSettings(context: android.content.Context) {
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+}
+
+/** The phone leaves the app out of its battery saving: the run's timer is not put to sleep with the screen off. */
+internal fun batteryUnrestricted(context: android.content.Context): Boolean =
+    context.getSystemService(android.os.PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+
+private val XIAOMI = setOf("xiaomi", "redmi", "poco")
+
+/**
+ * Battery saving still on for the app: the system's own request to switch it off, and on Xiaomi (MIUI, HyperOS) the
+ * autostart list, which kills a run with the screen off just as surely. Each falls back to the app's settings page.
+ */
+@android.annotation.SuppressLint("BatteryLife")
+@Composable
+private fun BatteryCard() {
+    val context = LocalContext.current
+    fun open(vararg intents: android.content.Intent) {
+        val all = intents.toList() + android.content.Intent(
+            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null),
+        )
+        all.firstOrNull { runCatching { context.startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess }
+    }
+    val xiaomi = Build.MANUFACTURER.lowercase() in XIAOMI || Build.BRAND.lowercase() in XIAOMI
+    FCard(gap = 8.dp) {
+        Text(
+            "Телефон может усыпить таймер с выключенным экраном" + (if (xiaomi) " — на Xiaomi особенно" else "") +
+                ". Разреши «Форме» работать без ограничений батареи" + (if (xiaomi) " и включи ей автозапуск." else "."),
+            style = T.body(14.sp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GhostButton("Без ограничений", {
+                open(
+                    android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, ("package:" + context.packageName).toUri()),
+                    android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                )
+            }, Modifier.weight(1f))
+            GhostButton(if (xiaomi) "Автозапуск" else "Настройки", {
+                open(
+                    android.content.Intent().setClassName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
+                )
+            }, Modifier.weight(1f))
+        }
     }
 }
 
@@ -379,9 +481,38 @@ fun RunActiveScreen() {
         view.keepScreenOn = settings.keepScreenOn
         onDispose { view.keepScreenOn = false }
     }
+    // Over the lock screen while the run screen is open: the clock and "lap" without unlocking.
+    DisposableEffect(Unit) {
+        val activity = context as? forma.app.MainActivity
+        activity?.showOverLock(true)
+        onDispose { activity?.showOverLock(false) }
+    }
     val u = ui
+    val lapsByKey = u != null && u.workout.lapMeters != null && u.state == RunTracker.State.RUNNING
+    // The volume-down key presses "lap" (and leaves the volume alone) while a stadium run goes on.
+    DisposableEffect(lapsByKey) {
+        forma.app.run.LapKey.onLap = if (lapsByKey) ({ RunService.send(context, RunService.ACTION_LAP) }) else null
+        onDispose { forma.app.run.LapKey.onLap = null }
+    }
+    // The run was on this screen and is gone (cleared from elsewhere: the cloud replaced the data): back, as before.
+    val had = remember { booleanArrayOf(false) }
+    if (u != null) had[0] = true
+    if (u == null && had[0]) {
+        LaunchedEffect(Unit) { nav.back() }
+        return
+    }
     if (u == null) {
-        LaunchedEffect(Unit) { delay(1500); if (RunSession.ui.value == null) nav.back() }
+        val error by RunSession.startError.collectAsState()
+        var late by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { delay(1500); late = true }
+        // Not started: said, not a silent step back to the screen before.
+        if (error != null || late) {
+            ScrollScreen(bottomInset = true) {
+                TopBar("Пробежка", onBack = { RunSession.clearStartError(); nav.back() })
+                Text(error ?: "Пробежка не запустилась. Попробуй ещё раз.", style = T.body(16.sp))
+                PrimaryButton("Назад", { RunSession.clearStartError(); nav.back() }, Modifier.fillMaxWidth())
+            }
+        }
         return
     }
     val w = u.workout
@@ -404,6 +535,7 @@ fun RunActiveScreen() {
                     Text(
                         when {
                             !u.gps && lapM != null -> "Стадион · круг $lapM м"
+                            !u.gps && u.distanceM > 0 -> "Без GPS · дистанция по шагам"
                             !u.gps -> "Без GPS · только время"
                             acc == null -> "GPS · ищем спутники…"
                             acc <= 15 -> "GPS · точность ${acc.roundToInt()} м"
@@ -527,7 +659,8 @@ fun RunActiveScreen() {
             Hairline()
             Row {
                 if (lapM != null && !u.gps) Metric("${u.laps}", Ru.plural(u.laps, "круг", "круга", "кругов"), Modifier.weight(1f), Alignment.Start)
-                else Metric(if (u.gps) Ru.km2(u.distanceM) else "—", "км", Modifier.weight(1f), Alignment.Start)
+                // Without GPS the steps may give the distance (the stride learnt on earlier runs): roughly, but not "—".
+                else Metric(if (u.gps || u.distanceM > 0) Ru.km2(u.distanceM) else "—", if (u.gps || u.distanceM <= 0) "км" else "км по шагам", Modifier.weight(1f), Alignment.Start)
                 Metric(Ru.clock(u.elapsedSec), if (w.isOpenEnded || over) "время" else "из ${Ru.clock(w.totalSeconds)}", Modifier.weight(1f), Alignment.CenterHorizontally)
                 val clock = u.lapClock
                 // Waiting on the line no lap is running: the warm-up's twelve minutes are not "this lap".
@@ -657,6 +790,14 @@ internal val SavedRunSaver = androidx.compose.runtime.saveable.Saver<Pair<Long, 
     },
 )
 
+internal const val SAVE_FAILED = "Не сохранилось — попробуй ещё раз"
+
+/** A treadmill display's distance typed in km, metres; null when empty or not a distance of a run [sec] long. */
+internal fun boardDistance(text: String, sec: Int): Double? {
+    val m = parseNum(text)?.takeIf { it > 0 && it <= 100 }?.times(1000) ?: return null
+    return m.takeIf { sec <= 0 || sec / (it / 1000) in forma.core.run.RunPlan.PLAUSIBLE_PACE }
+}
+
 /** A typed time-trial time ("5:52") over [meters], or null when it is not one: no colon, or a pace no one runs. */
 internal fun trialSeconds(text: String, meters: Int): Int? {
     if (':' !in text) return null
@@ -771,8 +912,12 @@ fun RunDoneScreen(workoutId: Long) {
     var rpe by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(0) }
     var saved by androidx.compose.runtime.saveable.rememberSaveable(stateSaver = SavedRunSaver) { mutableStateOf<Pair<Long, RunSummary>?>(null) }
     var saving by remember { mutableStateOf(false) }
+    // The save failed (the database, the disk): the run is kept, the runner tries again.
+    var failed by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var testKm by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    // On a treadmill (no GPS distance): the distance from its display.
+    var boardKm by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     // Reps as the runner did them (more than planned counts), prefilled with what the timer saw.
     val repsKind = tracker?.workout?.type.let { it == RunType.INTERVALS || it == RunType.TEMPO || it == RunType.GOAL_PACE }
     var reps by androidx.compose.runtime.saveable.rememberSaveable {
@@ -870,6 +1015,20 @@ fun RunDoneScreen(workoutId: Long) {
             } else if (w.type == RunType.TEST && w.testMeters == null && result.workDistanceM == null) {
                 NumberField(testKm, { testKm = it }, "Сколько пробежал за 12 минут (если без GPS)", "км")
             }
+            // A treadmill (or GPS off): the distance shown on its display, instead of none or the steps' rough one.
+            val board = w.lapMeters == null && w.type != RunType.TEST && (result.distanceM == null || !RunSession.gpsEnabled)
+            if (board) {
+                NumberField(boardKm, { boardKm = it }, "Дистанция с табло", "км", placeholder = result.distanceM?.let { Ru.one(it / 1000) } ?: "5,0")
+                val boardBad = boardKm.isNotBlank() && boardDistance(boardKm, result.durationSec) == null
+                Text(
+                    when {
+                        boardBad -> "Не похоже на дистанцию за это время — впиши километры, например 5,2."
+                        result.distanceM != null -> "Без GPS дистанция посчитана по шагам, примерно. Бежал на дорожке — впиши с табло."
+                        else -> "Бежал на дорожке — впиши дистанцию с табло: будет темп."
+                    },
+                    style = T.secondary(13.sp).copy(color = if (boardBad) F.c.warn else F.c.text2),
+                )
+            }
             if (repsKind && w.reps > 0) {
                 SectionLabel("Сколько отрезков сделал")
                 Stepper(
@@ -897,10 +1056,12 @@ fun RunDoneScreen(workoutId: Long) {
             PrimaryButton(if (saving) "Сохраняю…" else if (rpe == 0) "Сначала оценка" else "Сохранить", {
                 if (saving || rpe == 0) return@PrimaryButton
                 saving = true
+                failed = false
                 scope.launch {
                     try {
                         var r = tracker.result(android.os.SystemClock.elapsedRealtime(), rpe)
                         parseNum(testKm)?.let { km -> if (r.workDistanceM == null) r = r.copy(workDistanceM = km * 1000) }
+                        boardDistance(boardKm, r.durationSec)?.let { m -> r = r.copy(distanceM = m) }
                         tracker.workout.testMeters?.let { m -> r = r.copy(testSeconds = trialSeconds(testTime, m)) }
                         if (repsKind) r = r.copy(reps = reps)
                         if (!countExtra && tracker.workout.continuable) {
@@ -911,26 +1072,41 @@ fun RunDoneScreen(workoutId: Long) {
                             r = r.copy(durationSec = kept, distanceM = r.distanceM?.let { it * share })
                         }
                         val points = RunSession.points.map { TrackPointEntity(0, it.timeMs, it.lat, it.lon, it.accuracy) }
-                        // The day it was run: a run brought back after the app was closed may be saved days later.
-                        saved = repo.saveRun(tracker.workout, r, RunSession.startedAtWall, points, repo.dayOf(RunSession.startedAtWall))
-                        // The stadium's line as the presses placed it, and the strides measured where GPS was good: next
-                        // time GPS laps count from the first one, and steps give the distance where GPS is lost.
-                        val line = tracker.line
-                        val strides = tracker.strideSamples()
-                        if (line != null || strides.isNotEmpty()) {
-                            repo.updateSettings { st ->
-                                st.copy(
-                                    trackLine = line?.let { listOf(it.first, it.second) } ?: st.trackLine,
-                                    strideSamples = (st.strideSamples + strides.map { listOf(it.first, it.second) }).takeLast(150),
-                                )
-                            }
+                        // The day it was run: a run brought back after the app was closed may be saved days later. A save
+                        // that fails keeps the run (on its screen and on disk) for another try.
+                        val done = try {
+                            repo.saveRun(tracker.workout, r, RunSession.startedAtWall, points, repo.dayOf(RunSession.startedAtWall))
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            failed = true
+                            null
                         }
-                        RunSession.clear()
+                        if (done != null) {
+                            saved = done
+                            // The stadium's line as the presses placed it, and the strides measured where GPS was good: next
+                            // time GPS laps count from the first one, and steps give the distance where GPS is lost. The
+                            // run is saved already: a failure here must not offer to save it twice.
+                            val line = tracker.line
+                            val strides = tracker.strideSamples()
+                            if (line != null || strides.isNotEmpty()) {
+                                runCatching {
+                                    repo.updateSettings { st ->
+                                        st.copy(
+                                            trackLine = line?.let { listOf(it.first, it.second) } ?: st.trackLine,
+                                            strideSamples = (st.strideSamples + strides.map { listOf(it.first, it.second) }).takeLast(150),
+                                        )
+                                    }
+                                }
+                            }
+                            RunSession.clear()
+                        }
                     } finally {
                         saving = false
                     }
                 }
             }, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, enabled = !saving && rpe > 0)
+            if (failed) Text(SAVE_FAILED, style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.warn))
             Box(
                 Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp).clip(RoundedCornerShape(F.shape.radiusSmall))
                     .clickable(enabled = !saving, role = Role.Button, onClick = { confirmDiscard = true })
