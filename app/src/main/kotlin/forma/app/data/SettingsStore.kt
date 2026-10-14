@@ -67,6 +67,13 @@ data class Settings(
      * "so-so"), and the export shows it. The last [FEEL_DAYS] days are kept.
      */
     val feels: Map<Long, String> = emptyMap(),
+    /** A short note per exercise ("сиденье 4, хват шире"): exercise id → note, shown in the workout. */
+    val notes: Map<String, String> = emptyMap(),
+    /**
+     * Plan exercises (ids) whose swap for a single-joint exercise was made with its sets and reps as an added one's
+     * ([TrainingRepository.demotes]). Swaps made before that rule keep the plan's numbers: a plan the person shaped stays.
+     */
+    val demoted: Set<String> = emptySet(),
 ) {
     /** How the person said they felt on [day]; [Feel.UNSET] when they did not. */
     fun feelOn(day: java.time.LocalDate): Feel =

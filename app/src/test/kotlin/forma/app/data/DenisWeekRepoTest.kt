@@ -101,4 +101,26 @@ class DenisWeekRepoTest {
         assertEquals(next.plusWeeks(1).toEpochDay(), moved.startEpochDay)
         assertTrue(!ProgramGenerator.isDeloadWeek(moved, next.plusWeeks(1)))
     }
+
+    /**
+     * Denis's own swaps stay as he shaped them: the Bulgarian split squat swapped for leg extensions keeps the plan's sets
+     * and reps (made before the rule for single-joint swaps); the same swap made now gets an added exercise's numbers.
+     */
+    @Test fun hisSwapsKeepTheirNumbers() = runBlocking<Unit> {
+        val repo = repo(denis, "denis-swaps")
+        repo.updateSettings { it.copy(swaps = mapOf("bulgarian" to "leg_ext", "bench" to "chest_press"), removed = setOf("plank"), sets = mapOf("lat_pulldown" to 2)) }
+        val program = repo.store.programNow()!!
+        val lower = program.templates.first { it.id == "lower_a" }
+        val bulgarian = lower.slots.first { it.exerciseId == "bulgarian" }
+        val plan = repo.liftPlan(lower.id, monday.plusDays(5))
+        val ext = plan.items.first { it.exerciseId == "leg_ext" }
+        assertEquals(bulgarian.sets, ext.slot.sets)
+        assertEquals(bulgarian.repMin to bulgarian.repMax, ext.slot.repMin to ext.slot.repMax)
+        assertTrue(plan.items.none { it.exerciseId == "plank" })
+        // Swapped again now (back and forth): the rule for single-joint swaps applies.
+        repo.setSwap("bulgarian", null)
+        repo.setSwap("bulgarian", "leg_ext")
+        val again = repo.liftPlan(lower.id, monday.plusDays(5)).items.first { it.exerciseId == "leg_ext" }
+        assertEquals(10 to 15, again.slot.repMin to again.slot.repMax)
+    }
 }

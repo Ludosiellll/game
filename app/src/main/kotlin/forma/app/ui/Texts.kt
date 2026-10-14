@@ -63,7 +63,8 @@ object Texts {
             else -> "свой вес"
         }
         LoadKind.TIMED -> ""
-        else -> "${Ru.kg(w)} кг"
+        // Dumbbells: the weight of one, two of them ("20 кг ×2").
+        else -> "${Ru.kg(w)} кг" + if (ex?.perHand == true) " ×2" else ""
     }
 
     private fun target(ex: Exercise?, w: Double, reps: Int): String =

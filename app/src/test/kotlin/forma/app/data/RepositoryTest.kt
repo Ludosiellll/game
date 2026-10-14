@@ -65,8 +65,9 @@ class RepositoryTest {
         val plan = repo.planOf(db.workouts().get(id)!!)!!
         val squat = plan.items.first { it.exerciseId == "squat" }
         assertTrue(squat.prescription.calibrate)
-        repeat(3) { repo.logSet(id, squat, 60.0, 8, null) }
-        clock += 50 * 60_000
+        // Sets through the session (a session's time ends with its last set when left open long after it).
+        repeat(3) { clock += 15 * 60_000; repo.logSet(id, squat, 60.0, 8, null) }
+        clock += 5 * 60_000
         val summary = repo.finishLift(id, 7)
         val rep = summary.reports.first { it.exerciseId == "squat" }
         assertIs<Outcome.Calibrated>(rep.outcome)

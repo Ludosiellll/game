@@ -262,7 +262,8 @@ class RunFieldUiTest {
         show(repo) { RunManualScreen(w) }
         type("каждый круг", List(n) { if (it % 2 == 0) "52" else "53" }.joinToString(" "))
         assertTrue(texts("средний в отрезках").isNotEmpty(), texts("круг").toString())
-        compose.onNodeWithText("7").performScrollTo().performClick()
+        // The effort chip (the title may hold a 7 too: "7 × 1 круг").
+        compose.onAllNodes(androidx.compose.ui.test.hasText("7") and androidx.compose.ui.test.hasClickAction())[0].performScrollTo().performClick()
         settle()
         click("Сохранить")
         val saved = runs(repo).single()

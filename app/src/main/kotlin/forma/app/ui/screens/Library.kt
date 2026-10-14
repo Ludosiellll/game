@@ -149,16 +149,25 @@ fun LibraryScreen(mode: LibraryMode) {
 
     val swap = confirm
     if (swap != null && mode is LibraryMode.SwapInWorkout) {
+        // A single-joint exercise in the place of a heavy lift gets its own sets and reps: said before the choice.
+        val change by produceState<Pair<forma.core.strength.SlotSpec, forma.core.strength.SlotSpec>?>(null, swap.id) {
+            value = repo.swapChange(mode.workoutId, mode.position, swap.id)
+        }
         AlertDialog(
             onDismissRequest = { confirm = null },
             containerColor = F.c.surface,
             title = { Text("Заменить на «${swap.name}»?", style = T.title(20.sp)) },
             text = {
-                Text(
-                    "Только сегодня — план не меняется. Насовсем — это упражнение будет вместо «${current?.name}» во всех " +
-                        "следующих тренировках; вернуть можно в плане.",
-                    style = T.secondary(14.sp),
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Только сегодня — план не меняется. Насовсем — это упражнение будет вместо «${current?.name}» во всех " +
+                            "следующих тренировках; вернуть можно в плане.",
+                        style = T.secondary(14.sp),
+                    )
+                    change?.let { (was, now) ->
+                        Text("«${swap.name}» — на одну мышцу, ему нужны другие повторы: ${swapNote(was, now)}.", style = T.secondary(14.sp).copy(color = F.c.text))
+                    }
+                }
             },
             confirmButton = {
                 Column(horizontalAlignment = Alignment.End) {

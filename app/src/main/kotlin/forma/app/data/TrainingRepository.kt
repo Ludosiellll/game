@@ -320,6 +320,20 @@ class TrainingRepository(
             }
         }
 
+        /** A gap after the last set longer than this means the session was left open, not still going. */
+        const val OPEN_GAP_MS = 30 * 60_000L
+        /** Time put after the last set of a session left open: the last rest, putting things away. */
+        const val AFTER_LAST_SET_MS = 5 * 60_000L
+
+        /**
+         * When a lifting session ended: now, unless the last set ([lastSetAt]) was more than [OPEN_GAP_MS] before — then
+         * a few minutes after it. Its minutes go into the load: a session finished in the evening must not count the day.
+         */
+        fun liftEnd(startedAt: Long, lastSetAt: Long?, now: Long): Long = when {
+            lastSetAt != null && now - lastSetAt > OPEN_GAP_MS -> maxOf(startedAt, lastSetAt + AFTER_LAST_SET_MS)
+            else -> now
+        }
+
         /** The most sets of one exercise the plan can be set to. */
         const val MAX_SETS = 8
         /** Rest between sets the plan can be set to, seconds. */
@@ -339,8 +353,41 @@ class TrainingRepository(
             }
         }
 
-        /** The plan's slot as the user set it for good: its sets, reps and rest, the exercise put in its place. */
-        internal fun tuned(spec: SlotSpec, settings: Settings): SlotSpec = swapped(overrides(spec, settings), settings)
+        /**
+         * The plan's slot as the user set it for good: its sets, reps and rest, the exercise put in its place. In the place
+         * of a heavy lift a single-joint exercise starts from an added one's numbers; the user's own come on top.
+         */
+        internal fun tuned(spec: SlotSpec, settings: Settings): SlotSpec {
+            val id = swapOf(spec, settings) ?: return overrides(spec, settings)
+            return if (demotes(spec, id) && spec.exerciseId in settings.demoted) overrides(addedSpec(id), settings, spec.exerciseId)
+            else overrides(spec, settings).copy(exerciseId = id, increment = null)
+        }
+
+        /** What the plan sets for its slot [spec] with the user's swap in it, before the user's own sets, reps and rest. */
+        fun plannedFor(spec: SlotSpec, settings: Settings): SlotSpec =
+            swapOf(spec, settings)?.takeIf { demotes(spec, it) && spec.exerciseId in settings.demoted }?.let { addedSpec(it) } ?: spec
+
+        /**
+         * A single-joint exercise put in the place of a multi-joint main or secondary lift: heavy sets of 5–8 with long
+         * rests do not suit it, it is done like an added one (3 × 10–15).
+         */
+        fun demotes(spec: SlotSpec, newId: String): Boolean {
+            if (spec.role == SlotRole.ACCESSORY || newId == spec.exerciseId) return false
+            val was = Catalog.find(spec.exerciseId) ?: return false
+            val now = Catalog.find(newId) ?: return false
+            return was.compound && !now.compound && now.load != LoadKind.TIMED
+        }
+
+        /** [spec] with [newId] in its place: the same numbers, or an added one's when the swap [demotes] it. */
+        fun swapSpec(spec: SlotSpec, newId: String): SlotSpec = when {
+            newId == spec.exerciseId -> spec
+            demotes(spec, newId) -> addedSpec(newId)
+            else -> spec.copy(exerciseId = newId, increment = null)
+        }
+
+        /** The exercise the user put in the place of [spec] for good, if any (and it can still be done). */
+        private fun swapOf(spec: SlotSpec, settings: Settings): String? =
+            settings.swaps[spec.exerciseId]?.let { Catalog.moved[it] ?: it }?.takeIf { Catalog.find(it)?.archived == false }
 
         /**
          * Sets, rep range and rest the user set for good under [id]: the plan's exercise id, or [addedKey] for one added to a
@@ -354,10 +401,9 @@ class TrainingRepository(
         }
 
         /** The plan's slot with the exercise the user put in its place for good, if any. */
-        internal fun swapped(spec: SlotSpec, settings: Settings): SlotSpec {
-            val id = settings.swaps[spec.exerciseId]?.let { Catalog.moved[it] ?: it }?.takeIf { Catalog.find(it)?.archived == false } ?: return spec
-            return spec.copy(exerciseId = id, increment = null)
-        }
+        internal fun swapped(spec: SlotSpec, settings: Settings): SlotSpec = swapOf(spec, settings)?.let {
+            if (spec.exerciseId in settings.demoted) swapSpec(spec, it) else if (it == spec.exerciseId) spec else spec.copy(exerciseId = it, increment = null)
+        } ?: spec
 
         /** Exercises added to template [templateId] for good that can still be done (an own exercise may be archived). */
         internal fun addedFor(templateId: String, settings: Settings): List<String> =
@@ -385,10 +431,11 @@ class TrainingRepository(
         val added = addedTo(t.id, settings)
         val kept = t.slots.withIndex().filter { it.value.exerciseId !in settings.removed }
             .ifEmpty { if (added.isEmpty()) t.slots.withIndex().toList() else emptyList() }
-        val own = kept.map { (i, spec) -> buildItem(i, tuned(spec, settings), date, deload).copy(planId = spec.exerciseId) }
+        val own = kept.map { (i, spec) -> buildItem(i, tuned(spec, settings), date, deload, restKey = spec.exerciseId).copy(planId = spec.exerciseId) }
         // Added for good: after the plan's own, as chosen (no swap applies to them: they were picked by hand).
         val extra = added.mapIndexed { j, id ->
-            buildItem(t.slots.size + j, overrides(addedSpec(id), settings, addedKey(t.id, id)), date, deload).copy(planId = id, addedForGood = true)
+            val key = addedKey(t.id, id)
+            buildItem(t.slots.size + j, overrides(addedSpec(id), settings, key), date, deload, restKey = key).copy(planId = id, addedForGood = true)
         }
         return LiftPlan(t.id, t.title, warmUps(inOrder(own + extra), deload), deload)
     }
@@ -473,8 +520,12 @@ class TrainingRepository(
     /** How much longer (or shorter) this person's gym sessions are than the plan estimates ([forma.core.plan.SessionTime]). */
     suspend fun timeRatio(): Double = timeRatioOf(db.workouts().allDone())
 
-    /** One exercise of a session: today's prescription from its own progress, the stored estimate or a start hint. */
-    private suspend fun buildItem(position: Int, spec: SlotSpec, date: LocalDate, deload: Boolean): LiftItem {
+    /**
+     * One exercise of a session: today's prescription from its own progress, the stored estimate or a start hint.
+     * [restKey]: where the user's own rest for this place is kept — the plan's exercise id (before a swap), [addedKey]
+     * for one added to a day for good, null for one added today only.
+     */
+    private suspend fun buildItem(position: Int, spec: SlotSpec, date: LocalDate, deload: Boolean, restKey: String? = null): LiftItem {
         val program = store.programNow() ?: error("no program")
         val profile = store.profileNow() ?: error("no profile")
         val settings = store.settingsNow()
@@ -503,7 +554,8 @@ class TrainingRepository(
             WarmUp.sets(p.weight!!, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
         } else emptyList()
         // How this person recovers on this exercise: reps lost from set to set after the rest they took.
-        val ownRest = settings.rest.keys.any { it == spec.exerciseId || it.endsWith(":${spec.exerciseId}") }
+        // Own rest belongs to the place in the plan: it stays after a swap, and one set for a day stays on that day.
+        val ownRest = restKey != null && restKey in settings.rest
         val shift = if (ex.load == LoadKind.TIMED || ownRest) 0 else forma.core.strength.RestAdvice.personal(
             db.sets().history(ex.id).groupBy { it.workoutId }.values.flatMap { l ->
                 val target = l.firstOrNull()?.targetReps ?: spec.repMin
@@ -541,22 +593,41 @@ class TrainingRepository(
         if (db.sets().forWorkout(workoutId).any { it.position == position }) return false
         val settings = store.settingsNow()
         val own = ownSlot(plan.templateId, old)
-        // The plan's exercise here with its sets, reps and rest for good (the swap is today's choice, those stay).
-        val original = when {
-            old.addedForGood && old.planId != null -> overrides(addedSpec(old.planId), settings, addedKey(plan.templateId, old.planId))
-            own != null -> overrides(own, settings)
-            else -> null
-        }
+        val original = originalOf(plan, old, own, settings)
         val base = original ?: old.slot
-        val spec = if (newId == base.exerciseId) base else base.copy(exerciseId = newId, increment = null)
+        val spec = swapSpec(base, newId)
         val forGood = forever && original != null && old.addedForGood
-        val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload)
+        // The user's own rest stays with the place, unless the swap made it another kind of exercise.
+        val restKey = when {
+            demotes(base, newId) -> null
+            old.addedForGood && old.planId != null -> addedKey(plan.templateId, old.planId)
+            else -> own?.exerciseId
+        }
+        val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload, restKey)
             .copy(planId = if (forGood) newId else old.planId ?: own?.exerciseId, addedForGood = old.addedForGood)
         replacePlan(workoutId, plan.copy(items = plan.items.map { if (it.position == position) item else it }))
         if (forever && original != null) {
             if (old.addedForGood) replaceAdded(plan.templateId, original.exerciseId, newId) else setSwap(original.exerciseId, newId)
         }
         return true
+    }
+
+    /** The plan's exercise at [old]'s place with its sets, reps and rest for good (a swap is today's choice, those stay). */
+    private fun originalOf(plan: LiftPlan, old: LiftItem, own: SlotSpec?, settings: Settings): SlotSpec? = when {
+        old.addedForGood && old.planId != null -> overrides(addedSpec(old.planId), settings, addedKey(plan.templateId, old.planId))
+        own != null -> overrides(own, settings)
+        else -> null
+    }
+
+    /**
+     * What a swap of the exercise at [position] for [newId] would change: the numbers before and after, when a
+     * single-joint exercise takes the place of a heavy lift ([demotes]); null when they stay.
+     */
+    suspend fun swapChange(workoutId: Long, position: Int, newId: String): Pair<SlotSpec, SlotSpec>? {
+        val plan = db.workouts().get(workoutId)?.let { planOf(it) } ?: return null
+        val old = plan.items.firstOrNull { it.position == position } ?: return null
+        val base = originalOf(plan, old, ownSlot(plan.templateId, old), store.settingsNow()) ?: old.slot
+        return if (demotes(base, newId)) base to swapSpec(base, newId) else null
     }
 
     /** The generated plan's own slot of [item] in template [templateId]; null for an exercise added to the plan or today. */
@@ -591,7 +662,7 @@ class TrainingRepository(
             settings.added[plan.templateId].orEmpty().size
         val position = maxOf(planSize, (plan.items.maxOfOrNull { it.position } ?: -1) + 1)
         val spec = if (forever) overrides(addedSpec(exerciseId), settings, addedKey(plan.templateId, exerciseId)) else addedSpec(exerciseId)
-        val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload)
+        val item = buildItem(position, spec, LocalDate.ofEpochDay(w.epochDay), plan.deload, restKey = if (forever) addedKey(plan.templateId, exerciseId) else null)
             .let { if (forever) it.copy(planId = exerciseId, addedForGood = true) else it }
         replacePlan(workoutId, plan.copy(items = plan.items + item))
         if (forever) addToPlan(plan.templateId, exerciseId)
@@ -669,7 +740,15 @@ class TrainingRepository(
     suspend fun setSwap(planId: String, newId: String?) {
         val s = store.settingsNow()
         val swaps = if (newId == null || newId == planId) s.swaps - planId else s.swaps + (planId to newId)
-        store.setSettings(s.copy(swaps = swaps))
+        // Sets, reps and rest chosen for a heavy lift do not carry over to a single-joint exercise in its place (and back).
+        val slot = store.programNow()?.templates?.flatMap { it.slots }?.firstOrNull { it.exerciseId == planId }
+        val wasDemoted = planId in s.demoted
+        val nowDemoted = slot != null && swaps[planId]?.let { demotes(slot, it) } == true
+        val demoted = if (nowDemoted) s.demoted + planId else s.demoted - planId
+        store.setSettings(
+            if (wasDemoted == nowDemoted) s.copy(swaps = swaps, demoted = demoted)
+            else s.copy(swaps = swaps, demoted = demoted, sets = s.sets - planId, reps = s.reps - planId, rest = s.rest - planId),
+        )
         onChange()
     }
 
@@ -844,12 +923,14 @@ class TrainingRepository(
             }
             if (ev.outcome !is Outcome.NotDone) reports += SlotReport(ex.id, ex.name, ev.outcome, ev.e1rm, record)
         }
-        val minutes = max(1, ((now() - w.startedAt) / 60_000.0).roundToInt())
+        // A session left open (finished in the evening, or after a run at the stadium) ends with its last set.
+        val end = liftEnd(w.startedAt, sets.maxOfOrNull { it.doneAt }, now())
+        val minutes = max(1, ((end - w.startedAt) / 60_000.0).roundToInt())
         val load = TrainingLoad.sessionLoad(rpe, minutes.toDouble())
         val summary = LiftSummary(reports, volume, sets.size, minutes, load)
         db.workouts().update(
             w.copy(
-                status = Status.DONE, finishedAt = now(), rpe = rpe, durationSec = minutes * 60, load = load,
+                status = Status.DONE, finishedAt = end, rpe = rpe, durationSec = minutes * 60, load = load,
                 summaryJson = AppJson.encodeToString(LiftSummary.serializer(), summary),
             ),
         )
