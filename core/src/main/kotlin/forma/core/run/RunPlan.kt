@@ -932,10 +932,10 @@ object RunPlan {
                 var own = if (w.type == RunType.INTERVALS) state.intervalFails else state.tempoFails
                 var streak = state.qualityOnPace
                 if (success && w.cutback) {
-                    // A lighter week's shorter session proves nothing about the full step: the ladder waits.
+                    // A lighter week's shorter session proves nothing about the full step: the ladder waits, and a miss
+                    // of the full step before it still counts (seen: misses and lighter weeks in turn kept a rung for months).
                     out += RunOutcome.LighterWeek(ladder)
                     fails = 0
-                    own = 0
                 } else if (success) {
                     // More reps than planned at the planned effort: the next step is too small.
                     stage = min(size - 1, cur + if (repsDone > w.reps) 2 else 1)

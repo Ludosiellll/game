@@ -70,4 +70,16 @@ class RunBacklogTest {
         assertEquals(1500, race.testMeters)
         assertEquals("Забег · 10 км", RunPlan.race(RunState(walkStage = -1, vdot = 49.0), RunGoal(10_000, 2700)).title)
     }
+
+    /** A lighter week's shorter session between two misses of the full step: the second miss still steps back. */
+    @Test fun aLighterWeekDoesNotWipeAMissOfTheFullStep() {
+        var st = RunState(walkStage = -1, vdot = 50.0, intervalStage = 5, runs = 20)
+        val full = RunPlan.intervals(st)
+        st = RunPlan.after(st, full, RunResult(1.0, 10, full.totalSeconds), caps, day = 100).state
+        val light = RunPlan.intervals(st, cutback = true)
+        st = RunPlan.after(st, light, RunResult(1.0, 6, light.totalSeconds), caps, day = 104).state
+        assertEquals(1, st.intervalFails)
+        val again = RunPlan.intervals(st)
+        assertEquals(4, RunPlan.after(st, again, RunResult(1.0, 10, again.totalSeconds), caps, day = 108).state.intervalStage)
+    }
 }

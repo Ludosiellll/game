@@ -101,11 +101,15 @@ class PopulationTest {
             // A ladder on one rung, session after session.
             for (t in listOf(RunType.GOAL_PACE, RunType.INTERVALS, RunType.TEMPO)) {
                 val st = runs.filter { it.type == t }.map { it.stage }
+                val top = when (t) { RunType.GOAL_PACE -> forma.core.run.RunPlan.goalLadderSize; RunType.INTERVALS -> forma.core.run.RunPlan.intervalLadderSize; else -> forma.core.run.RunPlan.tempoLadderSize } - 1
+                // The top rung held is the ladder done, not a rung stuck on.
                 var same = 1
                 var worst = 1
-                for (i in 1 until st.size) { same = if (st[i] == st[i - 1]) same + 1 else 1; worst = maxOf(worst, same) }
-                val top = when (t) { RunType.GOAL_PACE -> forma.core.run.RunPlan.goalLadderSize; RunType.INTERVALS -> forma.core.run.RunPlan.intervalLadderSize; else -> forma.core.run.RunPlan.tempoLadderSize } - 1
-                if (worst >= 6 && st.lastOrNull() != top) found += "STUCK: $t on one rung $worst sessions in a row"
+                for (i in 1 until st.size) {
+                    same = if (st[i] == st[i - 1]) same + 1 else 1
+                    if (st[i] != top) worst = maxOf(worst, same)
+                }
+                if (worst >= 6) found += "STUCK: $t on one rung $worst sessions in a row"
             }
             // Easy volume that shrank over half a year while the form grew (and the person trained).
             val e0 = runs.first().easyMinutes
