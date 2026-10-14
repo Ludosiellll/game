@@ -158,7 +158,7 @@ object TrainingReport {
                 // Pull-ups and dips: the maximum is of the body with the extra weight; the next target is the extra weight ("+12,5 кг").
                 val withBody = if (ex?.load == LoadKind.BODYWEIGHT_PLUS) ", с весом тела" else ""
                 appendLine("- ${name(s.exerciseId)}: ${half(s.e1rm)} кг (лучший ${half(s.best)}$withBody)" +
-                    (next?.weight?.let { w -> "; следующая цель ${weight(ex, w)} × ${next.reps}" } ?: ""))
+                    (next?.weight?.let { w -> "; следующая цель ${Texts.weightReps(ex, w, next.reps)}" } ?: ""))
             }
             appendLine()
         }
@@ -368,14 +368,14 @@ object TrainingReport {
             val item = plan?.items?.firstOrNull { it.exerciseId == id }
             val planned = item?.prescription?.let { pr ->
                 val pw = pr.weight
-                if (pr.calibrate || pw == null) " (план: подбор веса)" else " (план ${weight(ex, pw)} × ${pr.reps}, ${pr.sets} подх., запас ${pr.rir})"
+                if (pr.calibrate || pw == null) " (план: подбор веса)" else " (план ${Texts.weightReps(ex, pw, pr.reps)}, ${pr.sets} подх., запас ${pr.rir})"
             } ?: ""
             val done = list.sortedBy { it.doneAt }.joinToString(", ") { s ->
-                (if (ex?.load == LoadKind.TIMED) "${s.reps} с" else "${weight(ex, s.weight)} × ${s.reps}") + (s.rir?.let { " (запас $it)" } ?: "")
+                Texts.weightReps(ex, s.weight, s.reps) + (s.rir?.let { " (запас $it)" } ?: "")
             }
             appendLine("- ${name(id)}$planned: $done")
             summary?.reports?.firstOrNull { it.exerciseId == id }?.let { r ->
-                appendLine("  - Итог: ${Texts.outcome(r.outcome, ex)}" + (r.e1rm?.let { " Расчётный максимум ${half(it)} кг." } ?: "") + if (r.record) " Рекорд!" else "")
+                appendLine("  - Итог: ${Texts.outcome(r.outcome, ex)}" + (r.e1rm?.let { " Расчётный максимум ${Texts.oneRm(ex, it)}." } ?: "") + if (r.record) " Рекорд!" else "")
             }
         }
         summary?.let { appendLine("- Всего: ${it.sets} подх., объём ${Ru.kg(it.volumeKg)} кг.") }

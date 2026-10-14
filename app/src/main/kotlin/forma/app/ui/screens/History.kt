@@ -145,7 +145,7 @@ fun HistoryItemScreen(workoutId: Long) {
                     if (planned != null && ex != null) Text("План: ${Texts.prescription(ex, planned.prescription)}", style = T.secondary(13.sp))
                     NumText(
                         s.joinToString("   ") { set ->
-                            (if (ex?.load == LoadKind.TIMED) "${set.reps} с" else "${Texts.weight(ex, set.weight)}×${set.reps}") +
+                            Texts.weightReps(ex, set.weight, set.reps) +
                                 (set.rir?.let { " (запас $it)" } ?: "")
                         },
                         style = T.number(15.sp, FontWeight.SemiBold),
