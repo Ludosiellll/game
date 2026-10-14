@@ -269,7 +269,8 @@ object Progression {
      */
     fun assumedRir(set: DoneSet, index: Int, p: Prescription): Int = set.rir ?: when {
         p.calibrate -> CALIBRATION_RIR
-        p.top && index == p.sets - 1 && set.reps >= p.reps -> p.topRir
+        // Past the target it stopped where told; at the target only, it may have had less left: the closer one.
+        p.top && index == p.sets - 1 && set.reps >= p.reps -> if (set.reps > p.reps) p.topRir else TOP_RIR
         set.reps >= p.reps -> max(0, p.rir - (set.reps - p.reps))
         else -> 0
     }
@@ -380,7 +381,7 @@ object Progression {
             // reserve beyond the plan; unknown when neither is there.
             val spare: Int? = when {
                 // Counted against one in reserve whatever the set was told: stopping earlier does not slow the weights.
-                top != null -> top.reps - target + ((top.rir ?: p.topRir) - TOP_RIR)
+                top != null -> top.reps - target + ((top.rir ?: if (top.reps > target) p.topRir else TOP_RIR) - TOP_RIR)
                 regular.all { it.rir != null } -> regular.minOf { it.rir!! - p.rir + (it.reps - target) }
                 else -> null
             }

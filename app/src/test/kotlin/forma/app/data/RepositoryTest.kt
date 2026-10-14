@@ -80,7 +80,8 @@ class RepositoryTest {
         val w = assertNotNull(p2.weight)
         assertTrue(p2.top)
         repeat(p2.sets - 1) { repo.logSet(id2, sq2, w, p2.reps, null) }
-        repo.logSet(id2, sq2, w, p2.reps + 1, null)
+        // One more with one in reserve, said (a "+" set before a hard run is told to stop with two: unrated, it would count so).
+        repo.logSet(id2, sq2, w, p2.reps + 1, 1)
         val rep2 = repo.finishLift(id2, 7).reports.first { it.exerciseId == "squat" }
         assertIs<Outcome.AddWeight>(rep2.outcome)
         val sq3 = repo.liftPlan(tpl, day.plusDays(14)).items.first { it.exerciseId == "squat" }
