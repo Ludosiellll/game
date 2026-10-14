@@ -70,6 +70,7 @@ fun IdealPlanScreen() {
     var taken by rememberSaveable { mutableIntStateOf(0) }
     var view by rememberSaveable { mutableIntStateOf(1) }
     var busy by remember { mutableStateOf(false) }
+    var all by rememberSaveable { mutableStateOf(false) }
     ScrollScreen {
         TopBar("Идеальный план", "Как есть — и каким может быть", onBack = { nav.back() })
         val result = loaded
@@ -117,15 +118,24 @@ fun IdealPlanScreen() {
             "Принято: $taken. Всё видно в «Плане» — там же любое изменение можно вернуть.", F.c.good, icon = Ic.check,
         )
 
+        // The most important first; a long list folds after a few (a ticked one stays in view).
+        val shown = if (all || changes.size <= SHOWN) changes.size else maxOf(SHOWN, changes.indexOfLast { it.id in ticked } + 1)
         if (changes.isNotEmpty()) {
             SectionLabel("Что можно улучшить")
-            changes.forEachIndexed { k, c ->
+            changes.take(shown).forEachIndexed { k, c ->
                 ChangeCard(
                     c, a.changes[k].options, checked = c.id in ticked, clash = clash[c.id],
                     onCheck = { ticked = if (c.id in ticked) ticked - c.id else ticked + c.id },
                     onPick = { id -> picks = picks.filterNot { it.startsWith("${c.id}=") } + "${c.id}=$id" },
                 )
             }
+        }
+
+        if (changes.size > shown) {
+            val more = changes.size - shown
+            forma.app.ui.components.GhostButton(
+                "Показать ещё $more", { all = true }, Modifier.fillMaxWidth(), height = 48.dp,
+            )
         }
 
         SectionLabel("Неделя в зале")
@@ -178,6 +188,9 @@ fun IdealPlanScreen() {
         )
     }
 }
+
+/** Changes shown before "Показать ещё". */
+private const val SHOWN = 6
 
 private fun name(id: String?) = id?.let { Catalog.find(it)?.name ?: it } ?: ""
 

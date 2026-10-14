@@ -100,7 +100,7 @@ class PopulationTest {
             return@runBlocking
         } ?: return@runBlocking
         if (repo.store.settingsNow() != before) found += "ADVICE_CHANGED_PLAN: looking changed the settings"
-        if (a.changes.size > 8) found += "ADVICE_MANY: ${a.changes.size} changes ${a.changes.map { it.id }}"
+        if (a.changes.size > 10) found += "ADVICE_MANY: ${a.changes.size} changes ${a.changes.map { it.id }}"
         for (c in a.changes) {
             val day = a.days.firstOrNull { it.templateId == c.templateId }
             when (c.kind) {
