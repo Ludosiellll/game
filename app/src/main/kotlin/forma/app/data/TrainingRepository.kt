@@ -1062,11 +1062,8 @@ class TrainingRepository(
 
     // ---------- daily life: pause, missed sessions, energy ----------
 
-    /** The last pause window stays in the settings: its days are never counted as missed. */
-    fun paused(s: Settings, day: LocalDate): Boolean {
-        val until = s.pauseUntil ?: return false
-        return day.toEpochDay() in (s.pauseFrom ?: until)..until
-    }
+    /** Pause windows stay in the settings: their days are never counted as missed. */
+    fun paused(s: Settings, day: LocalDate): Boolean = s.pausedOn(day)
 
     private fun mondayOf(day: LocalDate): LocalDate = day.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
 
@@ -1076,7 +1073,7 @@ class TrainingRepository(
      * sessions back are lighter by themselves (layoff and comeback rules).
      */
     suspend fun pause(from: LocalDate, until: LocalDate) {
-        store.setSettings(store.settingsNow().copy(pauseFrom = from.toEpochDay(), pauseUntil = until.toEpochDay()))
+        store.setSettings(store.settingsNow().withPause(from.toEpochDay(), until.toEpochDay()))
         if (until.toEpochDay() - from.toEpochDay() + 1 >= 7) restartBlock(until.plusDays(1))
         onChange()
     }

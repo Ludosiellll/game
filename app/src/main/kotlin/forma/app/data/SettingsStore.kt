@@ -42,6 +42,8 @@ data class Settings(
     val pauseFrom: Long? = null,
     /** … to this one, inclusive. */
     val pauseUntil: Long? = null,
+    /** Pauses before the last one ([from, until] epoch days): their days stay out of the missed ones too. */
+    val pastPauses: List<List<Long>> = emptyList(),
     /** Exercises replaced for good: plan exercise id → the one done instead. Survives plan changes. */
     val swaps: Map<String, String> = emptyMap(),
     /** Sets of an exercise for good: plan exercise id → how many, instead of the plan's number. */
@@ -75,6 +77,23 @@ data class Settings(
      */
     val demoted: Set<String> = emptySet(),
 ) {
+    /** Whether [day] is in a pause, the last one or one before it: no sessions are expected then. */
+    fun pausedOn(day: java.time.LocalDate): Boolean {
+        val d = day.toEpochDay()
+        val last = pauseUntil?.let { d in (pauseFrom ?: it)..it } == true
+        return last || pastPauses.any { it.size == 2 && d in it[0]..it[1] }
+    }
+
+    /**
+     * The settings with a new pause [from]–[until]: the last one is kept among [pastPauses] (the most recent
+     * [PAST_PAUSES]) unless the new one covers it.
+     */
+    fun withPause(from: Long, until: Long): Settings {
+        val last = pauseUntil?.let { listOf(pauseFrom ?: it, it) }?.takeIf { it[0] < from || it[1] > until }
+        val kept = (pastPauses + listOfNotNull(last)).filter { it.size == 2 && it[0] <= it[1] }.distinct().takeLast(PAST_PAUSES)
+        return copy(pauseFrom = from, pauseUntil = until, pastPauses = kept)
+    }
+
     /** How the person said they felt on [day]; [Feel.UNSET] when they did not. */
     fun feelOn(day: java.time.LocalDate): Feel =
         feels[day.toEpochDay()]?.let { name -> Feel.entries.firstOrNull { it.name == name } } ?: Feel.UNSET
@@ -88,6 +107,7 @@ data class Settings(
 
     companion object {
         const val FEEL_DAYS = 180
+        const val PAST_PAUSES = 30
     }
 }
 
