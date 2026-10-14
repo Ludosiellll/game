@@ -9,6 +9,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import forma.app.data.SetEntity
+import forma.app.data.LiftPlan
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onRoot
@@ -95,24 +98,20 @@ class IdealPlanTest {
         assertEquals(before, repo.store.settingsNow())
         assertEquals(program, repo.store.programNow())
         val ids = a.changes.map { it.id }
-        assertTrue("oneleg:bulgarian" in ids && "add:nordic" in ids && "add:seated_calf" in ids, ids.toString())
+        // His own swap stays, and nothing hard and unusual is pushed on him — said why, not proposed.
+        assertTrue(ids.none { it.startsWith("oneleg") || it == "add:nordic" } && "add:seated_calf" in ids, ids.toString())
+        assertTrue(a.held.any { "это твой выбор, обратно не предлагаю" in it }, a.held.toString())
+        assertTrue(a.held.any { it.startsWith("Нордические сгибания не предлагаю") }, a.held.toString())
         val chest = a.changes.first { it.id.startsWith("vol:CHEST") }
 
-        repo.applyPlanAdvice(listOf(a.changes.first { it.id == "oneleg:bulgarian" }.pick("split_squat"), a.changes.first { it.id == "add:nordic" }, chest))
+        repo.applyPlanAdvice(listOf(chest))
         val s = repo.store.settingsNow()
-        assertEquals("split_squat", s.swaps["bulgarian"])
-        assertEquals(listOf("nordic_curl"), s.added["lower_a"])
-        assertTrue("seated_calf" !in s.added["lower_a"].orEmpty(), "not ticked, not taken")
-        val legs = repo.liftPlan("lower_a", monday.plusDays(5))
-        val nordic = legs.items.first { it.exerciseId == "nordic_curl" }.slot
-        assertEquals(Triple(2, 4, 8), Triple(nordic.sets, nordic.repMin, nordic.repMax))
-        // The one-leg lift in the Bulgarian's place keeps the plan's numbers.
-        assertEquals(3, legs.items.first { it.exerciseId == "split_squat" }.slot.sets)
+        assertEquals("leg_ext", s.swaps["bulgarian"], "his swap stays")
+        assertTrue(s.added["lower_a"].orEmpty().isEmpty(), "not ticked, not taken")
         assertEquals(chest.setsTo, repo.liftPlan(chest.templateId, monday.plusDays(1)).items.first { it.exerciseId == chest.planId }.slot.sets)
         // Taken: no longer proposed; the rest still is.
         val again = repo.planAdvice()!!.changes.map { it.id }
-        assertTrue("oneleg:bulgarian" !in again && "add:nordic" !in again && "add:seated_calf" in again, again.toString())
-        // Bringing his own back is one choice away too: the plan's Bulgarian split squat.
+        assertTrue(chest.id !in again && "add:seated_calf" in again, again.toString())
         repo.applyPlanAdvice(emptyList())
         assertEquals(s, repo.store.settingsNow())
     }
@@ -140,22 +139,62 @@ class IdealPlanTest {
     }
 
     /**
-     * A swap made today the way the plan screen makes it (the leg extension in the Bulgarian's place, done with an added
-     * exercise's numbers): taking the one-leg lift back resets them to the plan's — and «С выбранным» shows exactly that.
+     * From his sessions: the leg extension (put in the Bulgarian's place with an added exercise's numbers, 4 sets) never
+     * done in four sessions, the calf raise done one set of two. Proposed: the same muscle another way, the calf raise
+     * set to what he does. «С выбранным» is what taking them does: the step-up in that place gets the plan's numbers.
      */
-    @Test fun thePreviewIsWhatTakingTheChangesDoes() = runBlocking<Unit> {
-        val repo = repo("ideal-preview")
+    @Test fun whatHeSkipsOrCutsShortIsSeenFromHisSessions() = runBlocking<Unit> {
+        val repo = repo("ideal-habits")
         repo.store.editSettings { it.copy(swaps = it.swaps - "bulgarian") }
         repo.setSwap("bulgarian", "leg_ext")
         repo.setPlanSets("bulgarian", 4, 3)
-        assertEquals(4, repo.liftPlan("lower_a", monday.plusDays(5)).items.first { it.exerciseId == "leg_ext" }.slot.sets)
+        val days = listOf(13L, 17L, 24L, 31L).map { LocalDate.of(2026, 10, it.toInt()) }
+        for (day in days) {
+            val at = day.atTime(18, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val plan = repo.liftPlan("lower_a", day)
+            val id = db.workouts().insert(
+                WorkoutEntity(epochDay = day.toEpochDay(), kind = Kind.LIFT, templateId = "lower_a", title = plan.title, startedAt = at, finishedAt = at,
+                    status = Status.DONE, rpe = 7, durationSec = 3600, load = 300.0, planJson = AppJson.encodeToString(LiftPlan.serializer(), plan)),
+            )
+            for (item in plan.items) {
+                val n = when (item.exerciseId) {
+                    "leg_ext" -> 0
+                    "calf_raise" -> 1
+                    else -> item.prescription.sets
+                }
+                repeat(n) { db.sets().insert(SetEntity(workoutId = id, exerciseId = item.exerciseId, slotKey = item.slot.key, position = item.position,
+                    weight = 40.0, reps = 8, rir = 2, targetWeight = null, targetReps = null, doneAt = at + it)) }
+            }
+        }
+        clock = LocalDate.of(2026, 11, 1).atTime(9, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val a = repo.planAdvice()!!
-        val chosen = listOf(a.changes.first { it.id == "oneleg:bulgarian" }.pick("split_squat"), a.changes.first { it.id == "add:nordic" })
+        val skip = a.changes.first { it.id == "skip:bulgarian" }
+        assertTrue("в 4 из 4 последних тренировок" in skip.why, skip.why)
+        assertTrue("leg_ext" !in skip.options && "bulgarian" !in skip.options && "step_up" in skip.options, skip.options.toString())
+        val calves = a.changes.first { it.id == "real:calf_raise" }
+        assertEquals(2 to 1, calves.setsFrom to calves.setsTo)
+
+        val chosen = listOf(skip.pick("step_up"), calves)
         val preview = repo.planPreview(chosen)
         repo.applyPlanAdvice(chosen)
         assertEquals(preview, repo.planAdvice()!!.days)
-        val split = preview.first { it.templateId == "lower_a" }.items.first { it.exerciseId == "split_squat" }
-        assertEquals(Triple(3, 8, 10), Triple(split.sets, split.repMin, split.repMax), "the plan's own numbers, his 4 sets of the extension do not carry over")
+        val step = preview.first { it.templateId == "lower_a" }.items.first { it.exerciseId == "step_up" }
+        assertEquals(Triple(3, 8, 10), Triple(step.sets, step.repMin, step.repMax), "the plan's own numbers, his 4 sets of the extension do not carry over")
+        assertEquals(1, repo.liftPlan("lower_a", LocalDate.of(2026, 11, 7)).items.first { it.exerciseId == "calf_raise" }.slot.sets)
+    }
+
+    /** «Не предлагать»: kept, not proposed again, and Nordic curls hidden count against hard unusual exercises. */
+    @Test fun whatHeSaidNotToProposeStaysAway() = runBlocking<Unit> {
+        val repo = repo("ideal-hide")
+        repo.store.editSettings { it.copy(swaps = it.swaps - "bulgarian") }
+        repo.hideAdvice("add:nordic")
+        val a = repo.planAdvice()!!
+        assertTrue(a.changes.none { it.id == "add:nordic" })
+        assertEquals(1, a.hidden)
+        // Nordic curls said not to: the Bulgarian split squat is not pushed either.
+        assertTrue(a.changes.none { "bulgarian" in it.options || "nordic_curl" in it.options }, a.changes.map { it.id to it.options }.toString())
+        repo.showHiddenAdvice()
+        assertEquals(0, repo.planAdvice()!!.hidden)
     }
 
     @Test fun nothingNewForHisLegsBeforeTheRace() = runBlocking<Unit> {
@@ -174,19 +213,23 @@ class IdealPlanTest {
             }
         }
         compose.waitUntil(10_000) { settle(); compose.onAllNodes(hasText("Что можно улучшить", ignoreCase = true)).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Разгибание ног → Болгарские сплит-приседания (как было в плане)").assertExists()
-        compose.onNodeWithText("Бег — череда приземлений", substring = true).assertExists()
+        compose.onNodeWithText("+ Подъём на носки сидя · 3 × 12–20").assertExists()
+        compose.onNodeWithText("Камбаловидная мышца", substring = true).assertExists()
+        compose.onNodeWithText("это твой выбор, обратно не предлагаю", substring = true).performScrollTo().assertExists()
         // Nothing ticked: nothing to take.
         compose.onNodeWithText("Отметь, что взять", ignoreCase = true).performScrollTo().assertExists()
-        compose.onNodeWithText("Разгибание ног → Болгарские сплит-приседания (как было в плане)").performScrollTo().performClick()
+        // «Не предлагать» on the soleus: gone, kept, can come back.
+        compose.onAllNodesWithText("Не предлагать")[0].performScrollTo().performClick()
+        compose.waitUntil(10_000) { settle(); compose.onAllNodes(hasText("Скрыто по твоей просьбе: 1", substring = true, ignoreCase = true)).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue("add:seated_calf" in runBlocking { repo.store.settingsNow() }.adviceHidden)
+        compose.onNodeWithText("+ Подъём на носки сидя · 3 × 12–20").assertDoesNotExist()
+        compose.onNodeWithText("Жим гантелей на наклонной: 3 → 4 подхода").performScrollTo().performClick()
         settle()
-        compose.onNodeWithText("Сплит-приседания").performScrollTo().performClick()
-        settle()
-        compose.onNodeWithText("Разгибание ног → Сплит-приседания").assertExists()
         compose.onNodeWithText("Принять выбранные (1)", ignoreCase = true).performScrollTo().performClick()
         settle()
         val s = runBlocking { repo.store.settingsNow() }
-        assertEquals("split_squat", s.swaps["bulgarian"])
+        assertEquals(4, s.sets["db_incline"])
+        assertEquals("leg_ext", s.swaps["bulgarian"])
         assertTrue(s.added.isEmpty(), s.added.toString())
         compose.waitUntil(10_000) { settle(); compose.onAllNodes(hasText("Принято: 1", substring = true)).fetchSemanticsNodes().isNotEmpty() }
     }
@@ -202,9 +245,12 @@ class IdealPlanTest {
         }
         compose.waitUntil(10_000) { settle(); compose.onAllNodes(hasText("Что можно улучшить", ignoreCase = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.onRoot().captureRoboImage("build/shots/carbon-ideal-1.png")
-        compose.onNodeWithText("Разгибание ног → Болгарские сплит-приседания (как было в плане)").performScrollTo().performClick()
+        compose.onNodeWithText("Жим гантелей на наклонной: 3 → 4 подхода").performScrollTo().performClick()
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-ideal-2.png")
+        compose.onNodeWithText("Что не предлагаю сейчас", ignoreCase = true).performScrollTo()
+        settle()
+        compose.onRoot().captureRoboImage("build/shots/carbon-ideal-held.png")
         compose.onNodeWithText("Неделя в зале", ignoreCase = true).performScrollTo()
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-ideal-3.png")

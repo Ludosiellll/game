@@ -1,6 +1,7 @@
 package forma.core.plan
 
 import forma.core.model.Aim
+import forma.core.model.Equipment
 import forma.core.model.Exercise
 import forma.core.model.Experience
 import forma.core.model.LiftFocus
@@ -28,7 +29,10 @@ import kotlin.math.roundToInt
  *   soleus (calf raises seated);
  * - the hinge (the back of the body) in a week that trains the legs; pushing against pulling;
  * - a lift without a new best for weeks: the same movement in another variation for a few weeks;
- * - a session longer than the time there is; being worn down often; a race coming (nothing new for the legs before it).
+ * - a session longer than the time there is; being worn down often; a race coming (nothing new for the legs before it);
+ * - what the person does ([Habits]): their own swaps stay, what they swapped away, took out, skip or hid is never offered,
+ *   hard unusual exercises (Nordic curls, Bulgarian split squats…) never for one who avoids them and last for others, the
+ *   plan set to the sets they really do, machines first for one who goes for machines.
  */
 object PlanAdvisor {
     /**
@@ -65,7 +69,45 @@ object PlanAdvisor {
         val tiredOften: Boolean = false,
         /** Days to the goal race, null without one. */
         val daysToRace: Long? = null,
+        /** What the person does: their choices and their sessions. */
+        val habits: Habits = Habits(),
         val find: (String) -> Exercise?,
+    )
+
+    /**
+     * What the person does, from their plan edits and sessions. Keys of [doneSets] and [skipped]: the plan's exercise id,
+     * or "templateId:exerciseId" for one added for good ([key]).
+     */
+    data class Habits(
+        /**
+         * Exercise → why it is not offered, said after its name: "ты убрал из плана", "ты пропускаешь в 3 из 4 тренировок".
+         * The person's swaps in the plan are seen from the plan itself ([Item.planId] ≠ [Item.exerciseId]).
+         */
+        val avoided: Map<String, String> = emptyMap(),
+        /** Exercise place → sets usually done, when fewer than planned. */
+        val doneSets: Map<String, Int> = emptyMap(),
+        /** Exercise place → (sessions skipped, sessions), when skipped often. */
+        val skipped: Map<String, Pair<Int, Int>> = emptyMap(),
+        /** Why the person seems to avoid hard unusual exercises; null — no sign of it. */
+        val avoidsHard: String? = null,
+        /** Does hard unusual exercises regularly: they may come first. */
+        val likesHard: Boolean = false,
+        /** Swaps toward machines and cables: those first among options. */
+        val machinesFirst: Boolean = false,
+        /** Change ids the person said not to propose. */
+        val hidden: Set<String> = emptySet(),
+    )
+
+    /** The key of an exercise's place for [Habits]: the plan's id, or the day and the exercise for one added for good. */
+    fun key(templateId: String, i: Item) = if (i.added) "$templateId:${i.exerciseId}" else i.planId
+
+    /**
+     * Hard unusual exercises: hard on the body or on technique, with soreness or balance to learn. Not offered to one who
+     * avoids them, last among options for others.
+     */
+    val HARD = setOf(
+        "nordic_curl", "glute_ham_raise", "bulgarian", "pistol", "sissy_squat", "zercher_squat", "deficit_deadlift",
+        "good_morning", "power_clean", "handstand_pushup", "single_leg_rdl",
     )
 
     enum class Kind { SWAP, ADD, SETS }
@@ -116,8 +158,10 @@ object PlanAdvisor {
         val summary: String,
         /** Something the plan cannot fix, said first (many lifts stuck at once: recovery, not exercises). */
         val warning: String? = null,
-        /** What is not proposed now, and why (a race coming, no time for more). */
+        /** What is not proposed now, and why (a race coming, no time for more, the person's own choice). */
         val held: List<String> = emptyList(),
+        /** How many changes the person said not to propose (they can bring them back). */
+        val hidden: Int = 0,
     )
 
     /** The muscles the week is weighed by (the core works in everything heavy). */
@@ -227,7 +271,58 @@ object PlanAdvisor {
         }
         val runner = runner(input)
         val raceSoon = input.daysToRace?.let { it in 0..RACE_QUIET_DAYS } == true
-        val usable = { id: String -> find(id)?.archived == false }
+        // The person's own swaps, seen in the plan itself: what they swapped away is theirs to bring back, not the advisor's.
+        val ownSwaps = days.flatMap { it.items }.filter { !it.added && it.planId != it.exerciseId }
+        val h = input.habits.let { h0 ->
+            val swappedAway = ownSwaps.associate { it.planId to "ты сам заменил на «${name(it.exerciseId)}»" }
+            val toMachines = ownSwaps.count { find(it.planId)?.equipment !in MACHINES && find(it.exerciseId)?.equipment in MACHINES }
+            val fromMachines = ownSwaps.count { find(it.planId)?.equipment in MACHINES && find(it.exerciseId)?.equipment !in MACHINES }
+            h0.copy(
+                avoided = swappedAway + h0.avoided,
+                avoidsHard = h0.avoidsHard ?: ownSwaps.firstOrNull { it.planId in HARD }?.let { "«${name(it.planId)}» ты сам заменил на «${name(it.exerciseId)}»" },
+                machinesFirst = h0.machinesFirst || toMachines > fromMachines,
+            )
+        }
+        // Never what the person turned away from; hard unusual exercises never for one who avoids them.
+        val usable = { id: String -> find(id)?.archived == false && id !in h.avoided && !(h.avoidsHard != null && id in HARD) }
+        // Options in the person's order: machines first for one who goes for them, hard unusual ones last unless liked.
+        fun prefer(ids: List<String>): List<String> {
+            val ok = ids.filter(usable)
+            val byKind = if (h.machinesFirst) ok.sortedBy { if (find(it)?.equipment in MACHINES) 0 else 1 } else ok
+            return if (h.likesHard) byKind else byKind.sortedBy { if (it in HARD) 1 else 0 }
+        }
+        fun key(d: Day, i: Item) = key(d.templateId, i)
+        // Not done as planned anyway: no more sets put on it, the first to lose one.
+        fun cutShort(d: Day, i: Item) = key(d, i) in h.doneSets || key(d, i) in h.skipped
+
+        // 0. The plan as the person does it: an exercise skipped often — the same muscle another way; sets usually cut
+        // short — the plan set to what is done.
+        for (d in days) for (i in d.items) {
+            val ex = find(i.exerciseId) ?: continue
+            val k = key(d, i)
+            val skip = h.skipped[k]
+            if (skip != null) {
+                val (n, of) = skip
+                val m = ex.primary.firstOrNull()
+                val present = days.flatMap { d2 -> d2.items.map { it.exerciseId } }.toSet()
+                val alts = prefer((VARIATIONS[ex.id].orEmpty() + (m?.let { isolations(it, runner) } ?: emptyList())).distinct())
+                    .filter { it != ex.id && it !in present && find(it)?.let { a -> a.compound == ex.compound || i.role == SlotRole.ACCESSORY } == true }
+                if (alts.isNotEmpty()) changes += Change(
+                    "skip:$k", Kind.SWAP, d.templateId, d.title, i.planId, i.exerciseId, alts, null, null, null, null,
+                    "«${ex.name}» ты пропускаешь в $n из $of последних тренировок — похоже, неудобно или не нравится. " +
+                        "Вот на ту же мышцу${m?.let { " (${it.ru.lowercase()})" } ?: ""} по-другому: план под то, что ты правда делаешь.",
+                    2, added = i.added,
+                ) else held += "«${ex.name}» ты пропускаешь в $n из $of тренировок, а замены на ту же мышцу не нашёл — его можно убрать в «Плане»."
+                continue
+            }
+            val usual = h.doneSets[k] ?: continue
+            if (usual in 1 until i.sets) changes += Change(
+                "real:$k", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, usual, null, null,
+                "«${ex.name}»: обычно ты делаешь ${Ru.sets(usual)} из ${i.sets}. Записать $usual — план совпадёт с тем, что ты " +
+                    "делаешь, а время тренировки посчитается по-настоящему.",
+                3, added = i.added,
+            )
+        }
 
         // 1. Lifts without a new best for weeks: the same movement in another variation. Many stuck at once is recovery
         // (sleep, food, a lighter week), not the exercises: then only the longest stuck gets another variation.
@@ -238,7 +333,7 @@ object PlanAdvisor {
         val stallFor = if (manyStuck) stuck.sortedByDescending { (_, i) -> input.stalled[i.exerciseId] ?: 0 }.take(1) else stuck
         for ((d, i) in stallFor) {
             val weeks = input.stalled[i.exerciseId] ?: continue
-            if (touched(d, i)) continue
+            if (touched(d, i) || key(d, i) in h.skipped) continue
             val ex = find(i.exerciseId) ?: continue
             // Before the race the legs get nothing new.
             if (raceSoon && ex.lowerBody) continue
@@ -258,24 +353,16 @@ object PlanAdvisor {
         if (runner) {
             val oneLeg = has { it.pattern == Pattern.LUNGE && it.compound } || has { it.id == "single_leg_rdl" || it.id == "pistol" }
             if (!oneLeg && !raceSoon) {
-                // A one-leg lift the person swapped away: offered back first, with the easier ones.
-                val swapped = cur().firstNotNullOfOrNull { d ->
-                    d.items.firstOrNull { i -> !i.added && i.planId != i.exerciseId && find(i.planId)?.pattern == Pattern.LUNGE }?.let { d to it }
-                }
-                if (swapped != null) {
-                    val (d, i) = swapped
-                    val own = find(i.planId)!!
-                    changes += Change(
-                        "oneleg:${i.planId}", Kind.SWAP, d.templateId, d.title, i.planId, i.exerciseId,
-                        (listOf(own.id) + ONE_LEG).distinct().filter(usable), null, null, null, null,
-                        "Бег — череда приземлений на одну ногу: упражнение на одной ноге тренирует силу и устойчивость таза и колена так, " +
-                            "как бегу нужно. «${name(i.exerciseId)}» на это не работает. Если «${own.name}» неудобны — сплит-приседания " +
-                            "проще по равновесию, зашагивания ближе всего к бегу.",
-                        2,
-                    )
+                // A one-leg lift the person swapped away or took out is their choice: not undone, only said.
+                val turned = h.avoided.entries.firstOrNull { (id, _) -> find(id)?.let { it.pattern == Pattern.LUNGE && it.compound } == true }
+                val easiest = listOf("step_up", "reverse_lunge", "split_squat").firstOrNull(usable)
+                if (turned != null) {
+                    held += "Упражнение на одной ноге бегу полезно (бег — череда приземлений на одну ногу), но «${name(turned.key)}» " +
+                        "${turned.value} — это твой выбор, обратно не предлагаю." +
+                        (easiest?.let { " Захочешь попробовать — проще всего «${name(it)}»: без веса или с лёгкими гантелями." } ?: "")
                 } else legDay()?.let { d ->
                     changes += Change(
-                        "oneleg:add", Kind.ADD, d.templateId, d.title, null, null, ONE_LEG.filter(usable), null, 3, 8 to 12, 120,
+                        "oneleg:add", Kind.ADD, d.templateId, d.title, null, null, prefer(ONE_LEG), null, 3, 8 to 12, 120,
                         "Ни одного упражнения на одной ноге: бег — череда приземлений на одну ногу, сила и устойчивость таза и колена " +
                             "тренируются именно так.",
                         2,
@@ -283,13 +370,29 @@ object PlanAdvisor {
                 }
             }
             if (!raceSoon && !has { it.id == "nordic_curl" || it.id == "glute_ham_raise" }) legDay()?.let { d ->
-                changes += Change(
-                    "add:nordic", Kind.ADD, d.templateId, d.title, null, null, listOf("nordic_curl", "glute_ham_raise").filter(usable), null, 2, 4 to 8, 90,
-                    "Задняя поверхность бедра в беге работает на растяжение — в быстрых отрезках особенно, там она и травмируется. " +
-                        "Нордические сгибания тренируют её именно так: в исследованиях они снижали такие травмы примерно вдвое. " +
-                        "Первые две недели — по 1 подходу: с непривычки сильная крепатура.",
-                    2,
-                )
+                val nordic = prefer(listOf("nordic_curl", "glute_ham_raise"))
+                val curl = cur().flatMap { it.items }.firstOrNull { find(it.exerciseId)?.pattern == Pattern.KNEE_FLEXION }
+                val why = "Задняя поверхность бедра в беге работает на растяжение — в быстрых отрезках особенно, там она и травмируется."
+                when {
+                    nordic.isNotEmpty() -> changes += Change(
+                        "add:nordic", Kind.ADD, d.templateId, d.title, null, null, nordic, null, 2, 4 to 8, 90,
+                        "$why Нордические сгибания тренируют её именно так: в исследованиях они снижали такие травмы примерно вдвое. " +
+                            "Первые две недели — по 1 подходу: с непривычки сильная крепатура." +
+                            (if (h.likesHard) "" else " Упражнение непривычное и тяжёлое: не хочется — нажми «Не предлагать»."),
+                        2,
+                    )
+                    // Not for one who avoids hard unusual exercises: the curl they do, done slower, gives part of it.
+                    curl != null -> held += "Нордические сгибания не предлагаю: " +
+                        (h.avoided["nordic_curl"]?.let { "их $it" } ?: h.avoidsHard?.let { "$it — похоже, тяжёлые непривычные упражнения не по душе" } ?: "ты их не делаешь") +
+                        ". Часть той же пользы даст «${name(curl.exerciseId)}», если опускать вес медленно, 3–4 секунды. $why"
+                    else -> prefer(listOf("seated_leg_curl", "leg_curl")).takeIf { it.isNotEmpty() }?.let { opts ->
+                        changes += Change(
+                            "add:hamstrings", Kind.ADD, d.templateId, d.title, null, null, opts, null, 2, 10 to 15, 75,
+                            "$why Сгибание ног с медленным опусканием (3–4 секунды) тренирует её на растяжение — без непривычных упражнений.",
+                            2,
+                        )
+                    }
+                }
             }
             if (!raceSoon && !has { it.id == "seated_calf" }) legDay()?.let { d ->
                 changes += Change(
@@ -306,7 +409,7 @@ object PlanAdvisor {
         // 3. The hinge: the back of the body, in a week that trains the legs.
         if (!raceSoon && has { it.lowerBody && it.compound } && !has { it.pattern == Pattern.HINGE && it.compound }) legDay()?.let { d ->
             changes += Change(
-                "add:hinge", Kind.ADD, d.templateId, d.title, null, null, listOf("rdl", "db_rdl", "single_leg_rdl").filter(usable), null, 3, 6 to 10, 120,
+                "add:hinge", Kind.ADD, d.templateId, d.title, null, null, prefer(listOf("rdl", "db_rdl", "single_leg_rdl")), null, 3, 6 to 10, 120,
                 "Ноги в плане есть, а наклона нет: задняя поверхность бедра и ягодицы почти без работы в разгибании таза — " +
                     "а это сила толчка и защита спины. Румынская тяга — самый простой вариант.",
                 2,
@@ -332,7 +435,7 @@ object PlanAdvisor {
             val v = vol[m] ?: 0.0
             val v0 = vol0[m] ?: 0.0
             if (low > 0 && v < low - 1) {
-                val iso = isolations(m, runner).filter(usable)
+                val iso = prefer(isolations(m, runner))
                     .filter { id -> (days + cur()).none { d -> d.items.any { it.exerciseId == id } } }
                 // A single-muscle exercise for a muscle with sets to spare (in the upper half of its range, still in it
                 // without these sets), on a day of the same half of the body.
@@ -343,7 +446,7 @@ object PlanAdvisor {
                     val ex = find(i.exerciseId)
                     val sets = if (i.added) i.sets * d.times else weekSets(i)
                     ex != null && i.role == SlotRole.ACCESSORY && !ex.compound && ex.load != LoadKind.TIMED && ex.primary.isNotEmpty() &&
-                        ex.id !in PROTECTIVE && ex.pattern != Pattern.REAR_DELT &&
+                        ex.id !in PROTECTIVE && ex.pattern != Pattern.REAR_DELT && !i.added &&
                         m !in ex.primary && (m in LEGS) == ex.lowerBody && !touched(d, i) &&
                         ex.primary.all { o ->
                             val (ol, oh) = ranges[o] ?: (0 to 99)
@@ -365,7 +468,7 @@ object PlanAdvisor {
                 // More sets where it is worked first already: single-muscle and secondary lifts, not the main ones.
                 var need = ceil(low - v).toInt()
                 val targets = cur().flatMap { d -> d.items.map { d to it } }
-                    .filter { (d, i) -> find(i.exerciseId)?.primary?.contains(m) == true && i.sets < MAX_SETS_ADVISED && i.role != SlotRole.MAIN && !touched(d, i) }
+                    .filter { (d, i) -> find(i.exerciseId)?.primary?.contains(m) == true && i.sets < MAX_SETS_ADVISED && i.role != SlotRole.MAIN && !touched(d, i) && !cutShort(d, i) }
                     .sortedWith(compareBy({ -it.second.role.ordinal }, { minutes(it.first, input.timeRatio) }))
                 for ((d, i) in targets) {
                     if (need <= 1) break
@@ -401,7 +504,8 @@ object PlanAdvisor {
             } else if (v0 > high + 2 && v > high + 2) {
                 val target = cur().flatMap { d -> d.items.map { d to it } }
                     .filter { (d, i) -> i.role == SlotRole.ACCESSORY && find(i.exerciseId)?.primary?.contains(m) == true && i.sets > 2 && !touched(d, i) }
-                    .maxByOrNull { (_, i) -> i.sets }
+                    .sortedWith(compareBy({ if (cutShort(it.first, it.second)) 0 else 1 }, { if (it.second.added) 1 else 0 }, { -it.second.sets }))
+                    .firstOrNull()
                 if (target != null) {
                     val (d, i) = target
                     changes += Change(
@@ -425,7 +529,7 @@ object PlanAdvisor {
             val pulls = if (pulls0 == pull) "$pull" else "$pulls0 (с предложенными выше — $pull)"
             if (!has { it.pattern == Pattern.REAR_DELT }) upperDayFor(now, find, input.timeRatio)?.let { d ->
                 changes += Change(
-                    "add:pull", Kind.ADD, d.templateId, d.title, null, null, listOf("face_pull", "reverse_fly", "reverse_pec_deck").filter(usable), null, 3, 12 to 20, 60,
+                    "add:pull", Kind.ADD, d.templateId, d.title, null, null, prefer(listOf("face_pull", "reverse_fly", "reverse_pec_deck")), null, 3, 12 to 20, 60,
                     "Жимов в неделе ${Ru.sets(push0)}, тяг — $pulls: плечи тянет вперёд. Тяга к лицу — противовес жимам для задней дельты " +
                         "и лопаток, плечевой сустав скажет спасибо.",
                     3,
@@ -444,7 +548,8 @@ object PlanAdvisor {
             val d = cur().first { it.templateId == d0.templateId }
             // As the plan fits a session into the time itself: an accessory set first, then one of a secondary lift.
             val free = d.items.filter { it.sets > 2 && !touched(d, it) && find(it.exerciseId)?.load != LoadKind.TIMED }
-            val last = free.filter { it.role == SlotRole.ACCESSORY }.maxByOrNull { it.sets }
+            val order = compareBy<Item>({ if (cutShort(d, it)) 0 else 1 }, { if (it.added) 1 else 0 }, { -it.sets })
+            val last = free.filter { it.role == SlotRole.ACCESSORY }.sortedWith(order).firstOrNull()
                 ?: free.lastOrNull { it.role == SlotRole.SECONDARY } ?: continue
             val saves = ((last.restSec + 45) / 60.0 * input.timeRatio).roundToInt()
             changes += Change(
@@ -457,7 +562,7 @@ object PlanAdvisor {
         if (input.tiredOften) {
             val worst = cur().flatMap { d -> d.items.map { d to it } }
                 .filter { (d, i) -> i.role == SlotRole.ACCESSORY && i.sets >= 3 && !touched(d, i) && find(i.exerciseId)?.load != LoadKind.TIMED }
-                .sortedByDescending { (_, i) -> i.sets }.take(2)
+                .sortedWith(compareBy({ if (cutShort(it.first, it.second)) 0 else 1 }, { if (it.second.added) 1 else 0 }, { -it.second.sets })).take(2)
             for ((d, i) in worst) changes += Change(
                 "rest:${d.templateId}:${i.planId}", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, i.sets - 1, null, null,
                 "Последние недели ты часто уставший: меньше подсобного — больше сил на главное" + (if (runner) " и на бег." else "."),
@@ -465,7 +570,8 @@ object PlanAdvisor {
             )
         }
 
-        val final = changes.filter { it.options.isNotEmpty() }.distinctBy { it.id }.sortedBy { it.priority }.map { c ->
+        val shown = changes.filter { it.options.isNotEmpty() }.distinctBy { it.id }
+        val final = shown.filter { it.id !in h.hidden }.sortedBy { it.priority }.map { c ->
             // An addition that makes its day longer than the time there is: said on it.
             if (c.kind != Kind.ADD || sm == null) return@map c
             val before = days.first { it.templateId == c.templateId }
@@ -491,13 +597,15 @@ object PlanAdvisor {
             else -> "$n ${Ru.plural(n, "предложение", "предложения", "предложений")} — на выбор. План и так рабочий, это доводка: " +
                 "меняется только то, что ты отметишь."
         }
-        return Advice(days, final, table, fine, ranges, summary, warning, held)
+        return Advice(days, final, table, fine, ranges, summary, warning, held, hidden = h.hidden.size)
     }
 
     /** What the advisor itself proposes to protect (a runner's hamstrings and calves): never the one swapped away for sets elsewhere. */
     private val PROTECTIVE = setOf("nordic_curl", "glute_ham_raise", "seated_calf", "face_pull")
 
-    /** One-leg lifts, in order of preference for a runner. */
+    private val MACHINES = setOf(Equipment.MACHINE, Equipment.CABLE)
+
+    /** One-leg lifts, in order of preference for a runner (the hard one goes last unless liked: [prefer]). */
     private val ONE_LEG = listOf("bulgarian", "split_squat", "step_up", "reverse_lunge")
 
     /** The day for upper-body work: one without heavy legs, the shortest. */

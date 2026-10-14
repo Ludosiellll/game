@@ -2,6 +2,7 @@ package forma.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -109,7 +110,9 @@ fun IdealPlanScreen() {
             Text(a.summary, style = T.body(16.sp, FontWeight.SemiBold))
             Text(
                 "Смотрю на всё сразу: цель и опыт, бег рядом с залом, подходы на каждую мышцу за неделю, баланс жимов и тяг, " +
-                    "как растут веса, сколько длится тренировка и как ты восстанавливаешься. Ничего не меняется само — отметь, что берёшь.",
+                    "как растут веса, сколько длится тренировка и как ты восстанавливаешься. И на то, что ты делаешь: что ты сам заменил, " +
+                    "убрал или пропускаешь, обратно не предлагаю; тяжёлые непривычные упражнения — только если видно, что они тебе по душе. " +
+                    "Ничего не меняется само — отметь, что берёшь.",
                 style = T.secondary(13.sp),
             )
         }
@@ -127,6 +130,10 @@ fun IdealPlanScreen() {
                     c, a.changes[k].options, checked = c.id in ticked, clash = clash[c.id],
                     onCheck = { ticked = if (c.id in ticked) ticked - c.id else ticked + c.id },
                     onPick = { id -> picks = picks.filterNot { it.startsWith("${c.id}=") } + "${c.id}=$id" },
+                    onHide = {
+                        ticked = ticked - c.id
+                        scope.launch { repo.hideAdvice(c.id) }
+                    },
                 )
             }
         }
@@ -137,6 +144,9 @@ fun IdealPlanScreen() {
                 "Показать ещё $more", { all = true }, Modifier.fillMaxWidth(), height = 48.dp,
             )
         }
+        if (a.hidden > 0) forma.app.ui.components.GhostButton(
+            "Скрыто по твоей просьбе: ${a.hidden} — показать снова", { scope.launch { repo.showHiddenAdvice() } }, Modifier.fillMaxWidth(), height = 48.dp,
+        )
 
         SectionLabel("Неделя в зале")
         if (changes.isNotEmpty()) Segmented(listOf("Сейчас", "С выбранным"), view, { view = it })
@@ -202,7 +212,10 @@ internal fun changeTitle(c: PlanAdvisor.Change): String = when (c.kind) {
 }
 
 @Composable
-private fun ChangeCard(c: PlanAdvisor.Change, options: List<String>, checked: Boolean, clash: String?, onCheck: () -> Unit, onPick: (String) -> Unit) {
+private fun ChangeCard(
+    c: PlanAdvisor.Change, options: List<String>, checked: Boolean, clash: String?,
+    onCheck: () -> Unit, onPick: (String) -> Unit, onHide: () -> Unit,
+) {
     FCard(outline = if (checked) F.c.accent else null, gap = 10.dp) {
         Row(
             Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Checkbox, onValueChange = { onCheck() }),
@@ -228,6 +241,12 @@ private fun ChangeCard(c: PlanAdvisor.Change, options: List<String>, checked: Bo
         }
         if (clash != null) Text("«${name(c.to)}» в этот день уже даёт «$clash» — выбери другой вариант.", style = T.secondary(13.sp).copy(color = F.c.warn))
         Text(c.why, style = T.secondary(14.sp))
+        // Not wanted: never again (until shown again at the bottom) — and the advisor learns from it.
+        Text(
+            "Не предлагать",
+            style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.text2),
+            modifier = Modifier.align(Alignment.End).clickable(role = Role.Button, onClick = onHide).padding(vertical = 10.dp, horizontal = 4.dp),
+        )
     }
 }
 

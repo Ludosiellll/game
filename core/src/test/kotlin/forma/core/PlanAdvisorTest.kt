@@ -31,25 +31,27 @@ class PlanAdvisorTest {
     private fun input(days: List<Day>, aim: Aim = hybrid, runs: Int = 3, exp: Experience = Experience.ADVANCED) =
         PlanAdvisor.Input(days, aim, exp, runs = runs, sessionMinutes = 75, find = Catalog::find)
 
-    @Test fun denisGetsTheOneLegLiftBackNordicsTheSoleusAndAChestSet() {
+    /**
+     * Denis swapped the Bulgarian split squat for the leg extension himself: it is not undone, and no hard unusual exercise
+     * (Nordic curls) is pushed on him — said why, with what he can do instead. What is proposed: the soleus, a chest set.
+     */
+    @Test fun denisChoicesStayNoHardUnusualExercisesTheSoleusAndAChestSet() {
         val a = PlanAdvisor.advise(input(denis()))
         val ids = a.changes.map { it.id }
-        val oneLeg = a.changes.first { it.id == "oneleg:bulgarian" }
-        assertEquals(Kind.SWAP, oneLeg.kind)
-        assertEquals("leg_ext", oneLeg.from)
-        // His own exercise back first; the easier ones as options.
-        assertEquals(listOf("bulgarian", "split_squat", "step_up", "reverse_lunge"), oneLeg.options)
-        val nordic = a.changes.first { it.id == "add:nordic" }
-        assertEquals("lower_a", nordic.templateId)
-        assertEquals(2, nordic.setsTo)
-        assertEquals(4 to 8, nordic.repsTo)
+        assertTrue(ids.none { it.startsWith("oneleg") || it == "add:nordic" }, ids.toString())
+        assertTrue(a.changes.none { "bulgarian" in it.options || "nordic_curl" in it.options })
+        assertTrue(
+            a.held.any { "«Болгарские сплит-приседания» ты сам заменил на «Разгибание ног» — это твой выбор, обратно не предлагаю" in it && "«Зашагивания на тумбу»" in it },
+            a.held.toString(),
+        )
+        assertTrue(a.held.any { it.startsWith("Нордические сгибания не предлагаю") && "«Сгибание ног лёжа», если опускать вес медленно" in it }, a.held.toString())
         assertEquals("lower_a", a.changes.first { it.id == "add:seated_calf" }.templateId)
         // Chest: 6 sets a week against 8–18: a set more where it works already, not on the bench (a main lift).
         val chest = a.changes.first { it.id.startsWith("vol:CHEST") }
         assertEquals("db_incline", chest.planId)
         assertEquals(3 to 4, chest.setsFrom to chest.setsTo)
         // Nothing else: the back, shoulders, arms are in range, pushing and pulling are even, the sessions fit.
-        assertEquals(4, ids.size, ids.toString())
+        assertEquals(2, ids.size, ids.toString())
         assertTrue(a.fine.any { "Жимы и тяги в балансе" in it }, a.fine.toString())
         assertTrue(a.fine.any { "По времени укладываешься" in it }, a.fine.toString())
         val calves = a.volume.first { it.muscle == Muscle.CALVES }
@@ -58,17 +60,54 @@ class PlanAdvisorTest {
         assertTrue(a.changes.all { it.why.isNotBlank() })
     }
 
+    /** A runner with no one-leg lift and no sign either way: one is proposed, the hard Bulgarian last; Nordic said to be hard. */
+    @Test fun withoutASignTheHardOnesComeLastAndAreSaidToBeHard() {
+        val days = denis().map { d -> d.copy(items = d.items.filter { it.planId != "bulgarian" }) }
+        val a = PlanAdvisor.advise(input(days))
+        assertEquals(listOf("split_squat", "step_up", "reverse_lunge", "bulgarian"), a.changes.first { it.id == "oneleg:add" }.options)
+        assertTrue("непривычное и тяжёлое" in a.changes.first { it.id == "add:nordic" }.why)
+        // One who does hard unusual exercises gets them first.
+        val likes = PlanAdvisor.advise(input(days).copy(habits = PlanAdvisor.Habits(likesHard = true)))
+        assertEquals("bulgarian", likes.changes.first { it.id == "oneleg:add" }.to)
+    }
+
     @Test fun onlyTheChosenChangesCountAndAPickedOptionIsTheOneTaken() {
-        val a = PlanAdvisor.advise(input(denis()))
-        val swap = a.changes.first { it.id == "oneleg:bulgarian" }.pick("split_squat")
-        assertEquals("split_squat", swap.to)
-        val after = PlanAdvisor.apply(a.days, listOf(swap))
-        assertTrue(after.first { it.templateId == "lower_a" }.items.any { it.exerciseId == "split_squat" && it.planId == "bulgarian" })
+        val days = denis().map { d -> d.copy(items = d.items.filter { it.planId != "bulgarian" }) }
+        val a = PlanAdvisor.advise(input(days))
+        val add = a.changes.first { it.id == "oneleg:add" }.pick("step_up")
+        assertEquals("step_up", add.to)
+        val after = PlanAdvisor.apply(a.days, listOf(add))
+        assertTrue(after.first { it.templateId == "lower_a" }.items.any { it.exerciseId == "step_up" && it.added })
         // Nothing chosen: the plan as it is.
         assertEquals(a.days, PlanAdvisor.apply(a.days, emptyList()))
         val table = PlanAdvisor.table(a, after, Catalog::find)
         val glutes = table.first { it.muscle == Muscle.GLUTES }
         assertEquals(glutes.now + 3, glutes.after)
+    }
+
+    /** What he really does: an exercise skipped often — another way for the same muscle; sets cut short — the plan set to them. */
+    @Test fun thePlanFollowsWhatHeDoes() {
+        val habits = PlanAdvisor.Habits(
+            skipped = mapOf("hammer_curl" to (3 to 4)),
+            doneSets = mapOf("lateral_raise" to 1),
+            avoided = mapOf("hammer_curl" to "ты пропускаешь в 3 из 4 тренировок", "leg_curl" to "ты убрал из плана"),
+        )
+        val a = PlanAdvisor.advise(input(denis()).copy(habits = habits))
+        val skip = a.changes.first { it.id == "skip:hammer_curl" }
+        assertEquals(Kind.SWAP, skip.kind)
+        assertTrue("hammer_curl" !in skip.options && skip.options.isNotEmpty(), skip.options.toString())
+        assertTrue("в 3 из 4 последних тренировок" in skip.why)
+        val real = a.changes.first { it.id == "real:lateral_raise" }
+        assertEquals(2 to 1, real.setsFrom to real.setsTo)
+        // Nothing removed or skipped comes back as an option anywhere.
+        assertTrue(a.changes.none { c -> "leg_curl" in c.options || ("hammer_curl" in c.options) })
+    }
+
+    /** «Не предлагать»: hidden, counted, not shown. */
+    @Test fun aChangeTheyHidIsNotProposed() {
+        val a = PlanAdvisor.advise(input(denis()).copy(habits = PlanAdvisor.Habits(hidden = setOf("add:seated_calf"))))
+        assertTrue(a.changes.none { it.id == "add:seated_calf" })
+        assertEquals(1, a.hidden)
     }
 
     @Test fun aMainLiftWithoutANewBestForWeeksGetsAVariationFirst() {

@@ -76,6 +76,8 @@ data class Settings(
      * ([TrainingRepository.demotes]). Swaps made before that rule keep the plan's numbers: a plan the person shaped stays.
      */
     val demoted: Set<String> = emptySet(),
+    /** «Идеальный план» changes the person said not to propose (change ids, [forma.core.plan.PlanAdvisor.Change.id]). */
+    val adviceHidden: Set<String> = emptySet(),
 ) {
     /** Whether [day] is in a pause, the last one or one before it: no sessions are expected then. */
     fun pausedOn(day: java.time.LocalDate): Boolean {

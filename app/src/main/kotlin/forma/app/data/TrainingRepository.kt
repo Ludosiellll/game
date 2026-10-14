@@ -1351,9 +1351,74 @@ class TrainingRepository(
                 days, program.aim, program.experience,
                 runs = sessions.count { it.isRun }, sessionMinutes = profile.sessionMinutes, timeRatio = timeRatio(),
                 stalled = weeksWithoutBest(today), tiredOften = lows >= 3 || zone == forma.core.load.LoadStory.Zone.REST || lighter,
-                daysToRace = daysToRace(today), find = Catalog::find,
+                daysToRace = daysToRace(today), habits = habitsOf(program, settings, today), find = Catalog::find,
             ),
         )
+    }
+
+    /**
+     * What the person does ([forma.core.plan.PlanAdvisor.Habits]), from the plan edits and the sessions of the last six
+     * weeks. An exercise counts from the first session it was in its place as it is now: a session without it there
+     * (taken out or swapped that day) or with no set of it is skipped; sets are compared with the session's own number
+     * (a lighter day or week asks fewer). Skipped in half the sessions or more (2+ of 3+) — avoided; done with fewer sets
+     * than planned in most full sessions (3+) — the sets usually done. A hard unusual exercise done in 3+ sessions — liked.
+     */
+    private suspend fun habitsOf(program: Program, settings: Settings, today: LocalDate): forma.core.plan.PlanAdvisor.Habits {
+        val avoided = mutableMapOf<String, String>()
+        settings.removed.forEach { avoided[it] = "ты убрал из плана" }
+        val ws = db.workouts().allDone().filter { it.kind == Kind.LIFT && it.epochDay in today.toEpochDay() - 42..today.toEpochDay() }
+        val setsOf = mutableMapOf<Long, List<SetEntity>>()
+        val skipped = mutableMapOf<String, Pair<Int, Int>>()
+        val doneSets = mutableMapOf<String, Int>()
+        var likesHard = false
+        for (t in program.templates) {
+            val sessions = ws.filter { it.templateId == t.id }.mapNotNull { w -> planOf(w)?.let { w to it } }
+            for (i in adviceItems(t, settings)) {
+                var seen = false
+                var n = 0
+                var skip = 0
+                val done = mutableListOf<Int>()
+                for ((w, plan) in sessions) {
+                    val at = plan.items.firstOrNull { (it.planId ?: it.exerciseId) == i.planId && it.addedForGood == i.added }
+                    val same = at != null && at.exerciseId == i.exerciseId
+                    if (!seen && !same) continue
+                    seen = true
+                    n++
+                    if (at == null || !same) { skip++; continue }
+                    val sets = setsOf.getOrPut(w.id) { db.sets().forWorkout(w.id) }.count { it.position == at.position }
+                    if (sets == 0) skip++ else if (at.prescription.sets == i.sets) done += sets
+                }
+                val k = forma.core.plan.PlanAdvisor.key(t.id, i)
+                if (n >= 3 && skip >= 2 && skip * 2 >= n) {
+                    skipped[k] = skip to n
+                    avoided[i.exerciseId] = "ты пропускаешь в $skip из $n тренировок"
+                } else if (done.size >= 3) {
+                    val usual = done.sorted()[done.size / 2]
+                    if (usual < i.sets) doneSets[k] = usual
+                }
+                if (i.exerciseId in forma.core.plan.PlanAdvisor.HARD && n - skip >= 3) likesHard = true
+            }
+        }
+        // Nordic curls said not to propose: a sign against hard unusual exercises too.
+        if ("add:nordic" in settings.adviceHidden) avoided.putIfAbsent("nordic_curl", "ты просил не предлагать")
+        val name = { id: String -> Catalog.find(id)?.name ?: id }
+        val avoidsHard = avoided.entries.firstOrNull { it.key in forma.core.plan.PlanAdvisor.HARD }?.let { "«${name(it.key)}» ${it.value}" }
+        return forma.core.plan.PlanAdvisor.Habits(
+            avoided = avoided, doneSets = doneSets, skipped = skipped, avoidsHard = avoidsHard,
+            likesHard = likesHard && avoidsHard == null, hidden = settings.adviceHidden,
+        )
+    }
+
+    /** «Не предлагать» on a «Идеальный план» change: it is not proposed again (until shown again). */
+    suspend fun hideAdvice(id: String) {
+        store.editSettings { it.copy(adviceHidden = it.adviceHidden + id) }
+        onChange()
+    }
+
+    /** The changes said not to propose come back. */
+    suspend fun showHiddenAdvice() {
+        store.editSettings { it.copy(adviceHidden = emptySet()) }
+        onChange()
     }
 
     /** The lifting days of the week as [settings] make them, each with how many times a week it comes. */
