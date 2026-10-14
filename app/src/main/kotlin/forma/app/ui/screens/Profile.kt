@@ -24,19 +24,22 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import forma.app.ui.components.Chip
 import forma.app.ui.components.FCard
+import forma.app.ui.components.GhostButton
 import forma.app.ui.components.PrimaryButton
 import forma.app.ui.components.SectionLabel
 import forma.app.ui.components.TopBar
 import forma.app.ui.theme.F
 import forma.app.ui.theme.T
 import forma.core.model.Experience
+import forma.core.model.LiftFocus
 import forma.core.model.RunLevel
 import forma.core.model.Sex
 import kotlinx.coroutines.launch
@@ -58,33 +61,58 @@ fun ProfileScreen() {
         week?.days?.filter { day -> day.sessions.any { it.kind == forma.core.plan.SessionKind.LIFT } }?.map { it.day }?.toSet().orEmpty()
     }
     val planRun = androidx.compose.runtime.remember(week) { week?.days?.filter { day -> day.sessions.any { it.isRun } }?.map { it.day }?.toSet().orEmpty() }
+    var confirmCopied by remember { mutableStateOf(false) }
+    var confirmRestore by remember { mutableStateOf(false) }
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    fun save() {
+        // The app's own days tapped back to as they were: still the app's week (the same days as one's own may lay out
+        // another way).
+        if (base.gymDays == null && d.gymDays == planGym && d.runDays == planRun) {
+            d.gymDays = null
+            d.runDays = null
+        }
+        scope.launch {
+            repo.updateProfile(d.toProfile(base))
+            nav.back()
+        }
+    }
+    val copiedFrom = program?.copiedFrom
     ScrollScreen {
         TopBar("Цель, дни и данные", "План пересчитается, прогресс по упражнениям сохранится", onBack = { nav.back() })
-        AimPicker(d)
-        WeekGrid(d, planGym, planRun)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(45, 60, 75, 90).forEach { m -> Chip("$m мин", d.minutes == m, { d.minutes = m }, Modifier.weight(1f)) }
-        }
-        SectionLabel("Опыт в зале")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip("Новичок", d.experience == Experience.NOVICE, { d.experience = Experience.NOVICE }, Modifier.weight(1f))
-            Chip("Средний", d.experience == Experience.INTERMEDIATE, { d.experience = Experience.INTERMEDIATE }, Modifier.weight(1f))
-            Chip("Опытный", d.experience == Experience.ADVANCED, { d.experience = Experience.ADVANCED }, Modifier.weight(1f))
-        }
-        SectionLabel("Бег")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip("С ходьбой", d.runLevel == RunLevel.NONE, { d.runLevel = RunLevel.NONE }, Modifier.weight(1f))
-            Chip("20–30 мин", d.runLevel == RunLevel.BASE, { d.runLevel = RunLevel.BASE }, Modifier.weight(1f))
-            Chip("Регулярно", d.runLevel == RunLevel.TRAINED, { d.runLevel = RunLevel.TRAINED }, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(3.0 to "3 км", 5.0 to "5 км", 10.0 to "10 км", 21.0975 to "21,1").forEach { (km, label) ->
-                Chip(label, d.raceKm == km, { d.raceKm = if (d.raceKm == km) null else km }, Modifier.weight(1f))
+        if (copiedFrom != null) {
+            FCard(gap = 8.dp) {
+                Text("Сейчас программа от: $copiedFrom", style = T.title(18.sp))
+                Text(
+                    if (settings.ownPlan != null) "Твоя прежняя программа сохранена вместе с заменами упражнений, подходами и отдыхом — её можно вернуть."
+                    else "Можно вернуться к своей программе: она соберётся заново по твоему профилю.",
+                    style = T.secondary(13.sp),
+                )
+                GhostButton("Вернуть мою программу", { confirmRestore = true }, Modifier.fillMaxWidth())
             }
         }
-        if (d.raceKm != null) {
-            NumberField(d.raceTime, { d.raceTime = it }, "Время недавнего забега", "мм:сс", keyboard = KeyboardType.Text, placeholder = "25:30")
-            RaceTimeHint(d)
+        AimPicker(d)
+        WeekGrid(d, planGym, planRun)
+        if (d.gymDays == null) DoubleDaysToggle(d)
+        SessionMinutes(d)
+        if (d.lift != LiftFocus.NONE) {
+            SectionLabel("Опыт в зале")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip("Новичок", d.experience == Experience.NOVICE, { d.experience = Experience.NOVICE }, Modifier.weight(1f))
+                Chip("Средний", d.experience == Experience.INTERMEDIATE, { d.experience = Experience.INTERMEDIATE }, Modifier.weight(1f))
+                Chip("Опытный", d.experience == Experience.ADVANCED, { d.experience = Experience.ADVANCED }, Modifier.weight(1f))
+            }
+        }
+        if (d.runsShown) {
+            SectionLabel("Бег")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip("С ходьбой", d.runLevel == RunLevel.NONE, { d.runLevel = RunLevel.NONE }, Modifier.weight(1f))
+                Chip("20–30 мин", d.runLevel == RunLevel.BASE, { d.runLevel = RunLevel.BASE }, Modifier.weight(1f))
+                Chip("Регулярно", d.runLevel == RunLevel.TRAINED, { d.runLevel = RunLevel.TRAINED }, Modifier.weight(1f))
+            }
+        }
+        if (d.raceShown) {
+            SectionLabel("Недавний забег или прикидка (необязательно)", Modifier.padding(top = 6.dp))
+            RaceFields(d, "Время недавнего забега")
         }
         RunGoalPicker(d)
         SectionLabel("О себе")
@@ -92,27 +120,52 @@ fun ProfileScreen() {
             Chip("Мужчина", d.sex == Sex.MALE, { d.sex = Sex.MALE }, Modifier.weight(1f))
             Chip("Женщина", d.sex == Sex.FEMALE, { d.sex = Sex.FEMALE }, Modifier.weight(1f))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumberField(d.birthYear, { d.birthYear = it }, "Год рождения", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number)
-            NumberField(d.weight, { d.weight = it }, "Вес", "кг", Modifier.weight(1f))
-        }
-        NumberField(d.height, { d.height = it }, "Рост", "см", keyboard = KeyboardType.Number, placeholder = "—")
-        NumberField(d.restingHr, { d.restingHr = it }, "Пульс в покое", "уд/мин", keyboard = KeyboardType.Number, placeholder = "—")
-        if (!d.fieldsOk) {
-            Text("Сначала исправь поле, подсвеченное выше: иначе оно сохранится не так, как задумано.", style = T.secondary(13.sp).copy(color = forma.app.ui.theme.F.c.bad))
-        }
+        BodyFields(d, onboarding = false)
+        // Why the button is grey, right above it: only the fields on the screen are checked.
+        d.problem?.let { Text(it, style = T.secondary(13.sp).copy(color = F.c.bad)) }
         PrimaryButton("Сохранить и пересчитать план", {
-            // The app's own days tapped back to as they were: still the app's week (the same days as one's own may lay out
-            // another way).
-            if (base.gymDays == null && d.gymDays == planGym && d.runDays == planRun) {
-                d.gymDays = null
-                d.runDays = null
-            }
-            scope.launch {
-                repo.updateProfile(d.toProfile(base))
-                nav.back()
-            }
+            if (copiedFrom != null) confirmCopied = true else save()
         }, Modifier.fillMaxWidth().padding(top = 6.dp), enabled = d.anyDay && d.fieldsOk)
+    }
+    if (confirmCopied && copiedFrom != null) {
+        AlertDialog(
+            onDismissRequest = { confirmCopied = false },
+            containerColor = F.c.surface,
+            title = { Text("Заменить программу от: $copiedFrom?", style = T.title(20.sp)) },
+            text = {
+                Text(
+                    "Сейчас ты занимаешься по программе друга. После сохранения план соберётся по твоему профилю, а программа друга уйдёт. " +
+                        "Прогресс по упражнениям сохранится.",
+                    style = T.secondary(14.sp),
+                )
+            },
+            confirmButton = { TextButton({ confirmCopied = false; save() }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
+            dismissButton = { TextButton({ confirmCopied = false }) { Text("Отмена", style = T.body(15.sp)) } },
+        )
+    }
+    if (confirmRestore && copiedFrom != null) {
+        AlertDialog(
+            onDismissRequest = { confirmRestore = false },
+            containerColor = F.c.surface,
+            title = { Text("Вернуть мою программу?", style = T.title(20.sp)) },
+            text = {
+                Text(
+                    "Программа от: $copiedFrom уйдёт. Вернутся твои цель, дни и тренировки — с заменами упражнений, подходами и отдыхом, " +
+                        "как были до копирования. Прогресс по упражнениям сохранится.",
+                    style = T.secondary(14.sp),
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    confirmRestore = false
+                    scope.launch {
+                        repo.restoreOwnProgram()
+                        nav.back()
+                    }
+                }) { Text("Вернуть", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+            },
+            dismissButton = { TextButton({ confirmRestore = false }) { Text("Отмена", style = T.body(15.sp)) } },
+        )
     }
 }
 

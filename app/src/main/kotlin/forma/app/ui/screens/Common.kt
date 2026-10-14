@@ -125,9 +125,13 @@ fun TextInput(
 
 fun parseNum(s: String): Double? = s.replace(',', '.').trim().toDoubleOrNull()
 
-/** "25:30" or "1:45:00" → seconds. */
+/**
+ * "25:30" or "1:45:00" → seconds. Null for what is not a time: a part that is not a whole number, a negative one, or
+ * minutes or seconds after a colon of 60 and more ("5:75" is a typo, not 6:15).
+ */
 fun parseClock(s: String): Double? {
-    val parts = s.trim().split(':').map { it.toIntOrNull() ?: return null }
+    val parts = s.trim().split(':').map { p -> p.trim().toIntOrNull()?.takeIf { it >= 0 } ?: return null }
+    if (parts.drop(1).any { it >= 60 }) return null
     return when (parts.size) {
         1 -> parts[0] * 60.0
         2 -> parts[0] * 60.0 + parts[1]

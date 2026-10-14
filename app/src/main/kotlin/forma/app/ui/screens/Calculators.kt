@@ -144,28 +144,49 @@ private fun WarmUpCalc() {
     Text("Отдых между разминочными 1–2 минуты, перед рабочим — от 2 минут.", style = T.secondary(13.sp))
 }
 
+/** "50,6 с", "1:28,4": a lap time with tenths (a whole second off the goal lap adds up over the laps of a race). */
+fun lapTenths(sec: Double): String {
+    val t = kotlin.math.round(sec * 10).toLong()
+    val whole = t / 10
+    return if (whole < 60) "${Ru.one(t / 10.0)} с" else "${whole / 60}:${"%02d".format(whole % 60)},${t % 10}"
+}
+
+/** Pace from a distance and a time: the lap of one's own stadium, 400 m, 1 km, 1500 m and longer at that pace. */
 @Composable
 private fun PaceCalc() {
+    val repo = LocalRepo.current
+    val profile by repo.store.profile.collectAsState(initial = null)
     var km by remember { mutableStateOf("5") }
     var time by remember { mutableStateOf("27:30") }
+    var lap by remember(profile?.lapMeters) { mutableStateOf((profile?.lapMeters ?: 400).toString()) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NumberField(km, { km = it }, "Дистанция", "км", Modifier.weight(1f))
         NumberField(time, { time = it }, "Время", "мм:сс", Modifier.weight(1f), keyboard = KeyboardType.Text)
     }
-    val d = parseNum(km) ?: return
-    val s = parseClock(time) ?: return
-    if (d <= 0 || s <= 0) return
+    NumberField(lap, { lap = it.filter(Char::isDigit) }, "Длина круга стадиона", "м", keyboard = KeyboardType.Number, placeholder = "400")
+    val d = parseNum(km)?.takeIf { it > 0 }
+        ?: return Text("Впиши дистанцию в километрах, например 1,5.", style = T.secondary(13.sp).copy(color = F.c.bad))
+    val s = parseClock(time)?.takeIf { it > 0 }
+        ?: return Text("Впиши время: минуты и секунды через двоеточие, например 5:30.", style = T.secondary(13.sp).copy(color = F.c.bad))
     val pace = s / d
+    val lapM = lap.toIntOrNull()?.takeIf { it in 100..1000 }
     ResultRows(
-        listOf(
+        listOfNotNull(
             "Темп" to "${Ru.pace(pace)} /км",
             "Скорость" to "${Ru.one(d / (s / 3600))} км/ч",
+            lapM?.takeIf { it != 400 }?.let { "Круг $it м" to lapTenths(pace * it / 1000) },
+            "400 м" to lapTenths(pace * 0.4),
             "1 км" to Ru.clock(pace.roundToInt()),
+            "1500 м этим темпом" to Ru.clock((pace * 1.5).roundToInt()),
             "5 км этим темпом" to Ru.clock((pace * 5).roundToInt()),
             "10 км этим темпом" to Ru.clock((pace * 10).roundToInt()),
         ),
     )
+    if (lap.isNotBlank() && lapM == null) Text("Длина круга — от 100 до 1000 м.", style = T.secondary(13.sp).copy(color = F.c.bad))
 }
+
+/** Distances the race forecast lists, m. */
+private val FORECAST = listOf(800, 1000, 1500, 3000, 5000, 10000, 21097, 42195)
 
 @Composable
 private fun RaceCalc() {
@@ -175,15 +196,21 @@ private fun RaceCalc() {
         NumberField(km, { km = it }, "Забег", "км", Modifier.weight(1f))
         NumberField(time, { time = it }, "Время", "мм:сс", Modifier.weight(1f), keyboard = KeyboardType.Text)
     }
-    val d = parseNum(km)?.takeIf { it >= 1.0 } ?: return
-    val s = parseClock(time)?.takeIf { it > 60 } ?: return
+    val d = parseNum(km)?.takeIf { it >= 0.4 }
+        ?: return Text("Впиши дистанцию от 0,4 км: например 0,8 для 800 м или 1,5.", style = T.secondary(13.sp).copy(color = F.c.bad))
+    val s = parseClock(time)?.takeIf { it >= 30 && it / d in 100.0..1200.0 }
+        ?: return Text("Не похоже на время забега: минуты и секунды через двоеточие, например 5:30.", style = T.secondary(13.sp).copy(color = F.c.bad))
     val v = Vdot.fromRace(d * 1000, s)
     FCard(gap = 4.dp) {
         Text("VDOT", style = T.secondary(13.sp))
         NumText(Ru.one(v), style = T.number(40.sp).copy(color = F.c.endurance))
-        Text("Прогноз по Дэниелсу. Марафон обычно выходит на 5–10 % медленнее, если бегаешь меньше 50 км в неделю.", style = T.secondary(12.sp))
+        Text(
+            "Прогноз по Дэниелсу. " + (if (d < 1.5) "По забегу короче 1,5 км прогноз на длинные дистанции грубее. " else "") +
+                "Марафон обычно выходит на 5–10 % медленнее, если бегаешь меньше 50 км в неделю.",
+            style = T.secondary(12.sp),
+        )
     }
-    ResultRows(listOf(1.0, 3.0, 5.0, 10.0, 21.0975, 42.195).map { k -> "${Ru.one(k).removeSuffix(",0")} км" to Ru.clock(Vdot.predictSeconds(v, k * 1000).roundToInt()) })
+    ResultRows(FORECAST.map { m -> goalDistance(m) to Ru.clock(Vdot.predictSeconds(v, m.toDouble()).roundToInt()) })
     val p = PaceTable.forVdot(v)
     ResultRows(
         listOf(
