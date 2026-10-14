@@ -120,7 +120,7 @@ private fun StrengthTab() {
             style = T.body(14.sp),
         )
         GhostButton("Перейти на средний уровень", {
-            scope.launch { repo.store.profileNow()?.let { repo.updateProfile(it.copy(experience = forma.core.model.Experience.INTERMEDIATE)) } }
+            scope.launch { repo.setExperience(forma.core.model.Experience.INTERMEDIATE) }
         }, Modifier.fillMaxWidth())
     }
     val bias by androidx.compose.runtime.produceState(0, rows) { value = repo.rirBias() }

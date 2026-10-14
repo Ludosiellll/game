@@ -52,7 +52,8 @@ fun PlanScreen() {
     val profile by repo.store.profile.collectAsState(initial = null)
     val p = program ?: return
     val today = forma.app.ui.rememberToday(repo)
-    val weekNo = ProgramGenerator.weekIndex(p, today)
+    val weekNo = ProgramGenerator.programWeek(p, today)
+    val lifting by repo.store.liftState.collectAsState(initial = forma.app.data.LiftState())
     ScrollScreen {
         Text(if (F.type.capsTitles) "ПЛАН" else "План", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         val goal = aimTitle(p.aim) + (p.copiedFrom?.let { " · программа от $it" } ?: "")
@@ -61,18 +62,10 @@ fun PlanScreen() {
         // The cycle is the gym's (sets, reserve, light weeks): without the gym there is nothing to say.
         if (p.templates.isNotEmpty()) FCard(gap = 6.dp) {
             SectionLabel("Цикл")
-            if (p.blockWeeks > 0) {
-                val pos = (weekNo - 1) % p.blockWeeks + 1
-                Text("Неделя $pos из ${p.blockWeeks}", style = T.title(22.sp))
-                val off = ProgramGenerator.rirOffset(p, today)
-                Text(
-                    when {
-                        pos == p.blockWeeks -> "Разгрузка: вдвое меньше подходов, вес −10 %. Дальше новый цикл с тех же весов."
-                        off > 0 -> "Вход в цикл: в каждом подходе оставляй на 1 повтор больше запаса."
-                        off < 0 -> "Пик цикла: запаса на 1 повтор меньше. Следующая неделя — разгрузка."
-                        else -> "Рабочая неделя: запас как в плане."
-                    }, style = T.secondary(14.sp),
-                )
+            val cycle = cycleWords(p, today, lifting.reactiveDeloadStart)
+            if (cycle != null) {
+                Text("Неделя ${cycle.first} из ${p.blockWeeks}", style = T.title(22.sp))
+                Text(cycle.second.replaceFirstChar { it.uppercase() }, style = T.secondary(14.sp))
             } else {
                 Text("Неделя $weekNo", style = T.title(22.sp))
                 Text("Новичкам плановая разгрузка не нужна: приложение даст лёгкую неделю само, если увидит, что веса откатываются.", style = T.secondary(14.sp))

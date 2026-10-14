@@ -362,8 +362,10 @@ object Progression {
         }
         val hitAll = allAtTarget
         // The block's first week asked for more in reserve: a rep or two short of the target is following it, not a miss —
-        // the weight and the target stay (before, this lowered the reps or the weight of whoever did as told).
-        if (p.intro && !hitAll && lighter == 0) {
+        // the weight and the target stay (before, this lowered the reps or the weight of whoever did as told). Further
+        // short than that is a miss as in any week.
+        val introNear = max(target - 2, kotlin.math.ceil(target * 0.75).toInt())
+        if (p.intro && !hitAll && lighter == 0 && planned.size >= p.sets && planned.all { it.reps >= introNear }) {
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.INTRO), e1rm)
         }
 

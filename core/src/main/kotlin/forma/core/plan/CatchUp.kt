@@ -31,39 +31,45 @@ object CatchUp {
     data class Close(val day: Int, val index: Int, val doneDay: Int, val doneIndex: Int)
 
     /**
-     * Which planned sessions of the week are done, and by what. On its own day a session is done by any of its kind, in
-     * order (a lift by a lift, whichever template; a run by a run) — as the day shows it. A session done on a day where
-     * nothing of its kind was left to do closes a missed one from an earlier day of the week (from [firstDay]): a lift any
-     * missed lift, the same template first (another template or a friend's copied workout counts as the gym done); a run
-     * a missed run of its kind, and a hard run a missed easy one. A session done ahead of its day does not close it.
+     * Which planned sessions of the week are done, and by what. On its own day a session is done by one of its kind: the
+     * same kind first (the hard run by the hard run, a lift by its template), then in order (a lift by a lift, whichever
+     * template; a run by a run) — as the day shows it. A session done on a day where nothing of its kind was left to do
+     * closes a missed one from an earlier day of the week (from [firstDay]): a lift any missed lift, the same template
+     * first (another template or a friend's copied workout counts as the gym done); a run a missed run of its kind, and a
+     * hard run a missed easy one. Failing that, it was done ahead: it closes a later one the same way once that day is
+     * over (before [today], ISO; 8 — the whole week is over).
      */
-    fun closes(week: List<Day>, firstDay: Int = 1): List<Close> {
+    fun closes(week: List<Day>, firstDay: Int = 1, today: Int = 8): List<Close> {
         val out = mutableListOf<Close>()
         val open = mutableListOf<Pair<Int, Int>>()
         val spare = mutableListOf<Pair<Int, Int>>()
+        fun same(a: PlannedSession, b: PlannedSession) = a.kind == b.kind && (a.kind != SessionKind.LIFT || a.templateId == b.templateId)
         for (d in week.sortedBy { it.day }) {
             for (isRun in listOf(false, true)) {
                 val planned = d.planned.withIndex().filter { it.value.isRun == isRun }
-                val done = d.done.withIndex().filter { it.value.isRun == isRun }
-                planned.forEachIndexed { i, p ->
-                    val x = done.getOrNull(i)
-                    if (x != null) out += Close(d.day, p.index, d.day, x.index)
+                val done = d.done.withIndex().filter { it.value.isRun == isRun }.toMutableList()
+                val by = mutableMapOf<Int, Int>()
+                for (p in planned) done.firstOrNull { same(it.value, p.value) }?.let { by[p.index] = it.index; done.remove(it) }
+                for (p in planned) if (p.index !in by) done.firstOrNull()?.let { by[p.index] = it.index; done.remove(it) }
+                for (p in planned) {
+                    val x = by[p.index]
+                    if (x != null) out += Close(d.day, p.index, d.day, x)
                     else if (d.day >= firstDay) open += d.day to p.index
                 }
-                done.drop(planned.size).forEach { spare += d.day to it.index }
+                done.forEach { spare += d.day to it.index }
             }
         }
         fun planned(o: Pair<Int, Int>) = week.first { it.day == o.first }.planned[o.second]
+        fun pick(s: PlannedSession, from: List<Pair<Int, Int>>) = if (s.kind == SessionKind.LIFT) {
+            from.firstOrNull { planned(it).kind == SessionKind.LIFT && planned(it).templateId == s.templateId }
+                ?: from.firstOrNull { planned(it).kind == SessionKind.LIFT }
+        } else {
+            from.firstOrNull { planned(it).kind == s.kind }
+                ?: from.firstOrNull { s.isHardRun && planned(it).kind == SessionKind.RUN_EASY }
+        }
         for ((doneDay, doneIndex) in spare.sortedBy { it.first }) {
             val s = week.first { it.day == doneDay }.done[doneIndex]
-            val before = open.filter { it.first < doneDay }
-            val match = if (s.kind == SessionKind.LIFT) {
-                before.firstOrNull { planned(it).kind == SessionKind.LIFT && planned(it).templateId == s.templateId }
-                    ?: before.firstOrNull { planned(it).kind == SessionKind.LIFT }
-            } else {
-                before.firstOrNull { planned(it).kind == s.kind }
-                    ?: before.firstOrNull { s.isHardRun && planned(it).kind == SessionKind.RUN_EASY }
-            } ?: continue
+            val match = pick(s, open.filter { it.first < doneDay }) ?: pick(s, open.filter { it.first in doneDay + 1 until today }) ?: continue
             open.remove(match)
             out += Close(match.first, match.second, doneDay, doneIndex)
         }
@@ -76,7 +82,7 @@ object CatchUp {
         if (todayPlan.planned.isNotEmpty() || todayPlan.done.isNotEmpty()) return null
 
         // Missed: planned before today and not done on its day or caught up on a later one (as the week shows it).
-        val closed = closes(week.filter { it.day <= today }, firstDay).map { it.day to it.index }.toSet()
+        val closed = closes(week.filter { it.day <= today }, firstDay, today).map { it.day to it.index }.toSet()
         val missed = week.filter { it.day in firstDay until today }.sortedBy { it.day }.flatMap { d ->
             d.planned.withIndex().filter { (d.day to it.index) !in closed }.map { Suggestion(it.value, d.day) }
         }

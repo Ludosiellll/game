@@ -39,6 +39,7 @@ import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Template id of sessions copied from a friend (not part of the own plan). */
@@ -104,10 +105,14 @@ class TrainingRepository(
     }
 
     /** Saves the profile and rebuilds the plan. Lifting progress is kept per exercise and rep range. */
-    suspend fun updateProfile(profile: Profile) {
+    suspend fun updateProfile(input: Profile) {
         val old = store.profileNow()
+        // Saved on a friend's program without a new aim or days (the screen showed the copy's): one's own program comes
+        // back as it was, its days too; with new ones, a plan is built from them.
+        val own = store.settingsNow().ownPlan?.takeIf { old != null && store.programNow()?.copiedFrom != null && sameShape(old, input) }
+        val profile = own?.let { withShapeOf(input, it.profile) } ?: input
         store.setProfile(profile)
-        store.setProgram(keepCycle(ProgramGenerator.generate(profile, today()), store.programNow()))
+        store.setProgram(own?.let { ownProgram(profile, it) } ?: keepCycle(ProgramGenerator.generate(profile, today()), store.programNow()))
         val raceChanged = old == null || old.raceMeters != profile.raceMeters || old.raceSeconds != profile.raceSeconds
         if (raceChanged || old.runLevel != profile.runLevel) {
             val init = ProgramGenerator.initialRunState(profile)
@@ -144,19 +149,40 @@ class TrainingRepository(
     suspend fun restoreOwnProgram() {
         val profile = store.profileNow() ?: return
         val own = store.settingsNow().ownPlan ?: return updateProfile(profile)
-        val p = own.profile
-        val restored = profile.copy(
-            aim = p.aim, goal = p.goal, trainingDays = p.trainingDays, gymDays = p.gymDays, runDays = p.runDays,
-            doubleDays = p.doubleDays, sessionMinutes = p.sessionMinutes,
-        )
+        val restored = withShapeOf(profile, own.profile)
         store.setProfile(restored)
-        // A program of another experience level than the profile's now is built anew (the edits apply to it all the same).
-        val program = if (own.program.experience == restored.experience) own.program
-        else keepCycle(ProgramGenerator.generate(restored, today()), own.program)
-        // What this week held under the friend's program was never asked of the own one: not "missed".
-        store.setProgram(program.copy(createdEpochDay = today().toEpochDay()))
+        store.setProgram(ownProgram(restored, own))
         store.setSettings(own.editsInto(store.settingsNow()))
         onChange()
+    }
+
+    /** Level up from the progress screen: the program stays (a friend's too) with the level's blocks; progress is kept. */
+    suspend fun setExperience(experience: Experience) {
+        val profile = store.profileNow() ?: return
+        val program = store.programNow()
+        if (program?.copiedFrom == null) return updateProfile(profile.copy(experience = experience))
+        val next = profile.copy(experience = experience)
+        store.setProfile(next)
+        store.setProgram(program.copy(experience = experience, blockWeeks = ProgramGenerator.generate(next, today()).blockWeeks))
+        onChange()
+    }
+
+    /** The same aim, days and session length: what the plan is laid out by. */
+    private fun sameShape(a: Profile, b: Profile) = a.aim == b.aim && a.trainingDays == b.trainingDays && a.gymDays == b.gymDays &&
+        a.runDays == b.runDays && a.doubleDays == b.doubleDays && a.sessionMinutes == b.sessionMinutes
+
+    /** [profile] with the aim, days and session length of [p]. */
+    private fun withShapeOf(profile: Profile, p: Profile) = profile.copy(
+        aim = p.aim, goal = p.goal, trainingDays = p.trainingDays, gymDays = p.gymDays, runDays = p.runDays,
+        doubleDays = p.doubleDays, sessionMinutes = p.sessionMinutes,
+    )
+
+    /** The own program put aside for [profile]: built anew for another experience level (the edits apply all the same). */
+    private fun ownProgram(profile: Profile, own: OwnPlan): Program {
+        val program = if (own.program.experience == profile.experience) own.program
+        else keepCycle(ProgramGenerator.generate(profile, today()), own.program)
+        // What this week held under the friend's program was never asked of the own one: not "missed".
+        return program.copy(createdEpochDay = today().toEpochDay())
     }
 
     /** A beginner who runs 30 minutes now: the profile's level and the week of a runner; the run state stays as it is. */
@@ -320,6 +346,9 @@ class TrainingRepository(
             }
         }
 
+        /** The longest easy run on a day with a leg session, minutes. */
+        const val AFTER_LEGS_EASY = 45
+
         /** A gap after the last set longer than this means the session was left open, not still going. */
         const val OPEN_GAP_MS = 30 * 60_000L
         /** Time put after the last set of a session left open: the last rest, putting things away. */
@@ -332,6 +361,20 @@ class TrainingRepository(
         fun liftEnd(startedAt: Long, lastSetAt: Long?, now: Long): Long = when {
             lastSetAt != null && now - lastSetAt > OPEN_GAP_MS -> maxOf(startedAt, lastSetAt + AFTER_LAST_SET_MS)
             else -> now
+        }
+
+        /**
+         * Minutes of a lifting session started at [startedAt] with sets done at [setTimes]: to its [liftEnd], each gap
+         * longer than [OPEN_GAP_MS] counted as [AFTER_LAST_SET_MS] — a start pressed at home long before the first set,
+         * a session left open and carried on another day.
+         */
+        fun liftMinutes(startedAt: Long, setTimes: List<Long>, now: Long): Int {
+            val end = liftEnd(startedAt, setTimes.maxOrNull(), now)
+            val ms = (listOf(startedAt) + setTimes.sorted() + end).zipWithNext { a, b ->
+                val gap = (b - a).coerceAtLeast(0)
+                if (gap > OPEN_GAP_MS) AFTER_LAST_SET_MS else gap
+            }.sum()
+            return max(1, (ms / 60_000.0).roundToInt())
         }
 
         /** The most sets of one exercise the plan can be set to. */
@@ -529,7 +572,9 @@ class TrainingRepository(
         val program = store.programNow() ?: error("no program")
         val profile = store.profileNow() ?: error("no profile")
         val settings = store.settingsNow()
-        val rirOffset = if (deload) 0 else ProgramGenerator.rirOffset(program, date)
+        // The days before a lighter week the app set itself are not the block's peak: the reserve as planned.
+        val lighterNext = store.liftStateNow().reactiveDeloadStart?.let { date.toEpochDay() in it - 7 until it } == true
+        val rirOffset = if (deload || lighterNext) 0 else ProgramGenerator.rirOffset(program, date)
         val trained = when (profile.experience) {
             Experience.NOVICE -> 1.0
             Experience.INTERMEDIATE -> 1.35
@@ -615,7 +660,8 @@ class TrainingRepository(
     /** The plan's exercise at [old]'s place with its sets, reps and rest for good (a swap is today's choice, those stay). */
     private fun originalOf(plan: LiftPlan, old: LiftItem, own: SlotSpec?, settings: Settings): SlotSpec? = when {
         old.addedForGood && old.planId != null -> overrides(addedSpec(old.planId), settings, addedKey(plan.templateId, old.planId))
-        own != null -> overrides(own, settings)
+        // A slot swapped for a single-joint exercise keeps that one's sets, reps and rest under its id: not the lift's.
+        own != null -> if (own.exerciseId in settings.demoted) own else overrides(own, settings)
         else -> null
     }
 
@@ -733,22 +779,23 @@ class TrainingRepository(
     /** Replaces [planId] by [newId] in every session from now on; the same id (or null) brings the original back. */
     /** Settings changed on their screen; they travel to other phones with the next sync. */
     suspend fun updateSettings(f: (Settings) -> Settings) {
-        store.setSettings(f(store.settingsNow()))
+        store.editSettings(f)
         onChange()
     }
 
     suspend fun setSwap(planId: String, newId: String?) {
-        val s = store.settingsNow()
-        val swaps = if (newId == null || newId == planId) s.swaps - planId else s.swaps + (planId to newId)
-        // Sets, reps and rest chosen for a heavy lift do not carry over to a single-joint exercise in its place (and back).
+        // The same exercise picked again changes nothing (a swap made before the rule below keeps its numbers).
+        if ((store.settingsNow().swaps[planId] ?: planId) == (newId ?: planId)) return
         val slot = store.programNow()?.templates?.flatMap { it.slots }?.firstOrNull { it.exerciseId == planId }
-        val wasDemoted = planId in s.demoted
-        val nowDemoted = slot != null && swaps[planId]?.let { demotes(slot, it) } == true
-        val demoted = if (nowDemoted) s.demoted + planId else s.demoted - planId
-        store.setSettings(
+        store.editSettings { s ->
+            val swaps = if (newId == null || newId == planId) s.swaps - planId else s.swaps + (planId to newId)
+            // Sets, reps and rest chosen for a heavy lift do not carry over to a single-joint exercise in its place (and back).
+            val wasDemoted = planId in s.demoted
+            val nowDemoted = slot != null && swaps[planId]?.let { demotes(slot, it) } == true
+            val demoted = if (nowDemoted) s.demoted + planId else s.demoted - planId
             if (wasDemoted == nowDemoted) s.copy(swaps = swaps, demoted = demoted)
-            else s.copy(swaps = swaps, demoted = demoted, sets = s.sets - planId, reps = s.reps - planId, rest = s.rest - planId),
-        )
+            else s.copy(swaps = swaps, demoted = demoted, sets = s.sets - planId, reps = s.reps - planId, rest = s.rest - planId)
+        }
         onChange()
     }
 
@@ -810,8 +857,11 @@ class TrainingRepository(
     /** Removes an own exercise from the lists; its history keeps its name. */
     suspend fun archiveCustom(id: String) {
         store.setCustom(store.customNow().map { if (it.id == id) it.copy(archived = true) else it })
-        val s = store.settingsNow()
-        store.setSettings(s.copy(swaps = s.swaps.filterValues { it != id }))
+        store.editSettings { s ->
+            // The plan's exercise comes back with its own numbers, not those set for the archived one in its place.
+            val back = s.swaps.filterValues { it == id }.keys intersect s.demoted
+            s.copy(swaps = s.swaps.filterValues { it != id }, demoted = s.demoted - back, sets = s.sets - back, reps = s.reps - back, rest = s.rest - back)
+        }
         refreshCustom()
         onChange()
     }
@@ -925,7 +975,7 @@ class TrainingRepository(
         }
         // A session left open (finished in the evening, or after a run at the stadium) ends with its last set.
         val end = liftEnd(w.startedAt, sets.maxOfOrNull { it.doneAt }, now())
-        val minutes = max(1, ((end - w.startedAt) / 60_000.0).roundToInt())
+        val minutes = liftMinutes(w.startedAt, sets.map { it.doneAt }, now())
         val load = TrainingLoad.sessionLoad(rpe, minutes.toDouble())
         val summary = LiftSummary(reports, volume, sets.size, minutes, load)
         db.workouts().update(
@@ -958,18 +1008,19 @@ class TrainingRepository(
         val nextMonday = day.with(java.time.temporal.TemporalAdjusters.next(java.time.DayOfWeek.MONDAY))
         val plannedSoon = ProgramGenerator.isDeloadWeek(program, nextMonday) || ProgramGenerator.isDeloadWeek(program, day)
         // At most one lighter week in six: a run of bad days is not a reason to deload again and again.
-        // A lighter week just behind (the last two weeks) is recovery enough. Three weeks blocked it in every week of a
+        // A lighter week just behind (last week) is recovery enough. A longer window blocked it in every week of a
         // 4–5-week block: the reactive deload never came for intermediate and advanced lifters.
         val recent = state.reactiveDeloadStart?.let { day.toEpochDay() < it + 42 } == true ||
-            (1L..2L).any { ProgramGenerator.isDeloadWeek(program, day.minusWeeks(it)) }
+            ProgramGenerator.isDeloadWeek(program, day.minusWeeks(1))
         // Run down by this person's own measure: below their rest line for four days or more (the dip still on).
         val worn = storyOf(db.workouts().allDone(), day)?.let { st ->
             st.history && st.dips.lastOrNull()?.let { it.recovered == null && day.toEpochDay() - it.from.toEpochDay() >= 3 } == true
         } == true
         if ((setbacks.size >= 2 || worn && setbacks.isNotEmpty()) && !plannedSoon && !recent) {
             store.setLiftState(state.copy(reactiveDeloadStart = nextMonday.toEpochDay()))
-            // The block starts again after the lighter week: the planned one does not follow a week or two later.
-            restartBlock(nextMonday.plusWeeks(1))
+            // The lighter week becomes the block's last one and a new block follows it: the planned one does not come a
+            // week or two later, the weeks keep their count (no week 1 three times), the runs are lighter that week too.
+            store.setProgram(ProgramGenerator.lighterWeekAt(program, nextMonday))
         }
     }
 
@@ -1055,7 +1106,7 @@ class TrainingRepository(
             ),
         )
         // The own edits of the plan before belong to that plan (kept with it): the friend's exercises are taken as they are.
-        updateSettings { it.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap(), ownPlan = keep) }
+        updateSettings { it.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap(), demoted = emptySet(), ownPlan = keep) }
         onChange()
         return true
     }
@@ -1154,7 +1205,7 @@ class TrainingRepository(
         val saved = store.runStateNow()
         val program = store.programNow()
         // The caps of the plan as it is now: after a switch to less running, runs are no longer than it allows.
-        val caps = program?.let { ProgramGenerator.runCaps(it, store.profileNow()?.runGoal?.middleDistance == true) }
+        val caps = capsOn(date)
         val st = RunPlan.withBreak(saved, date.toEpochDay()).let {
             if (caps == null) it else it.copy(easyMinutes = minOf(it.easyMinutes, caps.easyMax), longMinutes = minOf(it.longMinutes, caps.longMax))
         }.let { s -> RunPlan.weekCap(saved, date.toEpochDay())?.let { cap -> s.copy(easyMinutes = minOf(s.easyMinutes, cap), longMinutes = minOf(s.longMinutes, cap)) } ?: s }
@@ -1167,7 +1218,7 @@ class TrainingRepository(
         val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when (kind) {
             SessionKind.RUN_LONG -> if (guess != null) RunPlan.provisional(RunPlan.long(guess, cutback, date.toEpochDay())) else RunPlan.long(st, cutback, date.toEpochDay())
             SessionKind.RUN_QUALITY -> when {
-                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, cutback, goal, lap)
+                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, cutback, goal, lap, goalLater = goalLater(program, date))
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
                 else -> RunPlan.test(st)
             }
@@ -1184,6 +1235,37 @@ class TrainingRepository(
         val planned = track(if (light) RunPlan.lighter(st, track(w)) else w)
         val comeback = RunPlan.comebackNote(saved, date.toEpochDay()) ?: return planned
         return planned.copy(note = "$comeback ${planned.note}")
+    }
+
+    /**
+     * The caps of runs on [date] ([ProgramGenerator.runCaps]); on a day with a leg session an easy run is at most
+     * [AFTER_LEGS_EASY] minutes: the one easy run of a middle-distance week grows to an hour, but not after squats two days
+     * before a hard run.
+     */
+    private suspend fun capsOn(date: LocalDate): forma.core.run.RunCaps? {
+        val program = store.programNow() ?: return null
+        val caps = ProgramGenerator.runCaps(program, store.profileNow()?.runGoal?.middleDistance == true)
+        return if (legsOn(program, date)) caps.copy(easyMax = min(caps.easyMax, AFTER_LEGS_EASY)) else caps
+    }
+
+    /** Whether the plan has a leg session on [date]. */
+    private fun legsOn(program: Program, date: LocalDate) = program.week.on(date.dayOfWeek.value).any { s ->
+        s.kind == SessionKind.LIFT && program.templates.firstOrNull { it.id == s.templateId }?.legs == true
+    }
+
+    /** Legs worked one or two days before [date]: running economy is down for a day or two after strength work. */
+    private fun legsBefore(program: Program, date: LocalDate) = (1L..2L).any { legsOn(program, date.minusDays(it)) }
+
+    /**
+     * Race pace is better on a fresher hard day: when the legs worked a day or two before [date] and another hard day of
+     * the next four is fresh — and not the trial's — race pace due today goes there (the cycle's next session today).
+     */
+    private suspend fun goalLater(program: Program?, date: LocalDate): Boolean {
+        if (program == null || !legsBefore(program, date)) return false
+        val fresh = (1L..4L).map { date.plusDays(it) }.firstOrNull { d ->
+            program.week.on(d.dayOfWeek.value).any { it.kind == SessionKind.RUN_QUALITY } && !legsBefore(program, d)
+        } ?: return false
+        return trialDay(date) != fresh
     }
 
     /**
@@ -1208,20 +1290,19 @@ class TrainingRepository(
         val program = store.programNow() ?: return null
         val settings = store.settingsNow()
         val done = db.workouts().observeDone(from.toEpochDay(), from.toEpochDay() + 13).first()
+        // Only a trial that is due: not before two runs, after a break, or within weeks of the last one.
+        val st = store.runStateNow()
+        if (!st.canRunContinuously) return null
+        val goal = store.profileNow()?.runGoal
         val hard = (0 until 14).map { from.plusDays(it.toLong()) }.filter { d ->
-            if (paused(settings, d)) return@filter false
+            if (paused(settings, d) || !needsTest(st, d, goal)) return@filter false
             val planned = program.week.on(d.dayOfWeek.value)
             val item = DayItem(d, planned, done.filter { it.epochDay == d.toEpochDay() })
             planned.any { it.kind == SessionKind.RUN_QUALITY && !item.isDone(it) }
         }
         // A trial wants fresh legs: at least three days after a leg session (strength work on the legs costs running
         // economy for one to two days), when the next week holds such a hard day; otherwise the first hard day.
-        fun legsBefore(d: LocalDate) = (1..2).any { back ->
-            program.week.on(d.minusDays(back.toLong()).dayOfWeek.value).any { s ->
-                s.kind == SessionKind.LIFT && program.templates.firstOrNull { it.id == s.templateId }?.legs == true
-            }
-        }
-        return hard.firstOrNull { it.isBefore(hard.first().plusDays(7)) && !legsBefore(it) } ?: hard.firstOrNull()
+        return hard.firstOrNull { it.isBefore(hard.first().plusDays(7)) && !legsBefore(program, it) } ?: hard.firstOrNull()
     }
 
     /**
@@ -1248,7 +1329,7 @@ class TrainingRepository(
             return@withLock w.id to (s ?: RunSummary(emptyList(), max(1, (w.durationSec ?: 60) / 60), w.load ?: 0.0))
         }
         val program = store.programNow()
-        val caps = program?.let { ProgramGenerator.runCaps(it, store.profileNow()?.runGoal?.middleDistance == true) } ?: forma.core.run.RunCaps(45, 90)
+        val caps = capsOn(date) ?: forma.core.run.RunCaps(45, 90)
         val st = store.runStateNow()
         val after = RunPlan.after(st, workout, result, caps, date.toEpochDay(), goal = store.profileNow()?.runGoal)
         var next = after.state
@@ -1327,7 +1408,14 @@ class TrainingRepository(
         combine(store.program, store.settings, db.workouts().observeDone(monday.toEpochDay(), monday.toEpochDay() + 6)) { program, settings, done ->
             val week = catchUpWeek(program, settings, monday, done)
             val byDay = week.associate { d -> d.day to done.filter { it.epochDay == monday.plusDays(d.day - 1L).toEpochDay() }.sortedBy { it.startedAt } }
-            val later = CatchUp.closes(week, firstDay(program, monday)).filter { it.doneDay != it.day }
+            val t = today()
+            val todayIndex = when {
+                t.isBefore(monday) -> 0
+                t.isAfter(monday.plusDays(6)) -> 8
+                else -> t.dayOfWeek.value
+            }
+            val closes = CatchUp.closes(week, firstDay(program, monday), todayIndex)
+            val later = closes.filter { it.doneDay != it.day }
             week.map { d ->
                 val date = monday.plusDays(d.day - 1L)
                 DayItem(
@@ -1335,6 +1423,7 @@ class TrainingRepository(
                     doneLater = later.filter { it.day == d.day }.associate { it.index to byDay.getValue(it.doneDay)[it.doneIndex] },
                     catchUps = later.filter { it.doneDay == d.day }.associate { byDay.getValue(d.day)[it.doneIndex].id to monday.plusDays(it.day - 1L) },
                     paused = paused(settings, date),
+                    onDay = closes.filter { it.day == d.day && it.doneDay == d.day }.associate { it.index to byDay.getValue(d.day)[it.doneIndex] },
                 )
             }
         }

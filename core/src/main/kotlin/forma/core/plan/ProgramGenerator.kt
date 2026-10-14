@@ -102,9 +102,24 @@ object ProgramGenerator {
         }
     }
 
-    /** 1-based week of the program for [date]. */
+    /** 1-based week of the lifting block's count for [date] (the block may start again: a pause, a lighter week). */
     fun weekIndex(program: Program, date: LocalDate): Int =
         ((date.toEpochDay() - program.startEpochDay).coerceAtLeast(0) / 7).toInt() + 1
+
+    /** 1-based week since the program was made, for "Неделя N": a block started again does not start it over. */
+    fun programWeek(program: Program, date: LocalDate): Int {
+        val made = program.createdEpochDay?.let { LocalDate.ofEpochDay(it).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toEpochDay() }
+        return ((date.toEpochDay() - (made ?: program.startEpochDay)).coerceAtLeast(0) / 7).toInt() + 1
+    }
+
+    /**
+     * The program with its block counted so that the week of [monday] is the block's lighter week (the last one) and a
+     * new block follows it; without blocks, the 4-week count of lighter running weeks the same way.
+     */
+    fun lighterWeekAt(program: Program, monday: LocalDate): Program {
+        val weeks = if (program.blockWeeks > 0) program.blockWeeks else 4
+        return program.copy(startEpochDay = monday.minusWeeks(weeks - 1L).toEpochDay())
+    }
 
     /** Lighter week: last week of each lifting block, and every 4th week for running. */
     fun isDeloadWeek(program: Program, date: LocalDate): Boolean {

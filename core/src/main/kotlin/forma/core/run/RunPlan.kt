@@ -77,6 +77,11 @@ data class RunState(
      * slower and hard, 0 in it. Without a recent trial they move the paces ([EASY_SAYS]).
      */
     val easySigns: List<Int> = emptyList(),
+    /**
+     * Race pace was put off from a hard day too soon after the legs to a fresher one later in the week (the next type of
+     * the cycle was run instead): the next hard session is race pace.
+     */
+    val goalDeferred: Boolean = false,
 ) {
     val canRunContinuously: Boolean get() = walkStage < 0
 
@@ -403,9 +408,17 @@ object RunPlan {
         val stage = state.tempoStage.coerceIn(0, TEMPO.lastIndex)
         val (n0, work, rest) = TEMPO[stage]
         val cap = hardCap(state, 20 * 60)
-        val n = (if (cutback && n0 > 1) n0 - 1 else n0).let { if (cap != null && it > 1) min(it, max(1, cap / work)) else it }
-        val workSec = (if (cutback && n0 == 1) (work * 0.75).roundToInt() else work).let {
-            if (cap != null && n == 1) min(it, (cap / 60) * 60) else it
+        var n = if (cutback && n0 > 1) n0 - 1 else n0
+        var workSec = if (cutback && n0 == 1) (work * 0.75).roundToInt() else work
+        if (cap != null && n * workSec > cap) {
+            // Over the week's share: shorter reps of the same number while they stay 5 minutes or more (2 × 12 → 2 × 10),
+            // so a higher step never holds less tempo than the one before; else fewer reps, one at most the cap.
+            val each = (cap / n / 60) * 60
+            if (each >= 5 * 60) workSec = each
+            else {
+                n = max(1, cap / workSec)
+                if (n == 1) workSec = min(workSec, (cap / 60) * 60)
+            }
         }
         val p = paces(state)
         val segs = mutableListOf(Segment(SegmentKind.WARMUP, 10 * 60, p?.easy))
@@ -503,9 +516,11 @@ object RunPlan {
                     "(цель — ${Ru.clock(goal.seconds)}). После каждого контрольного ступень ближе к цели. $n"
             } else n
         }
+        // Lighter only when it has fewer reps than the full session on this track (whole laps change the count).
+        val full = if (cutback) goalPace(state, goal, lapMeters).segments.count { it.kind == SegmentKind.WORK } else 0
         return RunWorkout(
             RunType.GOAL_PACE, title, segs, note, targetRpe = if (stage <= 2) 7 else 8, stage = stage, lapMeters = lapMeters,
-            cutback = cutback && reps.size < (if (last) 2 else step.reps.size),
+            cutback = cutback && reps.size < full,
         )
     }
 
@@ -641,8 +656,10 @@ object RunPlan {
     /**
      * The hard session; while coming back from a long break it is an easy run. With a middle-distance goal every other one
      * is at race pace and of the rest two of three are tempo (threshold), one intervals (VO2max): 1500 m is mostly aerobic.
+     * [goalLater]: the legs are not fresh today and a fresher hard day comes later in the week — race pace due today goes
+     * there, and today runs the cycle's next session ([RunState.goalDeferred]).
      */
-    fun quality(state: RunState, cutback: Boolean = false, goal: RunGoal? = null, lapMeters: Int? = null): RunWorkout {
+    fun quality(state: RunState, cutback: Boolean = false, goal: RunGoal? = null, lapMeters: Int? = null, goalLater: Boolean = false): RunWorkout {
         val w = when {
             state.returnEasy > 0 -> easy(state, cutback).let {
                 val n = state.returnEasy
@@ -650,10 +667,13 @@ object RunPlan {
                     "${Ru.plural(n, "лёгкую пробежку", "лёгкие пробежки", "лёгких пробежек")}. " + it.note)
             }
             // Tempo twice for every intervals: fading after 800 m is the threshold more than VO2max.
-            goal != null && goal.middleDistance -> when (state.qualityCount % 6) {
-                0, 2, 4 -> goalPace(state, goal, lapMeters, cutback)
-                3 -> intervals(state, cutback)
-                else -> tempo(state, cutback)
+            goal != null && goal.middleDistance -> {
+                val pos = state.qualityCount % 6
+                when {
+                    state.goalDeferred || pos % 2 == 0 && !goalLater -> goalPace(state, goal, lapMeters, cutback)
+                    pos == 3 || pos == 2 -> intervals(state, cutback)
+                    else -> tempo(state, cutback)
+                }
             }
             state.qualityCount % 2 == 0 -> intervals(state, cutback)
             else -> tempo(state, cutback)
@@ -827,7 +847,7 @@ object RunPlan {
                     rpe >= 7 -> s.copy(easyMinutes = max(20, state.easyMinutes - 5)).also { out += RunOutcome.Shorter(it.easyMinutes) }
                     done && full && rpe <= 5 && state.easyMinutes < caps.easyMax && weekAllowsMore ->
                         s.copy(easyMinutes = min(caps.easyMax, state.easyMinutes + step)).also { out += RunOutcome.Longer(it.easyMinutes) }
-                    else -> s.also { out += RunOutcome.Same(state.easyMinutes) }
+                    else -> s.also { out += RunOutcome.Same(min(state.easyMinutes, caps.easyMax)) }
                 }
             }
             RunType.LONG -> {
@@ -841,7 +861,7 @@ object RunPlan {
                     rpe >= 8 || !done -> s.copy(longMinutes = max(30, state.longMinutes - 5)).also { out += RunOutcome.Shorter(it.longMinutes) }
                     rpe <= 6 && next > state.longMinutes && w.workSeconds >= state.longMinutes * 60 && weekAllowsMore ->
                         s.copy(longMinutes = next).also { out += RunOutcome.Longer(it.longMinutes) }
-                    else -> s.also { out += RunOutcome.Same(state.longMinutes) }
+                    else -> s.also { out += RunOutcome.Same(min(state.longMinutes, caps.longMax)) }
                 }
             }
             RunType.INTERVALS, RunType.TEMPO -> {
@@ -889,6 +909,8 @@ object RunPlan {
                 }
                 s = if (w.type == RunType.INTERVALS) s.copy(intervalStage = stage) else s.copy(tempoStage = stage)
                 s = s.copy(qualityCount = state.qualityCount + 1, qualityFails = fails, qualityOnPace = streak)
+                // Run in place of race pace put off to a fresher day: race pace comes next.
+                if (goal?.middleDistance == true && state.qualityCount % 2 == 0 && !state.goalDeferred) s = s.copy(goalDeferred = true)
                 val v = s.vdot
                 // Paces held a month (Daniels raises them after about four weeks); with a race goal the time trial measures
                 // the form instead, and its first half must not be paced from a guess.
@@ -966,7 +988,9 @@ object RunPlan {
                 val fast = target != null && pace != null && pace < target * 0.98
                 // More than 3 % faster: the laps were not the goal's. Even laps are the skill this ladder teaches (a fast
                 // runner who fades after 800 m lacks exactly that), so the step is run again at the right lap time.
-                val tooFast = target != null && pace != null && pace < target * 0.97
+                // Measured against the goal's own pace too (a step slower than the goal run at the goal is not too fast);
+                // GPS on short road reps is less exact than laps.
+                val tooFast = target != null && pace != null && pace < min(target, goal?.pace ?: target) * (if (w.lapMeters != null) 0.97 else 0.95)
                 val cur = state.goalStage.coerceIn(0, GOAL.lastIndex)
                 if (pace == null) out += RunOutcome.PaceUnknown
                 if (slow) out += RunOutcome.TooSlow
@@ -1006,7 +1030,7 @@ object RunPlan {
                     out += RunOutcome.StageRepeat("goal")
                     s = s.copy(goalFails = 1)
                 }
-                s = s.copy(qualityCount = state.qualityCount + 1)
+                s = s.copy(qualityCount = state.qualityCount + 1, goalDeferred = false)
             }
             RunType.FREE -> Unit
         }

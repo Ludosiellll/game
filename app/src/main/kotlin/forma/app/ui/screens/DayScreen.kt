@@ -288,7 +288,8 @@ private fun DayLiftCard(s: PlannedSession, p: Program, date: LocalDate, done: Wo
         }
         template?.let { Explained("Зачем", focusWhy(it.focus, hardRun)) }
         Explained("Цели в зале", LIFT_FOCUS.firstOrNull { it.value == p.aim.normalized().lift }?.let { "${it.label} — ${it.text.replaceFirstChar { c -> c.lowercase() }}" } ?: "")
-        cycleWords(p, date)?.let { Explained("Неделя цикла", it) }
+        val lifting by LocalRepo.current.store.liftState.collectAsState(initial = forma.app.data.LiftState())
+        cycleWords(p, date, lifting.reactiveDeloadStart)?.let { Explained("Неделя цикла", "Неделя ${it.first} из ${p.blockWeeks}: ${it.second}") }
         Explained("Как дальше", "После каждой тренировки вес и повторы пересчитываются по тому, как прошли подходы: все повторы с запасом — прибавка, не хватило — повтор или шаг назад.")
     }
 }
@@ -310,13 +311,20 @@ private fun focusWhy(f: Focus, hardRun: Boolean): String = when (f) {
     Focus.FULL -> "Всё тело: главные движения за одну тренировку."
 }
 
-/** Where the lifting cycle is in the week of [date]: the same words as the plan's cycle card. */
-private fun cycleWords(p: Program, date: LocalDate): String? {
+/**
+ * Where the lifting cycle is in the week of [date]: the week of the block and what it asks, the same words as the plan's
+ * cycle card. [reactive]: the Monday of a lighter week the app set itself (weights stepping back).
+ */
+internal fun cycleWords(p: Program, date: LocalDate, reactive: Long?): Pair<Int, String>? {
     if (p.blockWeeks <= 0) return null
     val pos = (ProgramGenerator.weekIndex(p, date) - 1) % p.blockWeeks + 1
     val off = ProgramGenerator.rirOffset(p, date)
-    return "Неделя $pos из ${p.blockWeeks}: " + when {
+    val d = date.toEpochDay()
+    return pos to when {
+        pos == p.blockWeeks && reactive != null && d in reactive until reactive + 7 ->
+            "разгрузка раньше плана — веса откатывались. Вдвое меньше подходов, вес −10 %, потом новый цикл."
         pos == p.blockWeeks -> "разгрузка — вдвое меньше подходов, вес −10 %. Дальше новый цикл с тех же весов."
+        reactive != null && d in reactive - 7 until reactive -> "рабочая неделя — запас как в плане. Следующая — разгрузка: веса откатывались."
         off > 0 -> "вход в цикл — в каждом подходе оставляй на 1 повтор больше запаса."
         off < 0 -> "пик цикла — запаса на 1 повтор меньше. Следующая неделя — разгрузка."
         else -> "рабочая неделя — запас как в плане."

@@ -125,7 +125,7 @@ fun TodayScreen() {
     val trialOn by produceState<LocalDate?>(null, program, today, week) { value = repo.trialDay(today) }
 
     val p = program ?: return
-    val weekNo = ProgramGenerator.weekIndex(p, today)
+    val weekNo = ProgramGenerator.programWeek(p, today)
     val deload = ProgramGenerator.isDeloadWeek(p, today) ||
         (liftState.reactiveDeloadStart?.let { today.toEpochDay() in it until it + 7 } == true)
     val gym = p.week.days.any { d -> d.sessions.any { it.kind == SessionKind.LIFT } }

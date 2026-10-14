@@ -42,7 +42,7 @@ class DenisWeekRepoTest {
         TrainingRepository(db, store, now = { clock }).also { it.completeOnboarding(profile) }
     }
 
-    @After fun tearDown() { db.close() }
+    @After fun tearDown() { if (::db.isInitialized) db.close() }
 
     private val denis = Profile(
         name = "Денис", aim = Aim(LiftFocus.POWERBUILDING, RunFocus.ENDURANCE, Emphasis.BALANCED), experience = Experience.ADVANCED,
@@ -65,19 +65,11 @@ class DenisWeekRepoTest {
         assertEquals(RunType.TEST, repo.runFor(SessionKind.RUN_QUALITY, day).type)
     }
 
-    @Test fun repeatedSetbacksBringALighterWeekForAnIntermediateToo() = runBlocking<Unit> {
-        val profile = Profile(
-            aim = Aim(LiftFocus.STRENGTH, RunFocus.NONE, Emphasis.GYM), experience = Experience.INTERMEDIATE, runLevel = RunLevel.BASE,
-            trainingDays = setOf(1, 3, 5), bodyWeightKg = 75.0,
-        )
-        val repo = repo(profile, "deload-intermediate")
-        // The third week of a five-week block.
-        val start = monday.minusWeeks(2)
-        repo.store.setProgram(repo.store.programNow()!!.copy(startEpochDay = start.toEpochDay()))
+    /** Two main lifts stepped back on Monday of the week [weeksIn] weeks after the block's start; Wednesday's session checks it. */
+    private fun setbacks(profile: Profile, name: String, weeksIn: Long): TrainingRepository = runBlocking {
+        val repo = repo(profile, name)
+        repo.store.setProgram(repo.store.programNow()!!.copy(startEpochDay = monday.minusWeeks(weeksIn).toEpochDay()))
         val program = repo.store.programNow()!!
-        assertEquals(5, program.blockWeeks)
-        assertTrue(!ProgramGenerator.isDeloadWeek(program, monday.plusWeeks(1)))
-        // Two main lifts stepped back this week.
         val t = program.templates.first()
         val plan = repo.liftPlan(t.id, monday)
         val mains = plan.items.filter { it.slot.role == forma.core.strength.SlotRole.MAIN }.take(2)
@@ -88,18 +80,44 @@ class DenisWeekRepoTest {
                 status = Status.DONE, rpe = 8, durationSec = 3600, load = 480.0,
                 planJson = AppJson.encodeToString(LiftPlan.serializer(), plan), summaryJson = AppJson.encodeToString(LiftSummary.serializer(), summary)),
         )
-        // The next session, finished on Wednesday, triggers the check.
         clock = monday.plusDays(2).atTime(18, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val id = repo.startLift(program.templates[1].id, monday.plusDays(2))
         val item = repo.planOf(db.workouts().get(id)!!)!!.items.first()
         repo.logSet(id, item, 60.0, item.prescription.reps, 2)
         repo.finishLift(id, 7)
+        repo
+    }
+
+    @Test fun repeatedSetbacksBringALighterWeekForAnIntermediateToo() = runBlocking<Unit> {
+        val profile = Profile(
+            aim = Aim(LiftFocus.STRENGTH, RunFocus.NONE, Emphasis.GYM), experience = Experience.INTERMEDIATE, runLevel = RunLevel.BASE,
+            trainingDays = setOf(1, 3, 5), bodyWeightKg = 75.0,
+        )
+        // The third week of a five-week block.
+        val repo = setbacks(profile, "deload-intermediate", 2)
         val next = monday.plusWeeks(1)
         assertEquals(next.toEpochDay(), repo.store.liftStateNow().reactiveDeloadStart)
-        // The block starts again after it: no planned lighter week right after.
+        // The lighter week is the block's last one, a new block after it: no planned lighter week right after.
         val moved = repo.store.programNow()!!
-        assertEquals(next.plusWeeks(1).toEpochDay(), moved.startEpochDay)
+        assertTrue(ProgramGenerator.isDeloadWeek(moved, next))
         assertTrue(!ProgramGenerator.isDeloadWeek(moved, next.plusWeeks(1)))
+        assertEquals(1, ProgramGenerator.rirOffset(moved, next.plusWeeks(1)))
+    }
+
+    /** Denis lifts as an advanced lifter (4-week blocks): the lighter week the app sets itself comes for him too. */
+    @Test fun repeatedSetbacksBringALighterWeekForAnAdvancedLifter() = runBlocking<Unit> {
+        // The second week of his block.
+        val repo = setbacks(denis, "deload-advanced", 1)
+        val next = monday.plusWeeks(1)
+        assertEquals(next.toEpochDay(), repo.store.liftStateNow().reactiveDeloadStart)
+        val moved = repo.store.programNow()!!
+        assertTrue(ProgramGenerator.isDeloadWeek(moved, next))
+        assertTrue(ProgramGenerator.isRunCutbackWeek(moved, next), "the runs are lighter that week too")
+        // The rest of this week is not the block's peak: the reserve as planned.
+        val sat = repo.liftPlan("upper_b", monday.plusDays(5))
+        assertTrue(sat.items.none { it.prescription.intro }, "no first-week reserve before it")
+        val plain = repo.liftPlan("upper_b", monday.plusDays(5).plusWeeks(3))
+        assertEquals(plain.items.first().slot.rir, sat.items.first().prescription.rir)
     }
 
     /**
@@ -122,5 +140,66 @@ class DenisWeekRepoTest {
         repo.setSwap("bulgarian", "leg_ext")
         val again = repo.liftPlan(lower.id, monday.plusDays(5)).items.first { it.exerciseId == "leg_ext" }
         assertEquals(10 to 15, again.slot.repMin to again.slot.repMax)
+    }
+
+    /** His week: race pace on Thursday (legs five days back), not on Monday two days after Saturday's legs. */
+    @Test fun racePaceGoesToThursdayAndTheEasyRunAfterLegsStaysShort() = runBlocking<Unit> {
+        val repo = repo(denis, "denis-race-pace")
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 10, vdot = 49.0, lastTestDay = monday.toEpochDay() - 3, easyMinutes = 55))
+        val program = repo.store.programNow()!!
+        val days = program.week.days.associate { it.day to it.sessions.map { s -> s.kind } }
+        assertEquals(listOf(SessionKind.RUN_QUALITY), days[1])
+        assertTrue(SessionKind.RUN_QUALITY in days[4].orEmpty())
+        assertNotEquals(RunType.GOAL_PACE, repo.runFor(SessionKind.RUN_QUALITY, monday).type)
+        assertEquals(RunType.GOAL_PACE, repo.runFor(SessionKind.RUN_QUALITY, monday.plusDays(3)).type)
+        // Saturday: the easy run after «Низ» is at most 45 minutes.
+        val sat = repo.runFor(SessionKind.RUN_EASY, monday.plusDays(5))
+        assertTrue(sat.workSeconds <= TrainingRepository.AFTER_LEGS_EASY * 60, "${sat.workSeconds / 60} min")
+    }
+
+    @Test fun noTrialDateBeforeTheTrialIsDue() = runBlocking<Unit> {
+        val repo = repo(denis, "denis-no-trial")
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 0))
+        assertEquals(null, repo.trialDay(monday))
+    }
+
+    @Test fun theSameSwapPickedAgainChangesNothing() = runBlocking<Unit> {
+        val repo = repo(denis, "denis-same-swap")
+        repo.updateSettings { it.copy(swaps = mapOf("bulgarian" to "leg_ext"), sets = mapOf("bulgarian" to 4)) }
+        repo.setSwap("bulgarian", "leg_ext")
+        val s = repo.store.settingsNow()
+        assertEquals(4, s.sets["bulgarian"])
+        assertTrue("bulgarian" !in s.demoted)
+    }
+
+    /** A friend's program and back: the own swaps come back with whether they are done as added exercises. */
+    @Test fun theOwnPlanComesBackWithItsSwapsAsTheyWere() = runBlocking<Unit> {
+        val repo = repo(denis, "denis-own-plan")
+        repo.setSwap("squat", "leg_ext")
+        assertTrue("squat" in repo.store.settingsNow().demoted)
+        val own = repo.store.programNow()!!
+        assertTrue(repo.copyProgram(own.copy(copiedFrom = null), "Егор"))
+        assertTrue(repo.store.settingsNow().demoted.isEmpty())
+        // Level up on the friend's program: it stays.
+        repo.setExperience(Experience.INTERMEDIATE)
+        assertEquals("Егор", repo.store.programNow()!!.copiedFrom)
+        // The profile saved without new days: one's own program and days come back.
+        repo.updateProfile(repo.store.profileNow()!!.copy(bodyWeightKg = 70.0))
+        val back = repo.store.programNow()!!
+        assertEquals(null, back.copiedFrom)
+        assertEquals(setOf(2, 4, 6), repo.store.profileNow()!!.gymDays)
+        val s = repo.store.settingsNow()
+        assertEquals("leg_ext", s.swaps["squat"])
+        assertTrue("squat" in s.demoted)
+    }
+
+    @Test fun aSessionLeftOpenCountsItsSetsNotTheDays() {
+        val min = 60_000L
+        val sets = listOf(90 * min, 93 * min, 96 * min)
+        // Started at home at 0, first set 90 minutes later: the warm-up gap counts 5 minutes.
+        assertEquals(15, TrainingRepository.liftMinutes(0, sets, 100 * min))
+        // Carried on two days later: the gap between counts 5 minutes too.
+        val two = sets + listOf(2 * 1440 * min, 2 * 1440 * min + 3 * min)
+        assertEquals(26, TrainingRepository.liftMinutes(0, two, 2 * 1440 * min + 10 * min))
     }
 }

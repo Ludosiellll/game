@@ -125,15 +125,16 @@ data class OwnPlan(
     val added: Map<String, List<String>> = emptyMap(),
     val reps: Map<String, List<Int>> = emptyMap(),
     val rest: Map<String, Int> = emptyMap(),
+    val demoted: Set<String> = emptySet(),
 ) {
     /** [s] with these edits back in and nothing put aside any more. */
     fun editsInto(s: Settings): Settings =
-        s.copy(swaps = swaps, sets = sets, removed = removed, added = added, reps = reps, rest = rest, ownPlan = null)
+        s.copy(swaps = swaps, sets = sets, removed = removed, added = added, reps = reps, rest = rest, demoted = demoted, ownPlan = null)
 
     companion object {
         /** The own plan of [profile] and [program] with the edits in [s]. */
         fun of(profile: Profile, program: Program, s: Settings) =
-            OwnPlan(profile, program, s.swaps, s.sets, s.removed, s.added, s.reps, s.rest)
+            OwnPlan(profile, program, s.swaps, s.sets, s.removed, s.added, s.reps, s.rest, s.demoted)
     }
 }
 
@@ -226,6 +227,14 @@ class SettingsStore(context: Context, name: String = "forma") {
     suspend fun setProgram(p: Program) = write(Keys.program, Program.serializer(), p)
     suspend fun setRunState(r: RunState) = write(Keys.runState, RunState.serializer(), r)
     suspend fun setSettings(s: Settings) = write(Keys.settings, Settings.serializer(), s)
+
+    /** Settings changed by [f] in one step: two changes at once (a run saved while its debrief is shown) both stay. */
+    suspend fun editSettings(f: (Settings) -> Settings) {
+        store.edit { p ->
+            val now = p[Keys.settings]?.let { runCatching { AppJson.decodeFromString(Settings.serializer(), it) }.getOrNull() } ?: Settings()
+            p[Keys.settings] = AppJson.encodeToString(Settings.serializer(), f(now))
+        }
+    }
 
     suspend fun clear() {
         store.edit { it.clear() }
