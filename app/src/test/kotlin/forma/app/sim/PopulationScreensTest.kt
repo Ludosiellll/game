@@ -76,7 +76,7 @@ class PopulationScreensTest {
     private fun texts(): List<String> = compose.onAllNodes(androidx.compose.ui.test.SemanticsMatcher("any") { true }, useUnmergedTree = true)
         .fetchSemanticsNodes().flatMap { n -> n.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } }
 
-    private val broken = Regex("""NaN|Infinity|\bnull\b|−?-\d+ (подход|повтор|мин|км|раз)""")
+    private val broken = Regex("""NaN|Infinity|\bnull\b|−?-\d+ (подход|повтор|мин|км|раз)|Не получилось|Разбираю план""")
 
     @Test fun everyScreenForManyPeople() {
         val n = System.getenv("FORMA_SIM_SCREENS")?.toIntOrNull()

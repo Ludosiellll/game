@@ -1335,7 +1335,11 @@ class TrainingRepository(
      * and added, all as on the plan screen) weighed with the person's focus, experience, running, session time and own
      * pace, lifts without a new best, how tired they have been, a race coming. Null without a program.
      */
-    suspend fun planAdvice(): forma.core.plan.PlanAdvisor.Advice? {
+    suspend fun planAdvice(): forma.core.plan.PlanAdvisor.Advice? =
+        // Many reads of the sessions in a row: off the main thread, which then waits for none of them.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { adviceNow() }
+
+    private suspend fun adviceNow(): forma.core.plan.PlanAdvisor.Advice? {
         val program = store.programNow() ?: return null
         val profile = store.profileNow() ?: return null
         val settings = store.settingsNow()
@@ -1487,11 +1491,11 @@ class TrainingRepository(
      * The gym week as it would be with [chosen] taken — built by the same edits and the same reading of the plan as
      * [applyPlanAdvice] and [planAdvice], so what «С выбранным» shows is what taking them does.
      */
-    suspend fun planPreview(chosen: List<forma.core.plan.PlanAdvisor.Change>): List<forma.core.plan.PlanAdvisor.Day> {
-        val program = store.programNow() ?: return emptyList()
-        val settings = advised(store.settingsNow(), program, chosen)
-        return adviceDays(program, settings)
-    }
+    suspend fun planPreview(chosen: List<forma.core.plan.PlanAdvisor.Change>): List<forma.core.plan.PlanAdvisor.Day> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val program = store.programNow() ?: return@withContext emptyList()
+            adviceDays(program, advised(store.settingsNow(), program, chosen))
+        }
 
     /**
      * A day with the gym and a run: which goes first and why ([forma.core.plan.SessionOrder]) — from the run as it stands

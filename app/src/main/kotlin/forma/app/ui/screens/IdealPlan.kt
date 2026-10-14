@@ -64,7 +64,16 @@ fun IdealPlanScreen() {
     val settings by repo.store.settings.collectAsState(initial = Settings())
     val program by repo.store.program.collectAsState(initial = null)
     // Loaded: Result of the advice (null inside — no plan to weigh); not loaded yet: null.
-    val loaded by produceState<Result<PlanAdvisor.Advice?>?>(null, settings, program) { value = runCatching { repo.planAdvice() } }
+    val loaded by produceState<Result<PlanAdvisor.Advice?>?>(null, settings, program) {
+        // A new key cancels the old reading: that is not a failure to show.
+        value = try {
+            Result.success(repo.planAdvice())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
     // Ticked change ids, and "id=option" for an option picked other than the first (saved across rotation).
     var ticked by rememberSaveable { mutableStateOf(listOf<String>()) }
     var picks by rememberSaveable { mutableStateOf(listOf<String>()) }
