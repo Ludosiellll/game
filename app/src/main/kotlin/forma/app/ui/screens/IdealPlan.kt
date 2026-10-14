@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -61,23 +62,46 @@ fun IdealPlanScreen() {
     val scope = rememberCoroutineScope()
     val settings by repo.store.settings.collectAsState(initial = Settings())
     val program by repo.store.program.collectAsState(initial = null)
-    val advice by produceState<PlanAdvisor.Advice?>(null, settings, program) { value = repo.planAdvice() }
+    // Loaded: Result of the advice (null inside — no plan to weigh); not loaded yet: null.
+    val loaded by produceState<Result<PlanAdvisor.Advice?>?>(null, settings, program) { value = runCatching { repo.planAdvice() } }
     // Ticked change ids, and "id=option" for an option picked other than the first (saved across rotation).
     var ticked by rememberSaveable { mutableStateOf(listOf<String>()) }
     var picks by rememberSaveable { mutableStateOf(listOf<String>()) }
     var taken by rememberSaveable { mutableIntStateOf(0) }
     var view by rememberSaveable { mutableIntStateOf(1) }
+    var busy by remember { mutableStateOf(false) }
     ScrollScreen {
         TopBar("Идеальный план", "Как есть — и каким может быть", onBack = { nav.back() })
-        val a = advice
+        val result = loaded
+        val a = result?.getOrNull()
         if (a == null) {
-            Text("Разбираю план…", style = T.secondary(14.sp))
+            Text(
+                when {
+                    result == null -> "Разбираю план…"
+                    result.isFailure -> "Не получилось разобрать план. Открой экран ещё раз."
+                    else -> "Плана зала пока нет — разбирать нечего."
+                },
+                style = T.secondary(14.sp),
+            )
             return@ScrollScreen
         }
         fun picked(c: PlanAdvisor.Change): PlanAdvisor.Change =
             picks.firstOrNull { it.startsWith("${c.id}=") }?.substringAfter('=')?.let { c.pick(it) } ?: c
         val changes = a.changes.map(::picked)
-        val chosen = changes.filter { it.id in ticked }
+        // Two ticked changes putting the same exercise into one day: the later one waits for another option.
+        val clash = mutableMapOf<String, String>()
+        val chosen = mutableListOf<PlanAdvisor.Change>()
+        for (c in changes.filter { it.id in ticked }) {
+            val other = chosen.firstOrNull { o -> o.templateId == c.templateId && o.to == c.to }
+            if (other != null) clash[c.id] = changeTitle(other) else chosen += c
+        }
+        // The week as taking them makes it: the same edits as «Принять», read the same way as the plan.
+        val chosenKey = chosen.map { "${it.id}=${it.to}" }
+        val preview by produceState<List<PlanAdvisor.Day>?>(null, chosenKey, settings) {
+            value = null
+            value = runCatching { repo.planPreview(chosen) }.getOrNull()
+        }
+        val after = preview ?: PlanAdvisor.apply(a.days, chosen)
 
         FCard(gap = 8.dp) {
             SectionLabel("Разбор")
@@ -88,15 +112,16 @@ fun IdealPlanScreen() {
                 style = T.secondary(13.sp),
             )
         }
+        a.warning?.let { Banner(it, F.c.warn) }
         if (taken > 0) Banner(
             "Принято: $taken. Всё видно в «Плане» — там же любое изменение можно вернуть.", F.c.good, icon = Ic.check,
         )
 
         if (changes.isNotEmpty()) {
             SectionLabel("Что можно улучшить")
-            changes.forEach { c ->
+            changes.forEachIndexed { k, c ->
                 ChangeCard(
-                    c, checked = c.id in ticked,
+                    c, a.changes[k].options, checked = c.id in ticked, clash = clash[c.id],
                     onCheck = { ticked = if (c.id in ticked) ticked - c.id else ticked + c.id },
                     onPick = { id -> picks = picks.filterNot { it.startsWith("${c.id}=") } + "${c.id}=$id" },
                 )
@@ -105,13 +130,13 @@ fun IdealPlanScreen() {
 
         SectionLabel("Неделя в зале")
         if (changes.isNotEmpty()) Segmented(listOf("Сейчас", "С выбранным"), view, { view = it })
-        val days = if (view == 1) PlanAdvisor.apply(a.days, chosen) else a.days
+        val days = if (view == 1) after else a.days
         days.forEach { d -> DayCard(d, a.days.first { it.templateId == d.templateId }, compare = view == 1) }
         if (view == 1 && chosen.isEmpty() && changes.isNotEmpty()) Text("Отметь изменения выше — здесь появится, каким станет план.", style = T.secondary(13.sp))
 
         SectionLabel("Подходы в неделю на мышцу")
         FCard(gap = 0.dp) {
-            PlanAdvisor.table(a, chosen, Catalog::find).forEachIndexed { i, v ->
+            PlanAdvisor.table(a, after, Catalog::find).forEachIndexed { i, v ->
                 if (i > 0) Hairline()
                 VolumeRow(v, showAfter = chosen.isNotEmpty())
             }
@@ -131,15 +156,20 @@ fun IdealPlanScreen() {
             if (chosen.isEmpty()) "Отметь, что взять" else "Принять выбранные (${chosen.size})",
             {
                 val take = chosen
+                busy = true
                 scope.launch {
-                    repo.applyPlanAdvice(take)
-                    taken = take.size
-                    ticked = emptyList()
-                    picks = emptyList()
-                    view = 1
+                    try {
+                        repo.applyPlanAdvice(take)
+                        taken = take.size
+                        ticked = emptyList()
+                        picks = emptyList()
+                        view = 1
+                    } finally {
+                        busy = false
+                    }
                 }
             },
-            Modifier.fillMaxWidth(), enabled = chosen.isNotEmpty(),
+            Modifier.fillMaxWidth(), enabled = chosen.isNotEmpty() && !busy,
         )
     }
 }
@@ -154,7 +184,7 @@ internal fun changeTitle(c: PlanAdvisor.Change): String = when (c.kind) {
 }
 
 @Composable
-private fun ChangeCard(c: PlanAdvisor.Change, checked: Boolean, onCheck: () -> Unit, onPick: (String) -> Unit) {
+private fun ChangeCard(c: PlanAdvisor.Change, options: List<String>, checked: Boolean, clash: String?, onCheck: () -> Unit, onPick: (String) -> Unit) {
     FCard(outline = if (checked) F.c.accent else null, gap = 10.dp) {
         Row(
             Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Checkbox, onValueChange = { onCheck() }),
@@ -171,12 +201,14 @@ private fun ChangeCard(c: PlanAdvisor.Change, checked: Boolean, onCheck: () -> U
                 Text(changeTitle(c), style = T.body(16.sp, FontWeight.Bold))
             }
         }
-        if (c.options.size > 1) {
+        // The options in their own order (the most fitting first), whichever is picked.
+        if (options.size > 1) {
             Text(if (c.kind == PlanAdvisor.Kind.ADD) "Что добавить:" else "Чем заменить:", style = T.secondary(13.sp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                c.options.forEach { id -> Chip(name(id), selected = id == c.to, onClick = { onPick(id) }, minWidth = 0.dp) }
+                options.forEach { id -> Chip(name(id), selected = id == c.to, onClick = { onPick(id) }, minWidth = 0.dp) }
             }
         }
+        if (clash != null) Text("«${name(c.to)}» в этот день уже даёт «$clash» — выбери другой вариант.", style = T.secondary(13.sp).copy(color = F.c.warn))
         Text(c.why, style = T.secondary(14.sp))
     }
 }
@@ -193,7 +225,7 @@ private fun DayCard(d: PlanAdvisor.Day, before: PlanAdvisor.Day, compare: Boolea
                 !compare -> null
                 was == null -> "новое"
                 was.exerciseId != i.exerciseId -> "вместо «${name(was.exerciseId)}»"
-                was.sets != i.sets -> "было ${Ru.sets(was.sets)}"
+                was.sets != i.sets || was.repMin != i.repMin || was.repMax != i.repMax -> "было ${was.sets} × ${was.repMin}–${was.repMax}"
                 else -> null
             }
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -215,7 +247,7 @@ private fun DayCard(d: PlanAdvisor.Day, before: PlanAdvisor.Day, compare: Boolea
 private fun VolumeRow(v: PlanAdvisor.Volume, showAfter: Boolean) {
     val value = if (showAfter) v.after else v.now
     val color = when {
-        v.low > 0 && value < v.low - 0.5 -> F.c.warn
+        v.low > 0 && value < v.low - 1 -> F.c.warn
         value > v.high + 2 -> F.c.warn
         else -> F.c.good
     }

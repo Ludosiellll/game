@@ -66,7 +66,7 @@ class PlanAdvisorTest {
         assertTrue(after.first { it.templateId == "lower_a" }.items.any { it.exerciseId == "split_squat" && it.planId == "bulgarian" })
         // Nothing chosen: the plan as it is.
         assertEquals(a.days, PlanAdvisor.apply(a.days, emptyList()))
-        val table = PlanAdvisor.table(a, listOf(swap), Catalog::find)
+        val table = PlanAdvisor.table(a, after, Catalog::find)
         val glutes = table.first { it.muscle == Muscle.GLUTES }
         assertEquals(glutes.now + 3, glutes.after)
     }
@@ -82,9 +82,19 @@ class PlanAdvisorTest {
         assertTrue(a.changes.none { it.id.startsWith("stall:") && it.planId == "squat" })
     }
 
+    /** Many lifts stuck at once: said to be recovery; only the longest stuck gets another variation. */
+    @Test fun manyLiftsStuckAtOnceIsRecoveryNotTheExercises() {
+        val a = PlanAdvisor.advise(input(denis()).copy(stalled = mapOf("bench" to 6, "row" to 5, "ohp" to 8, "squat" to 5)))
+        assertEquals(listOf("stall:upper_b:ohp"), a.changes.filter { it.id.startsWith("stall:") }.map { it.id })
+        assertTrue(a.warning!!.startsWith("Застой сразу в 4 основных упражнениях"), a.warning)
+        assertEquals(null, PlanAdvisor.advise(input(denis())).warning)
+    }
+
     @Test fun nothingNewForTheLegsBeforeTheRace() {
-        val a = PlanAdvisor.advise(input(denis()).copy(daysToRace = 12))
-        assertTrue(a.changes.none { it.id == "add:nordic" || it.id == "add:seated_calf" }, a.changes.map { it.id }.toString())
+        val a = PlanAdvisor.advise(input(denis()).copy(daysToRace = 12, stalled = mapOf("squat" to 6, "bench" to 6)))
+        // Not even his own one-leg lift back, nor another squat: only the upper body's stall.
+        assertTrue(a.changes.none { it.id == "add:nordic" || it.id == "add:seated_calf" || it.id.startsWith("oneleg") }, a.changes.map { it.id }.toString())
+        assertEquals(listOf("stall:upper_a:bench"), a.changes.filter { it.id.startsWith("stall:") }.map { it.id })
         assertTrue(a.fine.any { "До забега 12 дней" in it }, a.fine.toString())
     }
 
@@ -126,6 +136,12 @@ class PlanAdvisorTest {
         val days = denis()
         val a = PlanAdvisor.advise(input(days).copy(sessionMinutes = 40, timeRatio = 1.3))
         assertTrue(a.changes.any { it.id.startsWith("time:") }, a.changes.map { it.id }.toString())
+        assertTrue(a.changes.first { it.id.startsWith("time:") }.why.contains(" мин и почти ничего не стоит"))
+        // A day that fits as it is is not cut for what the advisor itself adds: the addition says how long the day gets.
+        val fits = PlanAdvisor.advise(input(days).copy(sessionMinutes = 44))
+        assertTrue(fits.changes.none { it.id.startsWith("time:lower_a") }, fits.changes.map { it.id }.toString())
+        assertTrue(fits.fine.any { "По времени укладываешься" in it }, fits.fine.toString())
+        assertTrue(fits.changes.first { it.id == "add:seated_calf" }.why.contains("С ним «Низ» — около"), fits.changes.first { it.id == "add:seated_calf" }.why)
         val tired = PlanAdvisor.advise(input(days).copy(tiredOften = true))
         // Denis's accessories are two sets each already (running comes too): nothing to take.
         assertTrue(tired.changes.none { it.id.startsWith("rest:") }, tired.changes.map { it.id + " " + it.setsFrom }.toString())

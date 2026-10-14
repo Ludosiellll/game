@@ -113,7 +113,7 @@ class PopulationTest {
         if (a.changes.isEmpty()) return@runBlocking
         fun rows(days: List<forma.core.plan.PlanAdvisor.Day>) =
             days.flatMap { d -> d.items.map { "${d.templateId}:${it.exerciseId}:${it.sets}:${it.repMin}-${it.repMax}" } }.sorted()
-        val shown = rows(forma.core.plan.PlanAdvisor.apply(a.days, a.changes))
+        val shown = rows(repo.planPreview(a.changes))
         repo.applyPlanAdvice(a.changes)
         val after = repo.planAdvice() ?: return@runBlocking
         val done = rows(after.days)

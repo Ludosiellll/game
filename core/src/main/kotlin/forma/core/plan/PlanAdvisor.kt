@@ -114,6 +114,8 @@ object PlanAdvisor {
         val fine: List<String>,
         val ranges: Map<Muscle, Pair<Int, Int>>,
         val summary: String,
+        /** Something the plan cannot fix, said first (many lifts stuck at once: recovery, not exercises). */
+        val warning: String? = null,
     )
 
     /** The muscles the week is weighed by (the core works in everything heavy). */
@@ -130,6 +132,9 @@ object PlanAdvisor {
 
     /** Weeks without a new best before another variation is worth it. */
     const val STALL_WEEKS = 5
+
+    /** This many main lifts stuck at once is taken for recovery, not for the exercises. */
+    const val MANY_STUCK = 3
 
     /** At most this many sets of one exercise the advisor proposes (more is better spread over another exercise). */
     const val MAX_SETS_ADVISED = 4
@@ -192,11 +197,11 @@ object PlanAdvisor {
         d.copy(items = items)
     }
 
-    /** The weekly sets table now and with [chosen] taken. */
-    fun table(advice: Advice, chosen: List<Change>, find: (String) -> Exercise?): List<Volume> {
+    /** The weekly sets table now and for the week [after] (the plan with the chosen changes taken). */
+    fun table(advice: Advice, after: List<Day>, find: (String) -> Exercise?): List<Volume> {
         val now = volume(advice.days, find)
-        val after = volume(apply(advice.days, chosen), find)
-        return MUSCLES.map { m -> advice.ranges.getValue(m).let { (lo, hi) -> Volume(m, now[m] ?: 0.0, after[m] ?: 0.0, lo, hi) } }
+        val then = volume(after, find)
+        return MUSCLES.map { m -> advice.ranges.getValue(m).let { (lo, hi) -> Volume(m, now[m] ?: 0.0, then[m] ?: 0.0, lo, hi) } }
     }
 
     fun advise(input: Input): Advice {
@@ -220,12 +225,21 @@ object PlanAdvisor {
         val raceSoon = input.daysToRace?.let { it in 0..RACE_QUIET_DAYS } == true
         val usable = { id: String -> find(id)?.archived == false }
 
-        // 1. Lifts without a new best for weeks: the same movement in another variation.
-        for (d in days) for (i in d.items) {
+        // 1. Lifts without a new best for weeks: the same movement in another variation. Many stuck at once is recovery
+        // (sleep, food, a lighter week), not the exercises: then only the longest stuck gets another variation.
+        val stuck = days.flatMap { d -> d.items.filter { i -> i.role != SlotRole.ACCESSORY && (input.stalled[i.exerciseId] ?: 0) >= STALL_WEEKS }.map { d to it } }
+        val manyStuck = stuck.size >= MANY_STUCK
+        val warning = if (manyStuck) "Застой сразу в ${stuck.size} основных упражнениях. Так бывает, когда не хватает восстановления, " +
+            "а не упражнений: сначала сон, еда и лёгкая неделя. Другой вариант предлагаю только для самого долгого застоя." else null
+        val stallFor = if (manyStuck) stuck.sortedByDescending { (_, i) -> input.stalled[i.exerciseId] ?: 0 }.take(1) else stuck
+        for ((d, i) in stallFor) {
             val weeks = input.stalled[i.exerciseId] ?: continue
-            if (weeks < STALL_WEEKS || i.role == SlotRole.ACCESSORY || touched(d, i)) continue
+            if (touched(d, i)) continue
             val ex = find(i.exerciseId) ?: continue
-            val alts = VARIATIONS[ex.id].orEmpty().filter(usable)
+            // Before the race the legs get nothing new.
+            if (raceSoon && ex.lowerBody) continue
+            val present = d.items.map { it.exerciseId }.toSet()
+            val alts = VARIATIONS[ex.id].orEmpty().filter(usable).filter { it !in present }
             if (alts.isEmpty()) continue
             changes += Change(
                 "stall:${d.templateId}:${i.planId}", Kind.SWAP, d.templateId, d.title, i.planId, i.exerciseId, alts, null, null, null, null,
@@ -238,7 +252,7 @@ object PlanAdvisor {
         // 2. What a runner's legs need.
         if (runner) {
             val oneLeg = has { it.pattern == Pattern.LUNGE && it.compound } || has { it.id == "single_leg_rdl" || it.id == "pistol" }
-            if (!oneLeg) {
+            if (!oneLeg && !raceSoon) {
                 // A one-leg lift the person swapped away: offered back first, with the easier ones.
                 val swapped = cur().firstNotNullOfOrNull { d ->
                     d.items.firstOrNull { i -> !i.added && i.planId != i.exerciseId && find(i.planId)?.pattern == Pattern.LUNGE }?.let { d to it }
@@ -254,7 +268,7 @@ object PlanAdvisor {
                             "проще по равновесию, зашагивания ближе всего к бегу.",
                         2,
                     )
-                } else if (!raceSoon) legDay()?.let { d ->
+                } else legDay()?.let { d ->
                     changes += Change(
                         "oneleg:add", Kind.ADD, d.templateId, d.title, null, null, ONE_LEG.filter(usable), null, 3, 8 to 12, 120,
                         "Ни одного упражнения на одной ноге: бег — череда приземлений на одну ногу, сила и устойчивость таза и колена " +
@@ -299,20 +313,29 @@ object PlanAdvisor {
         for (m in MUSCLES) {
             if (raceSoon && m in LEGS) continue
             val (low, high) = ranges.getValue(m)
+            // Decided with the changes so far (one already proposed may cover it), said in the plan's own numbers.
             val vol = volume(cur(), find)
+            val vol0 = volume(days, find)
             val v = vol[m] ?: 0.0
-            if (low > 0 && v < low - 0.5) {
-                val iso = isolations(m, runner).filter(usable).filter { id -> cur().none { d -> d.items.any { it.exerciseId == id } } }
+            val v0 = vol0[m] ?: 0.0
+            if (low > 0 && v < low - 1) {
+                val iso = isolations(m, runner).filter(usable)
+                    .filter { id -> (days + cur()).none { d -> d.items.any { it.exerciseId == id } } }
                 // A single-muscle exercise for a muscle with sets to spare (in the upper half of its range, still in it
                 // without these sets), on a day of the same half of the body.
+                // A swap of a plan exercise holds on every day it is on: its sets all count. Not the protective work the
+                // advisor itself stands for (Nordic curls, the soleus, the rear delts).
+                fun weekSets(i: Item) = cur().sumOf { d2 -> d2.items.filter { !it.added && it.planId == i.planId }.sumOf { it.sets * d2.times } }
                 val spare = cur().flatMap { d -> d.items.map { d to it } }.firstOrNull { (d, i) ->
                     val ex = find(i.exerciseId)
+                    val sets = if (i.added) i.sets * d.times else weekSets(i)
                     ex != null && i.role == SlotRole.ACCESSORY && !ex.compound && ex.load != LoadKind.TIMED && ex.primary.isNotEmpty() &&
+                        ex.id !in PROTECTIVE && ex.pattern != Pattern.REAR_DELT &&
                         m !in ex.primary && (m in LEGS) == ex.lowerBody && !touched(d, i) &&
                         ex.primary.all { o ->
                             val (ol, oh) = ranges[o] ?: (0 to 99)
                             val ov = vol[o] ?: 0.0
-                            ov >= (ol + oh) / 2.0 && ov - i.sets * d.times >= ol + 1
+                            ov >= (ol + oh) / 2.0 && ov - sets >= ol + 1
                         }
                 }
                 if (spare != null && iso.isNotEmpty()) {
@@ -320,7 +343,7 @@ object PlanAdvisor {
                     val o = find(i.exerciseId)!!.primary.first()
                     changes += Change(
                         "rebalance:${m.name}:${i.planId}", Kind.SWAP, d.templateId, d.title, i.planId, i.exerciseId, iso, null, null, null, null,
-                        "${m.ru}: ${setsText(v)} в неделю при норме $low–$high, а ${o.ru.lowercase()} — ${setsText(vol[o] ?: 0.0)}, с запасом. " +
+                        "${m.ru}: ${setsText(v0)} в неделю при норме $low–$high, а ${o.ru.lowercase()} — ${setsText(vol0[o] ?: 0.0)}, с запасом. " +
                             "Замена перекладывает подходы туда, где их не хватает, а тренировка не удлиняется.",
                         2, added = i.added,
                     )
@@ -336,21 +359,25 @@ object PlanAdvisor {
                     val to = minOf(MAX_SETS_ADVISED, i.sets + need)
                     changes += Change(
                         "vol:${m.name}:${i.planId}", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, to, null, null,
-                        "${m.ru}: ${setsText(v)} в неделю — меньше нормы для твоей цели ($low–$high). Ещё ${Ru.sets(to - i.sets)} — дешевле " +
-                            "всего в упражнении, которое её уже нагружает: без нового упражнения и почти без лишнего времени.",
+                        "${m.ru}: ${setsText(v0)} в неделю — меньше нормы для твоей цели ($low–$high). Ещё ${Ru.sets(to - i.sets)} — дешевле " +
+                            "всего в упражнении, которое эту мышцу уже нагружает: без нового упражнения и почти без лишнего времени.",
                         2, added = i.added,
                     )
                     need -= (to - i.sets) * d.times
                 }
-                if (need > 1) {
+                // A new exercise only for what the ones there do not do already: no second lateral raise beside the first.
+                val there = targets.mapNotNull { (_, i) -> find(i.exerciseId)?.pattern }.toSet()
+                val iso2 = iso.filter { id -> find(id)?.pattern !in there }
+                if (need > 1 && iso2.isNotEmpty()) {
+                    val iso = iso2
                     val day = if (m in LEGS) legDay() else upperDayFor(cur(), find, input.timeRatio)
                     if (day != null && iso.isNotEmpty()) changes += Change(
                         "add:${m.name}:${iso.first()}", Kind.ADD, day.templateId, day.title, null, null, iso, null, 3, if (m in LEGS) 8 to 12 else 10 to 15, 75,
-                        "${m.ru}: ${setsText(v)} в неделю — меньше нормы для твоей цели ($low–$high), и прямой работы на неё почти нет.",
+                        "${m.ru}: ${setsText(v0)} в неделю — меньше нормы для твоей цели ($low–$high), и прямой работы на эту мышцу почти нет.",
                         2,
                     )
                 }
-            } else if (v > high + 2) {
+            } else if (v0 > high + 2 && v > high + 2) {
                 val target = cur().flatMap { d -> d.items.map { d to it } }
                     .filter { (d, i) -> i.role == SlotRole.ACCESSORY && find(i.exerciseId)?.primary?.contains(m) == true && i.sets > 2 && !touched(d, i) }
                     .maxByOrNull { (_, i) -> i.sets }
@@ -358,7 +385,7 @@ object PlanAdvisor {
                     val (d, i) = target
                     changes += Change(
                         "less:${m.name}:${i.planId}", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, i.sets - 1, null, null,
-                        "${m.ru}: ${setsText(v)} в неделю — больше нормы ($low–$high)" + (if (runner && m in LEGS) ", а ногам ещё бегать" else "") +
+                        "${m.ru}: ${setsText(v0)} в неделю — больше нормы ($low–$high)" + (if (runner && m in LEGS) ", а ногам ещё бегать" else "") +
                             ": лишние подходы уже не растят, а утомляют.",
                         3, added = i.added,
                     )
@@ -370,25 +397,30 @@ object PlanAdvisor {
         val now = cur()
         val push = now.sumOf { d -> d.items.sumOf { i -> if (find(i.exerciseId)?.pattern in PUSH) i.sets * d.times else 0 } }
         val pull = now.sumOf { d -> d.items.sumOf { i -> if (find(i.exerciseId)?.pattern in PULL) i.sets * d.times else 0 } }
+        // As the plan is, and with the pulls proposed above if there are any.
+        val push0 = days.sumOf { d -> d.items.sumOf { i -> if (find(i.exerciseId)?.pattern in PUSH) i.sets * d.times else 0 } }
+        val pulls0 = days.sumOf { d -> d.items.sumOf { i -> if (find(i.exerciseId)?.pattern in PULL) i.sets * d.times else 0 } }
         if (push > 0 && pull < push * 0.75) {
-            // As the plan is, and with the pulls proposed above if there are any.
-            val pulls0 = days.sumOf { d -> d.items.sumOf { i -> if (find(i.exerciseId)?.pattern in PULL) i.sets * d.times else 0 } }
             val pulls = if (pulls0 == pull) "$pull" else "$pulls0 (с предложенными выше — $pull)"
             if (!has { it.pattern == Pattern.REAR_DELT }) upperDayFor(now, find, input.timeRatio)?.let { d ->
                 changes += Change(
                     "add:pull", Kind.ADD, d.templateId, d.title, null, null, listOf("face_pull", "reverse_fly", "reverse_pec_deck").filter(usable), null, 3, 12 to 20, 60,
-                    "Жимов в неделе ${Ru.sets(push)}, тяг — $pulls: плечи тянет вперёд. Тяга к лицу — противовес жимам для задней дельты " +
+                    "Жимов в неделе ${Ru.sets(push0)}, тяг — $pulls: плечи тянет вперёд. Тяга к лицу — противовес жимам для задней дельты " +
                         "и лопаток, плечевой сустав скажет спасибо.",
                     3,
                 )
             }
-        } else if (push > 0) fine += "Жимы и тяги в балансе: $push и $pull ${Ru.plural(pull, "подход", "подхода", "подходов")} в неделю."
+        } else if (push0 > 0 && pulls0 >= push0 * 0.75) {
+            fine += "Жимы и тяги в балансе: $push0 и $pulls0 ${Ru.plural(pulls0, "подход", "подхода", "подходов")} в неделю."
+        }
 
         // 6. Time and recovery.
         val sm = input.sessionMinutes
-        for (d in cur()) {
-            val min = minutes(d, input.timeRatio)
+        for (d0 in days) {
+            // The plan as it is: a day over the time only by what is proposed here says so on that proposal instead.
+            val min = minutes(d0, input.timeRatio)
             if (sm == null || min <= sm + 10) continue
+            val d = cur().first { it.templateId == d0.templateId }
             // As the plan fits a session into the time itself: an accessory set first, then one of a secondary lift.
             val free = d.items.filter { it.sets > 2 && !touched(d, it) && find(it.exerciseId)?.load != LoadKind.TIMED }
             val last = free.filter { it.role == SlotRole.ACCESSORY }.maxByOrNull { it.sets }
@@ -397,7 +429,7 @@ object PlanAdvisor {
             changes += Change(
                 "time:${d.templateId}:${last.planId}", Kind.SETS, d.templateId, d.title, last.planId, last.exerciseId, listOf(last.exerciseId), last.sets, last.sets - 1, null, null,
                 "«${d.title}» выходит примерно на $min мин при твоих $sm. Подход ${if (last.role == SlotRole.ACCESSORY) "подсобного" else "второго по важности упражнения"} " +
-                    "экономит около ${Ru.minutes(saves)} и почти ничего не стоит: главное остаётся.",
+                    "экономит около $saves мин и почти ничего не стоит: главное остаётся.",
                 3, added = last.added,
             )
         }
@@ -412,14 +444,20 @@ object PlanAdvisor {
             )
         }
 
-        val final = changes.filter { it.options.isNotEmpty() }.distinctBy { it.id }.sortedBy { it.priority }
+        val final = changes.filter { it.options.isNotEmpty() }.distinctBy { it.id }.sortedBy { it.priority }.map { c ->
+            // An addition that makes its day longer than the time there is: said on it.
+            if (c.kind != Kind.ADD || sm == null) return@map c
+            val before = days.first { it.templateId == c.templateId }
+            val with = minutes(apply(listOf(before), listOf(c)).first(), input.timeRatio)
+            if (with > sm + 10) c.copy(why = c.why + " С ним «${before.title}» — около $with мин при твоих $sm.") else c
+        }
         val a = volume(days, find)
         val b = volume(apply(days, final), find)
         val table = MUSCLES.map { m -> ranges.getValue(m).let { (lo, hi) -> Volume(m, a[m] ?: 0.0, b[m] ?: 0.0, lo, hi) } }
         // What is right already.
-        val inRange = table.filter { it.low > 0 && it.now >= it.low - 0.5 && it.now <= it.high + 2 }.map { it.muscle.ru.lowercase() }
+        val inRange = table.filter { it.low > 0 && it.now >= it.low - 1 && it.now <= it.high + 2 }.map { it.muscle.ru.lowercase() }
         if (inRange.isNotEmpty()) fine.add(0, "Подходов в неделю в норме: ${inRange.joinToString(", ")}.")
-        if (input.stalled.isNotEmpty() && final.none { it.id.startsWith("stall:") }) fine += "Застоя нет: основные упражнения растут."
+        if (input.stalled.isNotEmpty() && stuck.isEmpty()) fine += "Застоя нет: основные упражнения растут."
         if (sm != null) days.maxByOrNull { minutes(it, input.timeRatio) }?.let { d ->
             val min = minutes(d, input.timeRatio)
             if (min <= sm + 10) fine += "По времени укладываешься: самая длинная — «${d.title}», около $min мин при твоих $sm."
@@ -432,8 +470,11 @@ object PlanAdvisor {
             else -> "$n ${Ru.plural(n, "предложение", "предложения", "предложений")} — на выбор. План и так рабочий, это доводка: " +
                 "меняется только то, что ты отметишь."
         }
-        return Advice(days, final, table, fine, ranges, summary)
+        return Advice(days, final, table, fine, ranges, summary, warning)
     }
+
+    /** What the advisor itself proposes to protect (a runner's hamstrings and calves): never the one swapped away for sets elsewhere. */
+    private val PROTECTIVE = setOf("nordic_curl", "glute_ham_raise", "seated_calf", "face_pull")
 
     /** One-leg lifts, in order of preference for a runner. */
     private val ONE_LEG = listOf("bulgarian", "split_squat", "step_up", "reverse_lunge")

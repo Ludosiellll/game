@@ -117,15 +117,15 @@ class IdealPlanTest {
         assertEquals(s, repo.store.settingsNow())
     }
 
-    /** The bench without a new best for six weeks: another variation of it, first on the list. */
+    /** The bench without a new best for five weeks (a median of three sessions, so one odd session decides nothing): another variation, first. */
     @Test fun aLiftWithoutANewBestForWeeksIsSeenFromTheHistory() = runBlocking<Unit> {
         val repo = repo("ideal-stall")
         val program = repo.store.programNow()!!
         val t = program.templates.first { it.id == "upper_a" }
-        for (week in 0..6) {
-            val day = monday.minusWeeks(6L - week).plusDays(1)
+        for (week in 0..7) {
+            val day = monday.minusWeeks(7L - week).plusDays(1)
             val at = day.atTime(18, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            val e1rm = if (week == 0) 100.0 else 99.5
+            val e1rm = if (week < 3) 100.0 else 99.5
             val summary = LiftSummary(listOf(SlotReport("bench", "Жим штанги лёжа", Outcome.Hold(80.0, 6, HoldReason.NEAR_MISS), e1rm, false)), 0.0, 3, 60, 300.0)
             db.workouts().insert(
                 WorkoutEntity(epochDay = day.toEpochDay(), kind = Kind.LIFT, templateId = t.id, title = t.title, startedAt = at, finishedAt = at,
@@ -136,6 +136,34 @@ class IdealPlanTest {
         val first = repo.planAdvice()!!.changes.first()
         assertEquals("stall:upper_a:bench", first.id)
         assertEquals("pause_bench", first.to)
+        assertTrue("5 недель" in first.why, first.why)
+    }
+
+    /**
+     * A swap made today the way the plan screen makes it (the leg extension in the Bulgarian's place, done with an added
+     * exercise's numbers): taking the one-leg lift back resets them to the plan's — and «С выбранным» shows exactly that.
+     */
+    @Test fun thePreviewIsWhatTakingTheChangesDoes() = runBlocking<Unit> {
+        val repo = repo("ideal-preview")
+        repo.store.editSettings { it.copy(swaps = it.swaps - "bulgarian") }
+        repo.setSwap("bulgarian", "leg_ext")
+        repo.setPlanSets("bulgarian", 4, 3)
+        assertEquals(4, repo.liftPlan("lower_a", monday.plusDays(5)).items.first { it.exerciseId == "leg_ext" }.slot.sets)
+        val a = repo.planAdvice()!!
+        val chosen = listOf(a.changes.first { it.id == "oneleg:bulgarian" }.pick("split_squat"), a.changes.first { it.id == "add:nordic" })
+        val preview = repo.planPreview(chosen)
+        repo.applyPlanAdvice(chosen)
+        assertEquals(preview, repo.planAdvice()!!.days)
+        val split = preview.first { it.templateId == "lower_a" }.items.first { it.exerciseId == "split_squat" }
+        assertEquals(Triple(3, 8, 10), Triple(split.sets, split.repMin, split.repMax), "the plan's own numbers, his 4 sets of the extension do not carry over")
+    }
+
+    @Test fun nothingNewForHisLegsBeforeTheRace() = runBlocking<Unit> {
+        val repo = repo("ideal-race")
+        repo.updateProfile(repo.store.profileNow()!!.copy(runGoal = RunGoal(1500, 330, monday.plusDays(16).toEpochDay())))
+        val a = repo.planAdvice()!!
+        assertTrue(a.changes.none { it.templateId == "lower_a" }, a.changes.map { it.id }.toString())
+        assertTrue(a.fine.any { "До забега" in it }, a.fine.toString())
     }
 
     @Test fun theScreenShowsWhatAndWhyAndTakesOnlyTheTickedChange() {

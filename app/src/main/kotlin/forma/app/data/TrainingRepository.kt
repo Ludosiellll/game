@@ -386,6 +386,99 @@ class TrainingRepository(
         /** Where the sets, reps and rest of an exercise added to day [templateId] for good are kept. */
         fun addedKey(templateId: String, exerciseId: String) = "$templateId:$exerciseId"
 
+        /** [s] with [exerciseId] added to template [templateId] for good; null when it is there already. */
+        internal fun withAdded(s: Settings, templateId: String, exerciseId: String): Settings? {
+            val list = s.added[templateId].orEmpty()
+            if (exerciseId in list) return null
+            return s.copy(added = s.added + (templateId to list + exerciseId))
+        }
+
+        /** [s] with [newId] in the place of [oldId] among the exercises added to [templateId]; its numbers go with the place. */
+        internal fun withReplacedAdded(s: Settings, templateId: String, oldId: String, newId: String): Settings {
+            val list = s.added[templateId].orEmpty()
+            if (oldId !in list || newId == oldId) return s
+            val next = if (newId in list) list - oldId else list.map { if (it == oldId) newId else it }
+            // The sets, reps and rest chosen for this place go to the exercise put in it.
+            val from = addedKey(templateId, oldId)
+            val to = addedKey(templateId, newId)
+            fun <V> Map<String, V>.move(): Map<String, V> = this[from]?.let { (this - from) + (to to it) } ?: this
+            return s.copy(added = s.added + (templateId to next), sets = s.sets.move(), reps = s.reps.move(), rest = s.rest.move())
+        }
+
+        /** [s] with sets, reps and rest of [planId] for good; values equal to the plan's own ([planned]) clear the override. */
+        internal fun withTune(s: Settings, planId: String, planned: SlotSpec, sets: Int, reps: Pair<Int, Int>, restSec: Int): Settings {
+            val n = sets.coerceIn(1, MAX_SETS)
+            val r = restSec.coerceIn(MIN_REST, MAX_REST)
+            val range = reps.first.coerceIn(1, 100).let { lo -> lo to reps.second.coerceIn(lo, 100) }
+            return s.copy(
+                sets = if (n == planned.sets) s.sets - planId else s.sets + (planId to n),
+                reps = if (range == planned.repMin to planned.repMax) s.reps - planId else s.reps + (planId to listOf(range.first, range.second)),
+                rest = if (r == planned.restSec) s.rest - planId else s.rest + (planId to r),
+            )
+        }
+
+        /**
+         * [s] with [newId] in the place of plan exercise [planId] ([slot]: its place in the plan); the same id or null brings
+         * the plan's own back. Sets, reps and rest chosen for a heavy lift do not carry over to a single-joint exercise in
+         * its place (and back).
+         */
+        internal fun withSwap(s: Settings, slot: SlotSpec?, planId: String, newId: String?): Settings {
+            if ((s.swaps[planId] ?: planId) == (newId ?: planId)) return s
+            val swaps = if (newId == null || newId == planId) s.swaps - planId else s.swaps + (planId to newId)
+            val wasDemoted = planId in s.demoted
+            val nowDemoted = slot != null && swaps[planId]?.let { demotes(slot, it) } == true
+            val demoted = if (nowDemoted) s.demoted + planId else s.demoted - planId
+            return if (wasDemoted == nowDemoted) s.copy(swaps = swaps, demoted = demoted)
+            else s.copy(swaps = swaps, demoted = demoted, sets = s.sets - planId, reps = s.reps - planId, rest = s.rest - planId)
+        }
+
+        /** [s] with [sets] of [planId] for good; null or the plan's own number ([planned]) clears the override. */
+        internal fun withSets(s: Settings, planId: String, sets: Int?, planned: Int): Settings {
+            val n = sets?.coerceIn(1, MAX_SETS)
+            return s.copy(sets = if (n == null || n == planned) s.sets - planId else s.sets + (planId to n))
+        }
+
+        /**
+         * [settings] with the «Идеальный план» changes [chosen] taken, each with the option picked — the same edits as the
+         * plan screen makes. Sets of a plan exercise on several days with different planned numbers stay set on all of them.
+         */
+        fun advised(settings: Settings, program: Program, chosen: List<forma.core.plan.PlanAdvisor.Change>): Settings {
+            var s = settings
+            val specs = program.templates.flatMap { it.slots }
+            for (c in chosen) {
+                val to = c.to ?: continue
+                val planId = c.planId
+                s = when (c.kind) {
+                    forma.core.plan.PlanAdvisor.Kind.SWAP -> when {
+                        planId == null -> s
+                        c.added -> withReplacedAdded(s, c.templateId, planId, to)
+                        else -> withSwap(s, specs.firstOrNull { it.exerciseId == planId }, planId, to)
+                    }
+                    forma.core.plan.PlanAdvisor.Kind.ADD -> {
+                        val added = withAdded(s, c.templateId, to)
+                        val planned = addedSpec(to)
+                        when {
+                            added == null -> s
+                            c.setsTo == null && c.repsTo == null && c.restSec == null -> added
+                            else -> withTune(
+                                added, addedKey(c.templateId, to), planned, c.setsTo ?: planned.sets,
+                                c.repsTo ?: (planned.repMin to planned.repMax), c.restSec ?: planned.restSec,
+                            )
+                        }
+                    }
+                    forma.core.plan.PlanAdvisor.Kind.SETS -> when {
+                        planId == null || c.setsTo == null -> s
+                        c.added -> withSets(s, addedKey(c.templateId, planId), c.setsTo, addedSpec(planId).sets)
+                        else -> {
+                            val planned = specs.filter { it.exerciseId == planId }.map { plannedFor(it, s).sets }.distinct()
+                            withSets(s, planId, c.setsTo, planned.singleOrNull() ?: -1)
+                        }
+                    }
+                }
+            }
+            return s
+        }
+
         /** Sets, reps and rest of an exercise added to a session: 3 sets in a range that suits it. */
         internal fun addedSpec(exerciseId: String): SlotSpec {
             val ex = Catalog[exerciseId]
@@ -722,10 +815,8 @@ class TrainingRepository(
 
     /** Adds [exerciseId] to every session of template [templateId] from now on, after the plan's own exercises. */
     suspend fun addToPlan(templateId: String, exerciseId: String): Boolean {
-        val s = store.settingsNow()
-        val list = s.added[templateId].orEmpty()
-        if (exerciseId in list) return false
-        store.setSettings(s.copy(added = s.added + (templateId to list + exerciseId)))
+        val s = withAdded(store.settingsNow(), templateId, exerciseId) ?: return false
+        store.setSettings(s)
         onChange()
         return true
     }
@@ -747,14 +838,9 @@ class TrainingRepository(
     /** Puts [newId] in place of [oldId] among the exercises added for good to template [templateId]. */
     suspend fun replaceAdded(templateId: String, oldId: String, newId: String) {
         val s = store.settingsNow()
-        val list = s.added[templateId].orEmpty()
-        if (oldId !in list || newId == oldId) return
-        val next = if (newId in list) list - oldId else list.map { if (it == oldId) newId else it }
-        // The sets, reps and rest chosen for this place go to the exercise put in it.
-        val from = addedKey(templateId, oldId)
-        val to = addedKey(templateId, newId)
-        fun <V> Map<String, V>.move(): Map<String, V> = this[from]?.let { (this - from) + (to to it) } ?: this
-        store.setSettings(s.copy(added = s.added + (templateId to next), sets = s.sets.move(), reps = s.reps.move(), rest = s.rest.move()))
+        val next = withReplacedAdded(s, templateId, oldId, newId)
+        if (next == s) return
+        store.setSettings(next)
         onChange()
     }
 
@@ -764,17 +850,7 @@ class TrainingRepository(
      * plan comes through.
      */
     suspend fun tunePlan(planId: String, planned: SlotSpec, sets: Int, reps: Pair<Int, Int>, restSec: Int) {
-        val s = store.settingsNow()
-        val n = sets.coerceIn(1, MAX_SETS)
-        val r = restSec.coerceIn(MIN_REST, MAX_REST)
-        val range = reps.first.coerceIn(1, 100).let { lo -> lo to reps.second.coerceIn(lo, 100) }
-        store.setSettings(
-            s.copy(
-                sets = if (n == planned.sets) s.sets - planId else s.sets + (planId to n),
-                reps = if (range == planned.repMin to planned.repMax) s.reps - planId else s.reps + (planId to listOf(range.first, range.second)),
-                rest = if (r == planned.restSec) s.rest - planId else s.rest + (planId to r),
-            ),
-        )
+        store.setSettings(withTune(store.settingsNow(), planId, planned, sets, reps, restSec))
         onChange()
     }
 
@@ -792,23 +868,13 @@ class TrainingRepository(
         // The same exercise picked again changes nothing (a swap made before the rule below keeps its numbers).
         if ((store.settingsNow().swaps[planId] ?: planId) == (newId ?: planId)) return
         val slot = store.programNow()?.templates?.flatMap { it.slots }?.firstOrNull { it.exerciseId == planId }
-        store.editSettings { s ->
-            val swaps = if (newId == null || newId == planId) s.swaps - planId else s.swaps + (planId to newId)
-            // Sets, reps and rest chosen for a heavy lift do not carry over to a single-joint exercise in its place (and back).
-            val wasDemoted = planId in s.demoted
-            val nowDemoted = slot != null && swaps[planId]?.let { demotes(slot, it) } == true
-            val demoted = if (nowDemoted) s.demoted + planId else s.demoted - planId
-            if (wasDemoted == nowDemoted) s.copy(swaps = swaps, demoted = demoted)
-            else s.copy(swaps = swaps, demoted = demoted, sets = s.sets - planId, reps = s.reps - planId, rest = s.rest - planId)
-        }
+        store.editSettings { s -> withSwap(s, slot, planId, newId) }
         onChange()
     }
 
     /** Sets of [planId] in every session from now on; null (or the plan's own number) brings the plan's back. */
     suspend fun setPlanSets(planId: String, sets: Int?, planned: Int) {
-        val s = store.settingsNow()
-        val n = sets?.coerceIn(1, MAX_SETS)
-        store.setSettings(s.copy(sets = if (n == null || n == planned) s.sets - planId else s.sets + (planId to n)))
+        store.setSettings(withSets(store.settingsNow(), planId, sets, planned))
         onChange()
     }
 
@@ -1275,8 +1341,7 @@ class TrainingRepository(
         val settings = store.settingsNow()
         val today = today()
         val sessions = program.week.days.flatMap { it.sessions }
-        val times = sessions.filter { it.kind == SessionKind.LIFT }.groupingBy { it.templateId }.eachCount()
-        val days = program.templates.filter { (times[it.id] ?: 0) > 0 }.map { t -> forma.core.plan.PlanAdvisor.Day(t.id, t.title, adviceItems(t, settings), times.getValue(t.id)) }
+        val days = adviceDays(program, settings)
         // Tired often: "so-so" on 3 days of the last three weeks, below the rest line now, or a lighter week the app set lately.
         val lows = (1..21).count { settings.feelOn(today.minusDays(it.toLong())) == Feel.LOW }
         val zone = loadStoryNow(today)?.takeIf { it.history }?.zone
@@ -1289,6 +1354,12 @@ class TrainingRepository(
                 daysToRace = daysToRace(today), find = Catalog::find,
             ),
         )
+    }
+
+    /** The lifting days of the week as [settings] make them, each with how many times a week it comes. */
+    private fun adviceDays(program: Program, settings: Settings): List<forma.core.plan.PlanAdvisor.Day> {
+        val times = program.week.days.flatMap { it.sessions }.filter { it.kind == SessionKind.LIFT }.groupingBy { it.templateId }.eachCount()
+        return program.templates.filter { (times[it.id] ?: 0) > 0 }.map { t -> forma.core.plan.PlanAdvisor.Day(t.id, t.title, adviceItems(t, settings), times.getValue(t.id)) }
     }
 
     /** The exercises of [t] as every session has them now, with the numbers set for good (no lighter week, no progress). */
@@ -1307,23 +1378,31 @@ class TrainingRepository(
     }
 
     /**
-     * Exercise → weeks from its last new best estimate to its last session, for the exercises done 4+ times over 5+
-     * weeks of the last 12 and done in the last two (a lift left long ago or just begun says nothing yet).
+     * Exercise → weeks from its last new best to its last session, for exercises with weights done 5+ times over 5+ weeks
+     * of the last 12 and done in the last two (a lift left long ago or just begun says nothing yet). The best is of the
+     * median of three sessions in a row: one session rated too light or too heavy neither makes nor hides a stall; first
+     * sessions (the weight found) do not count; body-weight lifts are left out (the body's own weight moves their estimate).
      */
     private suspend fun weeksWithoutBest(today: LocalDate): Map<String, Int> {
         val from = today.toEpochDay() - 84
         val by = mutableMapOf<String, MutableList<Pair<Long, Double>>>()
         for (w in db.workouts().allDone().filter { it.kind == Kind.LIFT && it.epochDay >= from }) {
             val s = liftSummaryOf(w) ?: continue
-            for (r in s.reports) r.e1rm?.let { by.getOrPut(r.exerciseId) { mutableListOf() } += w.epochDay to it }
+            for (r in s.reports) {
+                if (r.outcome is Outcome.Calibrated || Catalog.find(r.exerciseId)?.load != LoadKind.EXTERNAL) continue
+                r.e1rm?.let { by.getOrPut(r.exerciseId) { mutableListOf() } += w.epochDay to it }
+            }
         }
         return by.mapNotNull { (id, xs) ->
             val sorted = xs.sortedBy { it.first }
             val last = sorted.last().first
-            if (sorted.size < 4 || last - sorted.first().first < 35 || today.toEpochDay() - last > 14) return@mapNotNull null
+            if (sorted.size < 5 || last - sorted.first().first < 35 || today.toEpochDay() - last > 14) return@mapNotNull null
             var best = 0.0
-            var bestDay = sorted.first().first
-            for ((d, e) in sorted) if (e > best * 1.005) { best = e; bestDay = d }
+            var bestDay = sorted[2].first
+            for (k in 2 until sorted.size) {
+                val m = listOf(sorted[k - 2].second, sorted[k - 1].second, sorted[k].second).sorted()[1]
+                if (m > best * 1.005) { best = m; bestDay = sorted[k].first }
+            }
             id to ((last - bestDay) / 7).toInt()
         }.toMap()
     }
@@ -1334,33 +1413,19 @@ class TrainingRepository(
      */
     suspend fun applyPlanAdvice(chosen: List<forma.core.plan.PlanAdvisor.Change>) {
         val program = store.programNow() ?: return
-        for (c in chosen) {
-            val to = c.to ?: continue
-            val planId = c.planId
-            when (c.kind) {
-                forma.core.plan.PlanAdvisor.Kind.SWAP -> when {
-                    planId == null -> Unit
-                    c.added -> replaceAdded(c.templateId, planId, to)
-                    else -> setSwap(planId, to)
-                }
-                forma.core.plan.PlanAdvisor.Kind.ADD -> {
-                    if (!addToPlan(c.templateId, to)) continue
-                    val planned = addedSpec(to)
-                    if (c.setsTo != null || c.repsTo != null || c.restSec != null) tunePlan(
-                        addedKey(c.templateId, to), planned, c.setsTo ?: planned.sets,
-                        c.repsTo ?: (planned.repMin to planned.repMax), c.restSec ?: planned.restSec,
-                    )
-                }
-                forma.core.plan.PlanAdvisor.Kind.SETS -> {
-                    if (planId == null || c.setsTo == null) continue
-                    if (c.added) setPlanSets(addedKey(c.templateId, planId), c.setsTo, addedSpec(planId).sets)
-                    else {
-                        val spec = program.templates.flatMap { it.slots }.firstOrNull { it.exerciseId == planId } ?: continue
-                        setPlanSets(planId, c.setsTo, plannedFor(spec, store.settingsNow()).sets)
-                    }
-                }
-            }
-        }
+        if (chosen.isEmpty()) return
+        store.editSettings { advised(it, program, chosen) }
+        onChange()
+    }
+
+    /**
+     * The gym week as it would be with [chosen] taken — built by the same edits and the same reading of the plan as
+     * [applyPlanAdvice] and [planAdvice], so what «С выбранным» shows is what taking them does.
+     */
+    suspend fun planPreview(chosen: List<forma.core.plan.PlanAdvisor.Change>): List<forma.core.plan.PlanAdvisor.Day> {
+        val program = store.programNow() ?: return emptyList()
+        val settings = advised(store.settingsNow(), program, chosen)
+        return adviceDays(program, settings)
     }
 
     /**
