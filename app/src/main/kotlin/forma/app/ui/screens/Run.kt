@@ -330,7 +330,10 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
             Hairline()
             ToggleRow("Голосовые подсказки", if (track) "Начало отрезков, время каждого круга, финиш" else "Начало отрезков, километры, финиш", voice) { voice = it }
         }
+        // On Xiaomi the autostart is apart from the battery: without it the system does not bring a closed run back.
+        var autostartHidden by remember { mutableStateOf(autostartDone(context)) }
         if (!batteryFree) BatteryCard()
+        else if (xiaomi() && !autostartHidden) AutostartRow { autostartHidden = true; hideAutostart(context) }
         PrimaryButton("Старт", {
             if (!ready || targetBad) return@PrimaryButton
             if (openLift != null && RunSession.tracker == null) askLift = true else go()
@@ -367,6 +370,29 @@ internal fun batteryUnrestricted(context: android.content.Context): Boolean =
 
 private val XIAOMI = setOf("xiaomi", "redmi", "poco")
 
+/** A Xiaomi, Redmi or POCO phone (MIUI, HyperOS). */
+private fun xiaomi() = Build.MANUFACTURER.lowercase() in XIAOMI || Build.BRAND.lowercase() in XIAOMI
+
+/** The first of [intents] the phone opens, else the app's settings page. */
+private fun openFirst(context: android.content.Context, vararg intents: android.content.Intent) {
+    val all = intents.toList() + android.content.Intent(
+        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null),
+    )
+    all.firstOrNull { runCatching { context.startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess }
+}
+
+private fun autostartIntent() = android.content.Intent().setClassName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+
+/** The runner said autostart is on (the phone does not tell): the reminder is hidden on this phone for good. */
+private fun autostartDone(context: android.content.Context) =
+    context.getSharedPreferences(RUN_PREFS, android.content.Context.MODE_PRIVATE).getBoolean("autostartDone", false)
+
+private fun hideAutostart(context: android.content.Context) {
+    context.getSharedPreferences(RUN_PREFS, android.content.Context.MODE_PRIVATE).edit().putBoolean("autostartDone", true).apply()
+}
+
+private const val RUN_PREFS = "forma_run"
+
 /**
  * Battery saving still on for the app: the system's own request to switch it off, and on Xiaomi (MIUI, HyperOS) the
  * autostart list, which kills a run with the screen off just as surely. Each falls back to the app's settings page.
@@ -375,13 +401,8 @@ private val XIAOMI = setOf("xiaomi", "redmi", "poco")
 @Composable
 private fun BatteryCard() {
     val context = LocalContext.current
-    fun open(vararg intents: android.content.Intent) {
-        val all = intents.toList() + android.content.Intent(
-            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null),
-        )
-        all.firstOrNull { runCatching { context.startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess }
-    }
-    val xiaomi = Build.MANUFACTURER.lowercase() in XIAOMI || Build.BRAND.lowercase() in XIAOMI
+    fun open(vararg intents: android.content.Intent) = openFirst(context, *intents)
+    val xiaomi = xiaomi()
     FCard(gap = 8.dp) {
         Text(
             "Телефон может усыпить таймер с выключенным экраном" + (if (xiaomi) " — на Xiaomi особенно" else "") +
@@ -395,11 +416,23 @@ private fun BatteryCard() {
                     android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
                 )
             }, Modifier.weight(1f))
-            GhostButton(if (xiaomi) "Автозапуск" else "Настройки", {
-                open(
-                    android.content.Intent().setClassName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
-                )
-            }, Modifier.weight(1f))
+            GhostButton(if (xiaomi) "Автозапуск" else "Настройки", { open(autostartIntent()) }, Modifier.weight(1f))
+        }
+    }
+}
+
+/**
+ * Xiaomi with the battery saving off already: the autostart is a list of its own, and it is what lets the system bring a
+ * run back after it closed the app. A line and two small buttons; "already on" hides it.
+ */
+@Composable
+private fun AutostartRow(onDone: () -> Unit) {
+    val context = LocalContext.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Включи «Форме» автозапуск: без него Xiaomi не вернёт пробежку, если закроет приложение.", style = T.secondary(13.sp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GhostButton("Автозапуск", { openFirst(context, autostartIntent()) }, Modifier.weight(1f), height = 40.dp)
+            GhostButton("Уже включён", onDone, Modifier.weight(1f), color = F.c.text2, height = 40.dp)
         }
     }
 }
@@ -475,7 +508,8 @@ fun RunActiveScreen() {
     val context = LocalContext.current
     val ui by RunSession.ui.collectAsState()
     val settings = LocalSettings.current
-    var locked by remember { mutableStateOf(false) }
+    // Kept through a turn of the phone: a run in the pocket must not come back unlocked.
+    var locked by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val view = LocalView.current
     DisposableEffect(settings.keepScreenOn) {
         view.keepScreenOn = settings.keepScreenOn
@@ -677,6 +711,8 @@ fun RunActiveScreen() {
                     style = T.secondary(14.sp),
                 )
             }
+            // The key reaches the app only while its screen is on (see LapKey): said, not found out on the line.
+            if (lapM != null && !finished) Text("Круг — кнопкой громкости вниз, пока экран включён.", style = T.secondary(13.sp))
         }
 
         Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -164,6 +164,37 @@ class RunManualUiTest {
         assertEquals(5400.0, run.distanceM!!, 1e-6)
     }
 
+    @Test fun lapsTypedGiveTheDistanceAndAWalkedLapIsALap() {
+        val repo = repo("ui-manual-laps")
+        val easy = runBlocking { repo.runFor(SessionKind.RUN_EASY, repo.today()) }
+        assertEquals(230, easy.lapMeters)
+        show(repo, Navigator(Screen.Today)) { RunManualScreen(easy) }
+        // A lap walked: over 18 minutes a km.
+        type("Круги по порядку", "80 82 250 81")
+        assertTrue(compose.onAllNodesWithText("Не похоже на времена кругов", substring = true).fetchSemanticsNodes().isEmpty())
+        type("Время пробежки", "8:13")
+        compose.onNodeWithText("4").performScrollTo().performClick()
+        settle()
+        compose.onNodeWithText("Сохранить").performScrollTo().performClick()
+        settle()
+        val run = runBlocking { repo.db.runs().get(runs(repo).single().id)!! }
+        assertEquals(4 * 230.0, run.distanceM!!, 1e-6)
+    }
+
+    @Test fun aShortEasyRunSaysTheUsualLengthStays() {
+        val repo = repo("ui-manual-short")
+        val easy = runBlocking { repo.runFor(SessionKind.RUN_EASY, repo.today()) }
+        val short = easy.copy(segments = easy.segments.map { if (it.kind == forma.core.run.SegmentKind.RUN) it.copy(seconds = 10 * 60) else it })
+        show(repo, Navigator(Screen.Today)) { RunManualScreen(short) }
+        type("Время пробежки", "10:00")
+        compose.onNodeWithText("4").performScrollTo().performClick()
+        settle()
+        compose.onNodeWithText("Сохранить").performScrollTo().performClick()
+        settle()
+        assertTrue(compose.onAllNodesWithText("Короткая пробежка длительность не меняет", substring = true).fetchSemanticsNodes().isNotEmpty())
+        assertTrue(compose.onAllNodesWithText("Длительность пока прежняя", substring = true).fetchSemanticsNodes().isEmpty())
+    }
+
     @Test fun aTrialOnTheWatch() {
         val repo = repo("ui-manual-trial")
         val w: RunWorkout = runBlocking { RunPlan.goalTest(repo.store.runStateNow().copy(vdot = 46.0), RunGoal(1500, 335), 230) }

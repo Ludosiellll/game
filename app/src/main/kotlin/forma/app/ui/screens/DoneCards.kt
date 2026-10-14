@@ -110,10 +110,15 @@ fun DoneRunDetails(w: WorkoutEntity) {
     GhostButton("Как прошло — разбор", { nav.push(Screen.HistoryItem(w.id)) }, Modifier.fillMaxWidth(), height = 48.dp)
 }
 
-/** "4,00 км · 25:12 · круг 52,3 с": what a run came to; [lapM] the stadium when the run itself does not say. */
+/**
+ * "4,00 км · 25:12 · круг 52,3 с": what a run came to. A session of reps shows the reps' lap (the whole session's, with
+ * the warm-up and the rests in it, is far slower); a road run its pace a km. [lapM]: the stadium when the run's plan
+ * cannot be read.
+ */
 fun runResult(r: RunEntity, lapM: Int?): String {
-    val lap = runCatching { AppJson.decodeFromString(RunWorkout.serializer(), r.planJson) }.getOrNull()?.lapMeters ?: lapM
-    val pace = r.avgPace?.takeIf { it > 0 }
+    val plan = runCatching { AppJson.decodeFromString(RunWorkout.serializer(), r.planJson) }.getOrNull()
+    val lap = if (plan != null) plan.lapMeters else lapM
+    val pace = (if (plan != null && plan.reps > 0) r.workPace else r.avgPace)?.takeIf { it > 0 }
     return listOfNotNull(
         r.distanceM?.takeIf { it > 0 }?.let { Ru.distance(it) },
         r.movingSec.takeIf { it > 0 }?.let { Ru.clock(it) },
@@ -131,15 +136,16 @@ fun OffPlanCard(w: WorkoutEntity, forDay: LocalDate?) {
     FCard(gap = 10.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(if (lift) Ic.dumbbell else Ic.run, null, tint = if (lift) F.c.strength else F.c.endurance, modifier = Modifier.size(18.dp))
-            SectionLabel("  Сделано вне плана", color = if (lift) F.c.strength else F.c.endurance)
+            // In place of a missed one, or beyond the plan: the header says which, the line under the title that it is done.
+            SectionLabel(
+                "  " + if (forDay != null) "Вместо пропущенной ${onDayShort(forDay.dayOfWeek)}" else "Вне плана",
+                color = if (lift) F.c.strength else F.c.endurance,
+            )
         }
         Text(w.title, style = T.title(22.sp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
-            Text(
-                if (forDay != null) "Сделано за пропущенную ${onDayFull(forDay.dayOfWeek)}" else "Сделано",
-                style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good),
-            )
+            Text("Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
         }
         if (lift) DoneLiftDetails(w, max = 3) else DoneRunDetails(w)
     }

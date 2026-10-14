@@ -48,6 +48,8 @@ object RunAlerts {
             .setCategory(NotificationCompat.CATEGORY_WORKOUT)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
+            // Posted again over itself (the service, then the check after the start): one sound, not two.
+            .setOnlyAlertOnce(true)
             .setContentIntent(open)
             .build()
         runCatching { nm.notify(INTERRUPTED_ID, n) }
@@ -60,7 +62,7 @@ object RunAlerts {
     /**
      * At the start of the process: a run that was going when the app was closed, and a few seconds later still not
      * carried on by the service (it was not brought back, or could not go to the foreground) — the runner is told, unless
-     * the app is on the screen already (it shows the run itself).
+     * the app is on the screen already (it shows the run itself) or the service told them already.
      */
     fun checkAfterStart(ctx: Context) {
         if (!RunSession.interrupted()) return
@@ -69,8 +71,12 @@ object RunAlerts {
     }
 
     internal fun checkNow(ctx: Context) {
-        if (RunSession.interrupted() && !onScreen()) interrupted(ctx)
+        if (RunSession.interrupted() && !onScreen() && !showing(ctx)) interrupted(ctx)
     }
+
+    /** The notice is up already: the service told the runner as it gave up. */
+    private fun showing(ctx: Context): Boolean =
+        runCatching { ctx.getSystemService(NotificationManager::class.java)?.activeNotifications?.any { it.id == INTERRUPTED_ID } }.getOrNull() == true
 
     private fun onScreen(): Boolean {
         val info = ActivityManager.RunningAppProcessInfo()

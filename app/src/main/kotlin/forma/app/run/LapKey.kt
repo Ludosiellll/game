@@ -5,7 +5,7 @@ import android.view.KeyEvent
 /**
  * The volume-down key as the lap button while the run screen of a stadium run is open (over the lock screen too): found
  * by feel in a pocket, where the screen's button is not. The volume does not change then. Set by the run screen, read by
- * the activity.
+ * the activity — so only while the screen is on: with it off, keys do not reach the app (the run screen says so).
  */
 object LapKey {
     /** What a press does; null when no run screen wants it. */

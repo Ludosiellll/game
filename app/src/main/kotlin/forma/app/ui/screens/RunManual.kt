@@ -94,8 +94,13 @@ fun RunManualScreen(workout: RunWorkout) {
     val kmBad = km.isNotBlank() && (dist == null || dist > 100_000)
     val paceBad = pace != null && pace !in RunPlan.PLAUSIBLE_PACE
     val lapBad = lapsPace == null && lap.isNotBlank() && (repPace == null || repPace !in RunPlan.PLAUSIBLE_PACE)
-    // Each lap a pace someone runs (a half lap at the start of a rep as its half).
-    val lapsBad = lapM != null && (typedLaps == null || laps.any { (it.seconds / it.part) / lapM * 1000 !in RunPlan.PLAUSIBLE_PACE })
+    // Each lap a pace someone runs (a half lap at the start of a rep as its half); outside the reps a lap may be walked.
+    val lapsBad = lapM != null && (
+        typedLaps == null ||
+            laps.any { (it.seconds / it.part) / lapM * 1000 !in if (it.rep != null) RunPlan.PLAUSIBLE_PACE else WALKED_LAP }
+        )
+    // A run without reps typed lap by lap is all its laps: the distance, when not typed.
+    val lapsDist = if (lapM != null && workout.reps == 0) laps.sumOf { it.part } * lapM else 0.0
     val trialBad = trial.isNotBlank() && trialSec == null
     val testBad = testKm.isNotBlank() && (testDist == null || testDist !in 800.0..5_500.0)
     val ok = rpe > 0 && !timeBad && !kmBad && !paceBad && !lapBad && !lapsBad && !trialBad && !testBad && (!timeNeeded || timeSec != null)
@@ -112,7 +117,7 @@ fun RunManualScreen(workout: RunWorkout) {
             FCard(gap = 0.dp) {
                 s.second.outcomes.forEachIndexed { i, o ->
                     if (i > 0) Hairline()
-                    Text(Texts.run(o, manual = true), style = T.body(15.sp), modifier = Modifier.padding(vertical = 12.dp))
+                    Text(Texts.run(o, manual = true, plan = workout), style = T.body(15.sp), modifier = Modifier.padding(vertical = 12.dp))
                 }
                 if (s.second.outcomes.isEmpty()) Text("Пробежка записана в историю.", style = T.body(15.sp), modifier = Modifier.padding(vertical = 12.dp))
             }
@@ -208,6 +213,7 @@ fun RunManualScreen(workout: RunWorkout) {
             kmBad -> Text("Не похоже на дистанцию — впиши километры, например 6,2.", style = T.secondary(13.sp).copy(color = F.c.warn))
             paceBad -> Text("Темп ${Ru.pace(pace!!)} на км — так не бегают: проверь время и дистанцию.", style = T.secondary(13.sp).copy(color = F.c.warn))
             pace != null -> Text("Средний темп ${Ru.pace(pace)} на км.", style = T.secondary(13.sp))
+            lapsDist > 0 -> Text("Не впишешь — посчитаю по кругам: ${Ru.distance(lapsDist)}.", style = T.secondary(13.sp))
         }
 
         SectionLabel("Насколько тяжело было?")
@@ -234,7 +240,7 @@ fun RunManualScreen(workout: RunWorkout) {
                         val r0 = RunPlan.manual(
                             workout,
                             ManualRun(
-                                durationSec = timeSec, distanceM = dist, rpe = rpe, reps = if (repsKind) reps else null,
+                                durationSec = timeSec, distanceM = dist ?: lapsDist.takeIf { it > 0 }, rpe = rpe, reps = if (repsKind) reps else null,
                                 workPace = repPace, testSeconds = trialSec, testDistanceM = testDist,
                             ),
                         )
@@ -257,3 +263,6 @@ fun RunManualScreen(workout: RunWorkout) {
         if (failed) Text(SAVE_FAILED, style = T.body(14.sp, androidx.compose.ui.text.font.FontWeight.SemiBold).copy(color = F.c.warn))
     }
 }
+
+/** Paces (s/km) a lap outside the reps may take: walked too, down to 2 km/h (a run/walk, a novice's slow lap). */
+private val WALKED_LAP = RunPlan.PLAUSIBLE_PACE.start..1800.0
