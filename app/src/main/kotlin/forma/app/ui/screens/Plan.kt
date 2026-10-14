@@ -189,15 +189,21 @@ private fun TemplateCard(t: Template) {
                     val name = item?.name ?: forma.core.model.Catalog.find(settings.swaps[s.exerciseId] ?: s.exerciseId)?.name ?: s.exerciseId
                     Text(name, style = T.body(15.sp, FontWeight.SemiBold).copy(color = if (removed) F.c.text3 else F.c.text))
                     val now = item?.slot ?: s
+                    // A single-joint exercise in the place of a heavy lift is done as one: said with the numbers.
+                    val demoted = settings.swaps[s.exerciseId]?.let { forma.app.data.TrainingRepository.demotes(s, it) } == true
                     // Only what the user changed, next to what the plan had.
-                    val was = listOfNotNull(
+                    val was = if (demoted) emptyList() else listOfNotNull(
                         if (now.sets != s.sets) "${s.sets} ${Ru.plural(s.sets, "подход", "подхода", "подходов")}" else null,
                         if (now.repMin != s.repMin || now.repMax != s.repMax) "${s.repMin}–${s.repMax}" else null,
                         if (now.restSec != s.restSec) "отдых ${Ru.clock(s.restSec)}" else null,
                     )
                     Text(
                         if (removed) "Убрано из плана · нажми, чтобы вернуть"
-                        else specLine(now, timed(item?.exerciseId ?: s.exerciseId)) + if (was.isNotEmpty()) " · в плане было: ${was.joinToString(", ")}" else "",
+                        else specLine(now, timed(item?.exerciseId ?: s.exerciseId)) + when {
+                            demoted -> " · вместо «${forma.core.model.Catalog.find(s.exerciseId)?.name ?: s.exerciseId}»: ${swapNote(s, now)}"
+                            was.isNotEmpty() -> " · в плане было: ${was.joinToString(", ")}"
+                            else -> ""
+                        },
                         style = T.secondary(12.sp),
                     )
                 }
@@ -225,10 +231,11 @@ private fun TemplateCard(t: Template) {
     val e = editing
     val own = t.slots.getOrNull(e)
     val addedId = if (e >= t.slots.size) added.getOrNull(e - t.slots.size) else null
-    // What the plan itself sets for this exercise (the user's changes are kept apart, so "как в плане" is always known).
-    val planned = own ?: addedId?.let { repo.addedPlanned(it) }
+    // What the plan itself sets for this exercise (the user's changes are kept apart, so "как в плане" is always known);
+    // with a single-joint exercise in the place of a heavy lift, what the plan sets for that one.
+    val planned = own?.let { forma.app.data.TrainingRepository.plannedFor(it, settings) } ?: addedId?.let { repo.addedPlanned(it) }
     if (planned != null) {
-        val planId = planned.exerciseId
+        val planId = own?.exerciseId ?: planned.exerciseId
         // Where its sets, reps and rest are kept: under the plan's exercise, or for one added to this day, under the day.
         val key = if (own != null) planId else forma.app.data.TrainingRepository.addedKey(t.id, planId)
         val item = plan?.items?.firstOrNull { it.position == e && it.addedForGood == (own == null) }
@@ -271,6 +278,14 @@ private fun TemplateCard(t: Template) {
                 editing = -1
             },
             removeNote = if (own != null) "Вернуть можно здесь же: убранное останется в списке серым." else "Добавить снова можно кнопкой «Добавить упражнение».",
+            swapNote = if (own != null && planned != own) {
+                "Вместо «${forma.core.model.Catalog.find(own.exerciseId)?.name ?: own.exerciseId}» — упражнение на одну мышцу, " +
+                    "ему нужны другие повторы: ${swapNote(own, planned)}."
+            } else null,
+            onHistory = {
+                editing = -1
+                nav.push(Screen.Exercise(exId))
+            },
             onDismiss = { editing = -1 },
         )
     }
@@ -285,7 +300,11 @@ private fun specLine(s: forma.core.strength.SlotSpec, timed: Boolean): String =
 /** Rep ranges to pick from: strength, strength and size, size, size and endurance. */
 private val REP_RANGES = listOf(3 to 5, 5 to 8, 6 to 10, 8 to 12, 10 to 15, 12 to 20)
 private val HOLD_RANGES = listOf(20 to 40, 30 to 60, 45 to 90)
-private val REST_OPTIONS = listOf(60, 90, 120, 180)
+private val REST_OPTIONS = listOf(60, 90, 120, 180, 240, forma.app.data.TrainingRepository.MAX_REST)
+
+/** "было 3×5–8, стало 3×10–15": what a swap changed in the numbers. */
+internal fun swapNote(was: forma.core.strength.SlotSpec, now: forma.core.strength.SlotSpec): String =
+    "было ${was.sets}×${was.repMin}–${was.repMax}, стало ${now.sets}×${now.repMin}–${now.repMax}"
 
 /** One exercise of the plan from now on: sets, rep range, rest, the weight step, another exercise in its place, or out. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -293,7 +312,8 @@ private val REST_OPTIONS = listOf(60, 90, 120, 180)
 private fun PlanExerciseDialog(
     name: String, sets: Int, planned: Int, reps: Pair<Int, Int>, plannedReps: Pair<Int, Int>, timed: Boolean,
     rest: Int, plannedRest: Int, canRemove: Boolean, step: Double?, defaultStep: Double,
-    onSave: (Int, Pair<Int, Int>, Int, Double?) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, removeNote: String, onDismiss: () -> Unit,
+    onSave: (Int, Pair<Int, Int>, Int, Double?) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, removeNote: String,
+    swapNote: String?, onHistory: () -> Unit, onDismiss: () -> Unit,
 ) {
     var n by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(sets) }
     var lo by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(reps.first) }
@@ -306,6 +326,7 @@ private fun PlanExerciseDialog(
         title = { Text(name, style = T.title(20.sp)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                swapNote?.let { Text(it, style = T.secondary(13.sp).copy(color = F.c.text)) }
                 Text("Подходов в каждой тренировке", style = T.secondary(13.sp))
                 forma.app.ui.components.Stepper(
                     "$n", if (n == planned) "как в плане" else "в плане $planned",
@@ -347,6 +368,7 @@ private fun PlanExerciseDialog(
                         }
                     }
                 }
+                GhostButton("История и прогресс", onHistory, Modifier.fillMaxWidth())
                 GhostButton("Заменить упражнение", onSwap, Modifier.fillMaxWidth())
                 if (canRemove) {
                     GhostButton("Убрать из плана", onRemove, Modifier.fillMaxWidth(), color = F.c.bad)

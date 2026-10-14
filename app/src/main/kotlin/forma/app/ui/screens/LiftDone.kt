@@ -25,6 +25,7 @@ import forma.app.ui.Screen
 import forma.app.ui.Texts
 import forma.app.ui.components.FCard
 import forma.app.ui.components.Hairline
+import forma.app.ui.components.NumText
 import forma.app.ui.components.PrimaryButton
 import forma.app.ui.components.SectionLabel
 import forma.app.ui.components.StatTile
@@ -66,6 +67,25 @@ fun LiftDoneScreen(workoutId: Long) {
                 }
             }
         }
+        // What was done, exercise by exercise in the order of the day.
+        val sets by remember(workoutId) { repo.db.sets().observeFor(workoutId) }.collectAsState(initial = emptyList())
+        val plan = remember(workout.planJson) { repo.planOf(workout) }
+        if (sets.isNotEmpty()) {
+            SectionLabel("Сделано")
+            val byPosition = sets.groupBy { it.position }
+            val order = plan?.items?.filter { it.position in byPosition }?.map { it.position to it.name }.orEmpty() +
+                byPosition.keys.filter { p -> plan?.items?.none { it.position == p } != false }
+                    .map { p -> p to (Catalog.find(byPosition.getValue(p).first().exerciseId)?.name ?: "") }
+            FCard(gap = 0.dp) {
+                order.forEachIndexed { i, (position, name) ->
+                    if (i > 0) Hairline()
+                    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(name, style = T.body(15.sp, FontWeight.Bold))
+                        NumText(setsLine(byPosition.getValue(position)), style = T.number(15.sp))
+                    }
+                }
+            }
+        }
         SectionLabel("Что изменится в следующий раз")
         FCard(gap = 0.dp) {
             summary.reports.forEachIndexed { i, r ->
@@ -86,4 +106,13 @@ fun LiftDoneScreen(workoutId: Long) {
         Text("Нагрузка тренировки: ${summary.load.roundToInt()} (оценка × минуты). Она идёт в график формы и усталости.", style = T.secondary(13.sp))
         NextToday { nav.tab(Screen.Today) }
     }
+}
+
+/** "80 кг × 5, 5, 4 · 85 кг × 3": sets in a row at one weight together; holds in seconds. */
+private fun setsLine(sets: List<forma.app.data.SetEntity>): String {
+    val ex = Catalog.find(sets.first().exerciseId)
+    if (ex?.load == forma.core.model.LoadKind.TIMED) return sets.joinToString(", ") { "${it.reps} с" }
+    val runs = mutableListOf<MutableList<forma.app.data.SetEntity>>()
+    for (s in sets) if (runs.lastOrNull()?.first()?.weight == s.weight) runs.last() += s else runs += mutableListOf(s)
+    return runs.joinToString(" · ") { run -> "${Texts.weight(ex, run.first().weight)} × ${run.joinToString(", ") { it.reps.toString() }}" }
 }

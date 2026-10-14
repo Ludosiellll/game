@@ -44,6 +44,8 @@ fun ExerciseScreen(exerciseId: String) {
     val bw by remember { repo.bodyWeightLookup() }.collectAsState(initial = { _: Long -> 75.0 })
     val stats by remember { repo.db.state().observeStats() }.collectAsState(initial = emptyList())
     val slots by remember { repo.db.state().observeSlots() }.collectAsState(initial = emptyList())
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    val program by repo.store.program.collectAsState(initial = null)
     val mine = rows.filter { it.exerciseId == exerciseId }
     val series = remember(rows, bw) { Stats.e1rmSeries(rows, ex, bw) }
     val rec = remember(rows, bw) { Stats.records(rows, ex, bw) }
@@ -80,12 +82,17 @@ fun ExerciseScreen(exerciseId: String) {
                 StatTile("Тренировок", "${rec.sessions}", null, F.c.text, Modifier.weight(1f))
             }
         }
-        val slot = slots.filter { it.exerciseId == exerciseId }.maxByOrNull { it.updatedAt }
-        if (slot != null && (slot.weight != null || ex.load == LoadKind.TIMED)) {
+        // One target per rep range: the same exercise in 5–8 on one day and 8–12 on another has two, each said with its day.
+        val targets = slots.filter { it.exerciseId == exerciseId && (it.weight != null || ex.load == LoadKind.TIMED) }.sortedByDescending { it.updatedAt }
+        if (targets.isNotEmpty()) {
             FCard(gap = 4.dp) {
                 SectionLabel("Следующая цель")
-                Text(if (ex.load == LoadKind.TIMED) "${slot.reps} с" else "${forma.app.ui.Texts.weight(ex, slot.weight!!)} × ${slot.reps}", style = T.title(22.sp))
-                if (slot.stalls > 0) Text("Без роста: ${slot.stalls} ${Ru.plural(slot.stalls, "тренировка", "тренировки", "тренировок")} подряд. После трёх — шаг назад на 10 %.", style = T.secondary(13.sp))
+                targets.take(3).forEachIndexed { i, slot ->
+                    if (i > 0) Hairline()
+                    Text(if (ex.load == LoadKind.TIMED) "${slot.reps} с" else "${forma.app.ui.Texts.weight(ex, slot.weight!!)} × ${slot.reps}", style = T.title(22.sp))
+                    Text(targetWhere(slot.slotKey, ex.load == LoadKind.TIMED, program, settings, repo), style = T.secondary(13.sp))
+                    if (slot.stalls > 0) Text("Без роста: ${slot.stalls} ${Ru.plural(slot.stalls, "тренировка", "тренировки", "тренировок")} подряд. После трёх — шаг назад на 10 %.", style = T.secondary(13.sp))
+                }
             }
         }
         if (e1rm != null && ex.load == LoadKind.EXTERNAL) {
@@ -95,8 +102,11 @@ fun ExerciseScreen(exerciseId: String) {
                     if (i > 0) Hairline()
                     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
                         Text("${Ru.reps(r)} до отказа", style = T.body(14.sp), modifier = Modifier.weight(1f))
-                        // Down to the step: "you can do it" must not promise more than the estimate.
-                        NumText("${Ru.kg(kotlin.math.floor(OneRm.loadFor(e1rm, r) / ex.step + 1e-9) * ex.step)} кг", style = T.number(14.sp, FontWeight.Bold))
+                        // Down to the step of this gym (the user's own, else the exercise's): "you can do it" must not
+                        // promise more than the estimate, nor a weight the gym does not have.
+                        val load = OneRm.loadFor(e1rm, r)
+                        val step = settings.steps[ex.id] ?: ex.stepAt(load)
+                        NumText(forma.app.ui.Texts.weight(ex, kotlin.math.floor(load / step + 1e-9) * step), style = T.number(14.sp, FontWeight.Bold))
                     }
                 }
             }
@@ -143,5 +153,25 @@ fun ExerciseScreen(exerciseId: String) {
             }, Modifier.fillMaxWidth())
             Text("История останется, упражнение просто перестанет предлагаться.", style = T.secondary(12.sp))
         }
+    }
+}
+
+/**
+ * Which rep range a target is for, and on which day of the plan: "6–10 повторов · «Верх А»". The days are found by the
+ * slot as the user set it (sets, swaps, rep ranges of their own).
+ */
+private fun targetWhere(slotKey: String, timed: Boolean, program: forma.core.plan.Program?, settings: forma.app.data.Settings, repo: forma.app.data.TrainingRepository): String {
+    val range = slotKey.substringAfterLast('@', "").takeIf { it.contains('-') }?.replace('-', '–')
+    val unit = if (timed) "с" else "повторов"
+    val days = program?.templates.orEmpty().filter { t ->
+        t.slots.any { forma.app.data.TrainingRepository.tuned(it, settings).key == slotKey } ||
+            repo.addedTo(t.id, settings).any { id ->
+                forma.app.data.TrainingRepository.overrides(forma.app.data.TrainingRepository.addedSpec(id), settings, forma.app.data.TrainingRepository.addedKey(t.id, id)).key == slotKey
+            }
+    }.map { "«${it.title}»" }
+    val what = if (range != null) "Для $range $unit" else "Цель"
+    return when {
+        days.isNotEmpty() -> "$what · ${days.joinToString(", ")}"
+        else -> "$what · сейчас такого диапазона в плане нет"
     }
 }
