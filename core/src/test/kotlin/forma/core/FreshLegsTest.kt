@@ -122,4 +122,23 @@ class FreshLegsTest {
         val week = listOf(CatchUp.Day(4, listOf(hard), listOf(jog, hard)))
         assertEquals(listOf(CatchUp.Close(4, 0, 4, 1)), CatchUp.closes(week))
     }
+
+    /** Legs before a hard run: the "+" set stops with 2 in reserve, and the same strength moves the weights the same. */
+    @Test fun aPlusSetStoppedEarlierBeforeAHardRunGrowsTheWeightsAsFast() {
+        val squat = Catalog["squat"]
+        val spec = SlotSpec("squat", 3, 5, 8, 2, 150, SlotRole.MAIN)
+        val st = SlotState(100.0, 6, 0, 0, 5, linear = false)
+        val usual = Progression.prescribe(squat, spec, st)
+        val beforeRun = Progression.prescribe(squat, spec, st, topRir = 2)
+        assertEquals(1, usual.topRir)
+        assertEquals(2, beforeRun.topRir)
+        assertEquals(usual.copy(topRir = 2), beforeRun)
+        // The same lifter: 6 + 2 with one in reserve, or 6 + 1 with two in reserve.
+        val a = Progression.evaluate(squat, spec, st, usual, listOf(DoneSet(100.0, 6, 2), DoneSet(100.0, 6, 2), DoneSet(100.0, 8, 1)))
+        val b = Progression.evaluate(squat, spec, st, beforeRun, listOf(DoneSet(100.0, 6, 2), DoneSet(100.0, 6, 2), DoneSet(100.0, 7, 2)))
+        assertEquals(a.outcome, b.outcome)
+        assertEquals(a.state.weight, b.state.weight)
+        // Not rated: a "+" set before a hard run is taken as stopped with 2 in reserve.
+        assertEquals(2, Progression.assumedRir(DoneSet(100.0, 7), 2, beforeRun))
+    }
 }

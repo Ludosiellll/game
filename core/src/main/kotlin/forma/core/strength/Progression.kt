@@ -71,10 +71,15 @@ data class Prescription(
     /** Suggested starting point for calibration. */
     val startHint: Double? = null,
     val phase: Phase = Phase.NORMAL,
-    /** The last set is "[reps]+": the target, then more while it goes well, stopping with one rep in reserve. */
+    /** The last set is "[reps]+": the target, then more while it goes well, stopping with [topRir] reps in reserve. */
     val top: Boolean = false,
     /** The first week of a block: a rep more in reserve than the plan's; a session short of the target is not a miss. */
     val intro: Boolean = false,
+    /**
+     * Reps left in reserve at the end of the "+" set: 1, or 2 on the legs a day or two before a hard run (legs fresher
+     * for it). Its spare reps count the same either way, so the weights grow as fast.
+     */
+    val topRir: Int = 1,
 )
 
 /** A working set as logged. [rir] is optional self-report. */
@@ -182,6 +187,7 @@ object Progression {
         bodyWeight: Double = 75.0,
         hint: Double? = null,
         daysSinceLast: Long? = null,
+        topRir: Int = TOP_RIR,
     ): Prescription {
         val rir = (spec.rir + rirOffset).coerceIn(0, 5)
         if (ex.load == LoadKind.TIMED) {
@@ -217,7 +223,7 @@ object Progression {
             calibrate -> CALIBRATION_RIR
             else -> rir
         }
-        return Prescription(weight, state.reps, sets, plannedRir, calibrate, if (calibrate) hint else null, phase, top, intro = rirOffset > 0 && !calibrate)
+        return Prescription(weight, state.reps, sets, plannedRir, calibrate, if (calibrate) hint else null, phase, top, intro = rirOffset > 0 && !calibrate, topRir = topRir)
     }
 
     /** Lowest weight the exercise allows: the most assistance for assisted body-weight exercises, the empty bar, or 0. */
@@ -263,7 +269,7 @@ object Progression {
      */
     fun assumedRir(set: DoneSet, index: Int, p: Prescription): Int = set.rir ?: when {
         p.calibrate -> CALIBRATION_RIR
-        p.top && index == p.sets - 1 && set.reps >= p.reps -> TOP_RIR
+        p.top && index == p.sets - 1 && set.reps >= p.reps -> p.topRir
         set.reps >= p.reps -> max(0, p.rir - (set.reps - p.reps))
         else -> 0
     }
@@ -373,7 +379,8 @@ object Progression {
             // Spare reps: on the "+" set, reps beyond the target with one kept in reserve; otherwise the reported
             // reserve beyond the plan; unknown when neither is there.
             val spare: Int? = when {
-                top != null -> top.reps - target + ((top.rir ?: TOP_RIR) - TOP_RIR)
+                // Counted against one in reserve whatever the set was told: stopping earlier does not slow the weights.
+                top != null -> top.reps - target + ((top.rir ?: p.topRir) - TOP_RIR)
                 regular.all { it.rir != null } -> regular.minOf { it.rir!! - p.rir + (it.reps - target) }
                 else -> null
             }

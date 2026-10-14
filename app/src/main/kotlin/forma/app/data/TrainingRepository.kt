@@ -594,6 +594,8 @@ class TrainingRepository(
             ex, spec, st, if (deload) Phase.DELOAD else Phase.NORMAL, rirOffset,
             stat?.e1rm, profile.bodyWeightKg, hint,
             daysSinceLast = lastDay?.let { date.toEpochDay() - it },
+            // Legs a day or two before a hard run: the "+" set stops with 2 in reserve, the run gets fresher legs.
+            topRir = if (ex.lowerBody && hardRunSoon(program, date)) 2 else 1,
         )
         val warm = if (spec.role == SlotRole.MAIN && p.weight != null && ex.load == LoadKind.EXTERNAL && !deload) {
             WarmUp.sets(p.weight!!, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
@@ -1251,6 +1253,11 @@ class TrainingRepository(
     /** Whether the plan has a leg session on [date]. */
     private fun legsOn(program: Program, date: LocalDate) = program.week.on(date.dayOfWeek.value).any { s ->
         s.kind == SessionKind.LIFT && program.templates.firstOrNull { it.id == s.templateId }?.legs == true
+    }
+
+    /** A hard run planned on [date] or one or two days after it. */
+    private fun hardRunSoon(program: Program, date: LocalDate) = (0L..2L).any { k ->
+        program.week.on(date.plusDays(k).dayOfWeek.value).any { it.kind == SessionKind.RUN_QUALITY }
     }
 
     /** Legs worked one or two days before [date]: running economy is down for a day or two after strength work. */

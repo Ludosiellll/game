@@ -202,4 +202,17 @@ class DenisWeekRepoTest {
         val two = sets + listOf(2 * 1440 * min, 2 * 1440 * min + 3 * min)
         assertEquals(26, TrainingRepository.liftMinutes(0, two, 2 * 1440 * min + 10 * min))
     }
+
+    /** Saturday's legs come two days before Monday's hard run: their "+" sets keep 2 in reserve; the upper body as before. */
+    @Test fun legPlusSetsBeforeTheHardRunKeepTwoInReserve() = runBlocking<Unit> {
+        val repo = repo(denis, "denis-plus")
+        val lower = repo.liftPlan("lower_a", monday.plusDays(5))
+        lower.items.filter { forma.core.model.Catalog[it.exerciseId].lowerBody }.forEach { assertEquals(2, it.prescription.topRir, it.exerciseId) }
+        assertTrue(lower.items.any { it.exerciseId == "squat" && it.prescription.topRir == 2 })
+        repo.liftPlan("upper_b", monday.plusDays(1)).items.forEach { assertEquals(1, it.prescription.topRir, it.exerciseId) }
+        // The plan itself is the same: sets, reps and rest of each exercise.
+        val program = repo.store.programNow()!!
+        val slots = program.templates.first { it.id == "lower_a" }.slots
+        assertEquals(slots.map { it.exerciseId to it.sets }, lower.items.map { it.slot.exerciseId to it.slot.sets }.filter { (id, _) -> slots.any { it.exerciseId == id } })
+    }
 }
