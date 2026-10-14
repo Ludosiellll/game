@@ -30,6 +30,7 @@ import forma.app.ui.components.Hairline
 import forma.app.ui.components.NumText
 import forma.app.ui.components.SectionLabel
 import forma.app.ui.components.TopBar
+import kotlinx.coroutines.launch
 import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
@@ -54,6 +55,7 @@ import java.time.temporal.TemporalAdjusters
 fun DayScreen(date: LocalDate) {
     val repo = LocalRepo.current
     val nav = LocalNav.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val today = forma.app.ui.rememberToday(repo)
     val program by repo.store.program.collectAsState(initial = null)
     val profile by repo.store.profile.collectAsState(initial = null)
@@ -62,9 +64,22 @@ fun DayScreen(date: LocalDate) {
     val week by remember(monday) { repo.weekFlow(monday) }.collectAsState(initial = emptyList())
     val p = program ?: return
     val item = week.firstOrNull { it.date == date }
-    val sessions = p.week.on(date.dayOfWeek.value)
+    val paused = repo.paused(settings, date)
+    // A pause day holds no sessions: the plan stands.
+    val sessions = if (paused) emptyList() else item?.planned ?: p.week.on(date.dayOfWeek.value)
     val trialOn by produceState<LocalDate?>(null, p, today) { value = repo.trialDay(today) }
     val runState by repo.store.runState.collectAsState(initial = null)
+    // A missed session of this week that today (a free day) can take: offered on its own day too.
+    val catchUp by produceState<forma.core.plan.CatchUp.Suggestion?>(null, week, settings, today) { value = repo.catchUp(today) }
+    fun doToday(s: PlannedSession) {
+        scope.launch {
+            if (s.isRun) nav.push(Screen.RunSetup(repo.runFor(s.kind, today), s.kind))
+            else {
+                // Never over an unfinished session: that one opens instead.
+                nav.push(Screen.Workout(repo.db.workouts().active()?.id ?: repo.startLift(s.templateId!!, today)))
+            }
+        }
+    }
     // A hard run as things stand: after a long break the hard sessions are easy runs for a while, and before running
     // continuously every run is run/walk (as runFor builds them).
     val hard: (PlannedSession) -> Boolean = { s ->
@@ -80,10 +95,9 @@ fun DayScreen(date: LocalDate) {
     ScrollScreen {
         // "Завтра" over "Четверг, 15 октября"; a day further off is its name over its date.
         TopBar(title ?: DAY_FULL[date.dayOfWeek.value - 1], if (title != null) dateLine(date) else shortDate(date), onBack = { nav.back() })
-        if (repo.paused(settings, date)) {
+        if (paused) {
             forma.app.ui.components.Banner("Пауза: в этот день тренировок нет, план стоит.", F.c.warn)
-        }
-        if (sessions.isEmpty()) {
+        } else if (sessions.isEmpty() && item?.offPlan.isNullOrEmpty()) {
             FCard(gap = 6.dp) {
                 SectionLabel("Отдых")
                 Text("По плану — отдых", style = T.title(20.sp))
@@ -96,13 +110,23 @@ fun DayScreen(date: LocalDate) {
         }
         sessions.forEach { s ->
             val done = item?.doneFor(s)
-            if (s.isRun) {
-                DayRunCard(s, date, done, trial = date == trialOn, goal = profile?.runGoal)
-            } else {
-                DayLiftCard(s, p, date, done, hardRun = sessions.any(hard))
+            val later = item?.doneLaterFor(s)
+            // Missed: a day already over, of the plan as it was then (not a day before the plan was made).
+            val missed = done == null && later == null && date.isBefore(today) && p.createdEpochDay?.let { date.toEpochDay() >= it } != false
+            when {
+                later != null || missed -> NotOnItsDayCard(
+                    s, p, later,
+                    // Only this week's: catch-up does not reach back into the weeks before.
+                    canCatchUp = missed && catchUp?.let { it.session == s && it.plannedOn == date.dayOfWeek.value && monday.plusDays(6) >= today } == true,
+                    thisWeek = !today.isAfter(monday.plusDays(6)),
+                ) { doToday(s) }
+                s.isRun -> DayRunCard(s, date, done, trial = date == trialOn, goal = profile?.runGoal)
+                else -> DayLiftCard(s, p, date, done, hardRun = sessions.any(hard))
             }
         }
-        val reasons = DayReasons.of(p, date.dayOfWeek.value, hard)
+        // Done beyond the plan of the day: a missed session caught up, or one extra.
+        if (!paused) item?.offPlan?.forEach { w -> OffPlanCard(w, item.catchUps[w.id]) }
+        val reasons = if (paused) emptyList() else DayReasons.of(p, date.dayOfWeek.value, hard)
         if (reasons.isNotEmpty()) {
             SectionLabel("Почему в этот день")
             FCard(gap = 8.dp) { reasons.forEach { Text(it, style = T.body(15.sp)) } }
@@ -111,6 +135,40 @@ fun DayScreen(date: LocalDate) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GhostButton("← ${DAY_SHORT[date.minusDays(1).dayOfWeek.value - 1]}", { nav.replaceTop(Screen.Day(date.minusDays(1).toEpochDay())) }, Modifier.weight(1f))
             GhostButton("${DAY_SHORT[date.plusDays(1).dayOfWeek.value - 1]} →", { nav.replaceTop(Screen.Day(date.plusDays(1).toEpochDay())) }, Modifier.weight(1f))
+        }
+    }
+}
+
+/**
+ * A planned session of a day already over that was not done on it: caught up later in the week ([later]: "Сделано в ср"
+ * with what was done), or missed — said so, never as if still ahead; [canCatchUp]: today is a free day it fits.
+ */
+@Composable
+private fun NotOnItsDayCard(s: PlannedSession, p: Program, later: WorkoutEntity?, canCatchUp: Boolean, thisWeek: Boolean, onToday: () -> Unit) {
+    val color = if (s.isRun) F.c.endurance else F.c.strength
+    FCard(gap = 10.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (s.isRun) Ic.run else Ic.dumbbell, null, tint = color, modifier = Modifier.size(18.dp))
+            Text(forma.app.ui.theme.labelText("  ${kindLabel(s)}"), style = T.label().copy(color = color), modifier = Modifier.weight(1f))
+        }
+        Text(sessionTitle(s, p), style = T.title(22.sp))
+        if (later != null) {
+            DoneLaterLine(later)
+            if (later.kind == forma.app.data.Kind.LIFT) DoneLiftDetails(later, max = 3) else DoneRunDetails(later)
+            return@FCard
+        }
+        SectionLabel("Пропущено", color = F.c.bad)
+        when {
+            canCatchUp -> {
+                Text("Сегодня свободный день, и эта тренировка в него помещается: соседним тренировкам она не помешает.", style = T.secondary(14.sp))
+                forma.app.ui.components.PrimaryButton("Сделать в свободный день", onToday, Modifier.fillMaxWidth(), color = color, textColor = F.c.onData)
+            }
+            thisWeek -> Text(
+                "Пропущенное можно сделать в свободный день этой недели, если оно не помешает соседним тренировкам, — " +
+                    "главный экран предложит его сам.",
+                style = T.secondary(14.sp),
+            )
+            else -> Text("Неделя прошла — план идёт дальше, догонять не нужно.", style = T.secondary(14.sp))
         }
     }
 }
@@ -161,7 +219,7 @@ private fun DayRunCard(s: PlannedSession, date: LocalDate, done: WorkoutEntity?,
                 Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
                 Text("Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
             }
-            GhostButton("Как прошло — разбор", { nav.push(Screen.HistoryItem(done.id)) }, Modifier.fillMaxWidth(), height = 48.dp)
+            DoneRunDetails(done)
         }
         if (!workout.isOpenEnded) {
             Column {
@@ -193,8 +251,8 @@ private fun DayRunCard(s: PlannedSession, date: LocalDate, done: WorkoutEntity?,
 private fun DayLiftCard(s: PlannedSession, p: Program, date: LocalDate, done: WorkoutEntity?, hardRun: Boolean) {
     val repo = LocalRepo.current
     val nav = LocalNav.current
-    val plan by produceState<LiftPlan?>(null, s.templateId, date) {
-        value = runCatching { repo.liftPlan(s.templateId!!, date) }.getOrNull()
+    val plan by produceState<LiftPlan?>(null, s.templateId, date, done?.id) {
+        value = if (done != null) null else runCatching { repo.liftPlan(s.templateId!!, date) }.getOrNull()
     }
     val template = p.templates.firstOrNull { it.id == s.templateId }
     FCard(gap = 10.dp) {
@@ -206,11 +264,15 @@ private fun DayLiftCard(s: PlannedSession, p: Program, date: LocalDate, done: Wo
         if (done != null) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
-                Text("Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
+                Text(
+                    if (done.templateId != s.templateId) "Сделано: ${done.title}" else "Сделано",
+                    style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good),
+                )
             }
-            GhostButton("Открыть тренировку", { nav.push(Screen.HistoryItem(done.id)) }, Modifier.fillMaxWidth(), height = 48.dp)
+            // What was done that day (its own plan and sets), not the session the plan holds now.
+            DoneLiftDetails(done)
         }
-        plan?.let { lp ->
+        if (done == null) plan?.let { lp ->
             Column {
                 lp.items.forEach { item ->
                     Hairline()

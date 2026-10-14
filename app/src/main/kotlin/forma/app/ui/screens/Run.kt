@@ -1121,11 +1121,15 @@ fun RunDoneScreen(workoutId: Long) {
             val savedW = w
             val savedRun = run
             if (savedW != null && savedRun != null) RunDebrief(savedW, savedRun, s.second)
+            // The plan the run was run to: a shorter run than usual says so instead of "the length stays".
+            val savedPlan = remember(savedRun) {
+                savedRun?.let { runCatching { forma.app.data.AppJson.decodeFromString(RunWorkout.serializer(), it.planJson) }.getOrNull() }
+            }
             SectionLabel("Что дальше в плане")
             FCard(gap = 0.dp) {
                 s.second.outcomes.forEachIndexed { i, o ->
                     if (i > 0) Hairline()
-                    Text(Texts.run(o), style = T.body(15.sp), modifier = Modifier.padding(vertical = 12.dp))
+                    Text(Texts.run(o, plan = savedPlan), style = T.body(15.sp), modifier = Modifier.padding(vertical = 12.dp))
                 }
                 if (s.second.outcomes.isEmpty()) Text("Пробежка записана в историю.", style = T.body(15.sp), modifier = Modifier.padding(vertical = 12.dp))
             }

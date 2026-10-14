@@ -60,6 +60,16 @@ object TrainingReport {
         }.toMap()
     }
 
+    /** The stored feel of the days ([Feel] names by epoch day) as said in the file. */
+    fun feelWords(feels: Map<Long, String>): Map<Long, String> = feels.mapNotNull { (day, name) ->
+        when (name) {
+            Feel.GOOD.name -> "хорошо"
+            Feel.LOW.name -> "так себе"
+            Feel.SICK.name -> "болею"
+            else -> null
+        }?.let { day to it }
+    }.toMap()
+
     /** "18 лет", "21 год", "22 года". */
     fun years(n: Int) = "$n ${Ru.plural(n, "год", "года", "лет")}"
 

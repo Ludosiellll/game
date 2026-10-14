@@ -39,8 +39,8 @@ fun ReportCard() {
     var message by remember { mutableStateOf<String?>(null) }
     suspend fun text(): String {
         val b = BackupManager(repo).snapshot()
-        // The feel of the day, when the settings hold one (read from the stored document as it is).
-        val feel = TrainingReport.feelFrom(repo.store.syncDocs()["settings"])
+        // How the person felt on each day they said it, in words.
+        val feel = TrainingReport.feelWords(repo.store.settingsNow().feels)
         return withContext(Dispatchers.Default) { TrainingReport.build(b, LocalDate.now(), BuildConfig.VERSION_NAME, feel) }
     }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->

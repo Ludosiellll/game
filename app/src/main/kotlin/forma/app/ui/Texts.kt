@@ -103,10 +103,16 @@ object Texts {
         else -> 0
     }
 
-    /** What a run changed; [manual]: entered by hand (no lap button to speak of). */
-    fun run(o: RunOutcome, manual: Boolean = false): String = when {
+    /**
+     * What a run changed; [manual]: entered by hand (no lap button to speak of). [plan]: the run as planned — one kept
+     * shorter than the usual length (after the gym, a lighter day) moves no length, and says so instead of "still the same".
+     */
+    fun run(o: RunOutcome, manual: Boolean = false, plan: forma.core.run.RunWorkout? = null): String = when {
         manual && o == RunOutcome.PaceUnknown -> "Средний круг не вписан: шаг решён по ощущениям. Впиши его в следующий раз — тогда видно, держится ли темп цели."
         manual && o == RunOutcome.TestNotCounted -> "Время контрольного не вписано — не засчитан. Следующий — через две недели."
+        o is RunOutcome.Same && plan != null && plan.workSeconds / 60 < o.minutes ->
+            "Короткая пробежка длительность не меняет; обычная " +
+                (if (plan.type == forma.core.run.RunType.LONG) "длинная" else "лёгкая") + " — ${o.minutes} мин."
         else -> run(o)
     }
 

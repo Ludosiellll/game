@@ -23,7 +23,8 @@ object LoadStory {
 
     enum class Zone { REST, BUILDING, BALANCE, FRESH, DETRAINING }
 
-    enum class Level { NONE, LIGHT, USUAL, MORE, SPIKE }
+    /** [ONGOING]: this week has only just begun — too little of it to say how it compares. */
+    enum class Level { NONE, LIGHT, USUAL, MORE, SPIKE, ONGOING }
 
     /** The person's rest line and where it came from. */
     data class Personal(
@@ -44,12 +45,17 @@ object LoadStory {
         val monday: LocalDate,
         val load: Double,
         val trainingDays: Int,
-        /** Load against the person's usual week (the median of the four before with training), null without them. */
+        /**
+         * Load against the person's usual week (the median of the four before with training), null without them. For the
+         * week under way: so far against the same days of those weeks ([soFar]).
+         */
         val ratio: Double?,
         val level: Level,
         /** Lowest and last freshness of the week, null without history. */
         val lowestPct: Double?,
         val endPct: Double?,
+        /** The week under way: [ratio] is up to now, set against the same days of the usual weeks. */
+        val soFar: Boolean = false,
     )
 
     /** A stretch below the rest line: how deep, how many days without training followed, when it was over. */
@@ -145,16 +151,21 @@ object LoadStory {
             val days = series.filter { !it.date.isBefore(m) && it.date.isBefore(m.plusDays(7)) }
             Triple(m, days, days.sumOf { it.load })
         }
+        // The week under way is set against the same days of the usual ones, from Monday: through today once today has
+        // a session, through yesterday before it (in the morning the usual weeks' sessions of today are not to be had yet).
+        val upTo = if ((loads[today] ?: 0.0) > 0) today else today.minusDays(1)
+        val daysIn = (upTo.toEpochDay() - thisMonday.toEpochDay() + 1).toInt()
         val rows = all.mapIndexedNotNull { i, (m, days, load) ->
             if (i < 4) return@mapIndexedNotNull null
             // Weeks before the first session say nothing.
             if (first == null || m.plusDays(6).isBefore(first)) return@mapIndexedNotNull null
-            val prior = all.subList(i - 4, i).map { it.third }.filter { it > 0 }
-            val usual = median(prior)
-            // This week so far is set against the same number of days of a usual one.
-            val share = if (m == thisMonday) ((today.toEpochDay() - m.toEpochDay() + 1) / 7.0) else 1.0
-            val ratio = usual?.takeIf { it > 0 }?.let { load / (it * share) }
-            val level = when {
+            val priorWeeks = all.subList(i - 4, i).filter { it.third > 0 }
+            val current = m == thisMonday
+            val usual = if (!current) median(priorWeeks.map { it.third })
+            else median(priorWeeks.map { (pm, pd, _) -> pd.filter { it.date.isBefore(pm.plusDays(daysIn.toLong())) }.sumOf { it.load } })
+            val soFar = if (current) days.filter { !it.date.isAfter(upTo) }.sumOf { it.load } else load
+            val ratio = usual?.takeIf { it > 0 }?.let { soFar / it }
+            val raw = when {
                 load <= 0 -> Level.NONE
                 ratio == null -> Level.USUAL
                 ratio < 0.7 -> Level.LIGHT
@@ -162,28 +173,39 @@ object LoadStory {
                 ratio <= 1.3 -> Level.MORE
                 else -> Level.SPIKE
             }
+            // A day or so in, one session more or less is all the difference: no verdict yet.
+            val level = when {
+                !current -> raw
+                daysIn <= 1 && raw != Level.USUAL -> Level.ONGOING
+                load > 0 && ratio == null && priorWeeks.isNotEmpty() -> Level.ONGOING
+                else -> raw
+            }
             val pcts = days.mapNotNull { pctOn(it) }
-            Week(m, load, days.count { it.load > 0 }, ratio, level, pcts.minOrNull(), days.lastOrNull()?.let { pctOn(it) })
+            Week(m, load, days.count { it.load > 0 }, ratio, level, pcts.minOrNull(), days.lastOrNull()?.let { pctOn(it) }, soFar = current)
         }
         val usualWeek = median(all.takeLast(5).dropLast(1).map { it.third }.filter { it > 0 })
 
+        // Freshness of the morning (the day before's numbers), as for the rest line: a hard session's own load does not
+        // make its evening a dip that "needed rest".
+        val morning = series.zipWithNext().associate { (a, b) -> b.date to pctOn(a) }
         val dips = mutableListOf<Dip>()
         var start: Int? = null
         val window = series.filter { !it.date.isBefore(thisMonday.minusWeeks((weeks - 1).toLong())) }
         fun close(endIdx: Int, recovered: LocalDate?) {
             val s = start ?: return
             val part = window.subList(s, endIdx + 1)
-            val low = part.minBy { it.formPct }
+            val low = part.minBy { morning[it.date] ?: it.formPct }
+            val lowPct = morning[low.date] ?: low.formPct
             val restTo = recovered ?: today
             val rest = window.count { !it.date.isBefore(part.first().date) && !it.date.isAfter(restTo) && it.load <= 0 }
             // A single day just under the line is noise: a dip lasts two days or goes 5 points under it.
-            if (part.size >= 2 || low.formPct <= personal.restBelow - 5 || recovered == null) {
-                dips += Dip(part.first().date, part.last().date, low.formPct, low.date, rest, recovered)
+            if (part.size >= 2 || lowPct <= personal.restBelow - 5 || recovered == null) {
+                dips += Dip(part.first().date, part.last().date, lowPct, low.date, rest, recovered)
             }
             start = null
         }
         window.forEachIndexed { i, d ->
-            val p = pctOn(d)
+            val p = morning[d.date]
             val below = p != null && p < personal.restBelow
             if (below && start == null) start = i
             if (!below && start != null) close(i - 1, d.date)
