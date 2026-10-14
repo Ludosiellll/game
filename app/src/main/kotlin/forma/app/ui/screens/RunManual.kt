@@ -31,6 +31,7 @@ import forma.app.ui.components.Stepper
 import forma.app.ui.components.TopBar
 import forma.app.ui.theme.F
 import forma.app.ui.theme.T
+import forma.core.run.ManualLaps
 import forma.core.run.ManualRun
 import forma.core.run.RunPlan
 import forma.core.run.RunType
@@ -43,7 +44,8 @@ import kotlin.math.roundToInt
 
 /**
  * A run with a watch (or a stopwatch) and no phone: what it showed goes in by hand, and the plan moves as after a run the
- * phone timed — the time and distance, the reps and their average lap, a trial's time, and the effort.
+ * phone timed — the time and distance, the reps and their average lap (or each lap, as the watch kept them), a trial's
+ * time, and the effort.
  */
 @Composable
 fun RunManualScreen(workout: RunWorkout) {
@@ -63,19 +65,25 @@ fun RunManualScreen(workout: RunWorkout) {
     var km by rememberSaveable { mutableStateOf("") }
     var reps by rememberSaveable { mutableIntStateOf(workout.reps) }
     var lap by rememberSaveable { mutableStateOf("") }
+    // Each lap as the watch kept it, "52 51 53": saved as laps, the reps' average from them.
+    var lapsText by rememberSaveable { mutableStateOf("") }
     var trial by rememberSaveable { mutableStateOf("") }
     var testKm by rememberSaveable { mutableStateOf("") }
     var rpe by rememberSaveable { mutableIntStateOf(0) }
     var saving by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
     var saved by rememberSaveable(stateSaver = SavedRunSaver) { mutableStateOf<Pair<Long, RunSummary>?>(null) }
 
     // What is typed, read; null where it is not a number (an empty field is not a mistake).
     val timeSec = parseClock(time)?.roundToInt()?.takeIf { it > 0 }
     val dist = parseNum(km)?.takeIf { it > 0 }?.times(1000)
     val pace = if (timeSec != null && dist != null) timeSec / (dist / 1000) else null
+    val typedLaps = if (lapM != null) ManualLaps.parse(lapsText) else emptyList()
+    val laps = typedLaps?.let { ManualLaps.assign(workout, it) }.orEmpty()
+    val lapsPace = lapM?.let { ManualLaps.repPace(laps, it) }
     val repPace = if (lapM != null) {
-        // "52" or "52,5" seconds a lap.
-        parseNum(lap)?.takeIf { it > 0 }?.let { it / lapM * 1000 }
+        // "52" or "52,5" seconds a lap; the laps typed one by one, when there are, give it.
+        lapsPace ?: parseNum(lap)?.takeIf { it > 0 }?.let { it / lapM * 1000 }
     } else {
         parseClock(lap)?.takeIf { it > 0 }
     }
@@ -85,10 +93,12 @@ fun RunManualScreen(workout: RunWorkout) {
     val timeBad = time.isNotBlank() && (timeSec == null || timeSec > 6 * 3600)
     val kmBad = km.isNotBlank() && (dist == null || dist > 100_000)
     val paceBad = pace != null && pace !in RunPlan.PLAUSIBLE_PACE
-    val lapBad = lap.isNotBlank() && (repPace == null || repPace !in RunPlan.PLAUSIBLE_PACE)
+    val lapBad = lapsPace == null && lap.isNotBlank() && (repPace == null || repPace !in RunPlan.PLAUSIBLE_PACE)
+    // Each lap a pace someone runs (a half lap at the start of a rep as its half).
+    val lapsBad = lapM != null && (typedLaps == null || laps.any { (it.seconds / it.part) / lapM * 1000 !in RunPlan.PLAUSIBLE_PACE })
     val trialBad = trial.isNotBlank() && trialSec == null
     val testBad = testKm.isNotBlank() && (testDist == null || testDist !in 800.0..5_500.0)
-    val ok = rpe > 0 && !timeBad && !kmBad && !paceBad && !lapBad && !trialBad && !testBad && (!timeNeeded || timeSec != null)
+    val ok = rpe > 0 && !timeBad && !kmBad && !paceBad && !lapBad && !lapsBad && !trialBad && !testBad && (!timeNeeded || timeSec != null)
 
     // Once saved, back leads home: the screen before would offer to start this run again.
     val leave = { if (saved != null) nav.tab(Screen.Today) else nav.back() }
@@ -166,6 +176,25 @@ fun RunManualScreen(workout: RunWorkout) {
                 style = T.secondary(13.sp).copy(color = if (lapBad) F.c.warn else F.c.text2),
             )
         }
+        if (lapM != null && !cooper) {
+            // A line of lap times: longer than a number field takes.
+            TextInput(
+                lapsText, { lapsText = it },
+                if (repsKind) "Или каждый круг отрезков по порядку, секунды" else "Круги по порядку (если засекал), секунды",
+                placeholder = "52 51 53", maxLength = 400,
+            )
+            val repLaps = laps.filter { it.rep != null }
+            Text(
+                when {
+                    lapsBad -> "Не похоже на времена кругов — впиши секунды через пробел, например 52 51 53."
+                    repLaps.isNotEmpty() && lapsPace != null ->
+                        "${laps.size} ${Ru.plural(laps.size, "круг", "круга", "кругов")}, средний в отрезках — ${Ru.lap(Track.lapSec(lapsPace, lapM))}."
+                    laps.isNotEmpty() -> "${laps.size} ${Ru.plural(laps.size, "круг", "круга", "кругов")} — сохранятся как круги пробежки."
+                    else -> "С часов с кругами: время каждого круга через пробел. Сохранятся, как с кнопкой «Круг»."
+                },
+                style = T.secondary(13.sp).copy(color = if (lapsBad) F.c.warn else F.c.text2),
+            )
+        }
         NumberField(
             time, { time = it },
             if (timeNeeded) "Время пробежки" else "Время всей тренировки, с разминкой (если знаешь)",
@@ -198,20 +227,26 @@ fun RunManualScreen(workout: RunWorkout) {
             {
                 if (saving || !ok) return@PrimaryButton
                 saving = true
+                failed = false
                 scope.launch {
                     try {
                         val date = today.minusDays(daysAgo.toLong())
-                        val r = RunPlan.manual(
+                        val r0 = RunPlan.manual(
                             workout,
                             ManualRun(
                                 durationSec = timeSec, distanceM = dist, rpe = rpe, reps = if (repsKind) reps else null,
                                 workPace = repPace, testSeconds = trialSec, testDistanceM = testDist,
                             ),
                         )
+                        val r = if (laps.isEmpty()) r0 else r0.copy(laps = laps)
                         // Filed at its end today, at midday on an earlier day (each entry its own moment: never merged).
                         val now = System.currentTimeMillis()
                         val startedAt = if (daysAgo == 0) now - r.durationSec * 1000L else repo.middayOf(date) + now % 60_000
                         saved = repo.saveRun(workout, r, startedAt, emptyList(), date, manual = true)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failed = true
                     } finally {
                         saving = false
                     }
@@ -219,5 +254,6 @@ fun RunManualScreen(workout: RunWorkout) {
             },
             Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, enabled = ok && !saving,
         )
+        if (failed) Text(SAVE_FAILED, style = T.body(14.sp, androidx.compose.ui.text.font.FontWeight.SemiBold).copy(color = F.c.warn))
     }
 }

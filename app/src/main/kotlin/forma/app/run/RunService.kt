@@ -44,8 +44,10 @@ import kotlinx.coroutines.launch
 
 /**
  * Keeps a run going with the screen off: a foreground service (health type, plus location when GPS is allowed),
- * a partial wake lock for the timer, GPS fixes and the voice coach. The run is written to disk every few seconds,
- * so a run the system kills together with the app comes back paused (see [RunSession.init]).
+ * a partial wake lock for the timer, GPS fixes and the voice coach. The run is written to disk every few seconds. A
+ * run the system kills together with the app is brought back by the system ([START_STICKY]): it goes on where it was
+ * saved, the gap filled from the step counter, and the voice says so; when the foreground is refused, a loud
+ * notification says the run stopped ([RunAlerts]). Opened by hand, the app shows it paused (see [RunSession.init]).
  */
 class RunService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -69,7 +71,12 @@ class RunService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        if (intent == null) {
+            // Brought back by the system after it closed the app mid-run.
+            restart()
+            return START_STICKY
+        }
+        when (intent.action) {
             ACTION_START -> start(intent)
             // By hand: the auto-pause steps aside until the runner runs again.
             ACTION_PAUSE -> control { autoPause.reset(); RunSession.autoPaused = false; it.pause(now()) }
@@ -80,7 +87,38 @@ class RunService : Service() {
         }
         // A control sent to a run that is not going in this service (a restored, paused one) needs no service.
         if (ticker == null) stopSelf(startId)
-        return START_NOT_STICKY
+        return START_STICKY
+    }
+
+    /** The gap left by a kill, filled once the step counter is read again: its wall-clock length and the run's record. */
+    private var pendingGap: Pair<Long, RunGap>? = null
+
+    /**
+     * The process was killed mid-run and the system started the service again: the run saved on disk (loaded by
+     * [RunSession.init]) goes on — from now, and the time missed as far as the steps cover it ([RunTracker.fillGap]).
+     * Without the foreground (refused in the background on newer Android) nothing can run: the runner is told loudly.
+     */
+    private fun restart() {
+        if (ticker != null) return
+        val t = RunSession.tracker
+        val gap = RunSession.gap
+        if (t == null || t.state == RunTracker.State.FINISHED) {
+            stopSelf()
+            return
+        }
+        if (!attach()) {
+            RunAlerts.interrupted(this)
+            stopSelf()
+            return
+        }
+        if (gap?.running == true) {
+            t.resume(now())
+            if (gap.savedAtWall > 0) pendingGap = (System.currentTimeMillis() - gap.savedAtWall).coerceIn(0, MAX_GAP_MS) to gap
+        }
+        coach?.speak(if (t.state == RunTracker.State.RUNNING) "Пробежка восстановлена, продолжаем." else "Пробежка восстановлена, она на паузе.")
+        RunSession.publish(now())
+        RunSession.save(now())
+        notifyNow()
     }
 
     private fun now() = SystemClock.elapsedRealtime()
@@ -111,10 +149,10 @@ class RunService : Service() {
         val t = RunSession.tracker ?: return
         when (val p = t.press(now())) {
             Press.Ignored -> return
-            Press.Start -> coach?.speak("Старт.")
+            Press.Start -> coach?.speak("Старт.", now = true)
             is Press.Done -> {
                 val l = p.lap
-                coach?.speak(CoachText.lap(t.workout, l, l.rep?.let { t.repTimes().getOrNull(it - 1) }))
+                coach?.speak(CoachText.lap(t.workout, l, l.rep?.let { t.repTimes().getOrNull(it - 1) }), now = true)
             }
         }
         RunSession.publish(now())
@@ -127,11 +165,15 @@ class RunService : Service() {
         val gps = hasLocation() && if (fresh) intent.getBooleanExtra(EXTRA_GPS, true) else RunSession.gpsEnabled
         // Started with startForegroundService(): in the foreground first, whatever happens next, or the system
         // kills the app a few seconds later.
-        if (!foreground(gps)) return
+        if (!foreground(gps)) {
+            if (fresh) RunSession.failStart(START_REFUSED)
+            return
+        }
         if (ticker != null) return
         if (fresh) {
             val workout = intent.getStringExtra(EXTRA_WORKOUT)
                 ?.let { runCatching { AppJson.decodeFromString(RunWorkout.serializer(), it) }.getOrNull() }
+            if (workout == null) RunSession.failStart(UNREADABLE)
             if (workout != null) {
                 val tracker = RunTracker(workout)
                 // The stadium's line from the last session: laps GPS sees count from the first one.
@@ -149,6 +191,9 @@ class RunService : Service() {
         if (RunSession.tracker?.state == RunTracker.State.FINISHED || !attach()) leave()
     }
 
+    /** GPS lost and back on the road, for the voice. */
+    private val gpsWatch = forma.core.run.GpsWatch()
+
     /** Puts the current run in the foreground: notification, wake lock, GPS, voice and the ticker. */
     private fun attach(): Boolean {
         val t = RunSession.tracker ?: return false
@@ -157,6 +202,7 @@ class RunService : Service() {
         val gps = RunSession.gpsEnabled && hasLocation()
         if (!foreground(gps)) return false
         RunSession.attached()
+        RunAlerts.cancel(this)
         // Marks past the plan already behind (a run brought back after the app was closed) are not said again.
         overMark = ((t.timelineMs(now()) / 1000).toInt() - t.workout.totalSeconds).coerceAtLeast(0) / 300
         lapsSaid = afterReps(t)
@@ -184,10 +230,11 @@ class RunService : Service() {
                 // A lap nobody pressed, seen by GPS crossing the line: in a rep, or any lap of a run without reps, it is
                 // said (roughly timed, and judged when there is a target).
                 tr.autoLap(now())?.let { l ->
-                    coach?.speak(CoachText.autoLap(l))
+                    coach?.speak(CoachText.autoLap(l), now = true)
                     RunSession.save(now())
                 }
                 checkPace(tr)
+                checkGps(tr)
                 if (events.any { (it as? RunEvent.Timeline)?.cue is Cue.ToLine }) waitSaidAt = now()
                 // Waiting on the line: a reminder every minute, in case the first one was missed.
                 if (tr.state == RunTracker.State.RUNNING && tr.waiting(now()) && now() - waitSaidAt > 60_000) {
@@ -265,6 +312,19 @@ class RunService : Service() {
     }
 
     /**
+     * On the road, GPS lost for a while and back, said once each way: the distance goes on by steps meanwhile (when the
+     * stride is known), or stands. Not on a stadium, where the laps are the button's.
+     */
+    private fun checkGps(tr: RunTracker) {
+        if (tr.workout.lapMeters != null || !RunSession.gpsEnabled) return
+        when (gpsWatch.tick(now(), tr.state == RunTracker.State.RUNNING)) {
+            forma.core.run.GpsWatch.Say.LOST -> coach?.speak(if (tr.cadence() != null) "GPS потерян, считаю по шагам." else "GPS потерян.")
+            forma.core.run.GpsWatch.Say.BACK -> coach?.speak("GPS снова есть.")
+            null -> Unit
+        }
+    }
+
+    /**
      * A quarter of a minute into what follows the last rep: the reps' laps are all in (a last press a little late still
      * counts), and the cool-down has minutes left — said at the finish, the sentence would be cut off as the run ends.
      */
@@ -305,7 +365,8 @@ class RunService : Service() {
     private fun onLocation(loc: Location) {
         val t = RunSession.tracker ?: return
         val fix = Fix(loc.time, loc.latitude, loc.longitude, if (loc.hasAccuracy()) loc.accuracy else 99f, if (loc.hasSpeed()) loc.speed else null)
-        checkAutoPause(t, fix)
+        gpsWatch.fix(now(), fix.accuracy <= 25f)
+        applyAutoPause(t, autoPauseOn(t) { autoPause.update(fix.speed, now(), t.state == RunTracker.State.RUNNING, fix.accuracy) })
         val events = t.onFix(fix, now())
         if (t.state == RunTracker.State.RUNNING && fix.accuracy <= 25f) RunSession.points += fix
         handle(events)
@@ -313,13 +374,17 @@ class RunService : Service() {
 
     /**
      * The auto-pause: only on the road (not on a stadium, where standing at the line between reps is part of the plan)
-     * and only for runs without a timed plan to keep — easy, long and free.
+     * and only for runs without a timed plan to keep — easy, long and free. [judge] runs only then.
      */
-    private fun checkAutoPause(t: RunTracker, fix: Fix) {
+    private fun autoPauseOn(t: RunTracker, judge: () -> forma.core.run.AutoPause.Act?): forma.core.run.AutoPause.Act? {
         val w = t.workout
-        if (!RunSession.autoPause || w.lapMeters != null || !(w.continuable || w.isOpenEnded)) return
-        if (t.state == RunTracker.State.FINISHED) return
-        when (val act = autoPause.update(fix.speed, now(), t.state == RunTracker.State.RUNNING)) {
+        if (!RunSession.autoPause || w.lapMeters != null || !(w.continuable || w.isOpenEnded)) return null
+        if (t.state == RunTracker.State.FINISHED) return null
+        return judge()
+    }
+
+    private fun applyAutoPause(t: RunTracker, act: forma.core.run.AutoPause.Act?) {
+        when (act) {
             is forma.core.run.AutoPause.Act.Pause -> {
                 t.pause(act.atMs)
                 RunSession.autoPaused = true
@@ -351,7 +416,20 @@ class RunService : Service() {
     private val stepListener = object : android.hardware.SensorEventListener {
         override fun onSensorChanged(e: android.hardware.SensorEvent) {
             val t = RunSession.tracker ?: return
-            handle(t.onSteps(e.values[0].toLong(), now()))
+            val total = e.values[0].toLong()
+            pendingGap?.let { (ms, gap) ->
+                // The first reading after a restart: the steps taken while the app was gone (none known after a reboot,
+                // when the counter starts over).
+                pendingGap = null
+                val steps = gap.stepTotal?.let { total - it }?.takeIf { it >= 0 }
+                if (t.fillGap(ms, steps, now()) > 0) {
+                    RunSession.publish(now())
+                    RunSession.save(now())
+                }
+            }
+            // Read while paused too: steps again are what ends an auto-pause, GPS or not.
+            applyAutoPause(t, autoPauseOn(t) { autoPause.steps(total, now()) })
+            handle(t.onSteps(total, now()))
         }
 
         override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
@@ -483,6 +561,12 @@ class RunService : Service() {
         private const val CHANNEL = "run"
         private const val NOTIFICATION_ID = 42
 
+        /** A gap longer than this after a kill is not filled: the run most likely ended out there. */
+        private const val MAX_GAP_MS = 30 * 60_000L
+
+        const val START_REFUSED = "Телефон не дал запустить пробежку. Попробуй ещё раз; если повторится — сними для «Формы» ограничения батареи."
+        const val UNREADABLE = "Не получилось прочитать тренировку. Открой её заново и нажми «Старт»."
+
         fun start(
             ctx: Context, workout: RunWorkout, gps: Boolean, voice: Boolean, beeps: Boolean, vibration: Boolean,
             line: List<Double>? = null, autoPause: Boolean = true, stride: Pair<Double, Double>? = null,
@@ -493,7 +577,9 @@ class RunService : Service() {
                 .putExtra(EXTRA_AUTOPAUSE, autoPause)
             if (stride != null) i.putExtra(EXTRA_STRIDE, doubleArrayOf(stride.first, stride.second))
             if (line != null && line.size == 2) i.putExtra(EXTRA_LINE, line.toDoubleArray())
-            ContextCompat.startForegroundService(ctx, i)
+            RunSession.clearStartError()
+            // Refused outright (a vendor's limits on starting in the background): said on the run screen.
+            runCatching { ContextCompat.startForegroundService(ctx, i) }.onFailure { RunSession.failStart(START_REFUSED) }
         }
 
         fun send(ctx: Context, action: String) {

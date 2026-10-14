@@ -50,7 +50,16 @@ data class SavedRun(
     val beeps: Boolean = true,
     val vibration: Boolean = true,
     val autoPause: Boolean = true,
+    /** Wall-clock time of this save: how long the app was gone when it comes back. */
+    val savedAtWall: Long = 0L,
+    /** The phone's step counter at this save (it counts since the phone started): the steps taken while the app was gone. */
+    val stepTotal: Long? = null,
+    /** Standing by the auto-pause at this save: the run itself was going. */
+    val autoPaused: Boolean = false,
 )
+
+/** A run on disk the app did not see the end of: when it was last saved, the step counter then, and whether it was going. */
+data class RunGap(val savedAtWall: Long, val stepTotal: Long?, val running: Boolean)
 
 /**
  * The current run on disk: a small state file rewritten every few seconds (write to a temporary file, then rename)
@@ -115,6 +124,15 @@ object RunSession {
     @Volatile internal var autoPaused = false
     internal val points = mutableListOf<Fix>()
     private var restored = false
+
+    /** The run came back from disk after the app was closed with it going: what is needed to carry on (see [RunService]). */
+    @Volatile var gap: RunGap? = null
+        internal set
+
+    /** Why the last start did not happen (the service could not start, the workout could not be read); shown on the run screen. */
+    private val _startError = MutableStateFlow<String?>(null)
+    val startError: StateFlow<String?> = _startError.asStateFlow()
+
     private var store: RunStore? = null
     private var savedPoints = 0
 
@@ -137,7 +155,19 @@ object RunSession {
         points += pts
         savedPoints = points.size
         restored = saved.tracker.state != RunTracker.State.FINISHED
+        gap = if (restored) RunGap(saved.savedAtWall, saved.stepTotal, saved.tracker.state == RunTracker.State.RUNNING || saved.autoPaused) else null
         publish(nowMs)
+    }
+
+    /** A run was going when the app was closed and nothing has carried it on yet: the runner must be told. */
+    fun interrupted(): Boolean = tracker != null && restored && gap?.running == true
+
+    internal fun failStart(reason: String) {
+        _startError.value = reason
+    }
+
+    fun clearStartError() {
+        _startError.value = null
     }
 
     /** A new run: whatever was on disk is replaced. */
@@ -154,11 +184,14 @@ object RunSession {
         points.clear()
         savedPoints = 0
         restored = false
+        gap = null
+        _startError.value = null
     }
 
     /** The run is going again in the service. */
     internal fun attached() {
         restored = false
+        gap = null
     }
 
     /** Writes the run to disk: the state and the GPS points since the last save. */
@@ -170,7 +203,12 @@ object RunSession {
                 st.appendPoints(points.subList(savedPoints, points.size).toList())
                 savedPoints = points.size
             }
-            st.saveState(SavedRun(t.snapshot(nowMs), startedAtWall, gpsEnabled, voice, beeps, vibration, autoPause))
+            st.saveState(
+                SavedRun(
+                    t.snapshot(nowMs), startedAtWall, gpsEnabled, voice, beeps, vibration, autoPause,
+                    System.currentTimeMillis(), t.stepTotal, autoPaused && t.state == RunTracker.State.PAUSED,
+                ),
+            )
         }
     }
 
@@ -193,6 +231,7 @@ object RunSession {
         points.clear()
         savedPoints = 0
         restored = false
+        gap = null
         store?.clear()
         _ui.value = null
     }

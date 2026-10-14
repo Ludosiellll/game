@@ -71,7 +71,7 @@ class VoiceCoach(context: Context, var voice: Boolean, var beeps: Boolean, var v
                     t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(id: String?) {}
                         override fun onDone(id: String?) { if (!t.isSpeaking) audio?.abandonAudioFocusRequest(focus) }
-                        override fun onStop(id: String?, interrupted: Boolean) { audio?.abandonAudioFocusRequest(focus) }
+                        override fun onStop(id: String?, interrupted: Boolean) { if (!t.isSpeaking) audio?.abandonAudioFocusRequest(focus) }
                         @Deprecated("Deprecated in Java")
                         override fun onError(id: String?) { audio?.abandonAudioFocusRequest(focus) }
                     })
@@ -83,21 +83,25 @@ class VoiceCoach(context: Context, var voice: Boolean, var beeps: Boolean, var v
         }
     }
 
-    fun speak(text: String) {
+    /**
+     * Says [text] after what is being said. [now]: a lap's time, which is worth something only at the line — it cuts off
+     * a longer sentence still going instead of waiting behind it.
+     */
+    fun speak(text: String, now: Boolean = false) {
         if (!voice || failed) return
         val t = tts ?: return
         if (!ready) {
             // Only the latest few matter: a minute-old "half way" is noise.
-            waiting += text
-            while (waiting.size > 3) waiting.removeAt(0)
+            if (now) waiting.add(0, text) else waiting += text
+            while (waiting.size > 3) waiting.removeAt(waiting.lastIndex.takeIf { now } ?: 0)
             return
         }
-        say(t, text)
+        say(t, text, now)
     }
 
-    private fun say(t: TextToSpeech, text: String) {
+    private fun say(t: TextToSpeech, text: String, now: Boolean = false) {
         audio?.requestAudioFocus(focus)
-        t.speak(text, TextToSpeech.QUEUE_ADD, null, "c" + System.nanoTime())
+        t.speak(text, if (now) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "c" + System.nanoTime())
     }
 
     fun countdown(left: Int) {

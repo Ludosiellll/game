@@ -165,6 +165,9 @@ class RunTracker(
 
     /** Steps from the phone's step counter: the cadence, and the distance where GPS gives none (off, or lost). */
     private var lastStepCount: Long? = null
+
+    /** The step counter's own total at its last reading (it counts since the phone started), or null before one. */
+    val stepTotal: Long? get() = lastStepCount
     var steps = 0L
         private set
     private var stepsActiveMs = 0L
@@ -236,6 +239,33 @@ class RunTracker(
         val (t1, s1) = stepWindow.last()
         if (t1 - t0 < 10_000) return null
         return ((s1 - s0) * 60_000.0 / (t1 - t0)).toInt().takeIf { it > 0 }
+    }
+
+    /**
+     * Time the app did not see: the system closed it mid-run and it came back on its own, [gapMs] later. The phone's step
+     * counter went on meanwhile: [gapSteps] steps (null when unknown). As much of the gap as the steps cover at the run's
+     * own cadence counts as running (standing at a traffic light is not filled), and with a known stride the steps give
+     * its way too. Nothing is said for the plan's moments skipped over. Returns the active ms added.
+     */
+    fun fillGap(gapMs: Long, gapSteps: Long?, nowMs: Long): Long {
+        if (state != State.RUNNING || gapMs <= 0 || gapSteps == null || gapSteps <= 0) return 0
+        // Implausibly many steps for the time (a counter that jumped): nothing is guessed from them.
+        if (gapSteps > 4 * (gapMs / 1000 + 1)) return 0
+        val cad = (if (runSteps >= 100 && runStepMs > 30_000) runSteps * 60_000.0 / runStepMs else GAP_CADENCE).coerceIn(120.0, 240.0)
+        val covered = minOf(gapMs, (gapSteps * 60_000.0 / cad).toLong())
+        if (covered < 1000) return 0
+        startedAt -= covered
+        steps += gapSteps
+        val active = activeMs(nowMs)
+        stepsActiveMs = active
+        stride?.let { s ->
+            addDistance(gapSteps * (s.first + s.second * cad).coerceIn(0.5, 2.2), active)
+            // GPS starts afresh after the gap: its first fix is a new anchor, not a jump across the way run unseen.
+            lastFix = null
+            lastSpeed = null
+        }
+        lastTickSec = (timelineMs(nowMs) / 1000).toInt()
+        return covered
     }
 
     /** The rep that waits for the start press on the line after the warm-up, if any (see [RunTimeline.startOnLine]). */
@@ -592,13 +622,17 @@ class RunTracker(
         }
         val last = lastPressMs
         if (last != null && active - last < MIN_LAP_MS) return Press.Ignored
-        lastPressMs = active
         val t = timelineMs(nowMs)
         val p = retimeAuto(t) ?: pressAt(t, auto = false)
-        if (p != Press.Ignored) {
-            lineDistM = distanceM
-            lineT = t
+        if (p == Press.Ignored) {
+            // A touch in the pocket, far too early for a lap: as if it never came (a press on the line seconds later
+            // still counts, and a lap GPS sees is not taken for its press).
+            pressTimes.removeAt(pressTimes.lastIndex)
+            return p
         }
+        lastPressMs = active
+        lineDistM = distanceM
+        lineT = t
         // Only a press that closes a lap is surely on the line: a start may be half a lap before it (6.5 laps).
         if (p is Press.Done) learnLine(active)
         return p
@@ -683,6 +717,7 @@ class RunTracker(
         } else {
             freeLap(t - from, before + 1, seg, lapM, auto)
         }
+        if (!auto && tooShort(result)) return Press.Ignored
         taps += t
         lapList += result
         if (auto) lineDistM = dist
@@ -723,7 +758,8 @@ class RunTracker(
             lapList += lap
             return Press.Done(lap)
         }
-        if (prev == null) {
+        // Once started, a press is a lap: without GPS the way since the start stays 0 and would make every press a start.
+        if (prev == null && -1 !in starts) {
             val sinceVisit = visit?.let { distanceM - lineDistM }
             val start = when {
                 visit == null && t < MIN_LAP_MS -> true
@@ -738,6 +774,7 @@ class RunTracker(
         }
         val from = prev ?: visit ?: starts[-1] ?: 0L
         val lap = freeLap(t - from, number, seg, lapM, auto = false)
+        if (tooShort(lap)) return Press.Ignored
         taps += t
         lapList += lap
         return Press.Done(lap)
@@ -753,6 +790,16 @@ class RunTracker(
         val fast = (own ?: pace)?.let { p -> lapM?.let { Track.lapSec(p.fast.toDouble(), it) } }
         val slow = own?.let { p -> lapM?.let { Track.lapSec(p.slow.toDouble(), it) } }
         return Lap(ms / 1000.0, fast, slow, number, null, auto = auto)
+    }
+
+    /**
+     * A pressed lap far quicker than its target (under [SHORT_LAP] of it): no one runs that, a sleeve or a pocket pressed
+     * the button. It closes no lap and no rep, and the line is not moved to where it happened. Without a target any lap
+     * of [MIN_LAP_MS] or more counts.
+     */
+    private fun tooShort(l: Lap): Boolean {
+        val ref = l.fast ?: l.slow ?: return false
+        return l.seconds < SHORT_LAP * ref
     }
 
     /** A press is made on the line: the fix of that moment moves the line toward it (a far one starts a new stadium). */
@@ -921,8 +968,14 @@ class RunTracker(
         /** Presses closer than this are one press (a double tap): no lap on a stadium is this short. */
         const val MIN_LAP_MS = 5_000L
 
+        /** A pressed lap under this share of its target is a stray touch, not a lap (see [tooShort]). */
+        const val SHORT_LAP = 0.45
+
         /** A crossing GPS saw becomes a lap when no press came this close to it. */
         const val AUTO_WAIT_MS = 8_000L
+
+        /** Steps a minute assumed for a gap when the run has not measured its own cadence yet. */
+        const val GAP_CADENCE = 160.0
 
         /** Fixes worse than this neither move the line nor count as passing it. */
         const val LINE_ACCURACY = 20f

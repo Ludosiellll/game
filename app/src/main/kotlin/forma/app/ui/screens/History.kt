@@ -1,5 +1,6 @@
 package forma.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -82,6 +83,7 @@ fun HistoryItemScreen(workoutId: Long) {
     val w by remember(workoutId) { repo.db.workouts().observe(workoutId) }.collectAsState(initial = null)
     val sets by produceState<List<SetEntity>>(emptyList(), workoutId) { value = repo.db.sets().forWorkout(workoutId) }
     val run by produceState<RunEntity?>(null, workoutId, w) { value = repo.db.runs().get(workoutId) }
+    val profile by repo.store.profile.collectAsState(initial = null)
     var confirm by remember { mutableStateOf(false) }
     val workout = w ?: return
     ScrollScreen {
@@ -89,7 +91,8 @@ fun HistoryItemScreen(workoutId: Long) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatTile("Время", "${(workout.durationSec ?: 0) / 60}", "мин", F.c.text, Modifier.weight(1f))
             StatTile("Оценка", "${workout.rpe ?: "—"}", "из 10", F.c.text, Modifier.weight(1f))
-            StatTile("Нагрузка", "${workout.load?.roundToInt() ?: "—"}", null, F.c.load, Modifier.weight(1f))
+            // Not in a warning colour: a load is a number to read, not a mistake.
+            StatTile("Нагрузка", "${workout.load?.roundToInt() ?: "—"}", null, F.c.text, Modifier.weight(1f))
         }
         if (workout.kind == Kind.LIFT) {
             sets.groupBy { it.position }.forEach { (_, s) ->
@@ -124,7 +127,7 @@ fun HistoryItemScreen(workoutId: Long) {
                     StatTile("Выполнено", "${(r.completed * 100).roundToInt()}%", "плана", F.c.text, Modifier.weight(1f))
                 }
                 if (r.workPace != null) Text("Темп на рабочих отрезках: ${Ru.pace(r.workPace)} /км", style = T.body(15.sp))
-                if (r.vdotAfter != null) Text("VDOT после пробежки: ${Ru.one(r.vdotAfter)}", style = T.secondary(14.sp))
+                if (r.vdotAfter != null) Text(formLine(r.vdotAfter, profile?.runGoal), style = T.secondary(14.sp))
             }
             val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
             if (summary?.manual == true) Text("Внесено вручную: бег без телефона.", style = T.secondary(14.sp))
@@ -220,6 +223,23 @@ private fun KmSplitsCard(splits: List<Double>) {
 }
 
 /**
+ * The fitness after a run in words that say what it means: "Форма (VDOT): 46,2 → прогноз на 1500 м — 5:31" with a goal,
+ * the number alone without one.
+ */
+internal fun formLine(vdot: Double, goal: forma.core.model.RunGoal?): String {
+    val head = "Форма (VDOT): ${Ru.one(vdot)}"
+    if (goal == null) return head
+    val m = goal.meters
+    val where = if (m >= 3000 && m % 1000 == 0) "${m / 1000} км" else "$m м"
+    return "$head → прогноз на $where — ${Ru.clock(forma.core.run.Vdot.predictSeconds(vdot, m.toDouble()).roundToInt())}"
+}
+
+private const val BODY = "Что это даёт телу"
+
+/** Read this many times after runs of a type, "what it gives the body" folds away (a tap opens it). */
+internal const val BODY_SHOWN = 3
+
+/**
  * The run talked through: how it went against what it was for (laps on target and how even, the easy pace kept, the
  * trial against the goal), the effort against the plan, what it trains and how long before the next hard day.
  */
@@ -240,14 +260,28 @@ fun RunDebrief(workout: forma.app.data.WorkoutEntity, run: RunEntity, summary: R
             gym = profile?.aim?.lifts != false,
         )
     }
+    // "What it gives the body" says the same after every run of a type: read a few times, it folds away. Counted once
+    // per showing; the count as it was when the screen opened decides (the count going up must not fold it while read).
+    val key = plan.type.name
+    val seenNow = forma.app.ui.LocalSettings.current.bodySeen[key] ?: 0
+    val seen = remember(workout.id) { seenNow }
+    androidx.compose.runtime.LaunchedEffect(workout.id) {
+        runCatching { repo.updateSettings { it.copy(bodySeen = it.bodySeen + (key to (it.bodySeen[key] ?: 0) + 1)) } }
+    }
+    var bodyOpen by remember(workout.id) { mutableStateOf(false) }
     if (items.isEmpty()) return
     SectionLabel("Разбор")
     FCard(gap = 0.dp) {
         items.forEachIndexed { i, it ->
             if (i > 0) Hairline()
-            Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            val folded = it.title == BODY && seen >= BODY_SHOWN && !bodyOpen
+            var m = Modifier.padding(vertical = 10.dp)
+            if (it.title == BODY && seen >= BODY_SHOWN) {
+                m = Modifier.fillMaxWidth().clickable(onClickLabel = if (bodyOpen) "Свернуть" else "Развернуть") { bodyOpen = !bodyOpen }.then(m)
+            }
+            Column(m, verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    it.title, style = T.body(15.sp, FontWeight.Bold).copy(
+                    it.title + if (folded) " ›" else "", style = T.body(15.sp, FontWeight.Bold).copy(
                         color = when (it.tone) {
                             1 -> F.c.good
                             -1 -> F.c.warn
@@ -255,7 +289,7 @@ fun RunDebrief(workout: forma.app.data.WorkoutEntity, run: RunEntity, summary: R
                         },
                     ),
                 )
-                Text(it.text, style = T.body(15.sp))
+                if (!folded) Text(it.text, style = T.body(15.sp))
             }
         }
     }
