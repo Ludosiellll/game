@@ -23,7 +23,10 @@ object LoadStory {
 
     enum class Zone { REST, BUILDING, BALANCE, FRESH, DETRAINING }
 
-    /** [ONGOING]: this week has only just begun — too little of it to say how it compares. */
+    /**
+     * [ONGOING]: the week under way, too little of it to say how it compares — a day in, or before the days the usual
+     * weeks trained on (a Thursday of someone who trains at weekends).
+     */
     enum class Level { NONE, LIGHT, USUAL, MORE, SPIKE, ONGOING }
 
     /** The person's rest line and where it came from. */
@@ -173,7 +176,8 @@ object LoadStory {
                 ratio <= 1.3 -> Level.MORE
                 else -> Level.SPIKE
             }
-            // A day or so in, one session more or less is all the difference: no verdict yet.
+            // A day or so in, one session more or less is all the difference; and before the usual training days there is
+            // nothing to set it against: no verdict yet.
             val level = when {
                 !current -> raw
                 daysIn <= 1 && raw != Level.USUAL -> Level.ONGOING

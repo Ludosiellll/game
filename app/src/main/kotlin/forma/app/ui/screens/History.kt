@@ -270,15 +270,14 @@ private fun KmSplitsCard(splits: List<Double>) {
 }
 
 /**
- * The fitness after a run in words that say what it means: "Форма (VDOT): 46,2 → прогноз на 1500 м — 5:31" with a goal,
- * the number alone without one.
+ * The fitness after a run in words that say what it means: "VDOT после пробежки: 46,2 → прогноз на 1,5 км — 5:31" with
+ * a goal, the number alone without one. Not «форма»: that word is the app's name.
  */
 internal fun formLine(vdot: Double, goal: forma.core.model.RunGoal?): String {
-    val head = "Форма (VDOT): ${Ru.one(vdot)}"
+    val head = "VDOT после пробежки: ${Ru.one(vdot)}"
     if (goal == null) return head
     val m = goal.meters
-    val where = if (m >= 3000 && m % 1000 == 0) "${m / 1000} км" else "$m м"
-    return "$head → прогноз на $where — ${Ru.clock(forma.core.run.Vdot.predictSeconds(vdot, m.toDouble()).roundToInt())}"
+    return "$head → прогноз на ${goalDistance(m)} — ${Ru.clock(forma.core.run.Vdot.predictSeconds(vdot, m.toDouble()).roundToInt())}"
 }
 
 private const val BODY = "Что это даёт телу"

@@ -27,7 +27,12 @@ object DayReasons {
         val runFirst = today.first().isRun
         val out = mutableListOf<String>()
         if (run != null && hard(run)) {
+            // The days around said as they are: a run-only week may hold two hard days in a row.
+            val prevHard = prev.any { hard(it) }
+            val nextHard = next.any { hard(it) }
             out += when {
+                lift == null && !gym && prevHard -> "Накануне тоже тяжёлый бег: разминка — длиннее и спокойнее."
+                lift == null && !gym && nextHard -> "Тяжёлому бегу нужны свежие ноги: накануне — без тяжёлого бега."
                 lift == null && !gym -> "Тяжёлому бегу нужны свежие ноги: накануне и назавтра — без тяжёлого бега."
                 lift == null -> "День без зала: все силы — на бег, тяжёлому бегу нужны свежие ноги."
                 !legDay -> "Тяжёлый бег — в день верха: руки и спина ему не мешают. " +

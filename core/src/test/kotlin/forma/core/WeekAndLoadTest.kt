@@ -101,7 +101,34 @@ class WeekAndLoadTest {
         lines.forEach { assertFalse("зал" in it.lowercase() || "ног:" in it || "ноги —" in it.lowercase(), it) }
     }
 
+    /** A run-only week with two hard days in a row: neither says "the day before and after — no hard running". */
+    @Test fun twoHardDaysInARowAreNotCalledApart() {
+        val speed = Aim(LiftFocus.NONE, RunFocus.SPEED, Emphasis.RUN)
+        val run = program(speed, 6 to listOf(quality), 7 to listOf(quality))
+        val sat = DayReasons.of(run, 6)
+        val sun = DayReasons.of(run, 7)
+        (sat + sun).forEach { assertFalse("накануне и назавтра" in it, it) }
+        assertTrue(sat.any { "накануне — без тяжёлого бега" in it }, sat.toString())
+        assertTrue(sun.any { "Накануне тоже тяжёлый бег" in it }, sun.toString())
+        // Days apart: said as before.
+        val apart = program(speed, 2 to listOf(quality), 6 to listOf(quality))
+        assertTrue(DayReasons.of(apart, 2).any { "накануне и назавтра — без тяжёлого бега" in it })
+    }
+
     // ---------- load ----------
+
+    /** Someone who trains at weekends, on a Thursday after an extra session: the week is under way, not "only just begun". */
+    @Test fun aWeekendTrainersThursdayIsNotTheStartOfTheWeek() {
+        val loads = mutableMapOf<LocalDate, Double>()
+        repeat(6) { w -> loads[start.plusDays(w * 7L + 5)] = 400.0; loads[start.plusDays(w * 7L + 6)] = 400.0 }
+        val thursday = start.plusWeeks(6).plusDays(3)
+        loads[thursday.minusDays(2)] = 300.0
+        val w = LoadStory.of(loads, thursday).weeks.last()
+        assertEquals(LoadStory.Level.ONGOING, w.level)
+        val note = LoadExplain.levelNote(w)!!
+        assertFalse("только началась" in note, note)
+        assertTrue("обычно тренируешься" in note, note)
+    }
 
     private val start = LocalDate.of(2026, 7, 6)
 

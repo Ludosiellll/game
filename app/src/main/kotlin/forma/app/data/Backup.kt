@@ -71,7 +71,7 @@ class BackupManager(private val repo: TrainingRepository) {
     suspend fun sessionGoing(): Boolean = repo.db.workouts().active() != null || forma.app.run.RunSession.tracker != null
 
     /**
-     * Replaces the data on the phone with the file's content. Returns the number of workouts restored.
+     * Replaces the data on the phone with the file's content. Returns the number of finished workouts restored.
      * With the cloud on, the next sync first brings in what the cloud has (newer progress wins, workouts deleted since
      * the file was made stay deleted), then uploads what only the file had: an old file rolls nothing back.
      * Whose the data is stays known: the account of the phone (or [signedIn]), else the file's — the restored data goes
@@ -95,6 +95,7 @@ class BackupManager(private val repo: TrainingRepository) {
             repo.refreshCustom()
         }
         repo.notifyChanged()
-        return b.workouts.size
+        // Finished ones, as the question before the restore counts them: one left unfinished in the file is not a workout yet.
+        return b.workouts.count { it.status == Status.DONE }
     }
 }

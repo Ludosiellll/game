@@ -203,7 +203,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     val aboutProblem: String? get() = when {
         birthYear.isBlank() -> "Впиши год рождения."
         birthYearBad -> "Год рождения — четыре цифры, например 2008."
-        weight.isBlank() -> "Впиши вес: от него стартовые веса в зале."
+        weight.isBlank() -> if (aim.lifts) "Впиши вес: от него стартовые веса в зале." else "Впиши вес: от него расход энергии."
         weightBad -> "Вес — от 30 до 250 кг."
         heightBad -> "Рост — от 120 до 230 см, или оставь поле пустым."
         restingHrBad -> "Пульс в покое — от 30 до 110 ударов, или оставь поле пустым."
@@ -427,7 +427,11 @@ fun BodyFields(d: ProfileDraft, onboarding: Boolean) {
 
 @Composable
 private fun AboutStep(d: ProfileDraft) {
-    StepTitle("О себе", "Вес нужен для стартовых весов в зале, год рождения и рост — для расчёта расхода энергии.")
+    StepTitle(
+        "О себе",
+        if (d.aim.lifts) "Вес нужен для стартовых весов в зале, год рождения и рост — для расчёта расхода энергии."
+        else "Вес, год рождения и рост нужны для расчёта расхода энергии.",
+    )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Chip("Мужчина", d.sex == Sex.MALE, { d.sex = Sex.MALE }, Modifier.weight(1f))
         Chip("Женщина", d.sex == Sex.FEMALE, { d.sex = Sex.FEMALE }, Modifier.weight(1f))

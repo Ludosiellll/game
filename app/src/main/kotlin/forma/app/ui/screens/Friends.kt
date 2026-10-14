@@ -58,7 +58,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import kotlin.math.roundToInt
 
-/** Everything the friends screen shows. [fresh]: the friends profile was just created (what friends see is explained). */
+/** Everything the friends screen shows. [fresh]: a new friends profile — what friends see is explained, once. */
 data class FriendsUi(
     val signedIn: Boolean = true,
     val loading: Boolean = false,
@@ -72,14 +72,16 @@ data class FriendsUi(
 
 /**
  * The friends screen from the server. The profile's name goes up only when the server has none — a friends profile
- * created just now: a name changed for friends is never overwritten by opening the screen.
+ * created just now: a name changed for friends is never overwritten by opening the screen. What friends see is
+ * explained to a new friends profile until [explained]: a profile may stay without a name (the app does not ask for
+ * one), and a blank name alone would explain it on every visit.
  */
-suspend fun loadFriends(api: FriendsApi, localName: String?, message: String? = null): FriendsUi {
+suspend fun loadFriends(api: FriendsApi, localName: String?, message: String? = null, explained: Boolean = false): FriendsUi {
     var me = api.me()
-    val fresh = me.name.isBlank()
+    val blank = me.name.isBlank()
     val name = localName?.trim().orEmpty()
-    if (fresh && name.isNotEmpty()) me = api.me(name)
-    return FriendsUi(signedIn = true, me = me, friends = api.list(), feed = api.feed(limit = 30), message = message, fresh = fresh)
+    if (blank && name.isNotEmpty()) me = api.me(name)
+    return FriendsUi(signedIn = true, me = me, friends = api.list(), feed = api.feed(limit = 30), message = message, fresh = blank && !explained)
 }
 
 @Composable
@@ -100,8 +102,11 @@ fun FriendsScreen() {
             return
         }
         ui = ui.copy(loading = true, error = null)
-        ui = runCatching { loadFriends(api, repo.store.profileNow()?.name, ui.message).let { it.copy(fresh = it.fresh || ui.fresh) } }
-            .getOrElse { FriendsUi(signedIn = true, error = describeFriends(it)) }
+        ui = runCatching {
+            loadFriends(api, repo.store.profileNow()?.name, ui.message, explained = cloud?.friendsExplained == true).let { it.copy(fresh = it.fresh || ui.fresh) }
+        }.getOrElse { FriendsUi(signedIn = true, error = describeFriends(it)) }
+        // Explained once: the banner stays on this visit, not on the next ones.
+        if (ui.fresh) cloud?.friendsExplained = true
     }
     LaunchedEffect(cloudState?.email) { reload() }
 

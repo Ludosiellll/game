@@ -110,8 +110,10 @@ object Stats {
      * Strength index: 100 at the start, then chained week to week — each week moves it by the geometric mean of
      * (this week's e1RM / last week's) over the exercises done lately in both weeks. An exercise added later or taken out
      * does not move it: it counts only from its second week and stops counting four weeks after its last session.
+     * Back after a break, it is set against its last value before it: the drop shows, and getting the old weights back
+     * brings the index back (not "+33 %" over the lower start of the return).
      * "+12 %" means the lifts done all along are on average 12 % stronger. An exercise's value in a week is the better of
-     * its last two sessions up to then.
+     * its last two sessions up to then (of the same stretch: a session before a break does not stand for the return).
      */
     fun strengthIndex(rows: List<SetRow>, bodyWeight: (Long) -> Double): List<Point> {
         val byEx = rows.groupBy { it.exerciseId }.mapNotNull { (id, r) ->
@@ -125,21 +127,19 @@ object Stats {
         fun valueOn(s: List<Point>, day: Long): Double? {
             val upTo = s.filter { it.epochDay <= day }
             if (upTo.isEmpty() || day - upTo.last().epochDay > ACTIVE_DAYS) return null
-            return upTo.takeLast(2).maxOf { it.value }
+            return upTo.takeLast(2).filter { upTo.last().epochDay - it.epochDay <= ACTIVE_DAYS }.maxOf { it.value }
         }
         val out = mutableListOf<Point>()
         var day = monday(LocalDate.ofEpochDay(first)).plusDays(6).toEpochDay()
         var index = 100.0
-        var prev: List<Double?>? = null
+        // Each exercise's last value counted: the week before, or the last one before a break.
+        val known = arrayOfNulls<Double>(byEx.size)
         while (true) {
             val now = byEx.map { valueOn(it, day) }
-            val p = prev
-            if (p != null) {
-                val logs = now.indices.mapNotNull { i -> val a = p[i]; val b = now[i]; if (a != null && b != null) ln(b / a) else null }
-                if (logs.isNotEmpty()) index *= exp(logs.sum() / logs.size)
-            }
+            val logs = now.indices.mapNotNull { i -> val a = known[i]; val b = now[i]; if (a != null && b != null) ln(b / a) else null }
+            if (logs.isNotEmpty()) index *= exp(logs.sum() / logs.size)
             out += Point(minOf(day, last), index)
-            prev = now
+            now.forEachIndexed { i, v -> if (v != null) known[i] = v }
             if (day >= last) break
             day += 7
         }

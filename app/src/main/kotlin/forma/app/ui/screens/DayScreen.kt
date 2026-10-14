@@ -96,7 +96,7 @@ fun DayScreen(date: LocalDate) {
         // "Завтра" over "Четверг, 15 октября"; a day further off is its name over its date.
         TopBar(title ?: DAY_FULL[date.dayOfWeek.value - 1], if (title != null) dateLine(date) else shortDate(date), onBack = { nav.back() })
         if (paused) {
-            forma.app.ui.components.Banner("Пауза: в этот день тренировок нет, план стоит.", F.c.warn)
+            forma.app.ui.components.Banner("Пауза: в этот день тренировок по плану нет, план стоит.", F.c.warn)
         } else if (sessions.isEmpty() && item?.offPlan.isNullOrEmpty()) {
             FCard(gap = 6.dp) {
                 SectionLabel("Отдых")
@@ -124,8 +124,8 @@ fun DayScreen(date: LocalDate) {
                 else -> DayLiftCard(s, p, date, done, hardRun = sessions.any(hard))
             }
         }
-        // Done beyond the plan of the day: a missed session caught up, or one extra.
-        if (!paused) item?.offPlan?.forEach { w -> OffPlanCard(w, item.catchUps[w.id]) }
+        // Done beyond the plan of the day: a missed session caught up, or one extra — on a pause day too.
+        item?.offPlan?.forEach { w -> OffPlanCard(w, item.catchUps[w.id]) }
         val reasons = if (paused) emptyList() else DayReasons.of(p, date.dayOfWeek.value, hard)
         if (reasons.isNotEmpty()) {
             SectionLabel("Почему в этот день")

@@ -153,7 +153,7 @@ fun TodayScreen() {
                 Banner("Пробежка прервалась на ${Ru.clock(r.elapsedSec)} — продолжить или закончить", F.c.warn, icon = Ic.run) { nav.push(Screen.RunActive) }
             else -> Banner("Идёт пробежка · ${Ru.clock(r.elapsedSec)}", F.c.endurance, icon = Ic.run) { nav.push(Screen.RunActive) }
         }
-        deloadText(deload && gym, runCutback)?.let { Banner(it, F.c.warn) }
+        deloadText(deload && gym, runCutback, ladder = p.week.days.any { d -> d.sessions.any { it.kind == SessionKind.RUN_QUALITY } })?.let { Banner(it, F.c.warn) }
 
         WeekStrip(week, today, p.createdEpochDay)
 
@@ -169,10 +169,14 @@ fun TodayScreen() {
         val todays = todayItem?.planned.orEmpty()
         val extra = todayItem?.offPlan.orEmpty()
         when {
-            repo.paused(settings, today) -> PauseCard(
-                java.time.LocalDate.ofEpochDay(settings.pauseUntil!!),
-                restarts = settings.pauseUntil!! - (settings.pauseFrom ?: settings.pauseUntil!!) + 1 >= 7,
-            ) { scope.launch { repo.resume(today) } }
+            repo.paused(settings, today) -> {
+                PauseCard(
+                    java.time.LocalDate.ofEpochDay(settings.pauseUntil!!),
+                    restarts = settings.pauseUntil!! - (settings.pauseFrom ?: settings.pauseUntil!!) + 1 >= 7,
+                ) { scope.launch { repo.resume(today) } }
+                // Trained on a pause day anyway: what was done shows, as it counts in the week.
+                extra.forEach { w -> OffPlanCard(w, todayItem?.catchUps?.get(w.id)) }
+            }
             todays.isEmpty() && extra.isNotEmpty() -> {
                 // A rest day trained on anyway (a missed session caught up, or one extra): said as done, not as rest.
                 extra.forEach { w -> OffPlanCard(w, todayItem?.catchUps?.get(w.id)) }
@@ -309,12 +313,12 @@ const val SICK_PAUSE_DAYS = 3
 
 /**
  * The lighter week's banner: the gym's deload ([gym]) and the shorter runs ([runs]) said together when they fall on the
- * same week, each alone otherwise; null in an ordinary week.
+ * same week, each alone otherwise; null in an ordinary week. [ladder]: the week holds hard runs, whose ladder step waits.
  */
-fun deloadText(gym: Boolean, runs: Boolean): String? = when {
+fun deloadText(gym: Boolean, runs: Boolean, ladder: Boolean = true): String? = when {
     gym && runs -> "Разгрузочная неделя: в зале вдвое меньше подходов и вес −10 %, пробежки короче. Восстановление — тоже тренировка."
     gym -> "Разгрузочная неделя: вдвое меньше подходов и вес −10 %. Восстановление — тоже тренировка."
-    runs -> "Облегчённая неделя бега: пробежки короче, шаг лестницы не двигается. Восстановление — тоже тренировка."
+    runs -> "Облегчённая неделя бега: пробежки короче" + (if (ladder) ", шаг лестницы не двигается" else "") + ". Восстановление — тоже тренировка."
     else -> null
 }
 
@@ -327,18 +331,22 @@ fun zoneColor(z: forma.core.load.LoadStory.Zone?): Color = when (z) {
     else -> F.c.text
 }
 
-/** "цель 5:30 · запас 3 с" when the forecast is within the goal, "до цели 9 с" when not yet. */
+/** "цель 5:30 · запас 3 с" when the forecast is within the goal, "цель 5:30 · без запаса" right on it, "до цели 9 с" when not yet. */
 fun goalGap(forecast: Double, goal: Int): String {
     val gap = (forecast - goal).roundToInt()
     fun sec(x: Int) = if (x < 60) "$x с" else Ru.clock(x)
-    return if (gap <= 0) "цель ${Ru.clock(goal)} · запас ${sec(-gap)}" else "до цели ${sec(gap)}"
+    return when {
+        gap < 0 -> "цель ${Ru.clock(goal)} · запас ${sec(-gap)}"
+        gap == 0 -> "цель ${Ru.clock(goal)} · без запаса"
+        else -> "до цели ${sec(gap)}"
+    }
 }
 
-/** "сегодня", "завтра", "16 окт". */
+/** "сегодня", "завтра", "16 окт", "16 мая": after a number May is said in full. */
 fun soonDay(d: LocalDate, today: LocalDate): String = when (d) {
     today -> "сегодня"
     today.plusDays(1) -> "завтра"
-    else -> "${d.dayOfMonth} ${MONTH_SHORT[d.monthValue - 1]}"
+    else -> "${d.dayOfMonth} ${if (d.monthValue == 5) "мая" else MONTH_SHORT[d.monthValue - 1]}"
 }
 
 /** A hollow dot: a session that was planned and not done. */
@@ -354,7 +362,7 @@ private fun Ring(color: Color, size: androidx.compose.ui.unit.Dp = 6.dp) {
 fun dayState(d: DayItem, today: LocalDate, since: Long? = null): String {
     val over = d.date.isBefore(today) && (since == null || d.date.toEpochDay() >= since)
     return when {
-        d.paused -> "пауза"
+        d.paused -> if (d.offPlan.isNotEmpty()) "пауза, сделано вне плана" else "пауза"
         d.planned.isNotEmpty() && d.planned.all { d.isDone(it) } -> if (d.offPlan.isNotEmpty()) "сделано, и ещё вне плана" else "сделано"
         d.planned.any { d.isDone(it) } -> if (over) "сделано частично, остальное пропущено" else "сделано частично"
         d.planned.isNotEmpty() && over -> "пропущено"
@@ -400,7 +408,7 @@ private fun WeekStrip(week: List<DayItem>, today: LocalDate, since: Long?) {
                         val liftColor = if (isToday) F.c.onAccent else F.c.strength
                         fun kindColor(run: Boolean) = if (run) runColor else liftColor
                         when {
-                            d.paused -> Text("—", style = T.secondary(11.sp))
+                            d.paused -> if (d.offPlan.isEmpty()) Text("—", style = T.secondary(11.sp))
                             doneAll -> Icon(Ic.check, null, tint = if (isToday) F.c.onAccent else F.c.good, modifier = Modifier.size(12.dp))
                             else -> d.planned.forEach { s ->
                                 when {
@@ -411,8 +419,8 @@ private fun WeekStrip(week: List<DayItem>, today: LocalDate, since: Long?) {
                                 }
                             }
                         }
-                        // Done beyond the plan of the day (caught up, extra): a tick in the colour of its kind.
-                        if (!d.paused) d.offPlan.forEach { w ->
+                        // Done beyond the plan of the day (caught up, extra, on a pause day): a tick in the colour of its kind.
+                        d.offPlan.forEach { w ->
                             Icon(Ic.check, null, tint = kindColor(w.kind == forma.app.data.Kind.RUN), modifier = Modifier.size(10.dp))
                         }
                     }

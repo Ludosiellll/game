@@ -66,6 +66,8 @@ data class CloudState(
     /** The phone's data belongs to another account ([previousEmail]): the sync waits for a decision. */
     val otherAccount: Boolean = false,
     val previousEmail: String? = null,
+    /** The account is being deleted: no sync meanwhile. */
+    val deleting: Boolean = false,
 )
 
 class NotSignedInException : IllegalStateException("not signed in")
@@ -125,6 +127,14 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
 
     val signedIn: Boolean get() = prefs.getBoolean(KEY_SIGNED_IN, false)
 
+    /** Set while the account is being deleted: a sync then would upload the phone's data to it again. */
+    @Volatile private var deleting = false
+
+    /** What friends see has been explained on the friends screen (once for the account signed in, not on every visit). */
+    var friendsExplained: Boolean
+        get() = prefs.getBoolean(KEY_FRIENDS_EXPLAINED, false)
+        set(value) { prefs.edit().putBoolean(KEY_FRIENDS_EXPLAINED, value).apply() }
+
     /**
      * Creates an account. Returns false when the project still requires email confirmation:
      * then the user confirms by the link in the email and signs in afterwards.
@@ -166,8 +176,12 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
     suspend fun signOut() {
         val c = client ?: return
         runCatching { c.auth.signOut() }.onFailure { c.auth.clearSession() }
-        prefs.edit().remove(KEY_SIGNED_IN).remove(KEY_LAST_SYNC).remove(KEY_LAST_ERROR).apply()
+        prefs.edit().remove(KEY_SIGNED_IN).remove(KEY_LAST_SYNC).remove(KEY_LAST_ERROR).remove(KEY_FRIENDS_EXPLAINED).apply()
         _state.update { it.copy(email = null, lastSyncAt = null, lastError = null, otherAccount = false) }
+        cancelSync()
+    }
+
+    private fun cancelSync() {
         runCatching {
             WorkManager.getInstance(context).run {
                 cancelUniqueWork(WORK_SOON)
@@ -180,6 +194,8 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
     suspend fun syncNow(): Result<SyncResult> {
         val c = client ?: return Result.failure(IllegalStateException("cloud is not configured"))
         val engine = engine ?: return Result.failure(IllegalStateException("cloud is not configured"))
+        // During the deletion the account is as good as gone: nothing to retry either.
+        if (deleting) return Result.failure(NotSignedInException())
         _state.update { it.copy(busy = true) }
         return try {
             val user = currentUser(c) ?: throw NotSignedInException()
@@ -233,14 +249,31 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
      * Deletes the account and everything of it in the cloud (workouts, progress, documents, friends) by the server
      * function of the delete_account migration, then signs out. The data on this phone stays and is no one's account's
      * any more: signing in to another account later uploads it there.
+     * No sync meanwhile: the background ones are cancelled and new ones refused before the call, and one going on
+     * finishes first (the lock). Not deleted (or not known whether), the background sync comes back.
      */
     suspend fun deleteAccount() {
         val c = client ?: throw IllegalStateException("cloud is not configured")
         currentUser(c) ?: throw NotSignedInException()
-        c.postgrest.rpc("delete_my_account", JsonObject(emptyMap()))
-        forma.app.data.DataLock.mutex.withLock { repo.db.sync().reset() }
-        prefs.edit().remove(KEY_LAST_EMAIL).apply()
-        signOut()
+        deleting = true
+        _state.update { it.copy(deleting = true) }
+        try {
+            cancelSync()
+            try {
+                forma.app.data.DataLock.mutex.withLock { c.postgrest.rpc("delete_my_account", JsonObject(emptyMap())) }
+            } catch (e: Exception) {
+                schedulePeriodic()
+                syncSoon()
+                throw e
+            }
+            prefs.edit().remove(KEY_LAST_EMAIL).apply()
+            signOut()
+            // After the sign-out: a sync that slipped in has finished by now (the lock), and what it saw is forgotten.
+            forma.app.data.DataLock.mutex.withLock { repo.db.sync().reset() }
+        } finally {
+            deleting = false
+            _state.update { it.copy(deleting = false) }
+        }
     }
 
     /** The signed-in user with a fresh access token, or null. */
@@ -286,6 +319,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         private const val KEY_LAST_EMAIL = "last_email"
         private const val KEY_LAST_SYNC = "last_sync"
         private const val KEY_LAST_ERROR = "last_error"
+        private const val KEY_FRIENDS_EXPLAINED = "friends_explained"
         private const val WORK_SOON = "forma-sync-soon"
         private const val WORK_PERIODIC = "forma-sync-periodic"
 
@@ -302,10 +336,15 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
             else -> e.message ?: e::class.simpleName ?: "Неизвестная ошибка"
         }
 
-        /** Human text for a failed account deletion: a server without the function says so plainly. */
+        /**
+         * Human text for a failed account deletion: a server without the function says so plainly. Without an answer
+         * (offline, a timeout) the account may be deleted already or not: it is tried again by hand, never by itself.
+         */
         fun describeDelete(e: Throwable): String = when {
             e is RestException && (e.statusCode == 404 || e.error.contains("PGRST202") || e.error.contains("delete_my_account")) ->
                 "Удаление аккаунта ещё не включено на сервере: нужно применить миграцию delete_account в проекте Supabase. Ничего не удалено."
+            e is HttpRequestException || e is HttpRequestTimeoutException || e is IOException ->
+                "Нет ответа от сервера — неизвестно, удалён ли аккаунт. Попробуй удалить ещё раз, когда появится интернет: повторное нажатие безопасно."
             else -> "Аккаунт не удалён. " + describe(e)
         }
 

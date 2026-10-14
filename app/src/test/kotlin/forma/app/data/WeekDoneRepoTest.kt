@@ -3,8 +3,10 @@ package forma.app.data
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import forma.app.ui.Texts
+import forma.app.ui.screens.dayState
 import forma.app.ui.screens.deloadText
 import forma.app.ui.screens.goalGap
+import forma.app.ui.screens.soonDay
 import forma.app.ui.screens.lapTenth
 import forma.core.model.Aim
 import forma.core.model.Emphasis
@@ -147,9 +149,21 @@ class WeekDoneRepoTest {
         assertEquals("1:00,0", lapTenth(59.96))
         assertEquals("цель 5:30 · запас 3 с", goalGap(327.4, 330))
         assertEquals("до цели 9 с", goalGap(339.2, 330))
+        // Right on the goal: no "запас 0 с".
+        assertEquals("цель 5:30 · без запаса", goalGap(330.3, 330))
         assertTrue(deloadText(gym = true, runs = true)!!.contains("пробежки короче"))
         assertFalse(deloadText(gym = true, runs = false)!!.contains("пробежк"))
         assertNull(deloadText(gym = false, runs = false))
+        // Only easy runs: no ladder to speak of.
+        assertTrue(deloadText(gym = false, runs = true)!!.contains("шаг лестницы"))
+        assertFalse(deloadText(gym = false, runs = true, ladder = false)!!.contains("лестниц"))
+        // "тест 16 мая", not "16 май".
+        assertEquals("16 мая", soonDay(LocalDate.of(2027, 5, 16), LocalDate.of(2027, 5, 1)))
+        assertEquals("16 окт", soonDay(LocalDate.of(2026, 10, 16), LocalDate.of(2026, 10, 1)))
+        // A run done on a pause day is said, not hidden behind the pause.
+        val run = WorkoutEntity(epochDay = monday.toEpochDay(), kind = Kind.RUN, templateId = null, title = "Свободный бег", startedAt = 0, status = Status.DONE)
+        assertEquals("пауза, сделано вне плана", dayState(DayItem(monday, emptyList(), listOf(run), paused = true), monday.plusDays(1)))
+        assertEquals("пауза", dayState(DayItem(monday, emptyList(), emptyList(), paused = true), monday.plusDays(1)))
     }
 
     @Test fun aShortEasyRunSaysItMovesNoLength() {
