@@ -312,6 +312,14 @@ object PlanAdvisor {
             )
         }
 
+        // One gym session a week short for many muscles: a second day helps, cramming them into one does not.
+        val sessions = days.sumOf { it.times }
+        val shortNow = volume(cur(), find).let { v -> MUSCLES.filter { m -> ranges.getValue(m).first.let { lo -> lo > 0 && (v[m] ?: 0.0) < lo - 1 } } }
+        val oneDayShort = sessions == 1 && shortNow.size >= 3
+        if (oneDayShort) held += "Одна тренировка в неделю, а подходов не хватает сразу на ${shortNow.size} " +
+            "${Ru.plural(shortNow.size, "мышцу", "мышцы", "мышц")} (${shortNow.joinToString(", ") { it.ru.lowercase() }}). В одну тренировку " +
+            "всё не уместить — лучше второй день в зале (План → Поменять дни), тогда предложу, что в него поставить."
+
         // 4. Weekly sets per muscle. Short, with another muscle to spare: one exercise swapped for the other. Short alone:
         // more sets where it works already, else an exercise for it. Far over: a set less on its single-muscle work.
         for (m in MUSCLES) {
@@ -372,7 +380,7 @@ object PlanAdvisor {
                 // A new exercise only for what the ones there do not do already: no second lateral raise beside the first.
                 val there = targets.mapNotNull { (_, i) -> find(i.exerciseId)?.pattern }.toSet()
                 val iso2 = iso.filter { id -> find(id)?.pattern !in there }
-                if (need > 1 && iso2.isNotEmpty()) {
+                if (need > 1 && iso2.isNotEmpty() && !oneDayShort) {
                     val iso = iso2
                     val day = if (m in LEGS) legDay() else upperDayFor(cur(), find, input.timeRatio)
                     val add = day?.let {

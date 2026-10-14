@@ -164,6 +164,10 @@ class PlanAdvisorTest {
         assertTrue("add:nordic" in ids && "oneleg:add" in ids, ids.toString())
         assertTrue(ids.none { it.startsWith("add:CHEST") }, ids.toString())
         assertTrue(a.held.any { it.startsWith("Грудь: 3 подхода") && "не влезет" in it }, a.held.toString())
+        // The same day as the only one of the week, with time for everything: a second day, not one crammed session.
+        val once = PlanAdvisor.advise(input(listOf(day)).copy(sessionMinutes = 120))
+        assertTrue(once.changes.none { it.id.startsWith("add:CHEST") || it.id.startsWith("add:BICEPS") }, once.changes.map { it.id }.toString())
+        assertTrue(once.held.any { it.startsWith("Одна тренировка в неделю") && "второй день" in it }, once.held.toString())
     }
 
     @Test fun aWeekWithoutTheGymHasNothingToSay() {
