@@ -105,7 +105,10 @@ fun DayScreen(date: LocalDate) {
                 )
             }
         }
-        sessions.forEach { s ->
+        // The gym and a run on one day: which first and why; one of them done — how to do the other.
+        val order by produceState<forma.app.data.DayOrder?>(null, date, sessions, settings) { value = if (paused) null else repo.dayOrder(date) }
+        order?.let { o -> OrderCard(o, runDone = item?.isDone(o.run) == true, liftDone = item?.isDone(o.lift) == true, today = date == today) }
+        (order?.ordered(sessions) ?: sessions).forEach { s ->
             val done = item?.doneFor(s)
             val later = item?.doneLaterFor(s)
             // Missed: a day already over, of the plan as it was then (not a day before the plan was made).
@@ -327,3 +330,29 @@ internal fun cycleWords(p: Program, date: LocalDate, reactive: Long?): Pair<Int,
         else -> "рабочая неделя — запас как в плане."
     }
 }
+
+/**
+ * A day with the gym and a run: which first and why, with the tips of the day; with one of them done, how to do the
+ * other; nothing once both are done.
+ */
+@Composable
+internal fun OrderCard(order: forma.app.data.DayOrder, runDone: Boolean, liftDone: Boolean, today: Boolean = true) {
+    if (runDone && liftDone) return
+    val after = when {
+        runDone -> forma.core.plan.SessionOrder.afterFirst(order.day, runDone = true)
+        liftDone -> forma.core.plan.SessionOrder.afterFirst(order.day, runDone = false)
+        else -> null
+    }
+    if ((runDone || liftDone) && after == null) return
+    FCard(gap = 8.dp) {
+        SectionLabel(if (runDone || liftDone) "Дальше" else if (today) "Порядок на сегодня" else "Порядок")
+        if (after != null) {
+            Text(after, style = T.body(15.sp))
+        } else {
+            Text(forma.core.plan.SessionOrder.words(order.advice), style = T.title(20.sp))
+            Text(order.advice.why, style = T.body(15.sp))
+            order.advice.tips.forEach { Text(it, style = T.secondary(14.sp)) }
+        }
+    }
+}
+

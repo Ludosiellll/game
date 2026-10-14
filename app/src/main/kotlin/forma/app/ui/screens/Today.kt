@@ -180,9 +180,12 @@ fun TodayScreen() {
             )
             else -> {
                 if (a == null && todays.any { todayItem?.isDone(it) != true }) FeelRow(feel, tired = (form ?: 0.0) < restLine) { setFeel(it) }
+                // The gym and a run today: which first and why (how tired, the exercises, the legs of the last days).
+                val order by produceState<forma.app.data.DayOrder?>(null, todays, feel, week) { value = repo.dayOrder(today, feel == Feel.LOW) }
                 if (feel == Feel.SICK) {
                     SickCard(today, onTrainAnyway = { setFeel(Feel.UNSET) }, onPause = { scope.launch { repo.pause(today, today.plusDays(SICK_PAUSE_DAYS - 1L)) } })
-                } else todays.forEach { s ->
+                } else order?.let { o -> OrderCard(o, runDone = todayItem?.isDone(o.run) == true, liftDone = todayItem?.isDone(o.lift) == true) }
+                if (feel != Feel.SICK) (order?.ordered(todays) ?: todays).forEach { s ->
                     val light = feel == Feel.LOW
                     if (s.kind == SessionKind.LIFT) {
                         LiftCard(s, p, today, todayItem?.doneFor(s), light) {

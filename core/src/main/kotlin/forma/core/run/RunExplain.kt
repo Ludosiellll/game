@@ -160,7 +160,7 @@ object RunExplain {
     /** The goal pace as the runner checks it: the lap time on a stadium, the pace a km on the road. */
     private fun paceWords(w: RunWorkout, goal: RunGoal): String {
         val lapM = w.lapMeters
-        return if (lapM != null) "круг $lapM м за ${Ru.lap(Track.lapSec(goal.pace, lapM))}" else "${Ru.pace(goal.pace)} на км"
+        return if (lapM != null) "круг $lapM м за ${Ru.lapTenth(Track.lapSec(goal.pace, lapM))}" else "${Ru.pace(goal.pace)} на км"
     }
 
     private fun target(w: RunWorkout, p: PaceRange): String {

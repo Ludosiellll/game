@@ -102,3 +102,19 @@ data class DayItem(
     /** Planned and not done, on a day already over. */
     fun missed(today: LocalDate): List<PlannedSession> = if (date.isBefore(today)) planned.filter { !isDone(it) } else emptyList()
 }
+
+/** A day with the gym and a run: the two sessions, the day as it stands and the advice on which goes first. */
+data class DayOrder(
+    val run: forma.core.plan.PlannedSession,
+    val lift: forma.core.plan.PlannedSession,
+    val day: forma.core.plan.SessionOrder.Day,
+    val advice: forma.core.plan.SessionOrder.Advice,
+) {
+    /** [sessions] of the day in the advised order (others after them as they were). */
+    fun ordered(sessions: List<forma.core.plan.PlannedSession>): List<forma.core.plan.PlannedSession> {
+        val first = if (advice.runFirst) run else lift
+        val second = if (advice.runFirst) lift else run
+        return listOf(first, second).filter { it in sessions } + sessions.filter { it != first && it != second }
+    }
+}
+

@@ -296,4 +296,22 @@ class DayScreenUiTest {
         compose.onNodeWithText("Забег · 1500 м").assertExists()
         compose.onRoot().captureRoboImage("build/shots/carbon-race-day.png")
     }
+
+    /** Thursday, a hard run and the upper body: the day says the run first and why, the run's card before the gym's. */
+    @Test fun aDoubleDaySaysWhatFirstAndWhy() {
+        val repo = repo()
+        // No trial due: Thursday's hard run is an ordinary one.
+        runBlocking { repo.store.setRunState(repo.store.runStateNow().copy(runs = 6, vdot = 49.0, lastTestDay = monday.toEpochDay() - 3)) }
+        show(repo) { DayScreen(monday.plusDays(3)) }
+        // The advice is worked out from the day as it stands: it comes a moment after the plan.
+        compose.waitUntil(10_000) {
+            settle()
+            compose.onAllNodesWithText("Порядок", ignoreCase = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onRoot().captureRoboImage("build/shots/carbon-day-order.png")
+        compose.onNodeWithText("Порядок", ignoreCase = true).performScrollTo()
+        compose.onNodeWithText("Сначала бег, потом зал.").assertExists()
+        compose.onNodeWithText("верху тела бег почти не мешает", substring = true).assertExists()
+        compose.onRoot().captureRoboImage("build/shots/carbon-day-order.png")
+    }
 }

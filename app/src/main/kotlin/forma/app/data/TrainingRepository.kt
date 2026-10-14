@@ -1264,6 +1264,57 @@ class TrainingRepository(
         return planned.copy(note = "$comeback ${planned.note}")
     }
 
+    /**
+     * A day with the gym and a run: which goes first and why ([forma.core.plan.SessionOrder]) — from the run as it stands
+     * that day, what the gym session does to the legs exercise by exercise (swaps and all), the person's freshness and
+     * feel today, the legs of the last two days, a lighter gym session. Null on a day without both (or a pause day).
+     */
+    suspend fun dayOrder(date: LocalDate, light: Boolean = false): DayOrder? {
+        val program = store.programNow() ?: return null
+        val settings = store.settingsNow()
+        if (paused(settings, date)) return null
+        val sessions = program.week.on(date.dayOfWeek.value)
+        val run = sessions.firstOrNull { it.isRun } ?: return null
+        val lift = sessions.firstOrNull { it.kind == SessionKind.LIFT && it.templateId != null } ?: return null
+        val templateId = lift.templateId ?: return null
+        val feelLow = settings.feelOn(date) == Feel.LOW
+        val w = runFor(run.kind, date, light || feelLow)
+        val kind = when (w.type) {
+            RunType.TEST -> if (daysToRace(date) == 0L) forma.core.plan.SessionOrder.Run.RACE else forma.core.plan.SessionOrder.Run.TRIAL
+            RunType.GOAL_PACE, RunType.INTERVALS, RunType.TEMPO -> forma.core.plan.SessionOrder.Run.HARD
+            RunType.LONG -> forma.core.plan.SessionOrder.Run.LONG
+            else -> forma.core.plan.SessionOrder.Run.EASY
+        }
+        val plan = liftPlan(templateId, date)
+        val legMuscles = setOf(forma.core.model.Muscle.QUADS, forma.core.model.Muscle.HAMSTRINGS, forma.core.model.Muscle.GLUTES, forma.core.model.Muscle.CALVES)
+        val legItems = plan.items.filter { item -> exercise(item.exerciseId, settings).let { ex -> ex.lowerBody || ex.primary.any { it in legMuscles } } }
+        val heavy = legItems.filter { it.slot.role != SlotRole.ACCESSORY && exercise(it.exerciseId, settings).compound }
+        val legs = when {
+            heavy.isNotEmpty() -> forma.core.plan.SessionOrder.Legs.HEAVY
+            legItems.isNotEmpty() -> forma.core.plan.SessionOrder.Legs.LIGHT
+            else -> forma.core.plan.SessionOrder.Legs.NONE
+        }
+        // Now: today's freshness against the person's own rest line, and the feel they said.
+        val fatigue = if (date == today()) {
+            val zone = loadStoryNow(date)?.takeIf { it.history }?.zone
+            when {
+                feelLow || zone == forma.core.load.LoadStory.Zone.REST -> forma.core.plan.SessionOrder.Fatigue.TIRED
+                zone == forma.core.load.LoadStory.Zone.FRESH -> forma.core.plan.SessionOrder.Fatigue.FRESH
+                else -> forma.core.plan.SessionOrder.Fatigue.NORMAL
+            }
+        } else forma.core.plan.SessionOrder.Fatigue.NORMAL
+        // The legs worked in the last two days, as done (a friend's copied workout by its exercises).
+        val done = db.workouts().allDone().filter { it.kind == Kind.LIFT && it.epochDay in date.toEpochDay() - 2 until date.toEpochDay() }
+        val legsFrom = done.filter { w0 -> legsOf(w0) ?: program.templates.firstOrNull { it.id == w0.templateId }?.legs == true }
+            .maxOfOrNull { it.epochDay }?.let { if (it == date.toEpochDay() - 1) "вчера" else "позавчера" }
+        val day = forma.core.plan.SessionOrder.Day(
+            kind, legs, program.aim.normalized().emphasis, fatigue,
+            legNames = heavy.ifEmpty { legItems }.map { it.name.replaceFirstChar { c -> c.lowercase() } },
+            legsHeavyFrom = legsFrom, gymLight = plan.deload || light || feelLow,
+        )
+        return DayOrder(run, lift, day, forma.core.plan.SessionOrder.advise(day))
+    }
+
     /** Days from [date] to the goal race (0 on its day), null without a race date or after it. */
     private suspend fun daysToRace(date: LocalDate): Long? =
         store.profileNow()?.runGoal?.date?.let { it - date.toEpochDay() }?.takeIf { it >= 0 }

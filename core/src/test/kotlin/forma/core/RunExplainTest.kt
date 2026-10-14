@@ -40,7 +40,7 @@ class RunExplainTest {
         }
         // Personal: the goal pace says the goal and the lap to run; an easy run its limit.
         val gp = RunExplain.of(RunPlan.goalPace(state, goal, 230), goal)
-        assertTrue("1500 м за 5:30" in gp.purpose && "круг 230 м за 51 с" in gp.purpose, gp.purpose)
+        assertTrue("1500 м за 5:30" in gp.purpose && "круг 230 м за 50,6 с" in gp.purpose, gp.purpose)
         val easy = RunExplain.of(RunPlan.onTrack(RunPlan.easy(state), 230), goal)
         assertTrue("Круг — не быстрее" in easy.how, easy.how)
         // A trial needs the most rest.
@@ -63,9 +63,9 @@ class RunExplainTest {
         val tuesday = DayReasons.of(p, 2)
         assertTrue(tuesday.any { "Лёгкий бег" in it }, tuesday.toString())
         val thursday = DayReasons.of(p, 4)
-        assertTrue(thursday.any { "в день верха" in it && "Сначала бег" in it }, thursday.toString())
+        assertTrue(thursday.any { "в день верха" in it }, thursday.toString())
         val saturday = DayReasons.of(p, 6)
-        assertTrue(saturday.any { "в день ног" in it && "Сначала зал" in it }, saturday.toString())
+        assertTrue(saturday.any { "в день ног" in it }, saturday.toString())
         assertTrue(DayReasons.of(p, 3).isEmpty())
     }
 

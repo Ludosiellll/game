@@ -85,6 +85,15 @@ object Ru {
         return if (s < 60) "$s с" else clock(s)
     }
 
+    /** A lap time to a tenth: "50,6 с" under a minute, "1:28,3" from a minute up (a goal is often tenths a lap away). */
+    fun lapTenth(sec: Double): String {
+        val tenths = Math.round(sec * 10)
+        if (tenths < 600) return "${one(tenths / 10.0)} с"
+        val m = tenths / 600
+        val rest = tenths % 600
+        return "$m:${(rest / 10).toString().padStart(2, '0')},${rest % 10}"
+    }
+
     /** Lap times "51–52 с" (or one number when both round the same). */
     fun lapRange(fast: Double, slow: Double): String {
         val a = fast.roundToInt()

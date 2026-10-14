@@ -24,7 +24,6 @@ object DayReasons {
         val lift = today.firstOrNull { it.kind == SessionKind.LIFT }
         val run = today.firstOrNull { it.isRun }
         val legDay = lift != null && template(lift)?.legs != false
-        val runFirst = today.first().isRun
         val out = mutableListOf<String>()
         if (run != null && hard(run)) {
             // The days around said as they are: a run-only week may hold two hard days in a row.
@@ -35,9 +34,9 @@ object DayReasons {
                 lift == null && !gym && nextHard -> "Тяжёлому бегу нужны свежие ноги: накануне — без тяжёлого бега."
                 lift == null && !gym -> "Тяжёлому бегу нужны свежие ноги: накануне и назавтра — без тяжёлого бега."
                 lift == null -> "День без зала: все силы — на бег, тяжёлому бегу нужны свежие ноги."
-                !legDay -> "Тяжёлый бег — в день верха: руки и спина ему не мешают. " +
-                    if (runFirst) "Сначала бег, пока ноги свежие, потом зал." else "Сначала зал, потом бег."
-                else -> "Тяжёлый бег и зал в один день: " + if (runFirst) "сначала бег, потом зал." else "сначала зал, потом бег."
+                // Which first — said with its reasons in the day's order card (SessionOrder), not here.
+                !legDay -> "Тяжёлый бег — в день верха: руки и спина ему не мешают."
+                else -> "Тяжёлый бег и зал в один день: что первым и почему — в карточке «Порядок»."
             }
             if (gym) {
                 out += if (legs(prev)) "Накануне — ноги: если они тяжёлые, сделай разминку длиннее и спокойнее."
@@ -55,9 +54,8 @@ object DayReasons {
                 lift == null && !gym -> "Лёгкий день: аэробная база без лишней усталости."
                 lift == null -> "Отдельный лёгкий день: аэробная база без лишней усталости."
                 legDay -> "Лёгкий бег — в день ног: тяжёлый бег в этот день не ставится, а лёгкий почти не мешает ногам " +
-                    "восстанавливаться. " + if (runFirst) "Сначала бег, потом зал." else "Сначала зал, потом бег."
-                else -> "Лёгкий бег в день верха: зал в этот день ноги не нагружает, а лёгкий бег не мешает верху. " +
-                    if (runFirst) "Сначала бег, потом зал." else "Сначала зал, потом бег."
+                    "восстанавливаться."
+                else -> "Лёгкий бег в день верха: зал в этот день ноги не нагружает, а лёгкий бег не мешает верху."
             }
         }
         if (lift != null && run == null && legDay && runs) {

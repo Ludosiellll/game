@@ -297,4 +297,20 @@ class DenisWeekRepoTest {
             assertEquals(RunType.EASY, repo.runFor(SessionKind.RUN_EASY, monday.plusDays(easy.first() - 1L)).type)
         }
     }
+
+    /** His Thursday: the hard run first (upper body after it); his Saturday: the legs first, the easy run after. */
+    @Test fun whatFirstOnHisDoubleDays() = runBlocking<Unit> {
+        val repo = repo(denis, "denis-order")
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 10, vdot = 49.0, lastTestDay = monday.toEpochDay() - 3))
+        val thu = assertNotNull(repo.dayOrder(monday.plusDays(3)))
+        assertTrue(thu.advice.runFirst)
+        assertEquals(forma.core.plan.SessionOrder.Legs.NONE, thu.day.legs)
+        val sat = assertNotNull(repo.dayOrder(monday.plusDays(5)))
+        assertTrue(!sat.advice.runFirst)
+        assertEquals(forma.core.plan.SessionOrder.Legs.HEAVY, sat.day.legs)
+        assertTrue("приседания" in sat.advice.why, sat.advice.why)
+        assertEquals(listOf(SessionKind.LIFT, SessionKind.RUN_EASY), sat.ordered(repo.store.programNow()!!.week.on(6)).map { it.kind })
+        // Monday has no gym: nothing to order.
+        assertEquals(null, repo.dayOrder(monday))
+    }
 }
