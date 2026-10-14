@@ -19,6 +19,7 @@ import forma.core.model.LiftFocus
 import forma.core.model.RunFocus
 import forma.core.run.Track
 import forma.core.text.Ru
+import forma.app.ui.theme.F
 
 /** One option: a short chip label and a line about what it means. */
 data class Choice<T>(val value: T, val label: String, val text: String)
@@ -145,6 +146,16 @@ fun RunGoalPicker(d: ProfileDraft) {
                 }
             },
             style = T.secondary(13.sp),
+        )
+        NumberField(d.goalDate, { d.goalDate = it }, "Дата забега (если есть)", "дд.мм", keyboard = KeyboardType.Text, placeholder = "15.06")
+        val day = d.raceDay
+        Text(
+            when {
+                d.goalDate.isBlank() -> "Есть забег — впиши дату: последние две недели перед ним станут подводкой, а в его день будет сам забег."
+                day == null -> "Не похоже на дату (или она прошла): число и месяц через точку, например 15.06."
+                else -> "Забег ${Ru.date(day)}. За две недели — подводка: тренировки легче, за 3–5 дней — короткая в темпе цели, накануне — только размяться."
+            },
+            style = T.secondary(13.sp).let { if (d.goalDate.isNotBlank() && day == null) it.copy(color = F.c.warn) else it },
         )
     }
     SectionLabel("Где бегаешь", Modifier.padding(top = 6.dp))

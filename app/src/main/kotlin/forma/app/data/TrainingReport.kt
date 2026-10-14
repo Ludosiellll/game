@@ -74,7 +74,10 @@ object TrainingReport {
                 "Бег: ${runLevel(p.runLevel)}".takeIf { p.aim.runs },
             ).takeIf { it.isNotEmpty() }?.let { appendLine("- " + it.joinToString(". ") + ".") }
             appendLine("- Цель: зал — ${lift(p.aim.lift)}, бег — ${run(p.aim.run)}, приоритет — ${emphasis(p.aim.emphasis)}.")
-            p.runGoal?.let { g -> appendLine("- Беговая цель: ${dist(g.meters)} за ${Ru.clock(g.seconds)} (темп ${Ru.pace(g.pace)} /км).") }
+            p.runGoal?.let { g ->
+                appendLine("- Беговая цель: ${dist(g.meters)} за ${Ru.clock(g.seconds)} (темп ${Ru.pace(g.pace)} /км)." +
+                    (g.date?.let { " Забег — ${Ru.date(LocalDate.ofEpochDay(it))}, за две недели до него подводка." } ?: ""))
+            }
             p.lapMeters?.let { appendLine("- Бегает на стадионе, круг $it м.") }
             if (p.ownWeek) appendLine("- Своя неделя: " + listOfNotNull(
                 p.gymDays.orEmpty().takeIf { it.isNotEmpty() }?.let { "зал — ${days(it)}" },

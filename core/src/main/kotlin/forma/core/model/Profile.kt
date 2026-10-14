@@ -74,7 +74,12 @@ enum class Experience { NOVICE, INTERMEDIATE, ADVANCED }
  * get race-pace sessions and are tested over the distance itself.
  */
 @Serializable
-data class RunGoal(val meters: Int, val seconds: Int) {
+data class RunGoal(
+    val meters: Int,
+    val seconds: Int,
+    /** The race's day (epoch day), when there is one: the weeks before it are a taper, the day itself the race. */
+    val date: Long? = null,
+) {
     val middleDistance: Boolean get() = meters <= 3000
 
     /** Race pace, seconds per km. */

@@ -52,8 +52,17 @@ data class RunState(
     val lastTestDay: Long? = null,
     /** Quality sessions in a row run on pace; three of them lift VDOT by 1. */
     val qualityOnPace: Int = 0,
-    /** Quality sessions in a row that were not completed as planned. */
+    /** Quality sessions in a row that were not completed as planned (both ladders: three bring the paces down). */
     val qualityFails: Int = 0,
+    /** Interval sessions in a row not completed as planned: two step the ladder back (tempo between them does not count). */
+    val intervalFails: Int = 0,
+    /** The same for tempo. */
+    val tempoFails: Int = 0,
+    /**
+     * Seconds a km added to the threshold pace for this runner: a speed type (fitness from a short race) holds intervals and
+     * race pace but not the tempo the fitness gives. Learnt from tempo runs, 0–12.
+     */
+    val tempoSoft: Int = 0,
     /** Run/walk sessions in a row that were not completed comfortably. */
     val walkFails: Int = 0,
     val lastVdotUpDay: Long? = null,
@@ -169,6 +178,8 @@ sealed interface RunOutcome {
     @Serializable data class EasyPaces(val from: Double, val to: Double) : RunOutcome
     /** Race-pace reps more than 3 % faster than the goal: the step is run again at the goal's lap time. */
     @Serializable data object TooFastRepeat : RunOutcome
+    /** Tempo not held at a hard effort: its pace is [seconds] a km softer for this runner from now on (or firmer again). */
+    @Serializable data class TempoPace(val seconds: Int, val softer: Boolean) : RunOutcome
     /** The runner rates easy runs harder than they are meant to feel: the effort thresholds are [offset] higher. */
     @Serializable data class OwnScale(val offset: Int) : RunOutcome
     /** No lap pressed and no GPS: the pace was not measured, only the effort and the reps decided. */
@@ -269,6 +280,9 @@ object RunPlan {
 
     /** Where the ladder starts again after a trial short of the goal: 5 × 400 m. */
     private const val GOAL_RESTART = 3
+
+    /** The most the threshold pace is softened for a runner, s/km (see [RunState.tempoSoft]). */
+    private const val TEMPO_SOFT_MAX = 12
     val intervalLadderSize: Int get() = INTERVALS.size
     val tempoLadderSize: Int get() = TEMPO.size
 
@@ -344,13 +358,34 @@ object RunPlan {
         return RunWorkout(RunType.RUN_WALK, title, segs, note, targetRpe = 6, stage = stage)
     }
 
-    fun easy(state: RunState, cutback: Boolean = false, day: Long? = null): RunWorkout {
+    /**
+     * An easy run; [strides] short accelerations after it (4–6 × about 80 m, 15–20 s): speed and form at no cost of
+     * recovery, twice a week for runners with hard runs (Daniels' "strides").
+     */
+    fun easy(state: RunState, cutback: Boolean = false, day: Long? = null, strides: Int = 0): RunWorkout {
         val cap = singleRunCap(state, day)
         val min = scaled(state.easyMinutes, cutback).let { if (cap != null) minOf(it, maxOf(15, cap)) else it }
+        val note = "Темп, в котором можно говорить предложениями. Медленнее — нормально." + if (strides > 0) {
+            " В конце — $strides ${Ru.plural(strides, "ускорение", "ускорения", "ускорений")} по 80 м (15–20 с; на стадионе — по прямой): " +
+                "быстро, но свободно, без напряжения; между ними — шагом, пока дыхание не успокоится (около минуты)."
+        } else ""
         return RunWorkout(
-            RunType.EASY, "Лёгкий бег · $min мин",
-            listOf(Segment(SegmentKind.RUN, min * 60, paces(state)?.easy)),
-            "Темп, в котором можно говорить предложениями. Медленнее — нормально.", targetRpe = 4,
+            RunType.EASY, "Лёгкий бег · $min мин" + if (strides > 0) " + $strides ${Ru.plural(strides, "ускорение", "ускорения", "ускорений")}" else "",
+            listOf(Segment(SegmentKind.RUN, min * 60, paces(state)?.easy)), note, targetRpe = 4,
+        )
+    }
+
+    /** Strides after an easy run: 4 to start with and in a lighter week, 6 once running is regular. */
+    fun strides(state: RunState, cutback: Boolean): Int = if (cutback || state.runs < 8) 4 else 6
+
+    /** The goal race on its day: run as a time trial (its time is the fitness), said as the race. */
+    fun race(state: RunState, goal: RunGoal): RunWorkout {
+        val t = goalTest(state, goal, null)
+        val name = if (goal.meters < 1000 || goal.meters % 1000 != 0) "${goal.meters} м" else "${goal.meters / 1000} км"
+        return t.copy(
+            title = "Забег · $name",
+            note = "Забег-цель: $name за ${Ru.clock(goal.seconds)}. Разминка 12 минут и 3–4 ускорения по 15 с. Первая половина — ровно, " +
+                "по темпу цели, без рывка со старта; вторая — сколько осталось. После финиша впиши время с табло: по нему пересчитаются темпы.",
         )
     }
 
@@ -421,9 +456,10 @@ object RunPlan {
             }
         }
         val p = paces(state)
+        val t = p?.let { it.threshold + state.tempoSoft }
         val segs = mutableListOf(Segment(SegmentKind.WARMUP, 10 * 60, p?.easy))
         repeat(n) { i ->
-            segs += Segment(SegmentKind.WORK, workSec, p?.let { PaceRange(it.threshold - 5, it.threshold + 5) })
+            segs += Segment(SegmentKind.WORK, workSec, t?.let { PaceRange(it - 5, it + 5) })
             if (i < n - 1 && rest > 0) segs += Segment(SegmentKind.RECOVERY, rest, p?.easy)
         }
         segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
@@ -731,6 +767,8 @@ object RunPlan {
             testSoon = state.testSoon && off < 28,
             qualityOnPace = 0,
             qualityFails = 0,
+            intervalFails = 0,
+            tempoFails = 0,
             walkFails = 0,
             returnEasy = max(state.returnEasy, if (off >= 56) 3 else if (off >= 28) 2 else 0),
             lastRunDay = day,
@@ -871,7 +909,7 @@ object RunPlan {
                 val ladder = if (w.type == RunType.INTERVALS) "intervals" else "tempo"
                 val size = if (w.type == RunType.INTERVALS) INTERVALS.size else TEMPO.size
                 val cur = if (w.type == RunType.INTERVALS) state.intervalStage else state.tempoStage
-                val target = paces(s)?.let { if (w.type == RunType.INTERVALS) it.interval else it.threshold }
+                val target = paces(s)?.let { if (w.type == RunType.INTERVALS) it.interval.toDouble() else it.threshold + s.tempoSoft.toDouble() }
                 // Reps as the runner reported them count, but only for a session run (almost) through: reps cut short
                 // by skipping are not reps done.
                 val repsDone = r.reps ?: w.reps
@@ -889,29 +927,47 @@ object RunPlan {
                 val onPace = success && target != null && r.workPace != null && r.workPace <= target && rq <= w.targetRpe - 1
                 var stage = cur
                 var fails = state.qualityFails
+                // Misses of this ladder in a row: tempo run well between two hard interval sessions does not make them
+                // fine (seen in simulations: intervals on one rung for months, a miss always "the first").
+                var own = if (w.type == RunType.INTERVALS) state.intervalFails else state.tempoFails
                 var streak = state.qualityOnPace
                 if (success && w.cutback) {
                     // A lighter week's shorter session proves nothing about the full step: the ladder waits.
                     out += RunOutcome.LighterWeek(ladder)
                     fails = 0
+                    own = 0
                 } else if (success) {
                     // More reps than planned at the planned effort: the next step is too small.
                     stage = min(size - 1, cur + if (repsDone > w.reps) 2 else 1)
                     out += if (stage > cur) RunOutcome.StageUp(ladder, stage) else RunOutcome.LadderTop(ladder)
                     fails = 0
+                    own = 0
                     streak = if (onPace) streak + 1 else streak
                 } else {
                     fails += 1
+                    own += 1
                     streak = 0
-                    if (fails >= 2) {
+                    if (own >= 2) {
                         stage = max(0, cur - 1)
                         out += RunOutcome.StageDown(ladder, stage)
                     } else {
                         out += RunOutcome.StageRepeat(ladder)
                     }
                 }
-                s = if (w.type == RunType.INTERVALS) s.copy(intervalStage = stage) else s.copy(tempoStage = stage)
+                s = if (w.type == RunType.INTERVALS) s.copy(intervalStage = stage, intervalFails = own) else s.copy(tempoStage = stage, tempoFails = own)
                 s = s.copy(qualityCount = state.qualityCount + 1, qualityFails = fails, qualityOnPace = streak)
+                // Tempo measured slow at a hard effort: this runner's threshold is below what the fitness says (a speed type,
+                // fitness from a short race) — softer by 3 s a km, up to 12; held easily on pace, firmer again.
+                if (w.type == RunType.TEMPO && r.workPace != null) {
+                    val soft = state.tempoSoft
+                    if (tooSlow && r.rpe >= 8 && soft < TEMPO_SOFT_MAX) {
+                        s = s.copy(tempoSoft = soft + 3)
+                        out += RunOutcome.TempoPace(soft + 3, softer = true)
+                    } else if (onPace && soft > 0 && rq <= w.targetRpe - 2) {
+                        s = s.copy(tempoSoft = soft - 3)
+                        out += RunOutcome.TempoPace(soft - 3, softer = false)
+                    }
+                }
                 // Run in place of race pace put off to a fresher day: race pace comes next.
                 if (goal?.middleDistance == true && state.qualityCount % 2 == 0 && state.goalDeferredOn == null) s = s.copy(goalDeferredOn = day)
                 val v = s.vdot

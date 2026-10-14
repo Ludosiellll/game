@@ -273,4 +273,27 @@ class DayScreenUiTest {
         compose.onNodeWithText("Восстановление").performScrollTo()
         compose.onRoot().captureRoboImage("build/shots/carbon-debrief2.png")
     }
+
+    private fun withRace(repo: TrainingRepository, day: LocalDate) = runBlocking {
+        repo.updateProfile(repo.store.profileNow()!!.let { it.copy(runGoal = it.runGoal!!.copy(date = day.toEpochDay())) })
+        repo
+    }
+
+    /** The day before the goal race: the main screen says what to do with it. */
+    @Test fun theDayBeforeTheRaceSaysWhatToDo() {
+        show(withRace(repo(), monday.plusDays(1))) { TodayScreen() }
+        compose.onNodeWithText("Завтра · 1,5 км за 5:30", substring = true).performScrollTo()
+        compose.onNodeWithText("20 минут легко", substring = true).assertExists()
+    }
+
+    /** On the race day the race is on the main screen, with the start. */
+    @Test fun onTheRaceDayTheRaceIsOnTheMainScreen() {
+        show(withRace(repo(), monday)) { TodayScreen() }
+        compose.onNodeWithText("Забег сегодня", ignoreCase = true).performScrollTo()
+        // Monday's planned hard run is the race: one start, in its card.
+        compose.onNodeWithText("старт в её карточке", substring = true).assertExists()
+        compose.onAllNodesWithText("К старту").assertCountEquals(0)
+        compose.onNodeWithText("Забег · 1500 м").assertExists()
+        compose.onRoot().captureRoboImage("build/shots/carbon-race-day.png")
+    }
 }

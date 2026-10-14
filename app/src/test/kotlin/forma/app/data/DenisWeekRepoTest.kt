@@ -247,4 +247,54 @@ class DenisWeekRepoTest {
         assertEquals(before.slot, after.slot)
         assertTrue("bulgarian" !in repo.store.settingsNow().demoted)
     }
+
+    /** A race on Saturday the 14th of November: the two weeks before it lighter, its week a short race-pace run, the day the race. */
+    @Test fun theWeeksBeforeTheRaceAreATaper() = runBlocking<Unit> {
+        val race = LocalDate.of(2026, 11, 14)
+        val repo = repo(denis.copy(runGoal = RunGoal(1500, 330, race.toEpochDay())), "denis-race")
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 10, vdot = 49.0, lastTestDay = monday.toEpochDay() - 3))
+        // The race day itself (a Saturday, a gym and easy-run day in the plan): the race.
+        val day = repo.runFor(SessionKind.RUN_EASY, race)
+        assertEquals(RunType.TEST, day.type)
+        assertEquals("Забег · 1500 м", day.title)
+        // Thursday before: two days to go — 20 minutes easy with strides, not a hard run.
+        val thu = repo.runFor(SessionKind.RUN_QUALITY, race.minusDays(2))
+        assertEquals(RunType.EASY, thu.type)
+        assertTrue(thu.workSeconds <= 20 * 60 && "ускорени" in thu.title, thu.title)
+        // Monday before: five days to go — race pace, short.
+        val mon = repo.runFor(SessionKind.RUN_QUALITY, race.minusDays(5))
+        assertEquals(RunType.GOAL_PACE, mon.type)
+        assertTrue(mon.cutback)
+        // Ten days before: a lighter week, the ladders wait.
+        assertTrue(repo.runFor(SessionKind.RUN_QUALITY, race.minusDays(9)).cutback)
+        // Three weeks before: no trial, the race is the test.
+        repo.store.setRunState(repo.store.runStateNow().copy(lastTestDay = null))
+        assertEquals(null, repo.trialDay(race.minusDays(20)))
+        // The legs on the race day (his Saturday «Низ»): a lighter session; two weeks before as planned.
+        assertTrue(!repo.liftPlan("lower_a", race.minusDays(14)).deload)
+        assertTrue(repo.liftPlan("lower_a", race).deload)
+    }
+
+    /** His Saturday easy run (his one easy run, in a week with hard runs) ends with strides. */
+    @Test fun hisEasyRunEndsWithStrides() = runBlocking<Unit> {
+        val repo = repo(denis, "denis-strides")
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 10, vdot = 49.0))
+        val sat = repo.runFor(SessionKind.RUN_EASY, monday.plusDays(5))
+        assertTrue("6 ускорений" in sat.title, sat.title)
+    }
+
+    /** Four runs for 1500 m, two of them easy: the last easy run is a long easy one of up to an hour. */
+    @Test fun aSecondEasyRunBecomesTheLongEasyOne() = runBlocking<Unit> {
+        val runner = Profile(
+            aim = Aim(LiftFocus.NONE, RunFocus.SPEED, Emphasis.RUN), experience = Experience.INTERMEDIATE, runLevel = RunLevel.TRAINED,
+            trainingDays = setOf(1, 3, 5, 7), runGoal = RunGoal(1500, 330), lapMeters = 400,
+        )
+        val repo = repo(runner, "long-easy")
+        val program = repo.store.programNow()!!
+        val easy = program.week.days.filter { d -> d.sessions.any { it.kind == SessionKind.RUN_EASY } }.map { it.day }
+        if (easy.size >= 2 && program.week.days.none { d -> d.sessions.any { it.kind == SessionKind.RUN_LONG } }) {
+            assertEquals(RunType.LONG, repo.runFor(SessionKind.RUN_EASY, monday.plusDays(easy.last() - 1L)).type)
+            assertEquals(RunType.EASY, repo.runFor(SessionKind.RUN_EASY, monday.plusDays(easy.first() - 1L)).type)
+        }
+    }
 }

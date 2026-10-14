@@ -54,6 +54,7 @@ private data class DraftState(
     val height: String, val restingHr: String, val raceKm: Double?, val raceTime: String,
     val goalMeters: Int? = null, val goalTime: String = "", val stadium: Boolean = false, val lapMeters: String = "400",
     val doubleDays: Boolean = false, val gymDays: Set<Int>? = null, val runDays: Set<Int>? = null,
+    val goalDate: String = "",
 )
 
 /**
@@ -69,7 +70,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
                     DraftState(
                         d.lift, d.run, d.emphasis, d.experience, d.runLevel, d.days, d.minutes, d.sex, d.birthYear, d.weight,
                         d.height, d.restingHr, d.raceKm, d.raceTime, d.goalMeters, d.goalTime, d.stadium, d.lapMeters, d.doubleDays,
-                        d.gymDays, d.runDays,
+                        d.gymDays, d.runDays, d.goalDate,
                     ),
                 )
             },
@@ -80,7 +81,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
                         days = s.days; minutes = s.minutes; sex = s.sex; birthYear = s.birthYear; weight = s.weight
                         height = s.height; restingHr = s.restingHr; raceKm = s.raceKm; raceTime = s.raceTime
                         goalMeters = s.goalMeters; goalTime = s.goalTime; stadium = s.stadium; lapMeters = s.lapMeters; doubleDays = s.doubleDays
-                        gymDays = s.gymDays; runDays = s.runDays
+                        gymDays = s.gymDays; runDays = s.runDays; goalDate = s.goalDate
                     }
                 }
             },
@@ -106,6 +107,8 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     var raceTime by mutableStateOf(p.raceSeconds?.let { forma.core.text.Ru.clock(it.toInt()) } ?: "")
     var goalMeters by mutableStateOf(p.runGoal?.meters)
     var goalTime by mutableStateOf(p.runGoal?.let { forma.core.text.Ru.clock(it.seconds) } ?: "")
+    /** The race's day, when there is one: "15.06" or "15.06.2027". */
+    var goalDate by mutableStateOf(p.runGoal?.date?.let { LocalDate.ofEpochDay(it).format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")) } ?: "")
     var stadium by mutableStateOf(p.lapMeters != null)
     var lapMeters by mutableStateOf((p.lapMeters ?: 400).toString())
     var doubleDays by mutableStateOf(p.doubleDays)
@@ -141,8 +144,14 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     val runGoal: RunGoal? get() {
         val m = goalMeters ?: return null
         val sec = parseClock(goalTime)?.roundToInt()?.takeIf { it > 0 } ?: return null
-        return RunGoal(m, sec).takeIf { it.pace in 130.0..900.0 }
+        return RunGoal(m, sec, raceDay?.toEpochDay()).takeIf { it.pace in 130.0..900.0 }
     }
+
+    /** The race's day as typed (the year may be left out: this one, or the next if the day has passed), or null. */
+    val raceDay: LocalDate? get() = parseRaceDay(goalDate, LocalDate.now())
+
+    /** A race day typed that is not a date, or one already past. */
+    val goalDateBad: Boolean get() = racing && goalMeters != null && goalDate.isNotBlank() && raceDay == null
 
     /**
      * The recent race, if its time is a believable one: minutes and seconds ("25:30", not "2530" — 42 hours), at a pace
@@ -179,6 +188,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     val goalProblem: String? get() = when {
         goalBad && goalTime.isBlank() -> "Впиши время забега-цели или сними выбор дистанции."
         goalBad -> "Время цели не похоже на время: минуты и секунды через двоеточие, например 5:30."
+        goalDateBad -> "Дата забега: число и месяц через точку, например 15.06 — не в прошлом. Или оставь пустым."
         lapBad -> "Впиши длину круга от 100 до 1000 м или выбери «Улица, парк»."
         else -> null
     }
@@ -471,3 +481,19 @@ private fun SummaryStep(d: ProfileDraft) {
         WeekGrid(d, planGym, planRun)
     }
 }
+
+/**
+ * A race day typed as "15.06", "15.06.27" or "15.06.2027" (also with "/" or "-"): without a year this one, or the next when
+ * the day has passed. Null for anything else, a day before [today] or more than two years ahead.
+ */
+internal fun parseRaceDay(text: String, today: LocalDate): LocalDate? {
+    val parts = text.trim().split('.', '/', '-', ' ').filter { it.isNotBlank() }
+    if (parts.size !in 2..3) return null
+    val d = parts[0].toIntOrNull() ?: return null
+    val m = parts[1].toIntOrNull() ?: return null
+    val y = parts.getOrNull(2)?.toIntOrNull()?.let { if (it < 100) 2000 + it else it }
+    fun at(year: Int) = runCatching { LocalDate.of(year, m, d) }.getOrNull()
+    val day = if (y != null) at(y) else at(today.year)?.let { if (it.isBefore(today)) at(today.year + 1) else it }
+    return day?.takeIf { !it.isBefore(today) && it.isBefore(today.plusYears(2)) }
+}
+

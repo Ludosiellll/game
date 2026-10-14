@@ -469,7 +469,8 @@ class TrainingRepository(
         val program = store.programNow() ?: error("no program")
         val settings = store.settingsNow()
         val t = program.template(templateId)
-        val deload = deloadOn(date, forceDeload)
+        // The legs three days before the goal race or nearer: a lighter session, the race wants fresh legs.
+        val deload = deloadOn(date, forceDeload) || t.legs && daysToRace(date)?.let { it in 0..3 } == true
         // Exercises taken out for good stay out — never all of them. Positions stay the plan's (swaps look them up).
         val added = addedTo(t.id, settings)
         val kept = t.slots.withIndex().filter { it.value.exerciseId !in settings.removed }
@@ -1225,10 +1226,25 @@ class TrainingRepository(
         val cutback = program != null && ProgramGenerator.isRunCutbackWeek(program, date)
         // Before the first test of a race goal, easy and long runs get a pace limit from the goal (approximate).
         val guess = if (st.vdot == null && goal != null) st.copy(vdot = RunPlan.provisionalVdot(goal)) else null
-        val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when (kind) {
-            SessionKind.RUN_LONG -> if (guess != null) RunPlan.provisional(RunPlan.long(guess, cutback, date.toEpochDay())) else RunPlan.long(st, cutback, date.toEpochDay())
-            SessionKind.RUN_QUALITY -> when {
-                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, cutback, goal, lap, goalLater = goalLater(program, date))
+        // The goal race ahead: two weeks lighter, then a short race-pace session, then easy running; the day is the race.
+        val toRace = daysToRace(date)
+        if (toRace == 0L && goal != null && st.canRunContinuously) return RunPlan.race(st, goal)
+        val taper = toRace != null && toRace in 1..14
+        val lighter = cutback || taper
+        val longEasy = kind == SessionKind.RUN_EASY && program != null && longEasyDay(program, date, goal?.middleDistance == true)
+        val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when {
+            toRace != null && toRace in 1..2 -> RunPlan.easy(st.copy(easyMinutes = minOf(st.easyMinutes, 20)), strides = 4).let {
+                it.copy(note = "До забега ${toRace} ${Ru.plural(toRace.toInt(), "день", "дня", "дней")}: только размяться, без усталости. " + it.note)
+            }
+            toRace != null && toRace in 3..5 && kind == SessionKind.RUN_QUALITY -> (
+                if (goal?.middleDistance == true) RunPlan.goalPace(st, goal, lap, cutback = true) else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap)
+            ).let { it.copy(note = "Последняя тяжёлая перед забегом — короткая: освежить темп, не устать. " + it.note) }
+            toRace != null && toRace in 3..7 && kind != SessionKind.RUN_QUALITY ->
+                RunPlan.easy(st.copy(easyMinutes = (minOf(st.easyMinutes, st.longMinutes) * 0.7).toInt().coerceAtLeast(20)), strides = 4)
+            kind == SessionKind.RUN_LONG || longEasy ->
+                if (guess != null) RunPlan.provisional(RunPlan.long(guess, lighter, date.toEpochDay())) else RunPlan.long(st, lighter, date.toEpochDay())
+            kind == SessionKind.RUN_QUALITY -> when {
+                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date))
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
                 else -> RunPlan.test(st)
             }
@@ -1237,7 +1253,8 @@ class TrainingRepository(
                 val liftDay = program?.week?.on(date.dayOfWeek.value)?.any { it.kind == SessionKind.LIFT } == true
                 val short = liftDay && profile?.doubleDays != true
                 val base = guess ?: st
-                RunPlan.easy(if (short) base.copy(easyMinutes = minOf(base.easyMinutes, 30)) else base, cutback, date.toEpochDay())
+                val strides = if (program != null && stridesOn(program, date, goal?.middleDistance == true) && st.returnEasy == 0) RunPlan.strides(st, lighter) else 0
+                RunPlan.easy(if (short) base.copy(easyMinutes = minOf(base.easyMinutes, 30)) else base, lighter, date.toEpochDay(), strides)
                     .let { if (guess != null) RunPlan.provisional(it) else it }
             }
         }
@@ -1247,6 +1264,32 @@ class TrainingRepository(
         return planned.copy(note = "$comeback ${planned.note}")
     }
 
+    /** Days from [date] to the goal race (0 on its day), null without a race date or after it. */
+    private suspend fun daysToRace(date: LocalDate): Long? =
+        store.profileNow()?.runGoal?.date?.let { it - date.toEpochDay() }?.takeIf { it >= 0 }
+
+    /** Easy days of the plan's week, in order. */
+    private fun easyDays(program: Program) = program.week.days.sortedBy { it.day }.filter { d -> d.sessions.any { it.kind == SessionKind.RUN_EASY } }.map { it.day }
+
+    /**
+     * A middle-distance week with two easy runs or more and no long run: its last easy run (not on a leg day when another
+     * one is free of it) is a long easy run of up to an hour — the aerobic base the reps stand on.
+     */
+    private fun longEasyDay(program: Program, date: LocalDate, middle: Boolean): Boolean {
+        if (!middle || program.week.days.any { d -> d.sessions.any { it.kind == SessionKind.RUN_LONG } }) return false
+        val easy = easyDays(program)
+        if (easy.size < 2) return false
+        val monday = date.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val pick = easy.lastOrNull { !legsOn(program, monday.plusDays(it - 1L)) } ?: easy.last()
+        return date.dayOfWeek.value == pick
+    }
+
+    /** Strides go with the first two easy runs of a week that has hard runs (not the long easy one). */
+    private fun stridesOn(program: Program, date: LocalDate, middle: Boolean): Boolean {
+        if (program.week.days.none { d -> d.sessions.any { it.kind == SessionKind.RUN_QUALITY } }) return false
+        return date.dayOfWeek.value in easyDays(program).filter { !longEasyDay(program, date.with(java.time.DayOfWeek.of(it)), middle) }.take(2)
+    }
+
     /**
      * The caps of runs on [date] ([ProgramGenerator.runCaps]); on a day with a leg session an easy run is at most
      * [AFTER_LEGS_EASY] minutes: the one easy run of a middle-distance week grows to an hour, but not after squats two days
@@ -1254,8 +1297,12 @@ class TrainingRepository(
      */
     private suspend fun capsOn(date: LocalDate): forma.core.run.RunCaps? {
         val program = store.programNow() ?: return null
-        val caps = ProgramGenerator.runCaps(program, store.profileNow()?.runGoal?.middleDistance == true)
-        return if (legsOn(program, date)) caps.copy(easyMax = min(caps.easyMax, AFTER_LEGS_EASY)) else caps
+        val middle = store.profileNow()?.runGoal?.middleDistance == true
+        val caps = ProgramGenerator.runCaps(program, middle)
+        val legs = legsOn(program, date)
+        // The long easy run of a middle-distance week: up to an hour (after the legs, as an easy run after them).
+        val long = if (longEasyDay(program, date, middle)) min(caps.longMax, if (legs) AFTER_LEGS_EASY else 60) else caps.longMax
+        return caps.copy(easyMax = if (legs) min(caps.easyMax, AFTER_LEGS_EASY) else caps.easyMax, longMax = long)
     }
 
     /** Whether the plan has a leg session on [date]. */
@@ -1293,6 +1340,8 @@ class TrainingRepository(
     private fun needsTest(st: RunState, date: LocalDate, goal: forma.core.model.RunGoal?): Boolean {
         if (st.runs < 2 || st.returnEasy > 0) return false
         if (st.lastTrialTryDay?.let { date.toEpochDay() - it < 14 } == true) return false
+        // The goal race within three weeks is the test: no trial before it.
+        if (goal?.date?.let { it - date.toEpochDay() in 0..21 } == true) return false
         if (st.testSoon) return true
         // With a race of up to 3 km as the goal the first test is that race, whatever fitness was typed in.
         val last = st.lastTestDay ?: return st.vdot == null || goal?.middleDistance == true

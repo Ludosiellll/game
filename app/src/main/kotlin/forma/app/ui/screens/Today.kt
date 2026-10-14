@@ -136,6 +136,14 @@ fun TodayScreen() {
 
         WeekStrip(week, today, p.createdEpochDay)
 
+        // The goal race ahead: how far, what the days before it hold; on its day the start.
+        me?.runGoal?.takeIf { it.date != null }?.let { g ->
+            val raceDone = todayItem?.done?.any { it.kind == forma.app.data.Kind.RUN && it.templateId == forma.core.run.RunType.TEST.name } == true
+            // A run planned today becomes the race (its card starts it); on a day without one the race card does.
+            val runToday = todayItem?.planned.orEmpty().any { it.isRun }
+            RaceCard(g, today, raceDone, runToday) { scope.launch { nav.push(Screen.RunSetup(repo.runFor(SessionKind.RUN_QUALITY, today), SessionKind.RUN_QUALITY)) } }
+        }
+
         // The same window as on Progress → Нагрузка, so "Свежесть" reads the same number on both screens.
         val loadSeries = remember(loads, today) {
             TrainingLoad.series(loads, today.minusDays(120), today)
@@ -591,3 +599,38 @@ private fun PauseCard(until: LocalDate, restarts: Boolean, onBack: () -> Unit) {
         GhostButton("Вернуться сегодня", onBack, Modifier.fillMaxWidth())
     }
 }
+
+/** The goal race: the days to it and what they hold, the day before what to do, on its day the start. */
+@Composable
+private fun RaceCard(goal: forma.core.model.RunGoal, today: LocalDate, raceDone: Boolean, runToday: Boolean, onStart: () -> Unit) {
+    val day = goal.date ?: return
+    val date = LocalDate.ofEpochDay(day)
+    val days = day - today.toEpochDay()
+    if (days !in 0..21) return
+    val name = goalDistance(goal.meters)
+    FCard(gap = 8.dp) {
+        SectionLabel(if (days == 0L) "Забег сегодня" else "Забег-цель", color = F.c.endurance)
+        Text(
+            when (days) {
+                0L -> "$name за ${Ru.clock(goal.seconds)}"
+                1L -> "Завтра · $name за ${Ru.clock(goal.seconds)}"
+                else -> "Через $days ${Ru.plural(days.toInt(), "день", "дня", "дней")} · ${Ru.date(date)}"
+            },
+            style = T.title(20.sp),
+        )
+        Text(
+            when {
+                days == 0L && raceDone -> "Забег пройден — время в истории. Два дня — отдых или совсем лёгкий бег, потом план дальше."
+                days == 0L && runToday -> "Пробежка по плану сегодня — это забег: старт в её карточке ниже."
+                days == 0L -> "Разминка 12 минут и 3–4 ускорения. Первая половина — ровно по темпу цели, без рывка со старта. После финиша впиши время с табло."
+                days == 1L -> "Сегодня — 20 минут легко с 4 ускорениями или отдых. Ужин как обычно, ляг пораньше. Завтрак — за 2–3 часа до старта."
+                days <= 7 -> "Неделя забега: бег короче, за 3–5 дней — короткая тренировка в темпе цели, дальше только легко. Ноги в зале за 3 дня до забега — облегчённо."
+                days <= 14 -> "Подводка: последние две недели тренировки легче, шаги лестниц не двигаются — копится свежесть."
+                else -> "Контрольного до забега не будет: забег и есть проверка. С ${Ru.date(date.minusDays(14))} — подводка, тренировки легче."
+            },
+            style = T.secondary(14.sp),
+        )
+        if (days == 0L && !raceDone && !runToday) PrimaryButton("К старту", onStart, Modifier.fillMaxWidth())
+    }
+}
+
