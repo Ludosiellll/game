@@ -82,14 +82,18 @@ class PersonalRepoTest {
     @Test fun repsFallingOffSessionAfterSessionGiveLongerRest() = runBlocking<Unit> {
         val item = firstItem()
         assertNull(item.restWhy)
+        assertEquals(0, item.restShift)
+        // 8 with 2 left, then 6 and 4 to failure, three minutes apart: 3–4 reps lost a set.
         repeat(4) { session(start.plusDays(it * 2L), item, listOf(Triple(80.0, 8, 2), Triple(80.0, 6, 0), Triple(80.0, 4, 0))) }
         val again = repo.liftPlan(repo.store.programNow()!!.templates.first().id, start.plusDays(10)).items.first { it.exerciseId == item.exerciseId }
-        assertEquals(item.slot.restSec + 30, again.slot.restSec)
+        assertEquals(60, again.restShift)
         assertNotNull(again.restWhy)
         // A rest the person set themselves stays theirs.
         repo.updateSettings { it.copy(rest = mapOf(item.exerciseId to 120)) }
         val own = repo.liftPlan(repo.store.programNow()!!.templates.first().id, start.plusDays(10)).items.first { it.exerciseId == item.exerciseId }
         assertEquals(120, own.slot.restSec)
+        assertTrue(own.restOwn)
+        assertEquals(0, own.restShift)
         assertNull(own.restWhy)
     }
 

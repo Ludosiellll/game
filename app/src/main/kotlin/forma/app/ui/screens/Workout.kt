@@ -480,8 +480,18 @@ fun WorkoutScreen(workoutId: Long) {
                             }
                         }
                         inp.rir = null
+                        // Rest from this set: how hard it was, how heavy, the exercise, how this person recovers.
+                        val rest = forma.core.strength.RestAdvice.after(
+                            logged.slot.restSec, doneSet.reps, doneSet.rir, logged.prescription.rir, ex.compound, plan.deload, logged.restShift, logged.restOwn,
+                            target = if (logged.prescription.calibrate) null else logged.prescription.reps,
+                        )
+                        if (ns != null && ex.load != forma.core.model.LoadKind.TIMED) {
+                            val why = forma.core.strength.RestAdvice.words(rest)
+                            advice[logged.position] = (advice[logged.position]?.first ?: "") +
+                                " Отдых ${Ru.clock(rest.sec)}" + (if (why.isNotEmpty() && rest.sec != logged.slot.restSec) ": $why." else ".") to ns.change
+                        }
                         if (settings.autoRest) {
-                            forma.app.ui.RestTimer.start(context, workoutId, logged.slot.restSec * 1000L, settings.beeps, settings.vibration)
+                            forma.app.ui.RestTimer.start(context, workoutId, rest.sec * 1000L, settings.beeps, settings.vibration)
                         }
                         if (n + 1 >= planned) {
                             val idx = plan.items.indexOfFirst { it.position == logged.position }

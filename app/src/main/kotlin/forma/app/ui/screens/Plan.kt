@@ -278,9 +278,9 @@ private fun TemplateCard(t: Template) {
 
 private fun timed(exerciseId: String) = forma.core.model.Catalog.find(exerciseId)?.load == forma.core.model.LoadKind.TIMED
 
-/** "3 × 6–10 · запас 2 · отдых 2:00" for a plan row. */
+/** "3 × 6–10 · запас 2 · отдых ~2:00" for a plan row (the rest is worked out after each set around it). */
 private fun specLine(s: forma.core.strength.SlotSpec, timed: Boolean): String =
-    "${s.sets} × ${s.repMin}–${s.repMax}${if (timed) " с" else ""} · запас ${s.rir} · отдых ${Ru.clock(s.restSec)}"
+    "${s.sets} × ${s.repMin}–${s.repMax}${if (timed) " с" else ""} · запас ${s.rir} · отдых ~${Ru.clock(s.restSec)}"
 
 /** Rep ranges to pick from: strength, strength and size, size, size and endurance. */
 private val REP_RANGES = listOf(3 to 5, 5 to 8, 6 to 10, 8 to 12, 10 to 15, 12 to 20)
@@ -331,7 +331,12 @@ private fun PlanExerciseDialog(
                         forma.app.ui.components.Chip(Ru.clock(v), rs == v, { rs = v }, minWidth = 64.dp)
                     }
                 }
-                if (rs != plannedRest) Text("В плане ${Ru.clock(plannedRest)}.", style = T.secondary(12.sp))
+                Text(
+                    if (rs != plannedRest) "В плане ${Ru.clock(plannedRest)}. Свой отдых приложение не меняет — он будет одинаковым после любого подхода."
+                    else "Это середина: после каждого подхода отдых считается заново — дольше после тяжёлого подхода и на большом весе, " +
+                        "короче, когда был запас, и с поправкой на то, как ты восстанавливаешься в этом упражнении. Выберешь своё — будет всегда таким.",
+                    style = T.secondary(12.sp),
+                )
                 val chosen = st
                 if (chosen != null) {
                     // Weights come in the steps a gym really has: with 2.5 kg plates the barbell goes in 5 kg steps.

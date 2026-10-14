@@ -25,8 +25,12 @@ data class LiftItem(
     val addedForGood: Boolean = false,
     /** Why there is no warm-up before it (muscles warm already, single-muscle work), when there is none. */
     val noWarmUp: String? = null,
-    /** Why the rest is longer than the plan's for this person, when it is. */
+    /** Why the rest differs from the plan's for this person, when it does. */
     val restWhy: String? = null,
+    /** Seconds this person needs more (less) than the plan's rest here, learned from their sets ([forma.core.strength.RestAdvice.personal]). */
+    val restShift: Int = 0,
+    /** The rest was set by the person: it stays as set. */
+    val restOwn: Boolean = false,
 )
 
 @Serializable

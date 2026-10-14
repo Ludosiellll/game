@@ -27,15 +27,43 @@ class PersonalRulesTest {
         assertEquals(85, SessionTime.round(83.0))
     }
 
-    @Test fun restGrowsWhenRepsKeepFalling() {
-        val falling = List(4) { listOf(DoneSet(80.0, 8, 2), DoneSet(80.0, 7, 1), DoneSet(80.0, 5, 0)) }
-        assertTrue(RestAdvice.longer(falling))
-        val steady = List(4) { listOf(DoneSet(80.0, 8, 2), DoneSet(80.0, 8, 2), DoneSet(80.0, 7, 1)) }
-        assertFalse(RestAdvice.longer(steady))
-        // Two sessions are not a pattern.
-        assertFalse(RestAdvice.longer(falling.take(2)))
-        // Fewer reps on a heavier last set is the plan, not fatigue.
-        assertFalse(RestAdvice.longer(List(4) { listOf(DoneSet(80.0, 8, 2), DoneSet(80.0, 8, 2), DoneSet(90.0, 4, 1)) }))
+    @Test fun restFollowsTheSetJustDone() {
+        // A set as planned: the plan's rest.
+        assertEquals(150, RestAdvice.after(150, 8, 2, 2, compound = true, deload = false, personal = 0).sec)
+        // To failure: longer, and it says why.
+        val hard = RestAdvice.after(150, 8, 0, 2, compound = true, deload = false, personal = 0)
+        assertEquals(195, hard.sec)
+        assertTrue("до отказа" in RestAdvice.words(hard))
+        // Heavy and to failure: longer still; reps to spare: shorter.
+        assertEquals(210, RestAdvice.after(150, 4, 0, 2, compound = true, deload = false, personal = 0).sec)
+        assertEquals(135, RestAdvice.after(150, 8, 4, 2, compound = true, deload = false, personal = 0).sec)
+        // A single-joint exercise with many reps and reps to spare goes short, but not under 45 s.
+        assertEquals(45, RestAdvice.after(60, 15, 4, 1, compound = false, deload = false, personal = 0).sec)
+        // A multi-joint one never under 1:30, never over 5 min.
+        assertEquals(90, RestAdvice.after(90, 15, 4, 1, compound = true, deload = true, personal = 0).sec)
+        assertEquals(300, RestAdvice.after(240, 3, 0, 2, compound = true, deload = false, personal = 60).sec)
+        // The person's own rest stays as set.
+        assertEquals(120, RestAdvice.after(120, 3, 0, 2, compound = true, deload = false, personal = 60, own = true).sec)
+        // Not rated: taken as planned.
+        assertEquals(150, RestAdvice.after(150, 8, null, 2, compound = true, deload = false, personal = 0).sec)
+        // Not rated but short of the target: it ran out.
+        assertEquals(195, RestAdvice.after(150, 6, null, 2, compound = true, deload = false, personal = 0, target = 8).sec)
+    }
+
+    @Test fun restLearnsHowTheyRecover() {
+        // Losing three reps to failure from set to set after 2 minutes: a minute more.
+        assertEquals(60, RestAdvice.personal(List(6) { RestAdvice.Pair(120, 10, 7) }, 150))
+        assertEquals(30, RestAdvice.personal(List(6) { RestAdvice.Pair(150, 10, 8) }, 150))
+        // About a rep, as expected: nothing.
+        assertEquals(0, RestAdvice.personal(List(6) { RestAdvice.Pair(150, 10, 9) }, 150))
+        // Nothing lost on rests no longer than the plan's: they recover fast.
+        assertEquals(-15, RestAdvice.personal(List(6) { RestAdvice.Pair(100, 10, 10) }, 150))
+        // Five pairs are not enough.
+        assertEquals(0, RestAdvice.personal(List(5) { RestAdvice.Pair(120, 10, 7) }, 150))
+        // Pairs from logged sets: the rest between them from the times, failure where a set fell short unrated.
+        val t = 1_000_000L
+        val pairs = RestAdvice.pairsOf(listOf(DoneSet(80.0, 8, 2) to t, DoneSet(80.0, 7, null) to t + 180_000, DoneSet(85.0, 5, 1) to t + 360_000), 8)
+        assertEquals(listOf(RestAdvice.Pair(180 - 21 - 10, 10, 7)), pairs)
     }
 
     @Test fun startGuessesLearnHowFarOffTheyWere() {

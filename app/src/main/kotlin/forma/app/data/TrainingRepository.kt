@@ -456,16 +456,23 @@ class TrainingRepository(
         val warm = if (spec.role == SlotRole.MAIN && p.weight != null && ex.load == LoadKind.EXTERNAL && !deload) {
             WarmUp.sets(p.weight!!, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
         } else emptyList()
-        // Reps falling off set after set, session after session: this person needs longer rest here (unless they set it).
-        val ownRest = ex.load != LoadKind.TIMED && !deload && settings.rest.keys.none { it == spec.exerciseId || it.endsWith(":${spec.exerciseId}") } &&
-            forma.core.strength.RestAdvice.longer(
-                db.sets().history(ex.id).groupBy { it.workoutId }.values.map { l -> l.sortedBy { it.doneAt }.map { DoneSet(it.weight, it.reps, it.rir) } },
-            )
-        val rested = if (ownRest) spec.copy(restSec = (spec.restSec + forma.core.strength.RestAdvice.MORE_SEC).coerceAtMost(MAX_REST)) else spec
+        // How this person recovers on this exercise: reps lost from set to set after the rest they took.
+        val ownRest = settings.rest.keys.any { it == spec.exerciseId || it.endsWith(":${spec.exerciseId}") }
+        val shift = if (ex.load == LoadKind.TIMED || ownRest) 0 else forma.core.strength.RestAdvice.personal(
+            db.sets().history(ex.id).groupBy { it.workoutId }.values.flatMap { l ->
+                val target = l.firstOrNull()?.targetReps ?: spec.repMin
+                forma.core.strength.RestAdvice.pairsOf(l.sortedBy { it.doneAt }.map { DoneSet(it.weight, it.reps, it.rir) to it.doneAt }, target)
+            },
+            spec.restSec,
+        )
         return LiftItem(
-            position, rested, ex.id, ex.name, p, warm, ex.step,
-            restWhy = if (ownRest) "Отдых ${Ru.clock(rested.restSec)} вместо ${Ru.clock(spec.restSec)}: в последних тренировках к последнему подходу " +
-                "у тебя повторы падали на 3 и больше. Дольше отдых — больше повторов в поздних подходах." else null,
+            position, spec, ex.id, ex.name, p, warm, ex.step, restShift = shift, restOwn = ownRest,
+            restWhy = when {
+                shift > 0 -> "Отдых здесь у тебя на ${shift} с длиннее: в прошлых тренировках после обычного отдыха ты терял " +
+                    "в следующем подходе ${if (shift >= 60) "3 и больше" else "2 и больше"} повтора."
+                shift < 0 -> "Отдых здесь у тебя на ${-shift} с короче: в прошлых тренировках ты почти не терял повторов от подхода к подходу."
+                else -> null
+            },
         )
     }
 
