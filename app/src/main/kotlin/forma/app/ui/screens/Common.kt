@@ -164,6 +164,85 @@ fun kindLabel(s: PlannedSession): String = when (s.kind) {
     SessionKind.RUN_LONG -> "Длинный бег"
 }
 
+/** The session left open ([open]) is the one to go on with: the same session of the same day. */
+internal fun sameLift(open: forma.app.data.WorkoutEntity, templateId: String, today: LocalDate): Boolean =
+    open.templateId == templateId && open.epochDay == today.toEpochDay()
+
+/** A session left open ([open]) when another one was asked for: [templateId], lighter or not ([light]). */
+private data class LiftAsk(val open: forma.app.data.WorkoutEntity, val templateId: String, val light: Boolean)
+
+/**
+ * Starts the gym session [templateId] for [today] and opens it with [go]: from the main screen, a day of the plan and
+ * "Дальше" after a run. One left open of another session or from another day is never taken silently (Tuesday's
+ * «Верх Б» must not get Thursday's sets): it is asked about first — go on with it, finish it, or delete it and start.
+ * The same session of the same day just opens. One start at a time: a double tap does not open two. The question is a
+ * dialog of the screen that calls this.
+ */
+@Composable
+fun rememberLiftStart(today: LocalDate, go: (forma.app.ui.Screen) -> Unit): (templateId: String, light: Boolean) -> Unit {
+    val repo = forma.app.ui.LocalRepo.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val program by repo.store.program.collectAsState(initial = null)
+    var starting by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var asked by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<LiftAsk?>(null) }
+    fun once(block: suspend () -> Unit) {
+        if (starting) return
+        starting = true
+        scope.launch {
+            try {
+                block()
+            } finally {
+                starting = false
+            }
+        }
+    }
+    asked?.let { (a, templateId, light) ->
+        val title = program?.templates?.firstOrNull { it.id == templateId }?.title?.let { "«$it»" } ?: "новую"
+        val since = if (a.epochDay != today.toEpochDay()) "Начата ${shortDate(LocalDate.ofEpochDay(a.epochDay))}. " else ""
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { asked = null },
+            containerColor = F.c.surface,
+            title = { Text("«${a.title}» не закончена", style = T.title(20.sp)) },
+            text = {
+                Text(
+                    since + "Продолжить её, закончить — или удалить и начать $title? Подходы начатой тренировки при удалении пропадут.",
+                    style = T.secondary(14.sp),
+                )
+            },
+            confirmButton = {
+                Column(horizontalAlignment = Alignment.End) {
+                    androidx.compose.material3.TextButton({ asked = null; go(forma.app.ui.Screen.Workout(a.id)) }) {
+                        Text("Продолжить «${a.title}»", style = T.body(15.sp, androidx.compose.ui.text.font.FontWeight.Bold).copy(color = F.c.accent))
+                    }
+                    // Opens it with "Завершить" asked: its effort, or its deletion when it has no sets.
+                    androidx.compose.material3.TextButton({ asked = null; finishOnOpen = a.id; go(forma.app.ui.Screen.Workout(a.id)) }) {
+                        Text("Закончить «${a.title}»", style = T.body(15.sp).copy(color = F.c.accent))
+                    }
+                    androidx.compose.material3.TextButton({
+                        asked = null
+                        once {
+                            forma.app.ui.RestTimer.stopFor(context, a.id)
+                            repo.cancelWorkout(a.id)
+                            go(forma.app.ui.Screen.Workout(repo.startLift(templateId, today, forceDeload = light)))
+                        }
+                    }) { Text("Удалить и начать", style = T.body(15.sp).copy(color = F.c.bad)) }
+                }
+            },
+        )
+    }
+    return { templateId, light ->
+        once {
+            val a = repo.db.workouts().active()
+            when {
+                a == null -> go(forma.app.ui.Screen.Workout(repo.startLift(templateId, today, forceDeload = light)))
+                sameLift(a, templateId, today) -> go(forma.app.ui.Screen.Workout(a.id))
+                else -> asked = LiftAsk(a, templateId, light)
+            }
+        }
+    }
+}
+
 /**
  * After a session on a day with two (the gym and the stadium): the other one, ready to start — "Готово" becomes the
  * second button. Nothing when the day is done. The day's "so-so" holds for it too: the lighter gym, the lighter run.
@@ -177,7 +256,6 @@ fun NextToday(onDone: () -> Unit) {
     val monday = androidx.compose.runtime.remember(today) { today.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) }
     val week by androidx.compose.runtime.remember(monday) { repo.weekFlow(monday) }.collectAsState(initial = emptyList())
     val program by repo.store.program.collectAsState(initial = null)
-    val active by androidx.compose.runtime.remember { repo.db.workouts().observeActive() }.collectAsState(initial = null)
     val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
     val light = settings.feelOn(today) == forma.app.data.Feel.LOW
     val day = week.firstOrNull { it.date == today }
@@ -187,23 +265,23 @@ fun NextToday(onDone: () -> Unit) {
         value = next?.takeIf { it.isRun }?.let { repo.runFor(it.kind, today, light).title }
     }
     var starting by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    // The gym after the stadium: never into a session left open from another day.
+    val startLift = rememberLiftStart(today, nav::replaceTop)
     if (next == null || next.isRun && runTitle == null) {
         forma.app.ui.components.PrimaryButton("Готово", onDone, Modifier.fillMaxWidth())
         return
     }
     val title = runTitle ?: sessionTitle(next, program)
     forma.app.ui.components.PrimaryButton("Дальше: $title", {
+        if (!next.isRun) {
+            startLift(next.templateId!!, light)
+            return@PrimaryButton
+        }
         if (starting) return@PrimaryButton
         starting = true
         scope.launch {
             try {
-                if (next.isRun) {
-                    nav.replaceTop(forma.app.ui.Screen.RunSetup(repo.runFor(next.kind, today, light), next.kind))
-                } else {
-                    val a = active
-                    val id = if (a != null && a.templateId == next.templateId) a.id else repo.startLift(next.templateId!!, today, forceDeload = light)
-                    nav.replaceTop(forma.app.ui.Screen.Workout(id))
-                }
+                nav.replaceTop(forma.app.ui.Screen.RunSetup(repo.runFor(next.kind, today, light), next.kind))
             } finally {
                 starting = false
             }

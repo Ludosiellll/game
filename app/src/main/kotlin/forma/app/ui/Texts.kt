@@ -6,14 +6,17 @@ import forma.core.run.RunOutcome
 import forma.core.strength.HoldReason
 import forma.core.strength.Outcome
 import forma.core.text.Ru
+import kotlin.math.roundToInt
 
 /** Short Russian sentences that explain what the app changed and why. */
 object Texts {
     /** After a set: the next one, with its numbers, and why (the reserve against the plan). */
     fun nextSet(ex: Exercise, n: forma.core.strength.NextSet): String {
-        val target = if (ex.load == LoadKind.TIMED) "${n.reps} с" else "${weight(ex, n.weight)} × ${n.reps}"
+        val target = weightReps(ex, n.weight, n.reps)
         val r = n.reserve
         val why = when {
+            // A hold: no weight and no reserve to mark, its time grows from one session to the next.
+            ex.load == LoadKind.TIMED -> "Удержишь во всех подходах — в следующий раз дольше."
             n.calibrate && n.change > 0 -> "Пошло легко — значит, можно тяжелее."
             n.calibrate && n.change < 0 -> "Тяжеловато — чуть легче."
             n.calibrate && r == null -> "Отметь «сколько ещё мог» — по запасу подберу вес."
@@ -67,8 +70,23 @@ object Texts {
         else -> "${Ru.kg(w)} кг" + if (ex?.perHand == true) " ×2" else ""
     }
 
-    private fun target(ex: Exercise?, w: Double, reps: Int): String =
-        if (ex?.load == LoadKind.TIMED) "$reps с" else "${weight(ex, w)} × $reps"
+    /**
+     * A weight with its reps: "80 кг × 5", "+10 кг × 8"; dumbbells "по 20 кг × 10" (not "20 кг ×2 × 10"); a hold in
+     * seconds, "30 с". [reps]: one number or a row of them ("10, 10, 9").
+     */
+    fun weightReps(ex: Exercise?, w: Double, reps: String): String = when {
+        ex?.load == LoadKind.TIMED -> "$reps с"
+        ex?.perHand == true && ex.load == LoadKind.EXTERNAL -> "по ${Ru.kg(w)} кг × $reps"
+        else -> "${weight(ex, w)} × $reps"
+    }
+
+    fun weightReps(ex: Exercise?, w: Double, reps: Int): String = weightReps(ex, w, reps.toString())
+
+    /** A one-rep estimate to half a kilo; dumbbells per hand, as [weight] says them ("30 кг ×2"). */
+    fun oneRm(ex: Exercise?, e1rm: Double): String =
+        "${Ru.kg((e1rm * 2).roundToInt() / 2.0)} кг" + if (ex?.perHand == true && ex.load == LoadKind.EXTERNAL) " ×2" else ""
+
+    private fun target(ex: Exercise?, w: Double, reps: Int): String = weightReps(ex, w, reps)
 
     fun outcome(o: Outcome, ex: Exercise?): String = when (o) {
         is Outcome.Calibrated -> "Рабочий вес подобран: ${target(ex, o.weight, o.reps)}."
@@ -92,7 +110,7 @@ object Texts {
             HoldReason.AT_TOP -> "Это верх диапазона — держим ${target(ex, o.weight, o.reps)}. Хочешь дальше — замени на вариант сложнее."
         }
         is Outcome.Reduce -> "Вес оказался тяжёлым — ${target(ex, o.to, o.reps)} (−${Ru.kg(o.from - o.to)} кг). С этого веса снова растём."
-        is Outcome.Reset -> "Три тренировки без роста — шаг назад до ${target(ex, o.to, o.reps)}, чтобы снова пойти вверх."
+        is Outcome.Reset -> "Три тренировки без роста — шаг назад: ${target(ex, o.to, o.reps)}, чтобы снова пойти вверх."
         Outcome.NotDone -> "Не выполнялось — цель прежняя."
         Outcome.Deload -> "Разгрузка: прогресс сохранён, после неё продолжим с тех же весов."
     }

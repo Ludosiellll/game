@@ -93,7 +93,6 @@ import forma.core.text.Ru
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
-import kotlin.math.roundToInt
 import androidx.core.net.toUri
 
 /** The fields and the hint of one exercise as they were before a set was logged or deleted: "Отменить" brings them back. */
@@ -112,6 +111,9 @@ private data class Undo(
 
 /** How long "Отменить" stays after a set. */
 private const val UNDO_MS = 8_000L
+
+/** The session to open with "Завершить" asked at once: "Закончить «…»" when another one is started over it. */
+internal var finishOnOpen: Long? = null
 
 /** Weight step around [w]: the user's own step if set in settings, else the exercise's (finer for light dumbbells). */
 private fun stepOf(ex: forma.core.model.Exercise, item: forma.app.data.LiftItem, w: Double): Double =
@@ -175,6 +177,11 @@ fun WorkoutScreen(workoutId: Long) {
     val context = LocalContext.current
     // A rest saved before the system closed the app comes back with its time.
     LaunchedEffect(Unit) { forma.app.ui.RestTimer.restore(context) }
+    // Back from the system's settings with exact alarms allowed: the end of the rest going on is set again, on time.
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        forma.app.ui.RestTimer.reschedule(context)
+        onPauseOrDispose {}
+    }
     val workout by remember(workoutId) { repo.db.workouts().observe(workoutId) }.collectAsState(initial = null)
     // Null until read: the fields of an exercise with sets start from its last set, so they wait for the sets.
     val loaded by remember(workoutId) { repo.db.sets().observeFor(workoutId) }.collectAsState(initial = null)
@@ -268,7 +275,7 @@ fun WorkoutScreen(workoutId: Long) {
     var tick by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) { while (true) { tick = System.currentTimeMillis(); delay(1000) } }
 
-    var finishing by remember { mutableStateOf(false) }
+    var finishing by remember { mutableStateOf((finishOnOpen == workoutId).also { if (it) finishOnOpen = null }) }
     var lastLogAt by remember { mutableLongStateOf(Long.MIN_VALUE / 2) }
     var undo by remember { mutableStateOf<Undo?>(null) }
     var removing by remember { mutableStateOf<Int?>(null) }
@@ -404,7 +411,7 @@ fun WorkoutScreen(workoutId: Long) {
                         last != null -> {
                             val s = last.first.joinToString(", ") { it.reps.toString() }
                             val wDone = last.first.maxOf { it.weight }
-                            val text = if (ex.load == LoadKind.TIMED) "Прошлый раз: $s с." else "Прошлый раз ${Texts.weight(ex, wDone)} × $s."
+                            val text = if (ex.load == LoadKind.TIMED) "Прошлый раз: $s с." else "Прошлый раз ${Texts.weightReps(ex, wDone, s)}."
                             val why = last.second?.outcome?.let { " " + Texts.outcome(it, ex) } ?: ""
                             Hint(text + why, if ((last.second?.outcome?.let { Texts.tone(it) } ?: 0) < 0) F.c.warn else F.c.strength)
                         }
@@ -436,7 +443,7 @@ fun WorkoutScreen(workoutId: Long) {
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     NumText("Р${i + 1}", style = T.number(14.sp).copy(color = F.c.text3), modifier = Modifier.width(36.dp))
-                                    NumText("${Texts.weight(ex, s.weight)} × ${s.reps}", style = T.number(16.sp).copy(color = if (ticked) F.c.text3 else F.c.text2), modifier = Modifier.weight(1f))
+                                    NumText(Texts.weightReps(ex, s.weight, s.reps), style = T.number(16.sp).copy(color = if (ticked) F.c.text3 else F.c.text2), modifier = Modifier.weight(1f))
                                     Box(
                                         Modifier.size(24.dp).clip(CircleShape).background(if (ticked) F.c.good else F.c.surface2),
                                         contentAlignment = Alignment.Center,
@@ -458,10 +465,7 @@ fun WorkoutScreen(workoutId: Long) {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 NumText("${i + 1}", style = T.number(16.sp).copy(color = F.c.text2), modifier = Modifier.width(32.dp))
-                                NumText(
-                                    if (ex.load == LoadKind.TIMED) "${s.reps} с" else "${Texts.weight(ex, s.weight)} × ${s.reps}",
-                                    style = T.number(18.sp), modifier = Modifier.weight(1f),
-                                )
+                                NumText(Texts.weightReps(ex, s.weight, s.reps), style = T.number(18.sp), modifier = Modifier.weight(1f))
                                 if (s.rir != null) Text("запас ${if (s.rir >= 5) "5+" else s.rir}", style = T.secondary(13.sp), modifier = Modifier.padding(end = 10.dp))
                                 Box(Modifier.size(24.dp).clip(CircleShape).background(F.c.strength), contentAlignment = Alignment.Center) {
                                     Icon(Ic.check, null, tint = F.c.onData, modifier = Modifier.size(14.dp))
@@ -549,8 +553,11 @@ fun WorkoutScreen(workoutId: Long) {
                     }
                     if (timed) {
                         StepperGroup(listOf(repsSlot))
-                        // A plank held to the stopwatch: the seconds go into the field.
-                        HoldTimer(item.prescription.reps, settings.beeps, settings.vibration) { inp.reps = max(1, it) }
+                        // A plank held to the stopwatch: the seconds go into the field. A stopwatch of its own for each
+                        // exercise at its place: one started on a plank does not carry over to the side plank.
+                        androidx.compose.runtime.key(keyOf(item)) {
+                            HoldTimer(item.prescription.reps, settings.beeps, settings.vibration) { inp.reps = max(1, it) }
+                        }
                     } else {
                         // Assisted pull-ups and dips go below zero: negative weight is help from a machine or band.
                         val lowest = if (ex.assisted) -Progression.maxAssist(ex, bw) else 0.0
@@ -596,7 +603,7 @@ fun WorkoutScreen(workoutId: Long) {
                         val closes = n + 1 >= planned
                         val nx = if (closes) nextOpen(plan.items, logged.position, ::count) else null
                         val recordText = record?.let {
-                            "Рекорд! " + if (ex.load == LoadKind.EXTERNAL) "Расчётный максимум — ${Ru.kg((it * 2).roundToInt() / 2.0)} кг. " else "Сильнее, чем когда-либо. "
+                            "Рекорд! " + if (ex.load == LoadKind.EXTERNAL) "Расчётный максимум — ${Texts.oneRm(ex, it)}. " else "Сильнее, чем когда-либо. "
                         } ?: ""
                         var nextKey: String? = null
                         var nextBefore: Pair<String, Int>? = null
@@ -612,6 +619,9 @@ fun WorkoutScreen(workoutId: Long) {
                                 nextBefore = advice[nextKey]
                                 advice[nextKey] = recordText + "«${logged.name}» сделано. Дальше — ${nx.name}: ${Texts.prescription(nxEx, nx.prescription)}. " +
                                     Texts.orderWhy(nx.slot.role, nxEx) to 0
+                            } else if (record != null) {
+                                // The very last set of the session: no next set or exercise to say it with, so it stays here.
+                                advice[key] = recordText.trim() to 1
                             }
                         }
                         inp.rir = null

@@ -55,7 +55,7 @@ fun ExerciseScreen(exerciseId: String) {
         if (ex.load != LoadKind.TIMED && series.isNotEmpty()) {
             FCard(gap = 4.dp) {
                 Text("Максимум на 1 раз, расчёт", style = T.secondary(13.sp))
-                NumText("${Ru.kg(((e1rm ?: series.last().value) * 2).roundToInt() / 2.0)} кг", style = T.number(40.sp).copy(color = F.c.strength))
+                NumText(forma.app.ui.Texts.oneRm(ex, e1rm ?: series.last().value), style = T.number(40.sp).copy(color = F.c.strength))
                 if (series.size >= 2) LineChart(
                     listOf(Series(series.map { it.value }, F.c.strength, fill = true)),
                     xLabels = listOf(shortDate(LocalDate.ofEpochDay(series.first().epochDay)), shortDate(LocalDate.ofEpochDay(series.last().epochDay))),
@@ -70,9 +70,11 @@ fun ExerciseScreen(exerciseId: String) {
                     // Holds: seconds, not kilograms.
                     StatTile("Дольше всего", "${rec.mostReps}", "с", F.c.strength, Modifier.weight(1f))
                 } else {
-                    StatTile("Лучший расчёт", if (rec.bestE1rm > 0) Ru.kg((rec.bestE1rm * 2).roundToInt() / 2.0) else "—", "кг", F.c.strength, Modifier.weight(1f))
+                    // Dumbbells: the weight of one of the two, as everywhere ("30 кг ×2").
+                    val kg = if (ex.perHand && ex.load == LoadKind.EXTERNAL) "кг ×2" else "кг"
+                    StatTile("Лучший расчёт", if (rec.bestE1rm > 0) Ru.kg((rec.bestE1rm * 2).roundToInt() / 2.0) else "—", kg, F.c.strength, Modifier.weight(1f))
                     val (value, unit) = when {
-                        ex.load != LoadKind.BODYWEIGHT_PLUS -> Ru.kg(rec.heaviest) to "кг"
+                        ex.load != LoadKind.BODYWEIGHT_PLUS -> Ru.kg(rec.heaviest) to kg
                         rec.heaviest > 0 -> "+${Ru.kg(rec.heaviest)}" to "доп. кг"
                         rec.heaviest < 0 -> Ru.kg(-rec.heaviest) to "помощь, кг"
                         else -> "0" to "свой вес"
@@ -89,7 +91,7 @@ fun ExerciseScreen(exerciseId: String) {
                 SectionLabel("Следующая цель")
                 targets.take(3).forEachIndexed { i, slot ->
                     if (i > 0) Hairline()
-                    Text(if (ex.load == LoadKind.TIMED) "${slot.reps} с" else "${forma.app.ui.Texts.weight(ex, slot.weight!!)} × ${slot.reps}", style = T.title(22.sp))
+                    Text(if (ex.load == LoadKind.TIMED) "${slot.reps} с" else forma.app.ui.Texts.weightReps(ex, slot.weight!!, slot.reps), style = T.title(22.sp))
                     Text(targetWhere(slot.slotKey, ex.load == LoadKind.TIMED, program, settings, repo), style = T.secondary(13.sp))
                     if (slot.stalls > 0) Text("Без роста: ${slot.stalls} ${Ru.plural(slot.stalls, "тренировка", "тренировки", "тренировок")} подряд. После трёх — шаг назад на 10 %.", style = T.secondary(13.sp))
                 }

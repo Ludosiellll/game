@@ -63,7 +63,7 @@ fun LiftDoneScreen(workoutId: Long) {
                     Text("Новый рекорд силы", style = T.title(18.sp))
                 }
                 records.forEach { r ->
-                    Text("${r.name}: расчётный максимум ${Ru.kg(((r.e1rm ?: 0.0) * 2).roundToInt() / 2.0)} кг", style = T.body(15.sp))
+                    Text("${r.name}: расчётный максимум ${Texts.oneRm(Catalog.find(r.exerciseId), r.e1rm ?: 0.0)}", style = T.body(15.sp))
                 }
             }
         }
@@ -108,11 +108,11 @@ fun LiftDoneScreen(workoutId: Long) {
     }
 }
 
-/** "80 кг × 5, 5, 4 · 85 кг × 3": sets in a row at one weight together; holds in seconds. */
+/** "80 кг × 5, 5, 4 · 85 кг × 3" (dumbbells "по 20 кг × 10, 10"): sets in a row at one weight together; holds in seconds. */
 private fun setsLine(sets: List<forma.app.data.SetEntity>): String {
     val ex = Catalog.find(sets.first().exerciseId)
     if (ex?.load == forma.core.model.LoadKind.TIMED) return sets.joinToString(", ") { "${it.reps} с" }
     val runs = mutableListOf<MutableList<forma.app.data.SetEntity>>()
     for (s in sets) if (runs.lastOrNull()?.first()?.weight == s.weight) runs.last() += s else runs += mutableListOf(s)
-    return runs.joinToString(" · ") { run -> "${Texts.weight(ex, run.first().weight)} × ${run.joinToString(", ") { it.reps.toString() }}" }
+    return runs.joinToString(" · ") { run -> Texts.weightReps(ex, run.first().weight, run.joinToString(", ") { it.reps.toString() }) }
 }

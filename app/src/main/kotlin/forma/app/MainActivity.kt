@@ -6,10 +6,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.lifecycle.lifecycleScope
+import forma.app.data.Status
 import forma.app.run.LapKey
 import forma.app.ui.AppRoot
 import forma.app.ui.LocalCloud
 import forma.app.ui.LocalRepo
+import forma.app.ui.RestTimer
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -21,6 +25,9 @@ class MainActivity : ComponentActivity() {
         // Catch up with the cloud on every launch; the periodic job covers the days the app stays closed.
         cloud.schedulePeriodic()
         cloud.syncSoon()
+        // The rest between sets saved before the app was closed comes back; one of a session finished or deleted since,
+        // or one that ended long ago, goes with its notification.
+        lifecycleScope.launch { RestTimer.restore(this@MainActivity) { id -> repo.db.workouts().get(id)?.status == Status.ACTIVE } }
         setContent {
             CompositionLocalProvider(LocalRepo provides repo, LocalCloud provides cloud) { AppRoot() }
         }
