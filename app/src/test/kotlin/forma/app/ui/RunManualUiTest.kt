@@ -10,6 +10,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -125,7 +126,8 @@ class RunManualUiTest {
         assertEquals(RunType.GOAL_PACE, w.type)
         show(repo, Navigator(Screen.Today)) { RunManualScreen(w) }
         type("Средний круг", "52")
-        compose.onNodeWithText("7").performScrollTo().performClick()
+        // The effort chip (the title may hold a 7 too: "7 × 1 круг").
+        compose.onAllNodes(androidx.compose.ui.test.hasText("7") and androidx.compose.ui.test.hasClickAction()).onFirst().performScrollTo().performClick()
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-runmanual.png")
         compose.onNodeWithText("Сохранить").performScrollTo().performClick()

@@ -106,8 +106,8 @@ class DayScreenUiTest {
         settle()
         assertEquals(Screen.Day(monday.plusDays(3).toEpochDay()), nav.current)
         compose.onNodeWithText("Четверг").assertExists()
-        // The hard run of the day: the trial falls on Monday (its run not done yet), so Thursday is race pace.
-        compose.onNodeWithText("Темп цели", substring = true).assertExists()
+        // The hard run of the day: the trial is due, and Monday is two days after Saturday's legs — so it falls on Thursday.
+        compose.onAllNodesWithText("Контрольный", substring = true)[0].assertExists()
         // The run first (the hard run before the gym), then the gym: each with its own why.
         compose.onAllNodesWithText("Зачем")[0].performScrollTo()
         compose.onNodeWithText("Что даёт телу").performScrollTo()
@@ -161,7 +161,7 @@ class DayScreenUiTest {
     }
 
     /**
-     * Monday's planned hard run done (race pace, the trial not due): the plan has moved on (the next hard one is intervals),
+     * Monday's planned hard run done (race pace, the trial not due): the plan has moved on (the next hard one is tempo),
      * but Monday — on the main screen, in the day and in the week — shows what was run, not the next one as "moved".
      */
     private fun doneMonday(): TrainingRepository {
@@ -171,7 +171,7 @@ class DayScreenUiTest {
             val w = repo.runFor(SessionKind.RUN_QUALITY, monday)
             assertEquals(forma.core.run.RunType.GOAL_PACE, w.type)
             repo.saveRun(w, RunResult(1.0, 7, 1800, distanceM = 4000.0), clock - 1_900_000, emptyList(), monday)
-            assertEquals(forma.core.run.RunType.INTERVALS, repo.runFor(SessionKind.RUN_QUALITY, monday.plusDays(3)).type)
+            assertEquals(forma.core.run.RunType.TEMPO, repo.runFor(SessionKind.RUN_QUALITY, monday.plusDays(3)).type)
         }
         return repo
     }
@@ -204,7 +204,7 @@ class DayScreenUiTest {
         show(doneMonday()) { PlanScreen() }
         // Monday as run, Thursday what comes next.
         compose.onNodeWithText("Темп цели", substring = true).performScrollTo()
-        compose.onNodeWithText("Интервалы", substring = true).performScrollTo()
+        compose.onNodeWithText("Темповый", substring = true).performScrollTo()
         compose.onAllNodesWithText("Сделано")[0].assertExists()
         compose.onRoot().captureRoboImage("build/shots/carbon-plan-done.png")
     }

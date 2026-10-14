@@ -82,11 +82,12 @@ class TrialDayTest {
     @Test fun aFreeRunOnMondayMovesTheTrialToThursday() = runBlocking {
         val week = repo.store.programNow()!!.week
         assertEquals(listOf(SessionKind.RUN_QUALITY), week.on(1).map { it.kind })
-        // Before the run Monday is the trial day.
-        assertEquals(monday, repo.trialDay(monday))
-        assertEquals(RunType.TEST, repo.runFor(SessionKind.RUN_QUALITY, monday).type)
-        repo.saveRun(repo.freeRun(230), RunResult(1.0, 7, 1500, distanceM = 4600.0), clock - 1_600_000, emptyList(), monday)
+        // Monday is two days after Saturday's legs: the trial goes to Thursday (fresh legs), and Monday is race pace.
         val thursday = monday.plusDays(3)
+        assertEquals(thursday, repo.trialDay(monday))
+        assertEquals(RunType.GOAL_PACE, repo.runFor(SessionKind.RUN_QUALITY, monday).type)
+        // A free run on Monday changes nothing about it.
+        repo.saveRun(repo.freeRun(230), RunResult(1.0, 7, 1500, distanceM = 4600.0), clock - 1_600_000, emptyList(), monday)
         assertEquals(thursday, repo.trialDay(monday))
         // The week shows the trial once: Thursday's; a hard day after it shows what comes after the trial.
         assertEquals(RunType.TEST, repo.runFor(SessionKind.RUN_QUALITY, thursday, trial = thursday == repo.trialDay(monday)).type)

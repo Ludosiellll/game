@@ -73,6 +73,8 @@ data class Prescription(
     val phase: Phase = Phase.NORMAL,
     /** The last set is "[reps]+": the target, then more while it goes well, stopping with one rep in reserve. */
     val top: Boolean = false,
+    /** The first week of a block: a rep more in reserve than the plan's; a session short of the target is not a miss. */
+    val intro: Boolean = false,
 )
 
 /** A working set as logged. [rir] is optional self-report. */
@@ -100,6 +102,8 @@ enum class HoldReason {
     NEAR_MISS, FIRST_MISS, FEWER_SETS, LIGHTER, CONSOLIDATE, NOT_THE_WEIGHT, AT_TOP,
     /** Short of the target, but every short set was stopped with the reps left in reserve: a choice, not the weight. */
     STOPPED_EARLY,
+    /** The first week of a block asks for a rep more in reserve: falling short of the target then is what was asked. */
+    INTRO,
 }
 
 data class Evaluation(val state: SlotState, val outcome: Outcome, val e1rm: Double?)
@@ -213,7 +217,7 @@ object Progression {
             calibrate -> CALIBRATION_RIR
             else -> rir
         }
-        return Prescription(weight, state.reps, sets, plannedRir, calibrate, if (calibrate) hint else null, phase, top)
+        return Prescription(weight, state.reps, sets, plannedRir, calibrate, if (calibrate) hint else null, phase, top, intro = rirOffset > 0 && !calibrate)
     }
 
     /** Lowest weight the exercise allows: the most assistance for assisted body-weight exercises, the empty bar, or 0. */
@@ -357,6 +361,11 @@ object Progression {
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.FEWER_SETS), e1rm)
         }
         val hitAll = allAtTarget
+        // The block's first week asked for more in reserve: a rep or two short of the target is following it, not a miss —
+        // the weight and the target stay (before, this lowered the reps or the weight of whoever did as told).
+        if (p.intro && !hitAll && lighter == 0) {
+            return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.INTRO), e1rm)
+        }
 
         if (hitAll) {
             // Spare reps: on the "+" set, reps beyond the target with one kept in reserve; otherwise the reported

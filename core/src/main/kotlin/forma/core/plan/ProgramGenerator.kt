@@ -13,6 +13,7 @@ import forma.core.run.Vdot
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
+import kotlin.math.max
 
 object ProgramGenerator {
     /** The planner's version: a program laid out by an older one is laid out again (progress kept). */
@@ -41,7 +42,8 @@ object ProgramGenerator {
             Experience.ADVANCED -> 4
         }
         val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        return Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(plan), monday.toEpochDay(), aim, today.toEpochDay(), planner = PLANNER)
+        val program = Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(plan), monday.toEpochDay(), aim, today.toEpochDay(), planner = PLANNER)
+        return program.copy(runCaps = runCaps(program, middleGoal))
     }
 
     /**
@@ -51,6 +53,17 @@ object ProgramGenerator {
      */
     fun planAim(aim: Aim, middleGoal: Boolean): Aim =
         if (middleGoal && aim.run != RunFocus.SPEED && aim.run != RunFocus.NONE) aim.copy(run = RunFocus.SPEED) else aim
+
+    /**
+     * The caps of [program] as runs use them. A middle-distance goal with no long run and one easy run a week: that easy
+     * run is the whole aerobic base, so it may grow to an hour (as a long easy run would), kept easy. Applied when runs
+     * are planned, so a plan made before keeps its sessions as they are.
+     */
+    fun runCaps(program: Program, middleGoal: Boolean): RunCaps {
+        val runs = program.week.days.flatMap { it.sessions }
+        val baseRun = middleGoal && runs.none { it.kind == SessionKind.RUN_LONG } && runs.count { it.kind == SessionKind.RUN_EASY } == 1
+        return if (baseRun) program.runCaps.copy(easyMax = max(program.runCaps.easyMax, 60)) else program.runCaps
+    }
 
     /** How long easy and long runs may grow: by what running is for and how much of the week it gets. */
     fun caps(aim: Aim): RunCaps {

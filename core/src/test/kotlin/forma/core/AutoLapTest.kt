@@ -146,7 +146,7 @@ class AutoLapTest {
         repeat(20) { seed ->
             val run = session(w, forget = setOf(2, 5), seed = seed, line = true)
             val repLaps = run.tracker.laps.filter { it.rep != null }
-            assertEquals(8, repLaps.size, "seed $seed: ${run.tracker.laps}")
+            assertEquals(7, repLaps.size, "seed $seed: ${run.tracker.laps}")
             val autos = repLaps.withIndex().filter { it.value.auto }
             assertEquals(listOf(2, 5), autos.map { it.index }, "seed $seed: ${run.tracker.laps}")
             for ((i, l) in autos) assertTrue(abs(l.seconds - run.trueLaps[i]) <= 2.5, "seed $seed lap $i: ${l.seconds} vs ${run.trueLaps[i]}")
@@ -160,7 +160,7 @@ class AutoLapTest {
         repeat(20) { seed ->
             val run = session(w, forget = emptySet(), seed = seed, line = true)
             assertTrue(run.tracker.laps.none { it.auto }, "seed $seed: ${run.tracker.laps}")
-            assertEquals(8, run.tracker.laps.count { it.rep != null })
+            assertEquals(7, run.tracker.laps.count { it.rep != null })
         }
     }
 
@@ -383,9 +383,9 @@ class AutoLapTest {
         val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 2), goal, lapM)
         val run = session(w, forget = emptySet(), seed = 3, line = true)
         val t = run.tracker
-        // Eight reps of a lap and the nine warm-up laps GPS saw (12 min at 2.9 m/s): whole laps, not GPS that cuts the bends.
+        // Seven reps of a lap and the nine warm-up laps GPS saw (12 min at 2.9 m/s): whole laps, not GPS that cuts the bends.
         val laps = t.lapDistanceM() / lapM
-        assertEquals(17.0, laps, 1e-9)
+        assertEquals(16.0, laps, 1e-9)
         assertTrue(t.shownDistanceM() >= t.lapDistanceM())
         assertEquals(t.shownDistanceM(), t.result(3_600_000, 7).distanceM)
     }

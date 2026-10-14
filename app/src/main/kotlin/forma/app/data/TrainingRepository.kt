@@ -831,14 +831,18 @@ class TrainingRepository(
         val nextMonday = day.with(java.time.temporal.TemporalAdjusters.next(java.time.DayOfWeek.MONDAY))
         val plannedSoon = ProgramGenerator.isDeloadWeek(program, nextMonday) || ProgramGenerator.isDeloadWeek(program, day)
         // At most one lighter week in six: a run of bad days is not a reason to deload again and again.
+        // A lighter week just behind (the last two weeks) is recovery enough. Three weeks blocked it in every week of a
+        // 4–5-week block: the reactive deload never came for intermediate and advanced lifters.
         val recent = state.reactiveDeloadStart?.let { day.toEpochDay() < it + 42 } == true ||
-            (1L..3L).any { ProgramGenerator.isDeloadWeek(program, day.minusWeeks(it)) }
+            (1L..2L).any { ProgramGenerator.isDeloadWeek(program, day.minusWeeks(it)) }
         // Run down by this person's own measure: below their rest line for four days or more (the dip still on).
         val worn = storyOf(db.workouts().allDone(), day)?.let { st ->
             st.history && st.dips.lastOrNull()?.let { it.recovered == null && day.toEpochDay() - it.from.toEpochDay() >= 3 } == true
         } == true
         if ((setbacks.size >= 2 || worn && setbacks.isNotEmpty()) && !plannedSoon && !recent) {
             store.setLiftState(state.copy(reactiveDeloadStart = nextMonday.toEpochDay()))
+            // The block starts again after the lighter week: the planned one does not follow a week or two later.
+            restartBlock(nextMonday.plusWeeks(1))
         }
     }
 
@@ -992,11 +996,13 @@ class TrainingRepository(
      * The run of [kind] on [date]. [trial]: a due trial may be this one — false for a hard day after the one the trial
      * falls on ([trialDay]), which shows what comes after it instead.
      */
-    suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false, road: Boolean = false, trial: Boolean = true): RunWorkout {
+    suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false, road: Boolean = false, trial: Boolean? = null): RunWorkout {
+        // A due trial goes on its own day ([trialDay]): not on a hard day too soon after the legs.
+        @Suppress("NAME_SHADOWING") val trial = trial ?: (kind != SessionKind.RUN_QUALITY || trialDay(date) == date)
         val saved = store.runStateNow()
         val program = store.programNow()
         // The caps of the plan as it is now: after a switch to less running, runs are no longer than it allows.
-        val caps = program?.runCaps
+        val caps = program?.let { ProgramGenerator.runCaps(it, store.profileNow()?.runGoal?.middleDistance == true) }
         val st = RunPlan.withBreak(saved, date.toEpochDay()).let {
             if (caps == null) it else it.copy(easyMinutes = minOf(it.easyMinutes, caps.easyMax), longMinutes = minOf(it.longMinutes, caps.longMax))
         }.let { s -> RunPlan.weekCap(saved, date.toEpochDay())?.let { cap -> s.copy(easyMinutes = minOf(s.easyMinutes, cap), longMinutes = minOf(s.longMinutes, cap)) } ?: s }
@@ -1050,14 +1056,20 @@ class TrainingRepository(
         val program = store.programNow() ?: return null
         val settings = store.settingsNow()
         val done = db.workouts().observeDone(from.toEpochDay(), from.toEpochDay() + 13).first()
-        for (i in 0 until 14) {
-            val d = from.plusDays(i.toLong())
-            if (paused(settings, d)) continue
+        val hard = (0 until 14).map { from.plusDays(it.toLong()) }.filter { d ->
+            if (paused(settings, d)) return@filter false
             val planned = program.week.on(d.dayOfWeek.value)
             val item = DayItem(d, planned, done.filter { it.epochDay == d.toEpochDay() })
-            if (planned.any { it.kind == SessionKind.RUN_QUALITY && !item.isDone(it) }) return d
+            planned.any { it.kind == SessionKind.RUN_QUALITY && !item.isDone(it) }
         }
-        return null
+        // A trial wants fresh legs: at least three days after a leg session (strength work on the legs costs running
+        // economy for one to two days), when the next week holds such a hard day; otherwise the first hard day.
+        fun legsBefore(d: LocalDate) = (1..2).any { back ->
+            program.week.on(d.minusDays(back.toLong()).dayOfWeek.value).any { s ->
+                s.kind == SessionKind.LIFT && program.templates.firstOrNull { it.id == s.templateId }?.legs == true
+            }
+        }
+        return hard.firstOrNull { it.isBefore(hard.first().plusDays(7)) && !legsBefore(it) } ?: hard.firstOrNull()
     }
 
     /**
@@ -1084,7 +1096,7 @@ class TrainingRepository(
             return@withLock w.id to (s ?: RunSummary(emptyList(), max(1, (w.durationSec ?: 60) / 60), w.load ?: 0.0))
         }
         val program = store.programNow()
-        val caps = program?.runCaps ?: forma.core.run.RunCaps(45, 90)
+        val caps = program?.let { ProgramGenerator.runCaps(it, store.profileNow()?.runGoal?.middleDistance == true) } ?: forma.core.run.RunCaps(45, 90)
         val st = store.runStateNow()
         val after = RunPlan.after(st, workout, result, caps, date.toEpochDay(), goal = store.profileNow()?.runGoal)
         var next = after.state

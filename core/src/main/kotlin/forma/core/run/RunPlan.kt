@@ -162,6 +162,8 @@ sealed interface RunOutcome {
     @Serializable data object TooSlow : RunOutcome
     /** Five of the last six easy runs said the paces are off (no trial lately): VDOT moved by one. */
     @Serializable data class EasyPaces(val from: Double, val to: Double) : RunOutcome
+    /** Race-pace reps more than 3 % faster than the goal: the step is run again at the goal's lap time. */
+    @Serializable data object TooFastRepeat : RunOutcome
     /** The runner rates easy runs harder than they are meant to feel: the effort thresholds are [offset] higher. */
     @Serializable data class OwnScale(val offset: Int) : RunOutcome
     /** No lap pressed and no GPS: the pace was not measured, only the effort and the reps decided. */
@@ -243,7 +245,8 @@ object RunPlan {
     /**
      * Race-pace ladder for a middle-distance goal, written for 1500 m and scaled to the goal distance: short reps at the
      * goal pace with full recovery first (the pace is learnt where it is easy to hold), then more of them, then less
-     * rest, then longer reps, and finally the race in two parts. Goal-pace volume stays at 1–1.6 race distances.
+     * rest, then longer reps, and finally the race in two parts. Goal-pace volume stays at 0.8–1.6 race distances — also on
+ * a track, where reps are whole laps: the number of reps follows the real rep length ([trackReps]).
      */
     private val GOAL = listOf(
         GoalStep(List(6) { 200 }, 90),
@@ -258,6 +261,9 @@ object RunPlan {
     )
 
     val goalLadderSize: Int get() = GOAL.size
+
+    /** Where the ladder starts again after a trial short of the goal: 5 × 400 m. */
+    private const val GOAL_RESTART = 3
     val intervalLadderSize: Int get() = INTERVALS.size
     val tempoLadderSize: Int get() = TEMPO.size
 
@@ -275,6 +281,16 @@ object RunPlan {
             if (laps != null) prev = laps
         }
         return Track.repLaps(meters, lapMeters)
+    }
+
+    /**
+     * Reps of [repMeters] for a session meant as [meant] metres: the nearest count, never more than 1.6 race distances
+     * ([raceMeters]) and at least one.
+     */
+    fun trackReps(meant: Double, repMeters: Double, raceMeters: Double): Int {
+        val near = (meant / repMeters).roundToInt()
+        val cap = (1.6 * raceMeters / repMeters + 1e-6).toInt()
+        return near.coerceAtMost(cap).coerceAtLeast(1)
     }
 
     /** Paces (s/km) a time trial can believably be run at: faster than 2:10 or slower than 15:00 is a typo. */
@@ -353,10 +369,25 @@ object RunPlan {
         )
     }
 
+    /**
+     * The running of an average recent week, minutes (the last two weeks), null with fewer than three runs known. The
+     * hard work of one session is kept to a share of it: intervals (VO2max) to about 10 % and tempo to about 10 % of the
+     * week, at least 12 and 20 minutes — the usual limits for a small weekly volume (Daniels: 8 % and 10 %, made milder
+     * here), so the top of a ladder does not outgrow the running around it.
+     */
+    fun weekMinutes(state: RunState): Int? {
+        if (state.recent.size < 3) return null
+        val last = state.recent.maxOf { it.day }
+        return state.recent.filter { it.day > last - 14 }.sumOf { it.minutes } / 2
+    }
+
+    private fun hardCap(state: RunState, floor: Int): Int? = weekMinutes(state)?.let { max(floor, (it * 60 * 0.10).roundToInt()) }
+
     fun intervals(state: RunState, cutback: Boolean = false): RunWorkout {
         val stage = state.intervalStage.coerceIn(0, INTERVALS.lastIndex)
         val (n0, work, rest) = INTERVALS[stage]
-        val n = if (cutback) max(2, n0 - 2) else n0
+        val cap = hardCap(state, 12 * 60)
+        val n = (if (cutback) max(2, n0 - 2) else n0).let { if (cap != null) min(it, max(2, cap / work)) else it }
         val p = paces(state)
         val segs = mutableListOf(Segment(SegmentKind.WARMUP, 10 * 60, p?.easy))
         repeat(n) { i ->
@@ -365,14 +396,17 @@ object RunPlan {
         }
         segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
         val note = "Ускорения тяжёлые, но ровные: последнее не медленнее первого. Между ними — трусца. В конце разминки — 3–4 коротких ускорения по 15 с."
-        return RunWorkout(RunType.INTERVALS, "Интервалы · $n × ${work / 60} мин", segs, note, targetRpe = 8, stage = stage, cutback = n < n0)
+        return RunWorkout(RunType.INTERVALS, "Интервалы · $n × ${work / 60} мин", segs, note, targetRpe = 8, stage = stage, cutback = cutback && n < n0)
     }
 
     fun tempo(state: RunState, cutback: Boolean = false): RunWorkout {
         val stage = state.tempoStage.coerceIn(0, TEMPO.lastIndex)
         val (n0, work, rest) = TEMPO[stage]
-        val n = if (cutback && n0 > 1) n0 - 1 else n0
-        val workSec = if (cutback && n0 == 1) (work * 0.75).roundToInt() else work
+        val cap = hardCap(state, 20 * 60)
+        val n = (if (cutback && n0 > 1) n0 - 1 else n0).let { if (cap != null && it > 1) min(it, max(1, cap / work)) else it }
+        val workSec = (if (cutback && n0 == 1) (work * 0.75).roundToInt() else work).let {
+            if (cap != null && n == 1) min(it, (cap / 60) * 60) else it
+        }
         val p = paces(state)
         val segs = mutableListOf(Segment(SegmentKind.WARMUP, 10 * 60, p?.easy))
         repeat(n) { i ->
@@ -382,7 +416,7 @@ object RunPlan {
         segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
         val title = if (n == 1) "Темповый бег · ${workSec / 60} мин" else "Темповый бег · $n × ${workSec / 60} мин"
         val note = "«Комфортно тяжело»: можно сказать пару слов, но не болтать."
-        return RunWorkout(RunType.TEMPO, title, segs, note, targetRpe = 7, stage = stage, cutback = n < n0 || workSec < work)
+        return RunWorkout(RunType.TEMPO, title, segs, note, targetRpe = 7, stage = stage, cutback = cutback && (n < n0 || workSec < work))
     }
 
     /**
@@ -421,6 +455,19 @@ object RunPlan {
         // fits stays timed. The race in two parts: the rest of the race distance after the first part — or the race in
         // one go when the rest would be under half a lap.
         var laps: List<Double?> = reps.map { m -> lapMeters?.let { goalRepLaps(m, scale, it) } }
+        var rest = step.rest
+        if (!last && lapMeters != null) {
+            val l = laps.first()
+            if (l != null && laps.all { it == l }) {
+                // Whole laps are longer than the rep they stand for (on 230 m: 400 → 460 m, 600 → 690 m): fewer reps, so
+                // the session stays the volume it was meant to be, and the rest grows with the rep.
+                val meant = reps.size * reps.first()
+                val n = trackReps(meant, l * lapMeters, goal.meters.toDouble())
+                reps = List(n) { reps.first() }
+                laps = List(n) { l }
+                rest = (((step.rest * (l * lapMeters) / reps.first()) / 15).roundToInt() * 15).coerceAtLeast(step.rest)
+            }
+        }
         if (last && lapMeters != null) {
             val race = Track.raceLaps(goal.meters.toDouble(), lapMeters)
             val first = laps.first() ?: race
@@ -431,24 +478,24 @@ object RunPlan {
             val l = laps[i]
             val meters = if (l != null) l * lapMeters!! else (m / 50).roundToInt() * 50.0
             segs += Segment(SegmentKind.WORK, (meters / 1000 * pace).roundToInt(), range, l, if (l != null) lapSec else null)
-            if (i < reps.lastIndex) segs += Segment(SegmentKind.RECOVERY, step.rest)
+            if (i < reps.lastIndex) segs += Segment(SegmentKind.RECOVERY, rest)
         }
         segs += Segment(SegmentKind.COOLDOWN, 8 * 60, p?.easy)
         val work = segs.filter { it.kind == SegmentKind.WORK }
         fun len(s: Segment) = s.laps?.let { Ru.laps(it) } ?: "${(s.seconds / pace * 1000 / 50).roundToInt() * 50} м"
         val title = "Темп цели · " + if (work.all { it.seconds == work.first().seconds }) "${work.size} × ${len(work.first())}"
         else work.joinToString(" + ") { len(it) }
-        val rest = Ru.clock(step.rest)
+        val restWords = Ru.clock(rest)
         val note = if (lapSec != null) {
             val lapRange = Ru.lapRange(Track.lapSec(range.fast.toDouble(), lapMeters), Track.lapSec(range.slow.toDouble(), lapMeters))
             "Каждый круг — $lapRange: на ${lapSec.roundToInt()}-й секунде пискнет, в этот момент ты должен быть на линии. " +
-                "Быстрее не надо: ровный темп — главный навык этой дистанции. Между отрезками $rest шагом или трусцой. " +
+                "Быстрее не надо: ровный темп — главный навык этой дистанции. Между отрезками $restWords шагом или трусцой. " +
                     "В конце разминки — 3–4 ускорения по 15 с. " +
                 "Нажимай «Круг» на линии — по кругам приложение решит, что дальше." +
                 (work.lastOrNull()?.laps?.takeIf { it % 1.0 != 0.0 }?.let { " Отрезок в ${Ru.laps(it)} начни ${startWords(it % 1.0)}." } ?: "")
         } else {
             "Отрезки в темпе ${if (pace > goal.pace + 0.5) "ступени" else "цели"}, ${Ru.pace(pace)} на км: ровно, не быстрее. " +
-                "Между ними $rest шагом или трусцой."
+                "Между ними $restWords шагом или трусцой."
         }.let { n ->
             // Far from the goal: the step toward it, said with both times.
             if (pace > goal.pace + 0.5) {
@@ -458,7 +505,7 @@ object RunPlan {
         }
         return RunWorkout(
             RunType.GOAL_PACE, title, segs, note, targetRpe = if (stage <= 2) 7 else 8, stage = stage, lapMeters = lapMeters,
-            cutback = reps.size < (if (last) 2 else step.reps.size),
+            cutback = cutback && reps.size < (if (last) 2 else step.reps.size),
         )
     }
 
@@ -593,7 +640,7 @@ object RunPlan {
 
     /**
      * The hard session; while coming back from a long break it is an easy run. With a middle-distance goal every other one
-     * is at race pace and the rest alternate intervals (VO2max) and tempo (threshold): 1500 m is mostly aerobic.
+     * is at race pace and of the rest two of three are tempo (threshold), one intervals (VO2max): 1500 m is mostly aerobic.
      */
     fun quality(state: RunState, cutback: Boolean = false, goal: RunGoal? = null, lapMeters: Int? = null): RunWorkout {
         val w = when {
@@ -602,9 +649,10 @@ object RunPlan {
                 it.copy(note = "После перерыва сначала втягиваемся: интервалы и темп вернутся через $n " +
                     "${Ru.plural(n, "лёгкую пробежку", "лёгкие пробежки", "лёгких пробежек")}. " + it.note)
             }
-            goal != null && goal.middleDistance -> when (state.qualityCount % 4) {
-                0, 2 -> goalPace(state, goal, lapMeters, cutback)
-                1 -> intervals(state, cutback)
+            // Tempo twice for every intervals: fading after 800 m is the threshold more than VO2max.
+            goal != null && goal.middleDistance -> when (state.qualityCount % 6) {
+                0, 2, 4 -> goalPace(state, goal, lapMeters, cutback)
+                3 -> intervals(state, cutback)
                 else -> tempo(state, cutback)
             }
             state.qualityCount % 2 == 0 -> intervals(state, cutback)
@@ -879,8 +927,9 @@ object RunPlan {
                             // Judged on the unrounded fitness: 1495 m in 5:33 is faster than 1500 m in 5:35.
                             val reached = goal != null && raw >= Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble())
                             if (reached) out += RunOutcome.GoalReached
-                            // Not there yet after the whole ladder: back down three steps to build up to it again.
-                            if (goal != null && !reached && state.goalStage >= GOAL.lastIndex) s = s.copy(goalStage = GOAL.lastIndex - 3, goalFails = 0)
+                            // Not there yet after the whole ladder: back to the 400s to build up again — not to the longest
+                            // reps, the hardest sessions of the ladder.
+                            if (goal != null && !reached && state.goalStage >= GOAL.lastIndex) s = s.copy(goalStage = GOAL_RESTART, goalFails = 0)
                         }
                     }
                 } else {
@@ -915,6 +964,9 @@ object RunPlan {
                 // means the goal pace is comfortable already.
                 val slow = target != null && pace != null && pace > target * 1.03
                 val fast = target != null && pace != null && pace < target * 0.98
+                // More than 3 % faster: the laps were not the goal's. Even laps are the skill this ladder teaches (a fast
+                // runner who fades after 800 m lacks exactly that), so the step is run again at the right lap time.
+                val tooFast = target != null && pace != null && pace < target * 0.97
                 val cur = state.goalStage.coerceIn(0, GOAL.lastIndex)
                 if (pace == null) out += RunOutcome.PaceUnknown
                 if (slow) out += RunOutcome.TooSlow
@@ -922,6 +974,9 @@ object RunPlan {
                 if (enough && rq <= 8 && !slow && w.cutback) {
                     // A lighter week's shorter session: done, and the ladder waits for the full step.
                     out += RunOutcome.LighterWeek("goal")
+                    s = s.copy(goalFails = 0)
+                } else if (enough && tooFast) {
+                    out += RunOutcome.TooFastRepeat
                     s = s.copy(goalFails = 0)
                 } else if (enough && rq <= 8 && !slow) {
                     // Extra reps at the goal pace: the next step is too small. Faster than the goal is not a reason to

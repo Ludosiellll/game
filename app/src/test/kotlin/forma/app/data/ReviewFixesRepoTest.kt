@@ -180,15 +180,16 @@ class ReviewFixesRepoTest {
         val g = RunGoal(1500, 335)
         repo.completeOnboarding(profile.copy(aim = Aim(LiftFocus.MUSCLE, RunFocus.SPEED, Emphasis.BALANCED), runGoal = g, lapMeters = 230))
         repo.store.setRunState(repo.store.runStateNow().copy(runs = 3))
-        val trial = repo.runFor(SessionKind.RUN_QUALITY)
+        // As on its own day (the day [trialDay] picks may be a later one; here the trial being due is what is tested).
+        val trial = repo.runFor(SessionKind.RUN_QUALITY, trial = true)
         assertEquals(RunType.TEST, trial.type)
         // No time: not counted.
         repo.saveRun(trial, RunResult(1.0, 9, trial.totalSeconds), clock, emptyList(), repo.today())
         clock += 7 * 86_400_000L
-        assertTrue(repo.runFor(SessionKind.RUN_QUALITY).type != RunType.TEST)
+        assertTrue(repo.runFor(SessionKind.RUN_QUALITY, trial = true).type != RunType.TEST)
         // Two weeks on it comes back.
         clock += 7 * 86_400_000L
-        assertEquals(RunType.TEST, repo.runFor(SessionKind.RUN_QUALITY).type)
+        assertEquals(RunType.TEST, repo.runFor(SessionKind.RUN_QUALITY, trial = true).type)
     }
 
     @Test fun easyRunsBeforeTheFirstTestHaveAnApproximateLimit() = runBlocking {

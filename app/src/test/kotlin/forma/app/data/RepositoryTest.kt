@@ -230,8 +230,8 @@ class RepositoryTest {
         assertEquals(RunType.GOAL_PACE, pace.type)
         assertEquals(230, pace.lapMeters)
         assertEquals(1.0, pace.segments.first { it.kind == forma.core.run.SegmentKind.WORK }.laps)
-        val laps = List(6) { forma.core.run.Lap(51.0 + it % 2, 50.7, 52.1, 1, 1, it + 1) }
-        val (id, summary) = repo.saveRun(pace, RunResult(1.0, 7, 35 * 60, workPace = 225.0, laps = laps, reps = 6), clock, emptyList(), tue)
+        val laps = List(pace.reps) { forma.core.run.Lap(51.0 + it % 2, 50.7, 52.1, 1, 1, it + 1) }
+        val (id, summary) = repo.saveRun(pace, RunResult(1.0, 7, 35 * 60, workPace = 225.0, laps = laps, reps = pace.reps), clock, emptyList(), tue)
         assertEquals(1, repo.store.runStateNow().goalStage)
         // The laps are kept with the run.
         val stored = AppJson.decodeFromString(RunSummary.serializer(), db.workouts().get(id)!!.summaryJson!!)
@@ -247,8 +247,10 @@ class RepositoryTest {
         assertEquals(36 * 60, easy.workSeconds)
         clock += 1000
         repo.saveRun(easy, RunResult(1.0, 4, easy.totalSeconds + 6 * 60), clock, emptyList(), thu)
-        // Saturday: two runs done and no fitness known yet — the 1500 m time trial, 6.5 laps.
-        val sat = tue.plusDays(4)
+        // Two runs done and no fitness known yet: the 1500 m time trial, 6.5 laps — not on Saturday, two days after
+        // Thursday's legs, but on the next Tuesday with fresh legs.
+        val sat = tue.plusDays(7)
+        assertEquals(sat, repo.trialDay(tue.plusDays(4)))
         val trial = repo.runFor(SessionKind.RUN_QUALITY, sat)
         assertEquals(RunType.TEST, trial.type)
         assertEquals(1495, trial.testMeters)
@@ -258,9 +260,9 @@ class RepositoryTest {
         val st = repo.store.runStateNow()
         assertNotNull(st.vdot)
         assertEquals(sat.toEpochDay(), st.lastTestDay)
-        // Next Tuesday: intervals, in whole laps at the new paces.
-        val next = repo.runFor(SessionKind.RUN_QUALITY, tue.plusDays(7))
-        assertEquals(RunType.INTERVALS, next.type)
+        // The next hard day: tempo (twice for every intervals), in whole laps at the new paces.
+        val next = repo.runFor(SessionKind.RUN_QUALITY, tue.plusDays(9))
+        assertEquals(RunType.TEMPO, next.type)
         assertTrue(next.segments.filter { it.kind == forma.core.run.SegmentKind.WORK }.all { it.laps != null && it.lapSec != null })
     }
 
