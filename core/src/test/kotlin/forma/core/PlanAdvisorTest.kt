@@ -98,7 +98,7 @@ class PlanAdvisorTest {
         // Not even his own one-leg lift back, nor another squat: only the upper body's stall.
         assertTrue(a.changes.none { it.id == "add:nordic" || it.id == "add:seated_calf" || it.id.startsWith("oneleg") }, a.changes.map { it.id }.toString())
         assertEquals(listOf("stall:upper_a:bench"), a.changes.filter { it.id.startsWith("stall:") }.map { it.id })
-        assertTrue(a.fine.any { "До забега 12 дней" in it }, a.fine.toString())
+        assertTrue(a.held.any { "До забега 12 дней" in it }, a.held.toString())
     }
 
     /** A muscle short and another with sets to spare: one exercise for the other, the session no longer. */
@@ -148,6 +148,22 @@ class PlanAdvisorTest {
         val tired = PlanAdvisor.advise(input(days).copy(tiredOften = true))
         // Denis's accessories are two sets each already (running comes too): nothing to take.
         assertTrue(tired.changes.none { it.id.startsWith("rest:") }, tired.changes.map { it.id + " " + it.setsFrom }.toString())
+    }
+
+    /** One short gym day of a runner: what keeps the legs whole comes first; more for the chest would not fit — said, not proposed. */
+    @Test fun whatDoesNotFitTheTimeIsSaidNotProposed() {
+        val day = Day("full_a", "Всё тело", listOf(
+            Item("squat", "squat", 3, 5, 8, 150, SlotRole.MAIN),
+            Item("bench", "bench", 3, 5, 8, 150, SlotRole.MAIN),
+            Item("row", "row", 3, 8, 10, 120, SlotRole.SECONDARY),
+            Item("lateral_raise", "lateral_raise", 2, 10, 15, 75, SlotRole.ACCESSORY),
+            Item("plank", "plank", 3, 20, 60, 60, SlotRole.ACCESSORY),
+        ))
+        val a = PlanAdvisor.advise(input(listOf(day)).copy(sessionMinutes = 45))
+        val ids = a.changes.map { it.id }
+        assertTrue("add:nordic" in ids && "oneleg:add" in ids, ids.toString())
+        assertTrue(ids.none { it.startsWith("add:CHEST") }, ids.toString())
+        assertTrue(a.held.any { it.startsWith("Грудь: 3 подхода") && "не влезет" in it }, a.held.toString())
     }
 
     @Test fun aWeekWithoutTheGymHasNothingToSay() {

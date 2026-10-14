@@ -147,6 +147,11 @@ fun IdealPlanScreen() {
             style = T.secondary(13.sp),
         )
 
+        if (a.held.isNotEmpty()) {
+            SectionLabel("Что не предлагаю сейчас")
+            FCard(gap = 8.dp) { a.held.forEach { Text("• $it", style = T.body(15.sp)) } }
+        }
+
         if (a.fine.isNotEmpty()) {
             SectionLabel("Что уже хорошо")
             FCard(gap = 8.dp) { a.fine.forEach { Text("• $it", style = T.body(15.sp)) } }

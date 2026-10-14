@@ -163,7 +163,7 @@ class IdealPlanTest {
         repo.updateProfile(repo.store.profileNow()!!.copy(runGoal = RunGoal(1500, 330, monday.plusDays(16).toEpochDay())))
         val a = repo.planAdvice()!!
         assertTrue(a.changes.none { it.templateId == "lower_a" }, a.changes.map { it.id }.toString())
-        assertTrue(a.fine.any { "До забега" in it }, a.fine.toString())
+        assertTrue(a.held.any { "До забега" in it }, a.held.toString())
     }
 
     @Test fun theScreenShowsWhatAndWhyAndTakesOnlyTheTickedChange() {

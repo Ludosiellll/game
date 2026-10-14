@@ -116,6 +116,8 @@ object PlanAdvisor {
         val summary: String,
         /** Something the plan cannot fix, said first (many lifts stuck at once: recovery, not exercises). */
         val warning: String? = null,
+        /** What is not proposed now, and why (a race coming, no time for more). */
+        val held: List<String> = emptyList(),
     )
 
     /** The muscles the week is weighed by (the core works in everything heavy). */
@@ -211,6 +213,7 @@ object PlanAdvisor {
         if (days.isEmpty()) return Advice(emptyList(), emptyList(), emptyList(), emptyList(), ranges, "В неделе нет зала — разбирать нечего.")
         val changes = mutableListOf<Change>()
         val fine = mutableListOf<String>()
+        val held = mutableListOf<String>()
         fun name(id: String) = find(id)?.name ?: id
         fun cur() = apply(days, changes)
         fun has(pred: (Exercise) -> Boolean) = cur().any { d -> d.items.any { i -> find(i.exerciseId)?.let(pred) == true } }
@@ -295,7 +298,7 @@ object PlanAdvisor {
                     2,
                 )
             }
-            if (raceSoon) fine += "До забега ${Ru.days(input.daysToRace!!.toInt())}: новое для ног предложу после него — " +
+            if (raceSoon) held += "До забега ${Ru.days(input.daysToRace!!.toInt())}: новое для ног предложу после него — " +
                 "первые тренировки непривычного дают крепатуру на несколько дней."
         }
 
@@ -372,11 +375,19 @@ object PlanAdvisor {
                 if (need > 1 && iso2.isNotEmpty()) {
                     val iso = iso2
                     val day = if (m in LEGS) legDay() else upperDayFor(cur(), find, input.timeRatio)
-                    if (day != null && iso.isNotEmpty()) changes += Change(
-                        "add:${m.name}:${iso.first()}", Kind.ADD, day.templateId, day.title, null, null, iso, null, 3, if (m in LEGS) 8 to 12 else 10 to 15, 75,
-                        "${m.ru}: ${setsText(v0)} в неделю — меньше нормы для твоей цели ($low–$high), и прямой работы на эту мышцу почти нет.",
-                        2,
-                    )
+                    val add = day?.let {
+                        Change(
+                            "add:${m.name}:${iso.first()}", Kind.ADD, it.templateId, it.title, null, null, iso, null, 3, if (m in LEGS) 8 to 12 else 10 to 15, 75,
+                            "${m.ru}: ${setsText(v0)} в неделю — меньше нормы для твоей цели ($low–$high), и прямой работы на эту мышцу почти нет.",
+                            2,
+                        )
+                    }
+                    // Only what fits the time with everything proposed before it; the rest is said, not proposed.
+                    val sm0 = input.sessionMinutes
+                    val longer = add?.let { c -> minutes(apply(cur(), listOf(c)).first { it.templateId == c.templateId }, input.timeRatio) }
+                    if (add != null && (sm0 == null || longer!! <= sm0 + 10)) changes += add
+                    else if (add != null) held += "${m.ru}: ${setsText(v0)} в неделю при норме $low–$high, но с предложенным выше «${add.dayTitle}» " +
+                        "уже около ${longer} мин при твоих $sm0 — ещё одно упражнение не влезет. Больше времени или ещё день в зале — и предложу."
                 }
             } else if (v0 > high + 2 && v > high + 2) {
                 val target = cur().flatMap { d -> d.items.map { d to it } }
@@ -471,7 +482,7 @@ object PlanAdvisor {
             else -> "$n ${Ru.plural(n, "предложение", "предложения", "предложений")} — на выбор. План и так рабочий, это доводка: " +
                 "меняется только то, что ты отметишь."
         }
-        return Advice(days, final, table, fine, ranges, summary, warning)
+        return Advice(days, final, table, fine, ranges, summary, warning, held)
     }
 
     /** What the advisor itself proposes to protect (a runner's hamstrings and calves): never the one swapped away for sets elsewhere. */
