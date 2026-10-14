@@ -257,6 +257,7 @@ fun DataSection() {
     var message by remember { mutableStateOf<String?>(null) }
     var pending by remember { mutableStateOf<forma.app.data.Backup?>(null) }
     var otherAccount by remember { mutableStateOf(false) }
+    val cloudState = cloud?.state?.collectAsState()?.value
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) scope.launch {
             message = runCatching { backup.export(context, uri, cloud?.accountId()); "Копия сохранена." }.getOrElse { "Не получилось сохранить: ${it.message}" }
@@ -320,7 +321,7 @@ fun DataSection() {
             text = {
                 // Signed out (or into an account the phone's data is not of), the data still belongs to the account the
                 // phone synced with: the file's workouts go there.
-                val email = cloud?.state?.value?.takeIf { !it.otherAccount }?.email
+                val email = cloudState?.takeIf { !it.otherAccount }?.email
                 Text(
                     (if (email != null) "Эта копия — из другого облачного аккаунта, не из $email. После восстановления тренировки из файла загрузятся в облако $email. "
                     else "Эта копия — из другого облачного аккаунта, не из того, с которым телефон синхронизировался раньше. " +
