@@ -118,6 +118,8 @@ class PlanAdvisorTest {
         assertEquals("db_curl", c.from)
         assertEquals("cable_fly", c.to)
         assertTrue("Бицепс" in c.why || "бицепс" in c.why, c.why)
+        // Running for health only is not a runner's legs either.
+        assertTrue(PlanAdvisor.advise(input(denis(), Aim(LiftFocus.POWERBUILDING, RunFocus.HEALTH, Emphasis.BALANCED))).changes.none { it.id == "add:nordic" })
         // Not a runner: nothing about running.
         assertTrue(a.changes.none { it.id == "add:nordic" || it.id.startsWith("oneleg") })
     }

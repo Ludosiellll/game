@@ -141,7 +141,8 @@ object PlanAdvisor {
     /** At most this many sets of one exercise the advisor proposes (more is better spread over another exercise). */
     const val MAX_SETS_ADVISED = 4
 
-    fun runner(input: Input) = input.aim.normalized().run != RunFocus.NONE && input.runs >= 2
+    /** Running that asks things of the legs (endurance or speed, twice a week or more): not a jog for health. */
+    fun runner(input: Input) = input.aim.normalized().run.let { it == RunFocus.ENDURANCE || it == RunFocus.SPEED } && input.runs >= 2
 
     /** Weekly sets a muscle wants: by focus and experience; the legs lower beside running; the arms work in presses and pulls too. */
     fun range(input: Input, m: Muscle): Pair<Int, Int> {
