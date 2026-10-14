@@ -12,6 +12,7 @@ import forma.core.model.RunLevel
 import forma.core.model.Sex
 import forma.core.plan.SessionKind
 import forma.core.run.PaceTable
+import forma.core.run.RunOutcome
 import forma.core.run.RunType
 import forma.core.run.RunWorkout
 import forma.core.run.SegmentKind
@@ -22,6 +23,9 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.roundToInt
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 /**
  * Everything the app knows, as a text a person or an AI reads: who, what for, the plan, where things stand and every
@@ -30,11 +34,36 @@ import kotlin.math.roundToInt
  */
 object TrainingReport {
     private val DAYS = listOf("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+    private val MONTHS = listOf("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
     private val zone = ZoneId.systemDefault()
 
     fun fileName(today: LocalDate) = "forma-otchet-$today.md"
 
-    fun build(b: Backup, today: LocalDate, version: String): String = buildString {
+    /** Settings keys under which a feel of the day may be stored (by epoch day or ISO date). */
+    private val FEEL_KEYS = listOf("dayFeel", "dayFeels", "feel", "feels")
+
+    /**
+     * How the person felt each day, when the settings document holds it ([settingsJson] — the raw JSON, so a key this
+     * build does not know is still read): epoch day → the stored value as text. Empty when there is none.
+     */
+    fun feelFrom(settingsJson: String?): Map<Long, String> {
+        val root = settingsJson?.let { runCatching { AppJson.parseToJsonElement(it).jsonObject }.getOrNull() } ?: return emptyMap()
+        val map = FEEL_KEYS.firstNotNullOfOrNull { root[it] as? JsonObject } ?: return emptyMap()
+        return map.mapNotNull { (k, v) ->
+            val day = k.toLongOrNull() ?: runCatching { LocalDate.parse(k).toEpochDay() }.getOrNull() ?: return@mapNotNull null
+            val text = when (v) {
+                is JsonPrimitive -> v.content
+                is JsonObject -> (v["label"] ?: v["text"] ?: v["value"] ?: v["feel"])?.let { (it as? JsonPrimitive)?.content }
+                else -> null
+            }?.takeIf { it.isNotBlank() && it != "null" } ?: return@mapNotNull null
+            day to text
+        }.toMap()
+    }
+
+    /** "18 лет", "21 год", "22 года". */
+    fun years(n: Int) = "$n ${Ru.plural(n, "год", "года", "лет")}"
+
+    fun build(b: Backup, today: LocalDate, version: String, feel: Map<Long, String> = emptyMap()): String = buildString {
         val p = b.profile
         val done = b.workouts.filter { it.status == Status.DONE }.sortedByDescending { it.startedAt }
         appendLine("# Форма — все тренировки и прогресс")
@@ -46,10 +75,12 @@ object TrainingReport {
             "не перегружаюсь ли я, что поменять в плане, чтобы быстрее прийти к цели». Обозначения — в конце файла.")
         appendLine()
 
+        months(b, done, today)
+
         if (p != null) {
             appendLine("## Кто тренируется")
             appendLine()
-            appendLine("- ${if (p.sex == Sex.MALE) "Мужчина" else "Женщина"}, ${p.age(today.year)} лет" +
+            appendLine("- ${if (p.sex == Sex.MALE) "Мужчина" else "Женщина"}, ${years(p.age(today.year))}" +
                 (p.heightCm?.let { ", рост $it см" } ?: "") + ", вес ${Ru.kg(b.bodyWeights.maxByOrNull { it.epochDay }?.kg ?: p.bodyWeightKg)} кг.")
             appendLine("- Опыт в зале: ${experience(p.experience)}. Бег: ${runLevel(p.runLevel)}.")
             appendLine("- Цель: зал — ${lift(p.aim.lift)}, бег — ${run(p.aim.run)}, приоритет — ${emphasis(p.aim.emphasis)}.")
@@ -61,8 +92,8 @@ object TrainingReport {
             val rs = p.raceSeconds
             if (rm != null && rs != null) appendLine("- Известный забег: ${Ru.distance(rm)} за ${Ru.clock(rs.roundToInt())}.")
             appendLine()
+            goalPath(b, p)
         }
-
         b.program?.let { prog ->
             appendLine("## План")
             appendLine()
@@ -105,8 +136,9 @@ object TrainingReport {
             val v = st.vdot
             if (v != null) {
                 val t = PaceTable.forVdot(v)
-                appendLine("- VDOT ${Ru.one(v)}. Прогноз: 1500 м — ${Ru.clock(Vdot.predictSeconds(v, 1500.0).roundToInt())}, " +
-                    "5 км — ${Ru.clock(Vdot.predictSeconds(v, 5000.0).roundToInt())}, 10 км — ${Ru.clock(Vdot.predictSeconds(v, 10000.0).roundToInt())}.")
+                // The goal distance first (800 m, 3 km...), then the usual ones.
+                val forecast = listOf(b.profile?.runGoal?.meters ?: 1500, 5000, 10000).distinct()
+                appendLine("- VDOT ${Ru.one(v)}. Прогноз: " + forecast.joinToString(", ") { m -> "${dist(m)} — ${Ru.clock(Vdot.predictSeconds(v, m.toDouble()).roundToInt())}" } + ".")
                 appendLine("- Темпы, мин/км: лёгкий ${Ru.pace(t.easy.fast.toDouble())}–${Ru.pace(t.easy.slow.toDouble())}, " +
                     "пороговый ${Ru.pace(t.threshold.toDouble())}, интервальный ${Ru.pace(t.interval.toDouble())}, повторный ${Ru.pace(t.repetition.toDouble())}.")
             } else appendLine("- VDOT ещё не рассчитан (нет контрольного забега).")
@@ -124,8 +156,10 @@ object TrainingReport {
                 val ex = Catalog.find(s.exerciseId)
                 if (ex?.load == LoadKind.TIMED) return@forEach
                 val next = b.slots.filter { it.exerciseId == s.exerciseId }.maxByOrNull { it.updatedAt }
-                appendLine("- ${name(s.exerciseId)}: ${half(s.e1rm)} кг (лучший ${half(s.best)})" +
-                    (next?.weight?.let { w -> "; следующая цель ${Ru.kg(w)} кг × ${next.reps}" } ?: ""))
+                // Pull-ups and dips: the maximum is of the body with the extra weight; the next target is the extra weight ("+12,5 кг").
+                val withBody = if (ex?.load == LoadKind.BODYWEIGHT_PLUS) ", с весом тела" else ""
+                appendLine("- ${name(s.exerciseId)}: ${half(s.e1rm)} кг (лучший ${half(s.best)}$withBody)" +
+                    (next?.weight?.let { w -> "; следующая цель ${weight(ex, w)} × ${next.reps}" } ?: ""))
             }
             appendLine()
         }
@@ -139,14 +173,19 @@ object TrainingReport {
             appendLine("- ${LoadExplain.personal(st.personal)}")
             LoadExplain.usual(st)?.let { appendLine("- $it") }
             appendLine()
-            appendLine("Недели:")
+            appendLine("Недели (сначала новые):")
             st.weeks.reversed().forEach { w -> appendLine("- ${Ru.dates(w.monday, w.monday.plusDays(6))}: ${LoadExplain.level(w)} — ${LoadExplain.week(w)}") }
             appendLine()
             if (st.history) {
-                if (st.dips.isEmpty()) appendLine(LoadExplain.noDips(8)) else st.dips.forEach { appendLine("- ${LoadExplain.dip(it)}") }
+                if (st.dips.isEmpty()) appendLine(LoadExplain.noDips(8))
+                else {
+                    appendLine("Провалы свежести (сначала новые):")
+                    st.dips.sortedByDescending { it.from }.forEach { appendLine("- ${LoadExplain.dip(it)}") }
+                }
                 appendLine()
             }
         }
+        planWeeks(b, done, today)
 
         appendLine("## Тренировки (сначала новые)")
         appendLine()
@@ -163,6 +202,7 @@ object TrainingReport {
                 w.rpe?.let { "тяжесть $it/10" },
                 w.load?.let { "нагрузка ${it.roundToInt()}" },
                 if (w.deload) "разгрузка" else null,
+                feel[w.epochDay]?.let { "самочувствие: $it" },
                 TrainingRepository.verdict(w)?.let { if (it) "получилось" else "не всё получилось" },
             )
             appendLine(head.joinToString(" · "))
@@ -182,9 +222,137 @@ object TrainingReport {
         appendLine()
         appendLine("- «80 × 8, запас 2» — 80 кг на 8 повторов, и ещё 2 повтора можно было сделать (RIR). «план» — что приложение предлагало.")
         appendLine("- Тяжесть 1–10 — оценка тренировки в конце (RPE). ${LoadExplain.UNITS}")
-        appendLine("- Расчётный максимум — вес на 1 повтор по формуле из веса и повторов (e1RM).")
+        appendLine("- Расчётный максимум — вес на 1 повтор по формуле из веса и повторов (e1RM). У подтягиваний и отжиманий на брусьях " +
+            "он вместе с весом тела (вес тела + отягощение), а «+12,5 кг» в цели — только отягощение.")
         appendLine("- VDOT — беговая форма по таблицам Дэниелса. Темп — мин:с на километр.")
         appendLine("- «Итог» — что приложение решило после тренировки: вес, повторы, шаг лестницы, длительность следующей.")
+    }
+
+    private fun summaryOf(w: WorkoutEntity): RunSummary? =
+        w.summaryJson?.takeIf { w.kind == Kind.RUN }?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
+
+    private fun liftSummaryOf(w: WorkoutEntity): LiftSummary? =
+        w.summaryJson?.takeIf { w.kind == Kind.LIFT }?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
+
+    /**
+     * Month by month, newest first, at most a year: sessions done, kilometres, sets, the best time trial, the one-rep
+     * estimates of the main lifts (the best of the month) and the last body weight of the month.
+     */
+    private fun StringBuilder.months(b: Backup, done: List<WorkoutEntity>, today: LocalDate) {
+        if (done.isEmpty()) return
+        val main = b.program?.let { prog ->
+            TrainingRepository.shareable(prog, b.settings).templates.flatMap { t -> t.slots.filter { it.role == SlotRole.MAIN }.map { it.exerciseId } }
+        }.orEmpty().distinct().filter { Catalog.find(it)?.load != LoadKind.TIMED }.take(3)
+        val runsBy = b.runs.associateBy { it.workoutId }
+        val setsBy = b.sets.groupBy { it.workoutId }
+        val byMonth = done.groupBy { LocalDate.ofEpochDay(it.epochDay).withDayOfMonth(1) }
+        val first = byMonth.keys.min()
+        val months = generateSequence(today.withDayOfMonth(1)) { it.minusMonths(1) }.takeWhile { !it.isBefore(first) }.take(12).toList()
+        appendLine("## Сводка по месяцам (сначала новые)")
+        appendLine()
+        appendLine("| Месяц | Тренировок (зал / бег) | Км | Подходов | Лучший контрольный | " +
+            main.joinToString("") { "${name(it)}, макс. | " } + "Вес тела |")
+        appendLine("|" + " --- |".repeat(6 + main.size))
+        months.forEach { m ->
+            val ws = byMonth[m].orEmpty()
+            val lifts = ws.count { it.kind == Kind.LIFT }
+            val runs = ws.count { it.kind == Kind.RUN }
+            val km = ws.mapNotNull { runsBy[it.id]?.distanceM }.sum() / 1000
+            val sets = ws.sumOf { setsBy[it.id].orEmpty().size }
+            val trial = ws.flatMap { w -> summaryOf(w)?.outcomes.orEmpty().filterIsInstance<RunOutcome.TestTime>() }
+                .filter { it.meters > 0 && it.seconds > 0 }
+                .maxByOrNull { Vdot.fromRace(it.meters.toDouble(), it.seconds.toDouble()) }
+            val best = main.map { id ->
+                ws.mapNotNull { w -> liftSummaryOf(w)?.reports?.firstOrNull { it.exerciseId == id }?.e1rm }.maxOrNull()
+            }
+            val end = m.plusMonths(1).toEpochDay()
+            val body = b.bodyWeights.filter { it.epochDay in m.toEpochDay() until end }.maxByOrNull { it.epochDay }
+            appendLine(
+                "| ${MONTHS[m.monthValue - 1]} ${m.year} | ${ws.size} ($lifts / $runs) | ${if (km > 0) Ru.one(km) else "—"} | $sets | " +
+                    (trial?.let { "${dist(it.meters)} за ${Ru.clock(it.seconds)}" } ?: "—") + " | " +
+                    best.joinToString("") { e -> (e?.let { "${half(it)} кг" } ?: "—") + " | " } +
+                    (body?.let { "${Ru.kg(it.kg)} кг" } ?: "—") + " |",
+            )
+        }
+        appendLine()
+    }
+
+    /**
+     * The way to the race goal: the best trial over its distance against the goal time, and the latest session of reps
+     * at the goal pace — its average lap against the goal lap (on the person's stadium, or per 400 m).
+     */
+    private fun StringBuilder.goalPath(b: Backup, p: forma.core.model.Profile) {
+        val g = p.runGoal ?: return
+        val path = GoalProgress.of(b.workouts, b.runs, g.meters)
+        appendLine("## Путь к цели: ${dist(g.meters)} за ${Ru.clock(g.seconds)}")
+        appendLine()
+        val best = path.trials.minByOrNull { it.goalSeconds }
+        if (best == null) appendLine("- Контрольного забега на ${dist(g.meters)} ещё не было.")
+        else {
+            val gap = best.goalSeconds - g.seconds
+            appendLine("- Лучший контрольный: ${Ru.clock(best.goalSeconds.roundToInt())} (${Ru.date(LocalDate.ofEpochDay(best.epochDay))})" +
+                (if (best.meters != g.meters) ", пробежано ${best.meters} м за ${Ru.clock(best.seconds)}" else "") + " — " +
+                (if (gap <= 0.5) "цель достигнута." else "до цели ${lapTenthsText(gap)}.") +
+                " Контрольных всего: ${path.trials.size}.")
+        }
+        val lap = p.lapMeters ?: 400
+        val goalLap = forma.core.run.Track.lapSec(g.pace, lap)
+        val last = path.sessions.lastOrNull()
+        if (last == null) appendLine("- Отрезков в темпе цели ещё не было.")
+        else {
+            val avg = forma.core.run.Track.lapSec(last.paceSecKm, lap)
+            appendLine("- Последние отрезки в темпе цели (${Ru.date(LocalDate.ofEpochDay(last.epochDay))}): средний круг $lap м — ${lapTenthsText(avg)} " +
+                "при цели ${lapTenthsText(goalLap)}" + (if (last.judged > 0) ", в темпе ${last.onPace} из ${last.judged} кругов" else "") +
+                ". Отрезков в темпе цели всего: ${path.sessions.size}.")
+        }
+        appendLine()
+    }
+
+    /** "50,6 с", "1:28,4": tenths matter in a lap of the goal (6,5 laps × a second is a miss). */
+    private fun lapTenthsText(sec: Double): String {
+        val t = kotlin.math.round(sec * 10).toLong()
+        val whole = t / 10
+        return if (whole < 60) "${Ru.one(t / 10.0)} с" else "${whole / 60}:${"%02d".format(whole % 60)},${t % 10}"
+    }
+
+    /**
+     * Plan against what was done, week by week (newest first, at most 8): sessions of the gym and runs planned up to
+     * today and done, the planned ones skipped, the days of a pause. Weeks before the current plan was made are left out:
+     * what they held is not known.
+     */
+    private fun StringBuilder.planWeeks(b: Backup, done: List<WorkoutEntity>, today: LocalDate) {
+        val prog = b.program ?: return
+        val start = LocalDate.ofEpochDay(prog.createdEpochDay ?: prog.startEpochDay)
+        val thisMonday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val from = b.settings.pauseFrom ?: b.settings.pauseUntil
+        val until = b.settings.pauseUntil
+        fun paused(d: LocalDate) = until != null && d.toEpochDay() in (from ?: until)..until
+        val weeks = (0..7).map { thisMonday.minusWeeks(it.toLong()) }.filter { !it.plusDays(6).isBefore(start) }
+        if (weeks.isEmpty()) return
+        appendLine("### План и сделанное по неделям (сначала новые)")
+        appendLine()
+        weeks.forEach { monday ->
+            val dates = (0..6L).map { monday.plusDays(it) }.filter { !it.isBefore(start) && !it.isAfter(today) }
+            val planned = dates.filter { !paused(it) }.flatMap { prog.week.on(it.dayOfWeek.value) }
+            val pLift = planned.count { it.kind == SessionKind.LIFT }
+            val pRun = planned.count { it.kind != SessionKind.LIFT }
+            val ws = done.filter { it.epochDay in monday.toEpochDay()..monday.toEpochDay() + 6 }
+            val dLift = ws.count { it.kind == Kind.LIFT }
+            val dRun = ws.count { it.kind == Kind.RUN }
+            val pause = (0..6L).count { paused(monday.plusDays(it)) }
+            val parts = listOfNotNull(
+                "зал $dLift из $pLift".takeIf { pLift > 0 || dLift > 0 },
+                "бег $dRun из $pRun".takeIf { pRun > 0 || dRun > 0 },
+                listOfNotNull(
+                    (pLift - dLift).takeIf { it > 0 }?.let { "зал $it" },
+                    (pRun - dRun).takeIf { it > 0 }?.let { "бег $it" },
+                ).takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "пропущено: "),
+                if (pause > 0) "пауза ${Ru.days(pause)}" else null,
+                if (monday == thisMonday) "неделя идёт" else null,
+            )
+            appendLine("- ${Ru.dates(monday, monday.plusDays(6))}: " + parts.ifEmpty { listOf("ничего не было запланировано") }.joinToString("; "))
+        }
+        appendLine()
     }
 
     private fun StringBuilder.lift(w: WorkoutEntity, sets: List<SetEntity>) {
@@ -237,7 +405,7 @@ object TrainingReport {
         val work = p.segments.filter { it.kind == SegmentKind.WORK }
         val pace = (work.firstOrNull()?.pace ?: p.segments.firstOrNull { it.kind == SegmentKind.RUN }?.pace ?: p.targetPace)
             ?.let { ", темп ${Ru.pace(it.fast.toDouble())}–${Ru.pace(it.slow.toDouble())} /км" } ?: ""
-        val reps = if (work.isNotEmpty()) ", ${work.size} × ${work.first().laps?.let { "${Ru.laps(it)} кр." } ?: Ru.clock(work.first().seconds)}" else ""
+        val reps = if (work.isNotEmpty()) ", ${work.size} × ${work.first().laps?.let { Ru.laps(it) } ?: Ru.clock(work.first().seconds)}" else ""
         val total = if (p.totalSeconds > 0) ", всего ${Ru.clock(p.totalSeconds)}" else ""
         return reps + pace + total + (p.testMeters?.let { ", контрольный $it м" } ?: "") + (if (p.cutback) ", облегчённая" else "") +
             ", целевая тяжесть ${p.targetRpe}"

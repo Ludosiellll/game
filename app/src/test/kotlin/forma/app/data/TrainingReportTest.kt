@@ -14,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import java.time.LocalDate
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 @RunWith(AndroidJUnit4::class)
@@ -57,5 +58,42 @@ class TrainingReportTest {
         ).forEach { assertTrue(text.contains(it), "no «$it» in:\n$text") }
         // The plan as done here: the first exercise of the template is in it by name.
         assertTrue(text.contains(item.name), text)
+        // Denis is 18: "18 лет", the months on top, the way to the goal.
+        listOf("Мужчина, 18 лет", "## Сводка по месяцам", "| октябрь 2026 | 2 (1 / 1) | 5,0 |", "## Путь к цели: 1500 м за 5:30",
+            "Контрольного забега на 1500 м ещё не было", "### План и сделанное по неделям").forEach { assertTrue(text.contains(it), "no «$it» in:\n$text") }
+        assertTrue(text.indexOf("## Сводка по месяцам") < text.indexOf("## Кто тренируется"))
+    }
+
+    @Test fun agesAndFeelsReadNaturally() {
+        assertEquals("18 лет", TrainingReport.years(18))
+        assertEquals("21 год", TrainingReport.years(21))
+        assertEquals("22 года", TrainingReport.years(22))
+        assertEquals("41 год", TrainingReport.years(41))
+        val day = LocalDate.of(2026, 10, 6)
+        assertEquals(mapOf(day.toEpochDay() to "бодро"), TrainingReport.feelFrom("""{"look":"carbon","dayFeel":{"${day.toEpochDay()}":"бодро"}}"""))
+        assertEquals(mapOf(day.toEpochDay() to "4"), TrainingReport.feelFrom("""{"feel":{"$day":4}}"""))
+        assertEquals(emptyMap(), TrainingReport.feelFrom("""{"look":"carbon"}"""))
+        assertEquals(emptyMap(), TrainingReport.feelFrom(null))
+    }
+
+    /**
+     * Pull-ups: the next target is the extra weight ("+12,5 кг", not "12,5 кг" next to a maximum of 114,5), the maximum
+     * says it is with the body; a stadium session says "3 × 2 круга", not "кругов кр."; the forecast is for the goal.
+     */
+    @Test fun pullUpsLapsAndTheGoalForecastAreSaidRight() = runBlocking {
+        repo.store.setRunState(repo.store.runStateNow().copy(vdot = 50.0))
+        val goalPace = repo.runFor(forma.core.plan.SessionKind.RUN_QUALITY, monday)
+        repo.saveRun(goalPace, RunResult(1.0, 7, goalPace.totalSeconds), clock, emptyList(), monday)
+        val b = BackupManager(repo).snapshot()
+        val withPullUps = b.copy(
+            stats = b.stats + ExerciseStatEntity("pullup", 114.5, 110.0, clock),
+            slots = b.slots + SlotStateEntity("pullup@6-10", "pullup", 12.5, 8, 0, 0, 3, clock),
+        )
+        val text = TrainingReport.build(withPullUps, monday.plusDays(1), "test", mapOf(monday.toEpochDay() to "бодро"))
+        assertTrue(text.contains("Подтягивания: 114,5 кг (лучший 110, с весом тела); следующая цель +12,5 кг × 8"), text)
+        assertTrue(!text.contains("кр."), text)
+        assertTrue(text.contains("Прогноз: 1500 м — "), text)
+        assertTrue(text.contains("самочувствие: бодро"), text)
+        assertTrue(text.contains("вместе с весом тела"), text)
     }
 }
