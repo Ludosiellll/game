@@ -121,6 +121,8 @@ class PlanEditsUiTest {
         settle()
         compose.onNodeWithText("В план насовсем").performClick()
         settle()
+        // The tap saves off the main thread: under load it may land a little later.
+        compose.waitUntil(5_000) { runBlocking { repo.store.settingsNow().added[t.id] } != null }
         assertEquals(listOf(pick.id), runBlocking { repo.store.settingsNow().added[t.id] })
         val item = runBlocking { repo.planOf(repo.db.workouts().get(id)!!)!!.items.last() }
         assertEquals(pick.id, item.exerciseId)

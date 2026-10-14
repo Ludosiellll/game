@@ -161,7 +161,7 @@ class DayScreenUiTest {
     }
 
     /**
-     * Monday's planned hard run done (race pace, the trial not due): the plan has moved on (the next hard one is tempo),
+     * Monday's planned hard run done (tempo, the trial not due): the plan has moved on (the next hard one is race pace),
      * but Monday — on the main screen, in the day and in the week — shows what was run, not the next one as "moved".
      */
     private fun doneMonday(): TrainingRepository {
@@ -169,9 +169,10 @@ class DayScreenUiTest {
         runBlocking {
             repo.store.setRunState(repo.store.runStateNow().copy(runs = 6, vdot = 50.0, lastTestDay = monday.toEpochDay() - 7))
             val w = repo.runFor(SessionKind.RUN_QUALITY, monday)
-            assertEquals(forma.core.run.RunType.GOAL_PACE, w.type)
+            // Two days after Saturday's legs: tempo, race pace on Thursday (legs fresh).
+            assertEquals(forma.core.run.RunType.TEMPO, w.type)
             repo.saveRun(w, RunResult(1.0, 7, 1800, distanceM = 4000.0), clock - 1_900_000, emptyList(), monday)
-            assertEquals(forma.core.run.RunType.TEMPO, repo.runFor(SessionKind.RUN_QUALITY, monday.plusDays(3)).type)
+            assertEquals(forma.core.run.RunType.GOAL_PACE, repo.runFor(SessionKind.RUN_QUALITY, monday.plusDays(3)).type)
         }
         return repo
     }
@@ -187,14 +188,14 @@ class DayScreenUiTest {
 
     @Test fun aDoneRunShowsOnTheMainScreenAsItWasRun() {
         show(doneMonday()) { TodayScreen() }
-        compose.onAllNodesWithText("Темп цели", substring = true)[0].assertExists()
+        compose.onAllNodesWithText("Темповый", substring = true)[0].assertExists()
         compose.onAllNodesWithText("в следующий тяжёлый день", substring = true).assertCountEquals(0)
     }
 
     @Test fun aDoneRunShowsInItsDayAsItWasRun() {
         show(doneMonday()) { DayScreen(monday) }
-        compose.onNodeWithText("Темп цели", substring = true).assertExists()
-        compose.onAllNodesWithText("Интервалы", substring = true).assertCountEquals(0)
+        compose.onAllNodesWithText("Темповый", substring = true)[0].assertExists()
+        compose.onAllNodesWithText("Темп цели ·", substring = true).assertCountEquals(0)
         compose.onAllNodesWithText("перешла на следующий тяжёлый день", substring = true).assertCountEquals(0)
         compose.onNodeWithText("Как прошло — разбор", ignoreCase = true).assertExists()
         compose.onRoot().captureRoboImage("build/shots/carbon-day-done.png")
@@ -203,8 +204,8 @@ class DayScreenUiTest {
     @Test fun aDoneRunShowsInTheWeekAsItWasRun() {
         show(doneMonday()) { PlanScreen() }
         // Monday as run, Thursday what comes next.
-        compose.onNodeWithText("Темп цели", substring = true).performScrollTo()
-        compose.onNodeWithText("Темповый", substring = true).performScrollTo()
+        compose.onAllNodesWithText("Темповый", substring = true)[0].performScrollTo()
+        compose.onAllNodesWithText("Темп цели", substring = true)[0].performScrollTo()
         compose.onAllNodesWithText("Сделано")[0].assertExists()
         compose.onRoot().captureRoboImage("build/shots/carbon-plan-done.png")
     }
@@ -222,13 +223,13 @@ class DayScreenUiTest {
     @Test fun aRunOnAPauseDayShowsOnTheMainScreen() {
         show(runOnAPauseDay()) { TodayScreen() }
         compose.onNodeWithText("Отдыхаем до", substring = true).assertExists()
-        compose.onNodeWithText("Сделано вне плана", substring = true, ignoreCase = true).performScrollTo()
+        compose.onNodeWithText("Вне плана", substring = true, ignoreCase = true).performScrollTo()
     }
 
     @Test fun aRunOnAPauseDayShowsInItsDay() {
         show(runOnAPauseDay()) { DayScreen(monday) }
         compose.onNodeWithText("Пауза:", substring = true).assertExists()
-        compose.onNodeWithText("Сделано вне плана", substring = true, ignoreCase = true).performScrollTo()
+        compose.onNodeWithText("Вне плана", substring = true, ignoreCase = true).performScrollTo()
     }
 
     /** Large font (×1.5): the day still reads — the run's parts and its reasons wrap, nothing is cut off. */
