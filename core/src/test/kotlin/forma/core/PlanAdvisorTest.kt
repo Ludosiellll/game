@@ -132,7 +132,7 @@ class PlanAdvisorTest {
         val a = PlanAdvisor.advise(input(listOf(day), Aim(LiftFocus.STRENGTH, RunFocus.NONE, Emphasis.GYM), runs = 0))
         val c = a.changes.first { it.id == "add:pull" }
         assertEquals("face_pull", c.to)
-        assertTrue("11 подходов" in c.why && "тяг — 3 (с предложенными выше — 7)" in c.why, c.why)
+        assertTrue("11 подходов" in c.why && "тяг — 3 (с предложенными выше — 4)" in c.why, c.why)
     }
 
     @Test fun aSessionLongerThanTheTimeThereIsLosesAnAccessorySet() {
@@ -150,7 +150,7 @@ class PlanAdvisorTest {
         assertTrue(tired.changes.none { it.id.startsWith("rest:") }, tired.changes.map { it.id + " " + it.setsFrom }.toString())
     }
 
-    /** One short gym day of a runner: what keeps the legs whole comes first; more for the chest would not fit — said, not proposed. */
+    /** A short gym day of a runner, twice a week: what keeps the legs whole comes first; more for the chest would not fit — said, not proposed. */
     @Test fun whatDoesNotFitTheTimeIsSaidNotProposed() {
         val day = Day("full_a", "Всё тело", listOf(
             Item("squat", "squat", 3, 5, 8, 150, SlotRole.MAIN),
@@ -158,14 +158,14 @@ class PlanAdvisorTest {
             Item("row", "row", 3, 8, 10, 120, SlotRole.SECONDARY),
             Item("lateral_raise", "lateral_raise", 2, 10, 15, 75, SlotRole.ACCESSORY),
             Item("plank", "plank", 3, 20, 60, 60, SlotRole.ACCESSORY),
-        ))
+        ), times = 2)
         val a = PlanAdvisor.advise(input(listOf(day)).copy(sessionMinutes = 45))
         val ids = a.changes.map { it.id }
         assertTrue("add:nordic" in ids && "oneleg:add" in ids, ids.toString())
         assertTrue(ids.none { it.startsWith("add:CHEST") }, ids.toString())
-        assertTrue(a.held.any { it.startsWith("Грудь: 3 подхода") && "не влезет" in it }, a.held.toString())
+        assertTrue(a.held.any { it.startsWith("Грудь: 6 подходов") && "не влезет" in it }, a.held.toString())
         // The same day as the only one of the week, with time for everything: a second day, not one crammed session.
-        val once = PlanAdvisor.advise(input(listOf(day)).copy(sessionMinutes = 120))
+        val once = PlanAdvisor.advise(input(listOf(day.copy(times = 1))).copy(sessionMinutes = 120))
         assertTrue(once.changes.none { it.id.startsWith("add:CHEST") || it.id.startsWith("add:BICEPS") }, once.changes.map { it.id }.toString())
         assertTrue(once.held.any { it.startsWith("Одна тренировка в неделю") && "второй день" in it }, once.held.toString())
     }
