@@ -42,6 +42,13 @@ interface SyncDao {
     // ---- workouts (only finished ones leave the phone) ----
 
     @Query("SELECT * FROM workout WHERE status = 'DONE'") suspend fun doneWorkouts(): List<WorkoutEntity>
+
+    /** Finished workouts the cloud has not got yet: new since the last upload (friends do not see them yet). */
+    @Query("SELECT COUNT(*) FROM workout WHERE status = 'DONE' AND uid NOT IN (SELECT `key` FROM sync_row WHERE tbl = 'workouts')")
+    fun observeNotUploaded(): kotlinx.coroutines.flow.Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM workout WHERE status = 'DONE' AND uid NOT IN (SELECT `key` FROM sync_row WHERE tbl = 'workouts')")
+    suspend fun notUploaded(): Int
     @Query("SELECT * FROM workout WHERE uid = :uid") suspend fun workoutByUid(uid: String): WorkoutEntity?
     @Insert suspend fun insertWorkout(w: WorkoutEntity): Long
     @Update suspend fun updateWorkout(w: WorkoutEntity)

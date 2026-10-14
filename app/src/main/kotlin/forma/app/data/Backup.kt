@@ -27,11 +27,22 @@ data class Backup(
     val stats: List<ExerciseStatEntity>,
     val bodyWeights: List<BodyWeightEntity>,
     val customExercises: List<forma.core.model.Exercise> = emptyList(),
+    /** The cloud account (user id) the data belonged to when the file was made; null when the phone had none. */
+    val account: String? = null,
 )
 
 class BackupManager(private val repo: TrainingRepository) {
-    /** All tables read in one transaction: a sync or a saved run in between cannot leave sets without their workout. */
-    suspend fun snapshot(): Backup {
+    /**
+     * The cloud account the phone's data belongs to: the one it synced with (or, restored from a file and not synced
+     * since, the one before), else [signedIn] — the account signed in now, if any.
+     */
+    suspend fun account(signedIn: String? = null): String? = forma.app.sync.SyncEngine.owner(repo.db.sync()) ?: signedIn
+
+    /**
+     * All tables read in one transaction: a sync or a saved run in between cannot leave sets without their workout.
+     * [signedIn]: the account signed in now, written into the file when the phone has not synced yet.
+     */
+    suspend fun snapshot(signedIn: String? = null): Backup {
         val b = repo.db.backup()
         val st = repo.store
         return repo.db.withTransaction {
@@ -39,30 +50,41 @@ class BackupManager(private val repo: TrainingRepository) {
                 createdAt = System.currentTimeMillis(), profile = st.profileNow(), program = st.programNow(),
                 runState = st.runStateNow(), settings = st.settingsNow(), liftState = st.liftStateNow(),
                 workouts = b.workouts(), sets = b.sets(), runs = b.runs(), points = b.points(), slots = b.slots(), stats = b.stats(),
-                bodyWeights = b.bodyWeights(), customExercises = st.customNow(),
+                bodyWeights = b.bodyWeights(), customExercises = st.customNow(), account = account(signedIn),
             )
         }
     }
 
-    suspend fun export(context: Context, uri: Uri) {
-        val json = AppJson.encodeToString(Backup.serializer(), snapshot())
+    suspend fun export(context: Context, uri: Uri, signedIn: String? = null) {
+        val json = AppJson.encodeToString(Backup.serializer(), snapshot(signedIn))
         context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
             ?: error("Не удалось открыть файл")
     }
+
+    /** The file's content, read to be confirmed before anything on the phone changes. */
+    fun read(context: Context, uri: Uri): Backup {
+        val text = context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: error("Не удалось прочитать файл")
+        return AppJson.decodeFromString(Backup.serializer(), text)
+    }
+
+    /** A workout in the gym or a run is going on: a restore would wipe it, so it waits. */
+    suspend fun sessionGoing(): Boolean = repo.db.workouts().active() != null || forma.app.run.RunSession.tracker != null
 
     /**
      * Replaces the data on the phone with the file's content. Returns the number of workouts restored.
      * With the cloud on, the next sync first brings in what the cloud has (newer progress wins, workouts deleted since
      * the file was made stay deleted), then uploads what only the file had: an old file rolls nothing back.
+     * Whose the data is stays known: the account of the phone (or [signedIn]), else the file's — the restored data goes
+     * only to that account. The caller has asked about a file of another account ([Backup.account]).
      */
-    suspend fun import(context: Context, uri: Uri): Int {
-        val text = context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: error("Не удалось прочитать файл")
-        return restore(AppJson.decodeFromString(Backup.serializer(), text))
-    }
-
-    suspend fun restore(b: Backup): Int {
+    suspend fun restore(b: Backup, signedIn: String? = null): Int {
+        if (sessionGoing()) error("Сначала закончи начатую тренировку или пробежку")
         DataLock.mutex.withLock {
-            repo.db.backup().replaceAll(b.workouts, b.sets, b.runs, b.points, b.slots, b.stats, b.bodyWeights)
+            val owner = account(signedIn) ?: b.account
+            repo.db.backup().replaceAll(
+                b.workouts, b.sets, b.runs, b.points, b.slots, b.stats, b.bodyWeights,
+                listOfNotNull(owner?.let { SyncCursorEntity(forma.app.sync.SyncEngine.OWNER, it) }),
+            )
             val st = repo.store
             b.profile?.let { st.setProfile(it) }
             b.program?.let { st.setProgram(it) }

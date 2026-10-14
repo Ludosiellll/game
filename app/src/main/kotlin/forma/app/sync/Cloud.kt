@@ -27,6 +27,7 @@ import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpRequestTimeoutException
@@ -219,6 +220,29 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         return syncNow()
     }
 
+    /** The id of the account signed in on this phone, from the stored session (no network); null when signed out. */
+    suspend fun accountId(): String? {
+        val c = client ?: return null
+        return runCatching {
+            c.auth.awaitInitialization()
+            c.auth.currentSessionOrNull()?.user?.id
+        }.getOrNull()
+    }
+
+    /**
+     * Deletes the account and everything of it in the cloud (workouts, progress, documents, friends) by the server
+     * function of the delete_account migration, then signs out. The data on this phone stays and is no one's account's
+     * any more: signing in to another account later uploads it there.
+     */
+    suspend fun deleteAccount() {
+        val c = client ?: throw IllegalStateException("cloud is not configured")
+        currentUser(c) ?: throw NotSignedInException()
+        c.postgrest.rpc("delete_my_account", JsonObject(emptyMap()))
+        forma.app.data.DataLock.mutex.withLock { repo.db.sync().reset() }
+        prefs.edit().remove(KEY_LAST_EMAIL).apply()
+        signOut()
+    }
+
     /** The signed-in user with a fresh access token, or null. */
     private suspend fun currentUser(c: SupabaseClient): UserInfo? {
         val auth = c.auth
@@ -276,6 +300,13 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
                 else -> "Ошибка сервера: ${e.error}"
             }
             else -> e.message ?: e::class.simpleName ?: "Неизвестная ошибка"
+        }
+
+        /** Human text for a failed account deletion: a server without the function says so plainly. */
+        fun describeDelete(e: Throwable): String = when {
+            e is RestException && (e.statusCode == 404 || e.error.contains("PGRST202") || e.error.contains("delete_my_account")) ->
+                "Удаление аккаунта ещё не включено на сервере: нужно применить миграцию delete_account в проекте Supabase. Ничего не удалено."
+            else -> "Аккаунт не удалён. " + describe(e)
         }
 
         /** Human text for a failed sign-in or sign-up. */

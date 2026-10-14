@@ -56,6 +56,8 @@ class SyncEngineTest {
     )
 
     @Before fun setUp() = runBlocking {
+        // A run left by a screen test in this process would count as one going on (a restore waits for it).
+        forma.app.run.RunSession.clear()
         val ctx = ApplicationProvider.getApplicationContext<Context>()
         cloud = FakeCloud(user)
         a = Phone("sync-test-a", ctx, 1_760_000_000_000L)
@@ -266,6 +268,55 @@ class SyncEngineTest {
         assertEquals(0, other.live("workouts"))
         assertEquals(0, a.db.workouts().allDone().size)
         assertNull(a.store.profileNow())
+    }
+
+    /**
+     * A file restored on a phone of Denis's account stays Denis's: signed in as someone else, the phone refuses to sync
+     * (the restore no longer drops the account mark). The file names its account, and a fresh phone restoring it takes
+     * that account as the owner.
+     */
+    @Test fun aRestoredFileStaysWithItsAccount() = runBlocking {
+        val other = "4b2d9c1e-0000-4000-8000-000000000002"
+        assertNull(BackupManager(a.repo).snapshot().account)
+        a.liftSession(LocalDate.of(2026, 10, 5))
+        a.sync()
+        val file = BackupManager(a.repo).snapshot()
+        assertEquals(user, file.account)
+        BackupManager(a.repo).restore(file)
+        val elsewhere = FakeCloud(other)
+        assertFailsWith<AccountMismatchException> { SyncEngine(elsewhere, a.db, a.store).run(other) }
+        assertEquals(0, elsewhere.live("workouts"))
+        // Its own account: a first sync again (the cloud copy merges in first), then normal ones.
+        a.sync()
+        assertEquals(1, cloud.live("workouts"))
+        // A new phone, never synced, restores the file: it is Denis's data, not the next account's to sign in.
+        BackupManager(b.repo).restore(file)
+        assertEquals(user, SyncEngine(cloud, b.db, b.store).owner())
+        assertFailsWith<AccountMismatchException> { SyncEngine(elsewhere, b.db, b.store).run(other) }
+        b.sync()
+        assertEquals(a.view(), b.view())
+    }
+
+    /** "1 тренировка ждёт сети": finished workouts the cloud has not got, until the next sync. */
+    @Test fun workoutsNotUploadedAreCounted() = runBlocking {
+        a.liftSession(LocalDate.of(2026, 10, 5))
+        assertEquals(1, a.db.sync().notUploaded())
+        a.sync()
+        assertEquals(0, a.db.sync().notUploaded())
+        a.clock += 86_400_000
+        a.liftSession(LocalDate.of(2026, 10, 6))
+        assertEquals(1, a.db.sync().notUploaded())
+    }
+
+    /** A restore replaces everything: never in the middle of a workout. */
+    @Test fun noRestoreDuringAWorkout() = runBlocking {
+        a.liftSession(LocalDate.of(2026, 10, 5))
+        val file = BackupManager(a.repo).snapshot()
+        a.repo.startLift(a.store.programNow()!!.templates.first().id, LocalDate.of(2026, 10, 7))
+        assertTrue(BackupManager(a.repo).sessionGoing())
+        assertFailsWith<IllegalStateException> { BackupManager(a.repo).restore(file) }
+        assertEquals(1, a.db.workouts().allDone().size)
+        assertTrue(a.db.workouts().active() != null)
     }
 
     @Test fun aWorkoutFinishedDuringASyncGoesUpWithTheNext() = runBlocking {
