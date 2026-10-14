@@ -72,6 +72,22 @@ object Stats {
         return out.mapValues { it.value.toList() }
     }
 
+    /**
+     * Hard sets per muscle over the last 7 days, today included — a rolling week, so on a Monday the sets of the days
+     * before still count. Primary muscles fully, secondary ones half.
+     */
+    fun setsLast7Days(rows: List<SetRow>, today: LocalDate): Map<Muscle, Double> {
+        val from = today.toEpochDay() - 6
+        val out = Muscle.entries.associateWith { 0.0 }.toMutableMap()
+        for (r in rows) {
+            if (r.epochDay !in from..today.toEpochDay()) continue
+            val ex = Catalog.find(r.exerciseId) ?: continue
+            ex.primary.forEach { out[it] = out.getValue(it) + 1.0 }
+            ex.secondary.forEach { out[it] = out.getValue(it) + 0.5 }
+        }
+        return out
+    }
+
     /** Kilograms moved per week (weight × reps; both dumbbells; body weight for body-weight lifts). */
     fun weeklyTonnage(rows: List<SetRow>, today: LocalDate, weeks: Int, bodyWeight: (Long) -> Double): List<Double> {
         val start = monday(today).minusWeeks((weeks - 1).toLong())
@@ -87,9 +103,15 @@ object Stats {
         return out.toList()
     }
 
+    /** An exercise stops counting in the index this long after its last session (taken out of the plan, swapped). */
+    private const val ACTIVE_DAYS = 28
+
     /**
-     * Strength index: 100 at the start, then the geometric mean of (current e1RM / first e1RM) over every
-     * exercise with history, sampled weekly. "+12 %" means lifts are on average 12 % stronger.
+     * Strength index: 100 at the start, then chained week to week — each week moves it by the geometric mean of
+     * (this week's e1RM / last week's) over the exercises done lately in both weeks. An exercise added later or taken out
+     * does not move it: it counts only from its second week and stops counting four weeks after its last session.
+     * "+12 %" means the lifts done all along are on average 12 % stronger. An exercise's value in a week is the better of
+     * its last two sessions up to then.
      */
     fun strengthIndex(rows: List<SetRow>, bodyWeight: (Long) -> Double): List<Point> {
         val byEx = rows.groupBy { it.exerciseId }.mapNotNull { (id, r) ->
@@ -100,14 +122,24 @@ object Stats {
         if (byEx.isEmpty()) return emptyList()
         val first = byEx.minOf { it.first().epochDay }
         val last = byEx.maxOf { it.last().epochDay }
+        fun valueOn(s: List<Point>, day: Long): Double? {
+            val upTo = s.filter { it.epochDay <= day }
+            if (upTo.isEmpty() || day - upTo.last().epochDay > ACTIVE_DAYS) return null
+            return upTo.takeLast(2).maxOf { it.value }
+        }
         val out = mutableListOf<Point>()
         var day = monday(LocalDate.ofEpochDay(first)).plusDays(6).toEpochDay()
+        var index = 100.0
+        var prev: List<Double?>? = null
         while (true) {
-            val ratios = byEx.mapNotNull { s ->
-                val upTo = s.filter { it.epochDay <= day }
-                if (upTo.isEmpty()) null else upTo.takeLast(2).maxOf { it.value } / s.first().value
+            val now = byEx.map { valueOn(it, day) }
+            val p = prev
+            if (p != null) {
+                val logs = now.indices.mapNotNull { i -> val a = p[i]; val b = now[i]; if (a != null && b != null) ln(b / a) else null }
+                if (logs.isNotEmpty()) index *= exp(logs.sum() / logs.size)
             }
-            if (ratios.isNotEmpty()) out += Point(minOf(day, last), 100 * exp(ratios.sumOf { ln(it) } / ratios.size))
+            out += Point(minOf(day, last), index)
+            prev = now
             if (day >= last) break
             day += 7
         }
