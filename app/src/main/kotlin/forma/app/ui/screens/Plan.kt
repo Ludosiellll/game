@@ -56,7 +56,7 @@ fun PlanScreen() {
     val lifting by repo.store.liftState.collectAsState(initial = forma.app.data.LiftState())
     ScrollScreen {
         Text(if (F.type.capsTitles) "ПЛАН" else "План", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
-        val goal = aimTitle(p.aim) + (p.copiedFrom?.let { " · программа от $it" } ?: "")
+        val goal = aimTitle(p.aim) + (p.copiedFrom?.let { " · программа друга ($it)" } ?: "")
         Text("$goal · ${when (p.experience) { Experience.NOVICE -> "новичок"; Experience.INTERMEDIATE -> "средний уровень"; Experience.ADVANCED -> "опытный" }}", style = T.secondary(15.sp))
 
         // The cycle is the gym's (sets, reserve, light weeks): without the gym there is nothing to say.
