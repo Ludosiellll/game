@@ -110,7 +110,8 @@ object LoadExplain {
     fun levelNote(w: LoadStory.Week): String? = when (w.level) {
         Level.SPIKE -> "Нагрузка резко выросла: больше чем на 30 % от твоей обычной недели. Так чаще всего и перегружаются — следующую лучше не наращивать."
         Level.LIGHT -> "Неделя легче обычной: разгрузка, пропуски или болезнь. Тренированность за неё почти не теряется."
-        Level.ONGOING -> "Неделя только началась: сравнить её с обычной можно будет через день-два."
+        // Monday's one session, or a Thursday of someone who trains at weekends: either way the usual days are still ahead.
+        Level.ONGOING -> "Неделя ещё идёт: сравнить её с обычной можно будет, когда пройдут дни, в которые ты обычно тренируешься."
         else -> null
     }
 

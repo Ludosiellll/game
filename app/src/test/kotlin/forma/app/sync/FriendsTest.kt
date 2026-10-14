@@ -250,11 +250,23 @@ class FriendsTest {
         assertTrue(first.fresh)
         forma.app.ui.screens.loadFriends(fresh, "Егор")
         assertEquals(listOf("Егор"), fresh.sent)
+        // No name anywhere (the app never asks for one): what friends see is explained on the first visit, not on each.
+        val nameless = Api("")
+        assertTrue(forma.app.ui.screens.loadFriends(nameless, "").fresh)
+        assertTrue(!forma.app.ui.screens.loadFriends(nameless, "", explained = true).fresh)
+        assertEquals(emptyList(), nameless.sent)
     }
 
     /** Offline, a friends call says so (and that nothing changed) instead of the sync's "will retry by itself". */
     @Test fun offlineFriendsCallsSaySo() {
         assertTrue(describeFriends(java.io.IOException("no network")).startsWith("Нет связи с сервером: ничего не изменилось"))
+    }
+
+    /** Deleting the account without an answer: try again when online, safely — not "will retry by itself", not "not deleted". */
+    @Test fun anAccountDeletionWithoutAnAnswerSaysToTryAgain() {
+        val text = Cloud.describeDelete(java.io.IOException("timeout"))
+        assertTrue("ещё раз, когда появится интернет" in text && "безопасно" in text, text)
+        assertTrue("повторится сама" !in text && "не удалён" !in text, text)
     }
 
     @Test fun aFriendsProgramBecomesOwn() = runBlocking {

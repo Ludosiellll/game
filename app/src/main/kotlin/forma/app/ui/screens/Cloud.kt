@@ -194,7 +194,7 @@ fun CloudContent(
                     waitingText(waiting)?.let { Banner(it, F.c.warn, icon = Ic.cloud) }
                     PrimaryButton(
                         if (state.busy) "Синхронизирую…" else "Синхронизировать", onSync, Modifier.fillMaxWidth(),
-                        icon = Ic.cloud, enabled = !state.busy,
+                        icon = Ic.cloud, enabled = !state.busy && !state.deleting,
                     )
                     Text("Синхронизация идёт сама: после каждой тренировки и дважды в день в фоне.", style = T.secondary(13.sp))
                     GhostButton("Выйти", onSignOut, Modifier.fillMaxWidth(), height = 50.dp)
@@ -205,8 +205,13 @@ fun CloudContent(
         message?.let { Banner(it, F.c.accent) }
         data()
         if (state.configured && state.ready && state.email != null && !state.otherAccount) {
-            GhostButton("Удалить аккаунт и данные в облаке", { deleteStep = 1 }, Modifier.fillMaxWidth(), color = F.c.bad, height = 50.dp)
-            Text("Удалятся аккаунт, все тренировки и прогресс в облаке и дружба. На телефоне данные останутся.", style = T.secondary(12.sp))
+            // Pressed once while it runs: a second deletion or a sync would only get in its way.
+            GhostButton(
+                if (state.deleting) "Удаляю аккаунт…" else "Удалить аккаунт и данные в облаке",
+                { if (!state.deleting && !state.busy) deleteStep = 1 }, Modifier.fillMaxWidth(),
+                color = if (state.deleting || state.busy) F.c.text3 else F.c.bad, height = 50.dp,
+            )
+            Text("Удалятся аккаунт, все тренировки и прогресс в облаке и друзья. На телефоне данные останутся.", style = T.secondary(12.sp))
         }
     }
     // Twice asked: the first time what goes, the second time that it cannot be undone.
@@ -313,10 +318,14 @@ fun DataSection() {
             containerColor = F.c.surface,
             title = { Text("Файл из другого аккаунта", style = T.title(20.sp)) },
             text = {
+                // Signed out (or into an account the phone's data is not of), the data still belongs to the account the
+                // phone synced with: the file's workouts go there.
+                val email = cloud?.state?.value?.takeIf { !it.otherAccount }?.email
                 Text(
-                    "Эта копия сделана в другом облачном аккаунте, а данные телефона — " +
-                        (cloud?.state?.value?.email?.let { "аккаунта $it" } ?: "другого аккаунта") + ". " +
-                        "После восстановления тренировки из файла загрузятся в облако этого аккаунта. Восстанавливай, только если это твои тренировки.",
+                    (if (email != null) "Эта копия — из другого облачного аккаунта, не из $email. После восстановления тренировки из файла загрузятся в облако $email. "
+                    else "Эта копия — из другого облачного аккаунта, не из того, с которым телефон синхронизировался раньше. " +
+                        "После восстановления тренировки из файла загрузятся в облако того, прежнего аккаунта, когда ты снова в него войдёшь. ") +
+                        "Восстанавливай, только если это твои тренировки.",
                     style = T.secondary(14.sp),
                 )
             },

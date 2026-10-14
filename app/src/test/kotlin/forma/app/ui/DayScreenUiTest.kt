@@ -209,6 +209,28 @@ class DayScreenUiTest {
         compose.onRoot().captureRoboImage("build/shots/carbon-plan-done.png")
     }
 
+    /** Trained on a pause day anyway: the run counts in the week, so the main screen and the day show it under the pause. */
+    private fun runOnAPauseDay(): TrainingRepository {
+        val repo = repo()
+        runBlocking {
+            repo.pause(monday, monday.plusDays(2))
+            repo.saveRun(repo.freeRun(230), RunResult(1.0, 5, 1500, distanceM = 4200.0), clock, emptyList(), monday)
+        }
+        return repo
+    }
+
+    @Test fun aRunOnAPauseDayShowsOnTheMainScreen() {
+        show(runOnAPauseDay()) { TodayScreen() }
+        compose.onNodeWithText("Отдыхаем до", substring = true).assertExists()
+        compose.onNodeWithText("Сделано вне плана", substring = true, ignoreCase = true).performScrollTo()
+    }
+
+    @Test fun aRunOnAPauseDayShowsInItsDay() {
+        show(runOnAPauseDay()) { DayScreen(monday) }
+        compose.onNodeWithText("Пауза:", substring = true).assertExists()
+        compose.onNodeWithText("Сделано вне плана", substring = true, ignoreCase = true).performScrollTo()
+    }
+
     /** Large font (×1.5): the day still reads — the run's parts and its reasons wrap, nothing is cut off. */
     @Test fun theDayReadsInALargeFont() {
         val repo = repo()

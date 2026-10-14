@@ -47,6 +47,16 @@ class StatsTest {
         assertNull(Stats.changePct(listOf(Point(0, 0.0), Point(7, 10.0))))
     }
 
+    /** Back after two months off at lower weights: the drop shows, and the old weights regained bring it back — not "+25 %". */
+    @Test fun aReturnAfterABreakIsSetAgainstTheLastValueBeforeIt() {
+        val before = (0 until 4).map { i -> row(i.toLong(), i * 7L, "squat", 100.0, 5) }
+        val after = listOf(80.0, 85.0, 90.0, 95.0, 100.0).mapIndexed { i, kg -> row(10L + i, 84L + i * 7, "squat", kg, 5) }
+        val idx = Stats.strengthIndex(before + after) { 80.0 }
+        assertTrue(idx.minOf { it.value } < 85, idx.toString())
+        assertEquals(100.0, idx.last().value, 1e-6)
+        assertEquals(0.0, Stats.changePct(idx)!!, 1e-6)
+    }
+
     @Test fun strengthIndexStartsAtHundredAndGrows() {
         val rows = (0 until 6).flatMap { i -> listOf(row(i.toLong(), i * 7L, "squat", 60.0 + 2.5 * i, 8), row(i.toLong(), i * 7L, "bench", 50.0 + 1.25 * i, 8)) }
         val idx = Stats.strengthIndex(rows) { 80.0 }

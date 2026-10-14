@@ -81,7 +81,7 @@ fun ProfileScreen() {
         TopBar("Цель, дни и данные", "План пересчитается, прогресс по упражнениям сохранится", onBack = { nav.back() })
         if (copiedFrom != null) {
             FCard(gap = 8.dp) {
-                Text("Сейчас программа от: $copiedFrom", style = T.title(18.sp))
+                Text("Сейчас программа друга ($copiedFrom)", style = T.title(18.sp))
                 Text(
                     if (settings.ownPlan != null) "Твоя прежняя программа сохранена вместе с заменами упражнений, подходами и отдыхом — её можно вернуть."
                     else "Можно вернуться к своей программе: она соберётся заново по твоему профилю.",
@@ -131,7 +131,7 @@ fun ProfileScreen() {
         AlertDialog(
             onDismissRequest = { confirmCopied = false },
             containerColor = F.c.surface,
-            title = { Text("Заменить программу от: $copiedFrom?", style = T.title(20.sp)) },
+            title = { Text("Сменить программу друга ($copiedFrom) на свою?", style = T.title(20.sp)) },
             text = {
                 Text(
                     "Сейчас ты занимаешься по программе друга. После сохранения план соберётся по твоему профилю, а программа друга уйдёт. " +
@@ -150,7 +150,7 @@ fun ProfileScreen() {
             title = { Text("Вернуть мою программу?", style = T.title(20.sp)) },
             text = {
                 Text(
-                    "Программа от: $copiedFrom уйдёт. Вернутся твои цель, дни и тренировки — с заменами упражнений, подходами и отдыхом, " +
+                    "Программа друга ($copiedFrom) уйдёт. Вернутся твои цель, дни и тренировки — с заменами упражнений, подходами и отдыхом, " +
                         "как были до копирования. Прогресс по упражнениям сохранится.",
                     style = T.secondary(14.sp),
                 )

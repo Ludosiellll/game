@@ -2,11 +2,22 @@ package forma.app.data
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import forma.core.model.Aim
+import forma.core.model.Emphasis
 import forma.core.model.Experience
+import forma.core.model.LiftFocus
 import forma.core.model.Profile
+import forma.core.model.RunFocus
 import forma.core.model.RunGoal
 import forma.core.model.RunLevel
+import forma.core.plan.DayPlan
+import forma.core.plan.PlannedSession
+import forma.core.plan.SessionKind
+import forma.core.plan.WeekPlan
+import forma.core.run.RunOutcome
+import forma.core.run.RunPlan
 import forma.core.run.RunResult
+import forma.core.run.RunWorkout
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -15,6 +26,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import java.time.LocalDate
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 @RunWith(AndroidJUnit4::class)
@@ -64,16 +76,110 @@ class TrainingReportTest {
         assertTrue(text.indexOf("## Сводка по месяцам") < text.indexOf("## Кто тренируется"))
     }
 
-    @Test fun agesAndFeelsReadNaturally() {
+    @Test fun agesReadNaturally() {
         assertEquals("18 лет", TrainingReport.years(18))
         assertEquals("21 год", TrainingReport.years(21))
         assertEquals("22 года", TrainingReport.years(22))
         assertEquals("41 год", TrainingReport.years(41))
-        val day = LocalDate.of(2026, 10, 6)
-        assertEquals(mapOf(day.toEpochDay() to "бодро"), TrainingReport.feelFrom("""{"look":"carbon","dayFeel":{"${day.toEpochDay()}":"бодро"}}"""))
-        assertEquals(mapOf(day.toEpochDay() to "4"), TrainingReport.feelFrom("""{"feel":{"$day":4}}"""))
-        assertEquals(emptyMap(), TrainingReport.feelFrom("""{"look":"carbon"}"""))
-        assertEquals(emptyMap(), TrainingReport.feelFrom(null))
+    }
+
+    /** Denis's own week: hard run Mon, the gym Tue, hard run and the gym Thu, the gym and an easy run Sat — no long run. */
+    private fun denisWeek(b: Backup): Backup {
+        val prog = b.program!!
+        val t = prog.templates.map { it.id }
+        val week = WeekPlan(
+            listOf(
+                DayPlan(1, listOf(PlannedSession(SessionKind.RUN_QUALITY))),
+                DayPlan(2, listOf(PlannedSession(SessionKind.LIFT, t[0]))),
+                DayPlan(4, listOf(PlannedSession(SessionKind.RUN_QUALITY), PlannedSession(SessionKind.LIFT, t[1 % t.size]))),
+                DayPlan(6, listOf(PlannedSession(SessionKind.LIFT, t[2 % t.size]), PlannedSession(SessionKind.RUN_EASY))),
+            ),
+            emptyList(),
+        )
+        return b.copy(program = prog.copy(week = week))
+    }
+
+    /** The gym only to who lifts and running only to who runs; the long run and the ladders only when the week holds them. */
+    @Test fun eachPersonHearsOfWhatTheyDo() = runBlocking {
+        val b = denisWeek(BackupManager(repo).snapshot())
+        val p = b.profile!!
+        val denis = TrainingReport.build(b, monday, "test")
+        assertTrue(denis.contains("- Опыт в зале: опытный. Бег: бегает 20+ минут."), denis)
+        assertTrue(denis.contains("- Лёгкий бег — ${b.runState!!.easyMinutes} мин. Шаги лестниц: интервалы"), denis)
+        assertFalse(denis.contains("длинный —"), denis)
+        val withLong = b.copy(program = b.program!!.copy(week = b.program!!.week.copy(days = b.program!!.week.days + DayPlan(7, listOf(PlannedSession(SessionKind.RUN_LONG))))))
+        assertTrue(TrainingReport.build(withLong, monday, "test").contains(", длинный — ${b.runState!!.longMinutes} мин."))
+        // Gym only: no running level, no VDOT, no ladders.
+        val gym = TrainingReport.build(b.copy(profile = p.copy(aim = Aim(LiftFocus.MUSCLE, RunFocus.NONE, Emphasis.GYM), runGoal = null)), monday, "test")
+        listOf("Бег: ", "### Бег", "VDOT ещё не рассчитан", "Шаги лестниц").forEach { assertFalse(gym.contains(it), "«$it» in:\n$gym") }
+        assertTrue(gym.contains("- Опыт в зале: опытный."), gym)
+        // Running only: no experience in the gym.
+        val run = TrainingReport.build(b.copy(profile = p.copy(aim = Aim(LiftFocus.NONE, RunFocus.SPEED, Emphasis.RUN))), monday, "test")
+        assertFalse(run.contains("Опыт в зале"), run)
+        assertTrue(run.contains("- Бег: бегает 20+ минут."), run)
+        // An own week without running days: no empty "бег — .".
+        val own = TrainingReport.build(b.copy(profile = p.copy(gymDays = setOf(1, 3, 5), runDays = emptySet())), monday, "test")
+        assertTrue(own.contains("- Своя неделя: зал — пн, ср, пт."), own)
+    }
+
+    /** The week under way: today's session not missed in the morning, counted once done; every pause's days left out. */
+    @Test fun theWeekUnderWayCountsTodayOnceDoneAndEveryPause() = runBlocking {
+        val b = denisWeek(BackupManager(repo).snapshot())
+        val morning = TrainingReport.build(b, monday, "test")
+        assertFalse(morning.contains("пропущено"), morning)
+        val wednesday = monday.plusDays(2)
+        assertTrue(TrainingReport.build(b, wednesday, "test").contains("пропущено: зал 1, бег 1"))
+        // Monday and Tuesday in a pause before the last one (that one is next week): nothing missed.
+        val paused = b.copy(
+            settings = b.settings.copy(
+                pauseFrom = monday.plusDays(7).toEpochDay(), pauseUntil = monday.plusDays(9).toEpochDay(),
+                pastPauses = listOf(listOf(monday.toEpochDay(), monday.plusDays(1).toEpochDay())),
+            ),
+        )
+        val text = TrainingReport.build(paused, wednesday, "test")
+        assertFalse(text.contains("пропущено"), text)
+        assertTrue(text.contains("пауза 2 дня"), text)
+        // Monday's hard run done: counted that day.
+        repo.saveRun(repo.freeRun(230), RunResult(1.0, 4, 1800, distanceM = 5000.0), clock, emptyList(), monday)
+        val evening = TrainingReport.build(denisWeek(BackupManager(repo).snapshot()), monday, "test")
+        assertTrue(evening.contains("бег 1 из 1"), evening)
+        assertFalse(evening.contains("пропущено"), evening)
+    }
+
+    /** A 5 km goal never has sessions at the goal pace: none promised. A block restarted ahead says so. */
+    @Test fun theGoalAndTheBlockAreSaidAsTheyAre() = runBlocking {
+        val b = BackupManager(repo).snapshot()
+        assertTrue(TrainingReport.build(b, monday, "test").contains("- Отрезков в темпе цели ещё не было."))
+        val fiveK = TrainingReport.build(b.copy(profile = b.profile!!.copy(runGoal = RunGoal(5000, 1500))), monday, "test")
+        assertTrue(fiveK.contains("## Путь к цели: 5 км за 25:00"), fiveK)
+        assertFalse(fiveK.contains("Отрезков в темпе цели"), fiveK)
+        val ahead = TrainingReport.build(b.copy(program = b.program!!.copy(startEpochDay = monday.plusWeeks(2).toEpochDay())), monday, "test")
+        assertTrue(ahead.contains("Новый блок — с 19 октября."), ahead)
+        assertFalse(ahead.contains("Начат "), ahead)
+    }
+
+    /** An easy run kept short: "the usual one stays 40 min", not "the length stays" — the file reads the run's own plan. */
+    @Test fun aShortEasyRunIsSaidAsOnTheScreen() = runBlocking {
+        repo.saveRun(repo.freeRun(230), RunResult(1.0, 4, 1500, distanceM = 4000.0), clock, emptyList(), monday)
+        val b = BackupManager(repo).snapshot()
+        val w = b.workouts.first { it.kind == Kind.RUN }
+        val short = RunPlan.easy(b.runState!!.copy(easyMinutes = 25))
+        val summary = RunSummary(listOf(RunOutcome.Same(40)), 25, 100.0)
+        val edited = b.copy(
+            workouts = b.workouts.map { if (it.id == w.id) it.copy(summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary)) else it },
+            runs = b.runs.map { if (it.workoutId == w.id) it.copy(planJson = AppJson.encodeToString(RunWorkout.serializer(), short)) else it },
+        )
+        val text = TrainingReport.build(edited, monday, "test")
+        assertTrue(text.contains("Короткая пробежка длительность не меняет; обычная лёгкая — 40 мин."), text)
+        assertFalse(text.contains("Длительность пока прежняя"), text)
+    }
+
+    /** "Восстановлено тренировок" counts what the question before it counted: the finished ones. */
+    @Test fun aRestoreCountsTheFinishedWorkouts() = runBlocking {
+        repo.saveRun(repo.freeRun(230), RunResult(1.0, 4, 1800, distanceM = 5000.0), clock, emptyList(), monday)
+        val b = BackupManager(repo).snapshot()
+        val unfinished = b.workouts.first().copy(id = 999, uid = newUid(), status = Status.ACTIVE, summaryJson = null)
+        assertEquals(1, BackupManager(repo).restore(b.copy(workouts = b.workouts + unfinished)))
     }
 
     /**
