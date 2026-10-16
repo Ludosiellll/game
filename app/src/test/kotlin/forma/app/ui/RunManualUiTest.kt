@@ -67,11 +67,13 @@ class RunManualUiTest {
         }
     }
 
-    private fun repo(name: String): TrainingRepository {
+    /** [day]: the clock fixed to that day (a plan that depends on the day of the week); null — the real clock. */
+    private fun repo(name: String, day: java.time.LocalDate? = null): TrainingRepository {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         val store = SettingsStore(ctx, name)
         runBlocking { store.clear() }
-        return TrainingRepository(FormaDatabase.create(ctx, inMemory = true), store).also {
+        val now: () -> Long = day?.let { d -> { d.atTime(9, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() } } ?: System::currentTimeMillis
+        return TrainingRepository(FormaDatabase.create(ctx, inMemory = true), store, now).also {
             runBlocking {
                 it.completeOnboarding(
                     Profile(
@@ -118,7 +120,8 @@ class RunManualUiTest {
     }
 
     @Test fun goalPaceRepsWithAWatchMoveTheLadder() {
-        val repo = repo("ui-manual-goal")
+        // A Tuesday: the legs (Thursday) far behind — race pace is due today, not put off to a fresher day.
+        val repo = repo("ui-manual-goal", java.time.LocalDate.of(2026, 10, 13))
         val w = runBlocking {
             repo.store.setRunState(repo.store.runStateNow().copy(vdot = 46.0, runs = 6, goalStage = 2, lastTestDay = repo.today().toEpochDay() - 10))
             repo.runFor(SessionKind.RUN_QUALITY, repo.today())

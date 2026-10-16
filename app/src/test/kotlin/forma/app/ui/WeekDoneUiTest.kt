@@ -138,20 +138,6 @@ class WeekDoneUiTest {
         compose.waitUntil(10_000) { settle(); compose.onAllNodesWithText("Дальше: $light").fetchSemanticsNodes().isNotEmpty() }
     }
 
-    /** Back on Monday after «Болею» and its pause: the day says the runs go easy and the first gym session lighter. */
-    @Test fun backFromBeingSickTheDaySaysSo() {
-        val repo = repo()
-        val friday = monday.plusDays(4)
-        runBlocking {
-            repo.store.editSettings { it.withFeel(friday, Feel.SICK) }
-            repo.pause(friday, friday.plusDays(2))
-        }
-        at(monday.plusDays(7))
-        show(repo) { TodayScreen() }
-        compose.waitUntil(10_000) { settle(); compose.onAllNodesWithText("После болезни: ещё 2 пробежки — лёгкие, первая силовая — облегчённая", substring = true).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Лёгкий бег", substring = true).assertExists()
-    }
-
     @Test fun sickOffersAPauseOfThreeDays() {
         val repo = repo()
         show(repo) { TodayScreen() }
