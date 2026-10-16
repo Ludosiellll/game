@@ -186,7 +186,10 @@ class ReviewFixesRepoTest {
         // No time: not counted.
         repo.saveRun(trial, RunResult(1.0, 9, trial.totalSeconds), clock, emptyList(), repo.today())
         clock += 7 * 86_400_000L
-        assertTrue(repo.runFor(SessionKind.RUN_QUALITY, trial = true).type != RunType.TEST)
+        val next = repo.runFor(SessionKind.RUN_QUALITY, trial = true)
+        assertTrue(next.type != RunType.TEST)
+        // Run that day (two weeks with no run at all would make the trial's day an easy return instead).
+        repo.saveRun(next, RunResult(1.0, 6, next.totalSeconds), clock, emptyList(), repo.today())
         // Two weeks on it comes back.
         clock += 7 * 86_400_000L
         assertEquals(RunType.TEST, repo.runFor(SessionKind.RUN_QUALITY, trial = true).type)
