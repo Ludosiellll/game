@@ -1351,6 +1351,11 @@ class TrainingRepository(
                 .let { if (guess != null) RunPlan.provisional(it) else it }.let { it.copy(note = sickNote + it.note) }
             kind == SessionKind.RUN_LONG || longEasy ->
                 if (guess != null) RunPlan.provisional(RunPlan.long(guess, lighter, date.toEpochDay())) else RunPlan.long(st, lighter, date.toEpochDay())
+            // The trial was due, but this is the first run after more than a week without running: not a trial cold, nor a
+            // hard session in its place — easy today, the trial on the next hard day ([trialDay]).
+            kind == SessionKind.RUN_QUALITY && RunPlan.breakDays(saved, date.toEpochDay()) != null && needsTest(st, date, goal) ->
+                RunPlan.easy(guess ?: st, lighter, date.toEpochDay()).let { if (guess != null) RunPlan.provisional(it) else it }
+                    .let { it.copy(note = "Контрольный — не первой пробежкой после перерыва: сегодня лёгкий, чтобы втянуться, контрольный — в следующий тяжёлый день. " + it.note) }
             kind == SessionKind.RUN_QUALITY -> when {
                 !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date))
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)

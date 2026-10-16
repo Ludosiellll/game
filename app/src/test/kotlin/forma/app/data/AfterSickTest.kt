@@ -126,7 +126,13 @@ class AfterSickTest {
         val thursday = mon.plusDays(10)
         at(thursday)
         assertNotEquals(thursday, repo.trialDay(thursday))
-        assertNotEquals(RunType.TEST, repo.runFor(SessionKind.RUN_QUALITY, thursday).type)
+        // Not a hard session in its place either: easy, said why.
+        val w = repo.runFor(SessionKind.RUN_QUALITY, thursday)
+        assertEquals(RunType.EASY, w.type)
+        assertTrue("Контрольный — не первой пробежкой после перерыва" in w.note, w.note)
+        // Back running (Thursday done): the trial on the next hard day with fresh legs.
+        ran(repo, thursday)
+        assertNotNull(repo.trialDay(thursday.plusDays(1)))
     }
 
     /** «Болею» pressed by mistake and set back the same day: no sickness. */
