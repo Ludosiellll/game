@@ -185,6 +185,16 @@ fun TodayScreen() {
                 if (feel == Feel.SICK) {
                     SickCard(today, onTrainAnyway = { setFeel(Feel.UNSET) }, onPause = { scope.launch { repo.pause(today, today.plusDays(SICK_PAUSE_DAYS - 1L)) } })
                 } else order?.let { o -> OrderCard(o, runDone = todayItem?.isDone(o.run) == true, liftDone = todayItem?.isDone(o.lift) == true) }
+                // Back from being sick: the first runs easy, the first gym session lighter — said above the day's sessions.
+                val afterSick by produceState<String?>(null, today, week, feel) {
+                    val runs = repo.easyAfterSick(today)
+                    val lift = repo.liftAfterSick(today)
+                    value = if (runs == 0 && !lift) null else "После болезни: " + listOfNotNull(
+                        if (runs > 0) "ещё $runs ${Ru.plural(runs, "пробежка", "пробежки", "пробежек")} — лёгкие" else null,
+                        if (lift) "первая силовая — облегчённая" else null,
+                    ).joinToString(", ") + ". Если снова станет хуже — «Болею»."
+                }
+                if (feel != Feel.SICK) afterSick?.let { Banner(it, F.c.warn) }
                 if (feel != Feel.SICK) (order?.ordered(todays) ?: todays).forEach { s ->
                     val light = feel == Feel.LOW
                     if (s.kind == SessionKind.LIFT) {

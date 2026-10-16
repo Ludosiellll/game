@@ -331,7 +331,7 @@ fun WorkoutScreen(workoutId: Long) {
                 TopBar(plan.title, "${Ru.clock(elapsed)} · ${plan.items.indexOf(item) + 1} из ${plan.items.size}", onBack = { nav.back() }) {
                     GhostButton("Завершить", { finishing = true }, height = 48.dp)
                 }
-                if (plan.deload) Banner("Разгрузка: меньше подходов и вес легче. Не дожимай до отказа.", F.c.warn)
+                if (plan.deload) Banner(plan.why ?: "Разгрузка: меньше подходов и вес легче. Не дожимай до отказа.", F.c.warn)
 
                 // Exercise switcher.
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

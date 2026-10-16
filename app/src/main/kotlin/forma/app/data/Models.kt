@@ -34,7 +34,14 @@ data class LiftItem(
 )
 
 @Serializable
-data class LiftPlan(val templateId: String, val title: String, val items: List<LiftItem>, val deload: Boolean)
+data class LiftPlan(
+    val templateId: String,
+    val title: String,
+    val items: List<LiftItem>,
+    val deload: Boolean,
+    /** Why the session is lighter when it is not the plan's lighter week (the first one after being sick). */
+    val why: String? = null,
+)
 
 @Serializable
 data class SlotReport(val exerciseId: String, val name: String, val outcome: Outcome, val e1rm: Double?, val record: Boolean)

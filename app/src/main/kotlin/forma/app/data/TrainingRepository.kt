@@ -377,6 +377,15 @@ class TrainingRepository(
             return max(1, (ms / 60_000.0).roundToInt())
         }
 
+        /** Days after being sick that still count ([sickEnd]). */
+        const val SICK_WINDOW = 21
+        /** Easy runs after being sick before reps and tempo come back. */
+        const val SICK_EASY_RUNS = 2
+        /** No trial within this many days after being sick. */
+        const val SICK_NO_TRIAL_DAYS = 7
+        /** Why the first gym session after being sick is lighter, said in it. */
+        const val SICK_LIFT = "После болезни — облегчённая: меньше подходов и вес легче, без отказа. Прогресс и план не сдвигаются."
+
         /** The most sets of one exercise the plan can be set to. */
         const val MAX_SETS = 8
         /** Rest between sets the plan can be set to, seconds. */
@@ -574,7 +583,8 @@ class TrainingRepository(
             val key = addedKey(t.id, id)
             buildItem(t.slots.size + j, overrides(addedSpec(id), settings, key), date, deload, restKey = key).copy(planId = id, addedForGood = true)
         }
-        return LiftPlan(t.id, t.title, warmUps(inOrder(own + extra), deload), deload)
+        val why = if (deload && !forceDeload && liftAfterSick(date) && !ProgramGenerator.isDeloadWeek(program, date)) SICK_LIFT else null
+        return LiftPlan(t.id, t.title, warmUps(inOrder(own + extra), deload), deload, why)
     }
 
     /**
@@ -623,7 +633,33 @@ class TrainingRepository(
     private suspend fun deloadOn(date: LocalDate, force: Boolean): Boolean {
         val program = store.programNow() ?: return force
         val reactive = store.liftStateNow().reactiveDeloadStart
-        return force || ProgramGenerator.isDeloadWeek(program, date) || (reactive != null && date.toEpochDay() in reactive until reactive + 7)
+        return force || ProgramGenerator.isDeloadWeek(program, date) || (reactive != null && date.toEpochDay() in reactive until reactive + 7) ||
+            liftAfterSick(date)
+    }
+
+    /**
+     * The last day of being sick before [date], within [SICK_WINDOW] days: the last day marked «Болею», or the end of a
+     * pause begun on one (or with one in it). Null — not sick lately. Read from the marks, so a mistap set back is no sickness.
+     */
+    fun sickEnd(settings: Settings, date: LocalDate): Long? {
+        val d = date.toEpochDay()
+        val sick = settings.feels.filterValues { it == Feel.SICK.name }.keys
+        val pauses = settings.pastPauses.filter { it.size == 2 } + listOfNotNull(settings.pauseUntil?.let { listOf(settings.pauseFrom ?: it, it) })
+        val ends = sick.filter { it < d } + pauses.filter { p -> sick.any { it in p[0]..p[1] } }.map { minOf(it[1], d - 1) }
+        return ends.filter { it >= d - SICK_WINDOW }.maxOrNull()
+    }
+
+    /** Runs still to go easy after being sick ([SICK_EASY_RUNS] minus those done since); 0 — none. */
+    suspend fun easyAfterSick(date: LocalDate): Int {
+        val end = sickEnd(store.settingsNow(), date) ?: return 0
+        val done = db.workouts().allDone().count { it.kind == Kind.RUN && it.epochDay > end && it.epochDay < date.toEpochDay() }
+        return (SICK_EASY_RUNS - done).coerceAtLeast(0)
+    }
+
+    /** The first gym session after being sick: lighter (fewer sets, lighter weights); the plan does not move. */
+    suspend fun liftAfterSick(date: LocalDate): Boolean {
+        val end = sickEnd(store.settingsNow(), date) ?: return false
+        return db.workouts().allDone().none { it.kind == Kind.LIFT && it.epochDay > end && it.epochDay < date.toEpochDay() }
     }
 
 
@@ -1298,6 +1334,10 @@ class TrainingRepository(
         val taper = toRace != null && toRace in 1..14
         val lighter = cutback || taper
         val longEasy = kind == SessionKind.RUN_EASY && program != null && longEasyDay(program, date, goal?.middleDistance == true)
+        // Back from being sick: the first runs easy, no reps and no strides, whatever the day holds.
+        val sickLeft = easyAfterSick(date)
+        val sickNote = "После болезни сначала втягиваемся: ещё $sickLeft ${Ru.plural(sickLeft, "лёгкая пробежка", "лёгкие пробежки", "лёгких пробежек")} — " +
+            "без отрезков и ускорений, темп разговорный. Если снова станет хуже — остановись и отметь «Болею»: здоровье важнее плана. "
         val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when {
             toRace != null && toRace in 1..2 -> RunPlan.easy(st.copy(easyMinutes = minOf(st.easyMinutes, 20)), strides = 4).let {
                 it.copy(note = "До забега ${toRace} ${Ru.plural(toRace.toInt(), "день", "дня", "дней")}: только размяться, без усталости. " + it.note)
@@ -1307,6 +1347,8 @@ class TrainingRepository(
             ).let { it.copy(note = "Последняя тяжёлая перед забегом — короткая: освежить темп, не устать. " + it.note) }
             toRace != null && toRace in 3..7 && kind != SessionKind.RUN_QUALITY ->
                 RunPlan.easy(st.copy(easyMinutes = (minOf(st.easyMinutes, st.longMinutes) * 0.7).toInt().coerceAtLeast(20)), strides = 4)
+            sickLeft > 0 -> RunPlan.easy(guess ?: st, lighter, date.toEpochDay())
+                .let { if (guess != null) RunPlan.provisional(it) else it }.let { it.copy(note = sickNote + it.note) }
             kind == SessionKind.RUN_LONG || longEasy ->
                 if (guess != null) RunPlan.provisional(RunPlan.long(guess, lighter, date.toEpochDay())) else RunPlan.long(st, lighter, date.toEpochDay())
             kind == SessionKind.RUN_QUALITY -> when {
@@ -1647,6 +1689,14 @@ class TrainingRepository(
         val goal = store.profileNow()?.runGoal
         val hard = (0 until 14).map { from.plusDays(it.toLong()) }.filter { d ->
             if (paused(settings, d) || !needsTest(st, d, goal)) return@filter false
+            // Not within a week of being sick, nor while the runs after it are still easy.
+            if (sickEnd(settings, d)?.let { d.toEpochDay() - it <= SICK_NO_TRIAL_DAYS } == true || easyAfterSick(d) > 0) return@filter false
+            // Not the first run after more than a week without running: a trial is not run cold.
+            if (RunPlan.breakDays(st, d.toEpochDay()) != null && (from.toEpochDay() until d.toEpochDay()).none { e ->
+                    val day = LocalDate.ofEpochDay(e)
+                    !paused(settings, day) && program.week.on(day.dayOfWeek.value).any { it.isRun }
+                }
+            ) return@filter false
             val planned = program.week.on(d.dayOfWeek.value)
             val item = DayItem(d, planned, done.filter { it.epochDay == d.toEpochDay() })
             planned.any { it.kind == SessionKind.RUN_QUALITY && !item.isDone(it) }

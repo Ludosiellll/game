@@ -57,6 +57,9 @@ class PopulationTest {
             try {
                 val rnd = Random(id * 7 + 3)
                 val sickStart = p.sickFrom?.let { start.plusWeeks(it.toLong()) }
+                val sickEnd = sickStart?.plusWeeks(p.sickWeeks.toLong())?.minusDays(1)
+                // Half of those who fall ill say so, as a person would: «Болею» and a pause for the illness.
+                val marksSick = sickStart != null && id % 2 == 0
                 val sim = runBlocking {
                     val s = Simulation(ctx, "pop-$id", p.profile, p.athlete, start = start, runner = p.runner)
                     s.setUp()
@@ -66,10 +69,17 @@ class PopulationTest {
                             val ill = sickStart != null && d >= sickStart && d < sickStart.plusWeeks(p.sickWeeks.toLong())
                             !ill && rnd.nextDouble() >= p.miss
                         },
+                        beforeDay = { d ->
+                            if (marksSick && d == sickStart) runBlocking {
+                                s.repo.store.editSettings { it.withFeel(d, forma.app.data.Feel.SICK) }
+                                s.repo.pause(d, sickEnd!!)
+                            }
+                        },
                     )
                     s
                 }
                 line = check(p, sim, found)
+                if (marksSick) afterSick(sim, sickEnd!!, found)
                 advice(sim, found)
                 if (System.getenv("FORMA_SIM_TRACE") != null) File(out, "trace-$id.txt").writeText(sim.runLog.joinToString("\n") { r ->
                     "${r.day} ${r.type} st${r.stage + 1} ${r.title} rpe=${r.result.rpe} done=${r.result.completed} appV=${r.appVdot} trueV=${"%.1f".format(r.trueVdot)} ${r.outcomes}"
@@ -120,6 +130,15 @@ class PopulationTest {
         if (shown != done) found += "ADVICE_MISMATCH: shown ${shown - done.toSet()} done ${done - shown.toSet()}"
         val again = after.changes.map { it.id }.filter { id -> a.changes.any { it.id == id } }
         if (again.isNotEmpty()) found += "ADVICE_AGAIN: $again"
+    }
+
+    /** Back from being sick (said with «Болею»): the first two runs easy, no trial within a week. */
+    private fun afterSick(sim: Simulation, sickEnd: java.time.LocalDate, found: MutableList<String>) {
+        val after = sim.runLog.filter { it.day > sickEnd }.sortedBy { it.day }
+        after.take(2).filter { it.type != forma.core.run.RunType.EASY && it.type != forma.core.run.RunType.RUN_WALK }
+            .forEach { found += "SICK_HARD: ${it.type} ${it.day.toEpochDay() - sickEnd.toEpochDay()} days after being sick" }
+        after.filter { it.type == forma.core.run.RunType.TEST && it.day.toEpochDay() - sickEnd.toEpochDay() <= 7 }
+            .forEach { found += "SICK_TRIAL: a trial ${it.day.toEpochDay() - sickEnd.toEpochDay()} days after being sick" }
     }
 
     /** What a good plan must never do; the numbers for the table. */
