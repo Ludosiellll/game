@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollTo
@@ -104,10 +105,13 @@ class TrialDayTest {
                 FormaTheme(Looks.byId("carbon")) { Box(Modifier.fillMaxSize().background(F.c.bg)) { TodayScreen() } }
             }
         }
-        repeat(6) {
+        // The day is worked out after the screen appears: waited for, not a fixed time (slower under load).
+        compose.waitUntil(10_000) {
             Thread.sleep(150)
             shadowOf(Looper.getMainLooper()).idle()
             compose.waitForIdle()
+            compose.onAllNodesWithText("Сделано: Свободный бег").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithText("в следующий тяжёлый день", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Сделано: Свободный бег").performScrollTo()
         compose.onNodeWithText("в следующий тяжёлый день", substring = true).performScrollTo()
