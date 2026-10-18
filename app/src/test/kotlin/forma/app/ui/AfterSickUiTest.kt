@@ -9,6 +9,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import forma.app.data.Feel
@@ -37,7 +39,10 @@ import org.robolectric.annotation.Config
 import java.time.LocalDate
 import java.time.ZoneId
 
-/** Back from being sick, on the main screen: the day says the runs go easy and the first gym session is lighter. */
+/**
+ * Back from being sick, on the main screen: the day says the runs go easy and the first gym session is lighter, and
+ * «Оказалось, не болел» takes it back.
+ */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [36], qualifiers = "w360dp-h780dp-xxhdpi")
 class AfterSickUiTest {
@@ -83,5 +88,16 @@ class AfterSickUiTest {
             compose.onAllNodesWithText("После болезни: ещё 2 пробежки — лёгкие, первая силовая — облегчённая", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Лёгкий бег", substring = true).assertExists()
+        // It was nothing after all: taken back, the day goes by the plan.
+        compose.onNodeWithText("Оказалось, не болел", ignoreCase = true).performScrollTo().performClick()
+        compose.onNodeWithText("Да, не болел").performClick()
+        compose.waitUntil(10_000) {
+            settle()
+            compose.onAllNodesWithText("После болезни", substring = true).fetchSemanticsNodes().isEmpty()
+        }
+        compose.onNodeWithText("Оказалось, не болел", ignoreCase = true).assertDoesNotExist()
+        // Monday's run as planned again, on the same screen.
+        compose.onNodeWithText("Лёгкий бег", substring = true).assertDoesNotExist()
+        kotlin.test.assertTrue(Feel.SICK.name !in runBlocking { repo.store.settingsNow() }.feels.values)
     }
 }

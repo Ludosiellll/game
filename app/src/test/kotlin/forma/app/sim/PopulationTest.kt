@@ -60,6 +60,8 @@ class PopulationTest {
                 val sickEnd = sickStart?.plusWeeks(p.sickWeeks.toLong())?.minusDays(1)
                 // Half of those who fall ill say so, as a person would: «Болею» and a pause for the illness.
                 val marksSick = sickStart != null && id % 2 == 0
+                // Some who are not ill think they are: «Болею» with the pause on a Friday, «Оказалось, не болел» the next day.
+                val falseAlarm = start.plusWeeks(5).plusDays(4).takeIf { p.sickFrom == null && id % 10 == 5 }
                 val sim = runBlocking {
                     val s = Simulation(ctx, "pop-$id", p.profile, p.athlete, start = start, runner = p.runner)
                     s.setUp()
@@ -67,13 +69,18 @@ class PopulationTest {
                         weeks * 7,
                         trains = { d ->
                             val ill = sickStart != null && d >= sickStart && d < sickStart.plusWeeks(p.sickWeeks.toLong())
-                            !ill && rnd.nextDouble() >= p.miss
+                            !ill && rnd.nextDouble() >= p.miss && d != falseAlarm
                         },
                         beforeDay = { d ->
                             if (marksSick && d == sickStart) runBlocking {
                                 s.repo.store.editSettings { it.withFeel(d, forma.app.data.Feel.SICK) }
                                 s.repo.pause(d, sickEnd!!)
                             }
+                            if (d == falseAlarm) runBlocking {
+                                s.repo.store.editSettings { it.withFeel(d, forma.app.data.Feel.SICK) }
+                                s.repo.pause(d, d.plusDays(2))
+                            }
+                            if (d == falseAlarm?.plusDays(1)) runBlocking { notSick(s.repo, d, falseAlarm!!, found) }
                         },
                     )
                     s
@@ -130,6 +137,15 @@ class PopulationTest {
         if (shown != done) found += "ADVICE_MISMATCH: shown ${shown - done.toSet()} done ${done - shown.toSet()}"
         val again = after.changes.map { it.id }.filter { id -> a.changes.any { it.id == id } }
         if (again.isNotEmpty()) found += "ADVICE_AGAIN: $again"
+    }
+
+    /** «Болею» taken back the day after: no sickness left and no pause — the Friday is an ordinary skipped day. */
+    private suspend fun notSick(repo: forma.app.data.TrainingRepository, d: LocalDate, marked: LocalDate, found: MutableList<String>) {
+        repo.notSick(d)
+        val s = repo.store.settingsNow()
+        if (s.feelOn(marked) == forma.app.data.Feel.SICK) found += "NOT_SICK_MARK: still «Болею» on $marked"
+        if (s.pausedOn(marked) || s.pausedOn(d)) found += "NOT_SICK_PAUSE: the pause stayed"
+        if (repo.sickEnd(s, d.plusDays(1)) != null || repo.easyAfterSick(d) > 0 || repo.liftAfterSick(d)) found += "NOT_SICK_AFTER: still back from being sick"
     }
 
     /** Back from being sick (said with «Болею»): the first two runs easy, no trial within a week. */

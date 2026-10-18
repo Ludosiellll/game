@@ -92,6 +92,7 @@ fun TodayScreen() {
     val rows by remember { repo.setRows() }.collectAsState(initial = emptyList())
     val bw by remember { repo.bodyWeightLookup() }.collectAsState(initial = { _: Long -> 75.0 })
     var pickTemplate by remember { mutableStateOf(false) }
+    var askNotSick by remember { mutableStateOf(false) }
     // One start at a time, and never silently into an unfinished one of another session or another day.
     val startLift = rememberLiftStart(today, nav::push)
     val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
@@ -101,7 +102,18 @@ fun TodayScreen() {
         scope.launch { repo.updateSettings { it.withFeel(today, f) } }
     }
     val catchUp by produceState<CatchUp.Suggestion?>(null, week, settings, today) { value = repo.catchUp(today) }
-    val trialOn by produceState<LocalDate?>(null, program, today, week) { value = repo.trialDay(today) }
+    // Being sick lately changes the day's sessions and the trial; «Оказалось, не болел» changes them back on this screen.
+    val sick = repo.sickEnd(settings, today)
+    val trialOn by produceState<LocalDate?>(null, program, today, week, sick) { value = repo.trialDay(today) }
+    // Back from being sick: the first runs easy, the first gym session lighter — said above the day's sessions.
+    val afterSick by produceState<String?>(null, today, week, feel, settings) {
+        val runs = repo.easyAfterSick(today)
+        val lift = repo.liftAfterSick(today)
+        value = if (runs == 0 && !lift || feel == Feel.SICK) null else "После болезни: " + listOfNotNull(
+            if (runs > 0) "ещё $runs ${Ru.plural(runs, "пробежка", "пробежки", "пробежек")} — лёгкие" else null,
+            if (lift) "первая силовая — облегчённая" else null,
+        ).joinToString(", ") + ". Если снова станет хуже — «Болею»."
+    }
 
     val p = program ?: return
     val weekNo = ProgramGenerator.programWeek(p, today)
@@ -160,51 +172,47 @@ fun TodayScreen() {
                 PauseCard(
                     java.time.LocalDate.ofEpochDay(settings.pauseUntil!!),
                     restarts = settings.pauseUntil!! - (settings.pauseFrom ?: settings.pauseUntil!!) + 1 >= 7,
+                    onNotSick = if (repo.sickPauseOn(settings, today)) ({ askNotSick = true }) else null,
                 ) { scope.launch { repo.resume(today) } }
                 // Trained on a pause day anyway: what was done shows, as it counts in the week.
                 extra.forEach { w -> OffPlanCard(w, todayItem?.catchUps?.get(w.id)) }
             }
             todays.isEmpty() && extra.isNotEmpty() -> {
+                afterSick?.let { AfterSickNote(it) { askNotSick = true } }
                 // A rest day trained on anyway (a missed session caught up, or one extra): said as done, not as rest.
                 extra.forEach { w -> OffPlanCard(w, todayItem?.catchUps?.get(w.id)) }
                 NextPlannedCard(today)
             }
-            todays.isEmpty() -> RestCard(
-                week, today, p, catchUp, onFree = { nav.push(Screen.RunSetup(repo.freeRun(me?.lapMeters), null)) }, onOther = { pickTemplate = true },
-                onCatchUp = { s ->
-                    scope.launch {
-                        if (s.kind == SessionKind.LIFT) startLift(s.templateId!!, false)
-                        else nav.push(Screen.RunSetup(repo.runFor(s.kind, today), s.kind))
-                    }
-                },
-            )
+            todays.isEmpty() -> {
+                afterSick?.let { AfterSickNote(it) { askNotSick = true } }
+                RestCard(
+                    week, today, p, catchUp, onFree = { nav.push(Screen.RunSetup(repo.freeRun(me?.lapMeters), null)) }, onOther = { pickTemplate = true },
+                    onCatchUp = { s ->
+                        scope.launch {
+                            if (s.kind == SessionKind.LIFT) startLift(s.templateId!!, false)
+                            else nav.push(Screen.RunSetup(repo.runFor(s.kind, today), s.kind))
+                        }
+                    },
+                )
+            }
             else -> {
                 if (a == null && todays.any { todayItem?.isDone(it) != true }) FeelRow(feel, tired = (form ?: 0.0) < restLine) { setFeel(it) }
                 // The gym and a run today: which first and why (how tired, the exercises, the legs of the last days).
-                val order by produceState<forma.app.data.DayOrder?>(null, todays, feel, week) { value = repo.dayOrder(today, feel == Feel.LOW) }
+                val order by produceState<forma.app.data.DayOrder?>(null, todays, feel, week, sick) { value = repo.dayOrder(today, feel == Feel.LOW) }
                 if (feel == Feel.SICK) {
                     SickCard(today, onTrainAnyway = { setFeel(Feel.UNSET) }, onPause = { scope.launch { repo.pause(today, today.plusDays(SICK_PAUSE_DAYS - 1L)) } })
                 } else order?.let { o -> OrderCard(o, runDone = todayItem?.isDone(o.run) == true, liftDone = todayItem?.isDone(o.lift) == true) }
-                // Back from being sick: the first runs easy, the first gym session lighter — said above the day's sessions.
-                val afterSick by produceState<String?>(null, today, week, feel) {
-                    val runs = repo.easyAfterSick(today)
-                    val lift = repo.liftAfterSick(today)
-                    value = if (runs == 0 && !lift) null else "После болезни: " + listOfNotNull(
-                        if (runs > 0) "ещё $runs ${Ru.plural(runs, "пробежка", "пробежки", "пробежек")} — лёгкие" else null,
-                        if (lift) "первая силовая — облегчённая" else null,
-                    ).joinToString(", ") + ". Если снова станет хуже — «Болею»."
-                }
-                if (feel != Feel.SICK) afterSick?.let { Banner(it, F.c.warn) }
+                afterSick?.let { AfterSickNote(it) { askNotSick = true } }
                 if (feel != Feel.SICK) (order?.ordered(todays) ?: todays).forEach { s ->
                     val light = feel == Feel.LOW
                     if (s.kind == SessionKind.LIFT) {
-                        LiftCard(s, p, today, todayItem?.doneFor(s), light) {
+                        LiftCard(s, p, today, todayItem?.doneFor(s), light, sick) {
                             scope.launch {
                                 startLift(s.templateId!!, light)
                             }
                         }
                     } else {
-                        RunCard(s, today, todayItem?.doneFor(s), light) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
+                        RunCard(s, today, todayItem?.doneFor(s), light, sick) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
                     }
                 }
                 extra.forEach { w -> OffPlanCard(w, todayItem?.catchUps?.get(w.id)) }
@@ -289,6 +297,28 @@ fun TodayScreen() {
                 }
             },
             confirmButton = { TextButton({ pickTemplate = false }) { Text("Отмена", style = T.body(15.sp)) } },
+            containerColor = F.c.surface,
+        )
+    }
+
+    if (askNotSick) {
+        AlertDialog(
+            onDismissRequest = { askNotSick = false },
+            title = { Text("Оказалось, не болел?", style = T.title(20.sp)) },
+            text = {
+                Text(
+                    "Снимутся отметка «Болею» и пауза. Эти дни станут обычным пропуском, как если бы ты просто не тренировался. " +
+                        "Бег и зал пойдут по плану, без лёгкого возвращения.",
+                    style = T.secondary(15.sp),
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    askNotSick = false
+                    scope.launch { repo.notSick(today) }
+                }) { Text("Да, не болел", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+            },
+            dismissButton = { TextButton({ askNotSick = false }) { Text("Отмена", style = T.body(15.sp)) } },
             containerColor = F.c.surface,
         )
     }
@@ -417,11 +447,11 @@ private fun WeekStrip(week: List<DayItem>, today: LocalDate, since: Long?) {
 }
 
 @Composable
-private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, doneAs: WorkoutEntity?, light: Boolean, onStart: () -> Unit) {
+private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, doneAs: WorkoutEntity?, light: Boolean, sick: Long?, onStart: () -> Unit) {
     val repo = LocalRepo.current
     val done = doneAs != null
     // Done: what was done (its own plan and sets), not what the plan holds now — that is the next session.
-    val plan by produceState<LiftPlan?>(null, s.templateId, today, light, done) {
+    val plan by produceState<LiftPlan?>(null, s.templateId, today, light, done, sick) {
         value = if (done) null else runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
     }
     val t = program.templates.firstOrNull { it.id == s.templateId }
@@ -483,14 +513,14 @@ fun prescriptionShort(sets: Int, reps: Int, weight: Double?, exerciseId: String)
 }
 
 @Composable
-private fun RunCard(s: PlannedSession, today: LocalDate, doneAs: forma.app.data.WorkoutEntity?, light: Boolean, onStart: (RunWorkout) -> Unit) {
+private fun RunCard(s: PlannedSession, today: LocalDate, doneAs: forma.app.data.WorkoutEntity?, light: Boolean, sick: Long?, onStart: (RunWorkout) -> Unit) {
     val done = doneAs != null
     val repo = LocalRepo.current
     // A free run done today in its place (for a trial): said as it is, not as the plan's. Any other run done is the
     // plan's own (the planned one, lighter for a bad day, entered by hand): it shows as it was run, for the plan has
     // moved on since — what it holds now is the next session.
     val other = doneAs != null && doneAs.templateId == forma.core.run.RunType.FREE.name
-    val workout by produceState<RunWorkout?>(null, s.kind, today, light, doneAs?.id) {
+    val workout by produceState<RunWorkout?>(null, s.kind, today, light, doneAs?.id, sick) {
         value = doneAs?.takeIf { !other }?.let { repo.runPlanOf(it.id) } ?: repo.runFor(s.kind, today, light)
     }
     val w = workout ?: return
@@ -599,8 +629,15 @@ private fun SickCard(today: LocalDate, onTrainAnyway: () -> Unit, onPause: () ->
     }
 }
 
+/** Back from being sick: what the first sessions are, and the way back if it was nothing after all. */
 @Composable
-private fun PauseCard(until: LocalDate, restarts: Boolean, onBack: () -> Unit) {
+private fun AfterSickNote(text: String, onNotSick: () -> Unit) {
+    Banner(text, F.c.warn)
+    GhostButton("Оказалось, не болел", onNotSick, Modifier.fillMaxWidth())
+}
+
+@Composable
+private fun PauseCard(until: LocalDate, restarts: Boolean, onNotSick: (() -> Unit)?, onBack: () -> Unit) {
     FCard {
         SectionLabel("Пауза")
         Text("Отдыхаем до ${shortDate(until)}", style = T.title(22.sp))
@@ -610,6 +647,8 @@ private fun PauseCard(until: LocalDate, restarts: Boolean, onBack: () -> Unit) {
             style = T.secondary(14.sp),
         )
         GhostButton("Вернуться сегодня", onBack, Modifier.fillMaxWidth())
+        // A pause from «Болею» that turned out to be nothing: its days are ordinary skipped days.
+        if (onNotSick != null) GhostButton("Оказалось, не болел", onNotSick, Modifier.fillMaxWidth())
     }
 }
 

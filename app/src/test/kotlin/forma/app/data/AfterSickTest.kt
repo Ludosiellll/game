@@ -135,6 +135,84 @@ class AfterSickTest {
         assertNotNull(repo.trialDay(thursday.plusDays(1)))
     }
 
+    /**
+     * «Болею» on Friday with the pause, and on Sunday it turns out it was nothing: taken back, the days are just skipped —
+     * Saturday's sessions missed as any (to catch up on), Monday as planned, the trial where it was.
+     */
+    @Test fun notSickAfterAllTheDaysAreJustSkipped() = runBlocking<Unit> {
+        val repo = denis("sick-not")
+        val sat = fri.plusDays(1)
+        val sun = fri.plusDays(2)
+        sick(repo)
+        at(sun)
+        assertNull(repo.catchUp(sun))
+        repo.notSick(sun)
+        val s = repo.store.settingsNow()
+        assertTrue(Feel.SICK.name !in s.feels.values, "${s.feels}")
+        assertEquals(Feel.GOOD, s.feelOn(mon.plusDays(3)))
+        assertFalse(s.pausedOn(fri) || s.pausedOn(sat) || s.pausedOn(sun))
+        assertNull(repo.sickEnd(s, mon.plusDays(7)))
+        // Saturday's run is missed as on any skipped day: offered today, a rest day.
+        assertEquals(SessionKind.RUN_EASY, repo.catchUp(sun)?.session?.kind)
+        val monday = mon.plusDays(7)
+        at(monday)
+        assertEquals(0, repo.easyAfterSick(monday))
+        assertEquals(RunType.GOAL_PACE, repo.runFor(SessionKind.RUN_QUALITY, monday).type)
+        assertFalse(repo.liftPlan("upper_b", monday.plusDays(1)).deload)
+        assertEquals(mon.plusDays(10), repo.trialDay(monday))
+    }
+
+    /** Taken back on a day of the pause: the pause is gone, today is an ordinary day of the plan. */
+    @Test fun notSickInThePauseEndsIt() = runBlocking<Unit> {
+        val repo = denis("sick-not-mid")
+        val sat = fri.plusDays(1)
+        sick(repo)
+        at(sat)
+        assertTrue(repo.sickPauseOn(repo.store.settingsNow(), sat))
+        repo.notSick(sat)
+        assertFalse(repo.paused(repo.store.settingsNow(), sat))
+        assertFalse(repo.sickPauseOn(repo.store.settingsNow(), sat))
+        val lower = repo.liftPlan("lower_a", sat)
+        assertFalse(lower.deload)
+        assertNull(lower.why)
+    }
+
+    /** Sick for real on Friday, a false alarm a week later: only the false alarm is taken back. */
+    @Test fun notSickTakesBackOnlyTheLastSickness() = runBlocking<Unit> {
+        val repo = denis("sick-not-last")
+        sick(repo)
+        ran(repo, mon.plusDays(7))
+        val thu = mon.plusDays(10)
+        repo.store.editSettings { it.withFeel(thu, Feel.SICK) }
+        repo.pause(thu, thu.plusDays(2))
+        at(thu.plusDays(1))
+        repo.notSick(thu.plusDays(1))
+        val s = repo.store.settingsNow()
+        assertEquals(Feel.SICK, s.feelOn(fri))
+        assertEquals(Feel.UNSET, s.feelOn(thu))
+        assertFalse(s.pausedOn(thu))
+        assertTrue(s.pausedOn(fri.plusDays(2)))
+        // The real one still counts: one easy run of the two to go.
+        assertEquals(fri.plusDays(2).toEpochDay(), repo.sickEnd(s, thu.plusDays(3)))
+        assertEquals(1, repo.easyAfterSick(thu.plusDays(3)))
+    }
+
+    /** Sick again right after a pause: one sickness, taken back whole. A long pause moved the block ahead: back to this week. */
+    @Test fun notSickTakesBackTheWholeSickness() = runBlocking<Unit> {
+        val repo = denis("sick-not-whole")
+        sick(repo)
+        val monday = mon.plusDays(7)
+        repo.store.editSettings { it.withFeel(monday, Feel.SICK) }
+        repo.pause(monday, monday.plusDays(9))
+        assertEquals(monday.plusDays(7).toEpochDay(), repo.store.programNow()!!.startEpochDay)
+        at(monday.plusDays(2))
+        repo.notSick(monday.plusDays(2))
+        val s = repo.store.settingsNow()
+        assertTrue(Feel.SICK.name !in s.feels.values, "${s.feels}")
+        assertFalse(s.pausedOn(fri) || s.pausedOn(monday) || s.pausedOn(monday.plusDays(2)))
+        assertEquals(monday.toEpochDay(), repo.store.programNow()!!.startEpochDay)
+    }
+
     /** «Болею» pressed by mistake and set back the same day: no sickness. */
     @Test fun aMistapSetBackIsNoSickness() = runBlocking<Unit> {
         val repo = denis("sick-mistap")

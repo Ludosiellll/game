@@ -386,6 +386,35 @@ class TrainingRepository(
         /** Why the first gym session after being sick is lighter, said in it. */
         const val SICK_LIFT = "После болезни — облегчённая: меньше подходов и вес легче, без отказа. Прогресс и план не сдвигаются."
 
+        /** Every pause as [from, until]: the ones before and the last one. */
+        private fun pausesOf(s: Settings): List<List<Long>> =
+            s.pastPauses.filter { it.size == 2 } + listOfNotNull(s.pauseUntil?.let { listOf(s.pauseFrom ?: it, it) })
+
+        /**
+         * [s] with the last sickness up to [day] taken back: its «Болею» marks and the pauses begun on them (or with them in)
+         * are gone. The last sickness is the last mark with its pause and the marks and pauses right before it, one free day
+         * between at most; an earlier one stays.
+         */
+        fun withoutSickness(s: Settings, day: LocalDate): Settings {
+            val pauses = pausesOf(s)
+            var from = Long.MAX_VALUE
+            val sick = s.feels.filterValues { it == Feel.SICK.name }.keys.filter { it <= day.toEpochDay() }.sortedDescending()
+            for (m in sick) {
+                val with = pauses.filter { m in it[0]..it[1] }
+                if (from != Long.MAX_VALUE && maxOf(m, with.maxOfOrNull { it[1] } ?: m) < from - 2) break
+                from = minOf(from, m, with.minOfOrNull { it[0] } ?: m)
+            }
+            val marks = sick.filter { it >= from }.toSet()
+            val gone = pauses.filter { p -> marks.any { it in p[0]..p[1] } }.toSet()
+            val last = s.pauseUntil?.let { listOf(s.pauseFrom ?: it, it) }
+            return s.copy(
+                feels = s.feels - marks,
+                pastPauses = s.pastPauses.filter { it !in gone },
+                pauseFrom = if (last in gone) null else s.pauseFrom,
+                pauseUntil = if (last in gone) null else s.pauseUntil,
+            )
+        }
+
         /** The most sets of one exercise the plan can be set to. */
         const val MAX_SETS = 8
         /** Rest between sets the plan can be set to, seconds. */
@@ -644,9 +673,29 @@ class TrainingRepository(
     fun sickEnd(settings: Settings, date: LocalDate): Long? {
         val d = date.toEpochDay()
         val sick = settings.feels.filterValues { it == Feel.SICK.name }.keys
-        val pauses = settings.pastPauses.filter { it.size == 2 } + listOfNotNull(settings.pauseUntil?.let { listOf(settings.pauseFrom ?: it, it) })
-        val ends = sick.filter { it < d } + pauses.filter { p -> sick.any { it in p[0]..p[1] } }.map { minOf(it[1], d - 1) }
+        val ends = sick.filter { it < d } + pausesOf(settings).filter { p -> sick.any { it in p[0]..p[1] } }.map { minOf(it[1], d - 1) }
         return ends.filter { it >= d - SICK_WINDOW }.maxOrNull()
+    }
+
+    /** Whether [day] is in a pause begun on a «Болею» day (or with one in it): the sick card's pause. */
+    fun sickPauseOn(settings: Settings, day: LocalDate): Boolean {
+        val d = day.toEpochDay()
+        val sick = settings.feels.filterValues { it == Feel.SICK.name }.keys
+        return pausesOf(settings).any { p -> d in p[0]..p[1] && sick.any { it in p[0]..p[1] } }
+    }
+
+    /**
+     * «Болею» taken back — it was nothing after all ([withoutSickness]): the days of it are ordinary skipped days, missed as
+     * any, and the runs and the gym go by the plan with no easy return.
+     */
+    suspend fun notSick(day: LocalDate = today()) {
+        val before = store.settingsNow()
+        if (sickEnd(before, day.plusDays(1)) == null) return
+        store.editSettings { withoutSickness(it, day) }
+        // A pause of a week or more moved the block to the week of return: back to this week, as at an early return.
+        val movedAhead = (store.programNow()?.startEpochDay ?: Long.MIN_VALUE) > mondayOf(day).toEpochDay()
+        if (sickPauseOn(before, day) && movedAhead) restartBlock(day)
+        onChange()
     }
 
     /** Runs still to go easy after being sick ([SICK_EASY_RUNS] minus those done since); 0 — none. */
