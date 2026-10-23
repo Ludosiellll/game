@@ -109,6 +109,15 @@ class RunManualUiTest {
 
     private fun runs(repo: TrainingRepository) = runBlocking { repo.db.workouts().allDone().filter { it.kind == "RUN" } }
 
+    /** The one run saved: the save is a few writes off the main thread, waited for rather than a fixed time. */
+    private fun saved(repo: TrainingRepository): forma.app.data.WorkoutEntity {
+        compose.waitUntil(10_000) {
+            settle()
+            runs(repo).isNotEmpty()
+        }
+        return runs(repo).single()
+    }
+
     @Test fun theSetupScreenLeadsToTheManualEntry() {
         val repo = repo("ui-manual-setup")
         val easy = runBlocking { repo.runFor(SessionKind.RUN_EASY, repo.today()) }
@@ -134,9 +143,12 @@ class RunManualUiTest {
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-runmanual.png")
         compose.onNodeWithText("Сохранить").performScrollTo().performClick()
-        settle()
-        assertTrue(compose.onAllNodesWithText("Сохранено", ignoreCase = true).fetchSemanticsNodes().isNotEmpty())
-        val saved = runs(repo).single()
+        // The save is a few writes off the main thread: waited for, not a fixed time (slower under a full test run).
+        compose.waitUntil(10_000) {
+            settle()
+            compose.onAllNodesWithText("Сохранено", ignoreCase = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        val saved = saved(repo)
         val summary = AppJson.decodeFromString(RunSummary.serializer(), saved.summaryJson!!)
         assertTrue(summary.manual)
         assertTrue(summary.outcomes.any { it is RunOutcome.StageUp }, summary.outcomes.toString())
@@ -159,8 +171,7 @@ class RunManualUiTest {
         type("Дистанция", "5,4")
         assertTrue(compose.onAllNodesWithText("Средний темп 5:57", substring = true).fetchSemanticsNodes().isNotEmpty())
         compose.onNodeWithText("Сохранить").performScrollTo().performClick()
-        settle()
-        val saved = runs(repo).single()
+        val saved = saved(repo)
         assertEquals(repo.today().minusDays(1).toEpochDay(), saved.epochDay)
         assertEquals(32 * 60 + 10, saved.durationSec)
         val run = runBlocking { repo.db.runs().get(saved.id)!! }
@@ -179,8 +190,7 @@ class RunManualUiTest {
         compose.onNodeWithText("4").performScrollTo().performClick()
         settle()
         compose.onNodeWithText("Сохранить").performScrollTo().performClick()
-        settle()
-        val run = runBlocking { repo.db.runs().get(runs(repo).single().id)!! }
+        val run = runBlocking { repo.db.runs().get(saved(repo).id)!! }
         assertEquals(4 * 230.0, run.distanceM!!, 1e-6)
     }
 
@@ -193,8 +203,10 @@ class RunManualUiTest {
         compose.onNodeWithText("4").performScrollTo().performClick()
         settle()
         compose.onNodeWithText("Сохранить").performScrollTo().performClick()
-        settle()
-        assertTrue(compose.onAllNodesWithText("Короткая пробежка длительность не меняет", substring = true).fetchSemanticsNodes().isNotEmpty())
+        compose.waitUntil(10_000) {
+            settle()
+            compose.onAllNodesWithText("Короткая пробежка длительность не меняет", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
         assertTrue(compose.onAllNodesWithText("Длительность пока прежняя", substring = true).fetchSemanticsNodes().isEmpty())
     }
 
@@ -206,8 +218,7 @@ class RunManualUiTest {
         compose.onNodeWithText("9").performScrollTo().performClick()
         settle()
         compose.onNodeWithText("Сохранить").performScrollTo().performClick()
-        settle()
-        val summary = AppJson.decodeFromString(RunSummary.serializer(), runs(repo).single().summaryJson!!)
+        val summary = AppJson.decodeFromString(RunSummary.serializer(), saved(repo).summaryJson!!)
         assertTrue(summary.outcomes.contains(RunOutcome.TestTime(1495, 338)), summary.outcomes.toString())
     }
 }
