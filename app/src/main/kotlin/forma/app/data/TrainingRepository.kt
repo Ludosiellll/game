@@ -1315,9 +1315,10 @@ class TrainingRepository(
     private fun catchUpWeek(program: Program?, settings: Settings, monday: LocalDate, done: List<WorkoutEntity>): List<CatchUp.Day> =
         (1..7).map { d ->
             val date = monday.plusDays(d - 1L)
-            val planned = if (program == null || paused(settings, date)) emptyList() else program.week.on(d)
+            val pause = paused(settings, date)
+            val planned = if (program == null || pause) emptyList() else program.week.on(d)
             val mine = done.filter { it.epochDay == date.toEpochDay() }.sortedBy { it.startedAt }
-            CatchUp.Day(d, planned, mine.map(::asSession), mine.map(::legsOf))
+            CatchUp.Day(d, planned, mine.map(::asSession), mine.map(::legsOf), paused = pause)
         }
 
     /** The first day of [monday]'s week the plan held (catch-up ignores what was planned before it). */
@@ -1400,11 +1401,18 @@ class TrainingRepository(
                 .let { if (guess != null) RunPlan.provisional(it) else it }.let { it.copy(note = sickNote + it.note) }
             kind == SessionKind.RUN_LONG || longEasy ->
                 if (guess != null) RunPlan.provisional(RunPlan.long(guess, lighter, date.toEpochDay())) else RunPlan.long(st, lighter, date.toEpochDay())
-            // The trial was due, but this is the first run after more than a week without running: not a trial cold, nor a
-            // hard session in its place — easy today, the trial on the next hard day ([trialDay]).
-            kind == SessionKind.RUN_QUALITY && RunPlan.breakDays(saved, date.toEpochDay()) != null && needsTest(st, date, goal) ->
-                RunPlan.easy(guess ?: st, lighter, date.toEpochDay()).let { if (guess != null) RunPlan.provisional(it) else it }
-                    .let { it.copy(note = "Контрольный — не первой пробежкой после перерыва: сегодня лёгкий, чтобы втянуться, контрольный — в следующий тяжёлый день. " + it.note) }
+            // The first run after more than a week without running: no hard session cold, nor a due trial — easy today, the
+            // hard ones from the next hard day (the trial there, [trialDay]). Whether a trial was due or not: two people
+            // back from the same break got an easy run and race-pace reps.
+            kind == SessionKind.RUN_QUALITY && RunPlan.breakDays(saved, date.toEpochDay()) != null ->
+                RunPlan.easy(guess ?: st, lighter, date.toEpochDay()).let { if (guess != null) RunPlan.provisional(it) else it }.let {
+                    it.copy(
+                        note = (
+                            if (needsTest(st, date, goal)) "Контрольный — не первой пробежкой после перерыва: сегодня лёгкий, чтобы втянуться, контрольный — в следующий тяжёлый день. "
+                            else "Тяжёлая — не первой пробежкой после перерыва: сегодня лёгкий, чтобы втянуться, тяжёлые — со следующего тяжёлого дня. "
+                            ) + it.note,
+                    )
+                }
             kind == SessionKind.RUN_QUALITY -> when {
                 !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date))
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
@@ -1783,17 +1791,11 @@ class TrainingRepository(
             val s = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
             return@withLock w.id to (s ?: RunSummary(emptyList(), max(1, (w.durationSec ?: 60) / 60), w.load ?: 0.0))
         }
-        val program = store.programNow()
-        val caps = capsOn(date) ?: forma.core.run.RunCaps(45, 90)
         val st = store.runStateNow()
-        val after = RunPlan.after(st, workout, result, caps, date.toEpochDay(), goal = store.profileNow()?.runGoal)
-        var next = after.state
-        if (workout.type == RunType.TEST && after.outcomes.any { it is RunOutcome.VdotChanged }) next = next.copy(lastTestDay = date.toEpochDay())
-        // A test run but not counted (no time, a doubtful one): the next waits two weeks, not until the next hard day.
-        else if (workout.type == RunType.TEST) next = next.copy(lastTrialTryDay = date.toEpochDay())
+        val (next, outcomes) = decideRun(st, workout, result, date)
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
-        val summary = RunSummary(after.outcomes, minutes, load, result.laps.orEmpty(), result.cadence, manual, result.kmSplits.orEmpty())
+        val summary = RunSummary(outcomes, minutes, load, result.laps.orEmpty(), result.cadence, manual, result.kmSplits.orEmpty())
         val avgPace = result.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
         val id = db.withTransaction {
             val id = db.workouts().insert(
@@ -1816,12 +1818,59 @@ class TrainingRepository(
         }
         // The progress moves only once the run is safely stored.
         store.setRunState(next)
+        store.setLastRun(LastRun(id, date.toEpochDay(), st, next, workout, result))
         // 30 minutes of running reached: the week of a beginner (run/walk only) becomes a runner's week — hard sessions,
         // a trial — with the progress kept. Seen in half-year simulations: without it a graduate had easy runs only, and
         // no trial, for months.
-        if (after.outcomes.any { it is RunOutcome.Graduated }) graduate()
+        if (outcomes.any { it is RunOutcome.Graduated }) graduate()
         onChange()
         id to summary
+    }
+
+    /** The running progress after [result] of [workout] run on [date] from [st], and the plan's decisions on it. */
+    private suspend fun decideRun(st: RunState, workout: RunWorkout, result: RunResult, date: LocalDate): Pair<RunState, List<RunOutcome>> {
+        val caps = capsOn(date) ?: forma.core.run.RunCaps(45, 90)
+        val after = RunPlan.after(st, workout, result, caps, date.toEpochDay(), goal = store.profileNow()?.runGoal)
+        var next = after.state
+        if (workout.type == RunType.TEST && after.outcomes.any { it is RunOutcome.VdotChanged }) next = next.copy(lastTestDay = date.toEpochDay())
+        // A test run but not counted (no time, a doubtful one): the next waits two weeks, not until the next hard day.
+        else if (workout.type == RunType.TEST) next = next.copy(lastTrialTryDay = date.toEpochDay())
+        return next to after.outcomes
+    }
+
+    /**
+     * The rating of a finished workout put right ("how hard it was"): its load — and so freshness — follows. The last
+     * run saved, while nothing has been built on it (no run since, the progress as it left it), is decided again as if
+     * rated so: easy runs longer or shorter, a ladder's step. An older run keeps its decisions: the runs after it were
+     * planned from them. True when the plan decided again.
+     */
+    suspend fun setRating(workoutId: Long, rpe: Int): Boolean = sessionLock.withLock {
+        val w = db.workouts().get(workoutId)?.takeIf { it.status == Status.DONE } ?: return@withLock false
+        val r = rpe.coerceIn(1, 10)
+        if (w.rpe == r) return@withLock false
+        val load = TrainingLoad.sessionLoad(r, (w.durationSec ?: 0) / 60.0)
+        if (w.kind == Kind.LIFT) {
+            val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
+            db.workouts().update(w.copy(rpe = r, load = load, summaryJson = summary?.let { AppJson.encodeToString(LiftSummary.serializer(), it.copy(load = load)) } ?: w.summaryJson))
+            onChange()
+            return@withLock false
+        }
+        val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
+        val last = store.lastRunNow()?.takeIf { it.workoutId == workoutId && it.after == store.runStateNow() }
+        var outcomes = summary?.outcomes
+        if (last != null) {
+            val result = last.result.copy(rpe = r)
+            val (next, decided) = decideRun(last.before, last.workout, result, LocalDate.ofEpochDay(last.day))
+            store.setRunState(next)
+            store.setLastRun(last.copy(after = next, result = result))
+            db.runs().get(workoutId)?.let { db.runs().insert(it.copy(vdotAfter = next.vdot)) }
+            if (decided.any { it is RunOutcome.Graduated } && outcomes?.any { it is RunOutcome.Graduated } != true) graduate()
+            outcomes = decided
+        }
+        val fixed = summary?.copy(load = load, outcomes = outcomes ?: summary.outcomes)
+        db.workouts().update(w.copy(rpe = r, load = load, summaryJson = fixed?.let { AppJson.encodeToString(RunSummary.serializer(), it) } ?: w.summaryJson))
+        onChange()
+        last != null
     }
 
     /**

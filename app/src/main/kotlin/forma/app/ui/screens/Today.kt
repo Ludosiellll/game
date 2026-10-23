@@ -206,13 +206,13 @@ fun TodayScreen() {
                 if (feel != Feel.SICK) (order?.ordered(todays) ?: todays).forEach { s ->
                     val light = feel == Feel.LOW
                     if (s.kind == SessionKind.LIFT) {
-                        LiftCard(s, p, today, todayItem?.doneFor(s), light, sick) {
+                        LiftCard(s, p, today, todayItem?.doneFor(s), light, sick, ahead = todayItem?.doneLaterFor(s)) {
                             scope.launch {
                                 startLift(s.templateId!!, light)
                             }
                         }
                     } else {
-                        RunCard(s, today, todayItem?.doneFor(s), light, sick) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
+                        RunCard(s, today, todayItem?.doneFor(s), light, sick, ahead = todayItem?.doneLaterFor(s)) { w -> nav.push(Screen.RunSetup(w, s.kind)) }
                     }
                 }
                 extra.forEach { w -> OffPlanCard(w, todayItem?.catchUps?.get(w.id)) }
@@ -447,7 +447,10 @@ private fun WeekStrip(week: List<DayItem>, today: LocalDate, since: Long?) {
 }
 
 @Composable
-private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, doneAs: WorkoutEntity?, light: Boolean, sick: Long?, onStart: () -> Unit) {
+private fun LiftCard(
+    s: PlannedSession, program: Program, today: LocalDate, doneAs: WorkoutEntity?, light: Boolean, sick: Long?, ahead: WorkoutEntity? = null,
+    onStart: () -> Unit,
+) {
     val repo = LocalRepo.current
     val done = doneAs != null
     // Done: what was done (its own plan and sets), not what the plan holds now — that is the next session.
@@ -477,6 +480,11 @@ private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, done
             DoneLiftDetails(doneAs, max = 3)
             return@FCard
         }
+        if (ahead != null) {
+            DoneAhead(ahead, s.templateId?.let { it != ahead.templateId } == true)
+            GhostButton("Всё равно сделать сегодня", onStart, Modifier.fillMaxWidth())
+            return@FCard
+        }
         if (minutes != null && budget != null && ratio != 1.0 && minutes > budget * 1.15) Text(
             "У тебя тренировки идут дольше расчёта (×${forma.core.text.Ru.one(ratio)}): выйдет около $minutes мин при твоих $budget. " +
                 "Не успеваешь — убери подсобное упражнение в «План» или сократи отдых.",
@@ -502,6 +510,22 @@ private fun LiftCard(s: PlannedSession, program: Program, today: LocalDate, done
     }
 }
 
+/**
+ * A session of today done on a day before: «Сделано заранее, в пятницу» (with what was done when it was another
+ * workout or run) — it counts for today, as the week shows it.
+ */
+@Composable
+private fun DoneAhead(w: WorkoutEntity, other: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
+        Text(
+            "Сделано заранее, ${onDayFull(LocalDate.ofEpochDay(w.epochDay).dayOfWeek)}" + if (other) ": ${w.title}" else "",
+            style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good),
+        )
+    }
+    Text("Засчитано за сегодня. Хочешь — сделай и сегодня: тогда та тренировка будет лишней сверх плана.", style = T.secondary(13.sp))
+}
+
 fun prescriptionShort(sets: Int, reps: Int, weight: Double?, exerciseId: String): String {
     val ex = forma.core.model.Catalog.find(exerciseId)
     return when {
@@ -513,7 +537,10 @@ fun prescriptionShort(sets: Int, reps: Int, weight: Double?, exerciseId: String)
 }
 
 @Composable
-private fun RunCard(s: PlannedSession, today: LocalDate, doneAs: forma.app.data.WorkoutEntity?, light: Boolean, sick: Long?, onStart: (RunWorkout) -> Unit) {
+private fun RunCard(
+    s: PlannedSession, today: LocalDate, doneAs: forma.app.data.WorkoutEntity?, light: Boolean, sick: Long?, ahead: WorkoutEntity? = null,
+    onStart: (RunWorkout) -> Unit,
+) {
     val done = doneAs != null
     val repo = LocalRepo.current
     // A free run done today in its place (for a trial): said as it is, not as the plan's. Any other run done is the
@@ -531,6 +558,12 @@ private fun RunCard(s: PlannedSession, today: LocalDate, doneAs: forma.app.data.
             NumText("${w.totalSeconds / 60} мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
         }
         Text(w.title, style = T.title(22.sp))
+        // Done ahead on a day before (Saturday's run on Friday): said so, the plan's run still there to do if wanted.
+        if (doneAs == null && ahead != null) {
+            DoneAhead(ahead, ahead.templateId != w.type.name)
+            GhostButton("Всё равно пробежать сегодня", { onStart(w) }, Modifier.fillMaxWidth())
+            return@FCard
+        }
         if (!other) Text(w.note, style = T.secondary(14.sp))
         val pace = w.segments.firstOrNull { it.kind == forma.core.run.SegmentKind.WORK || it.kind == forma.core.run.SegmentKind.RUN }?.pace
         val lapM = w.lapMeters

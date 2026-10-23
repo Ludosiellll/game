@@ -120,15 +120,23 @@ fun HistoryItemScreen(workoutId: Long) {
     val run by produceState<RunEntity?>(null, workoutId, w) { value = repo.db.runs().get(workoutId) }
     val profile by repo.store.profile.collectAsState(initial = null)
     var confirm by remember { mutableStateOf(false) }
+    // The rating put right: the picker open, and what the plan did about it.
+    var rating by remember { mutableStateOf(false) }
+    var rated by remember { mutableStateOf<String?>(null) }
     val workout = w ?: return
     ScrollScreen {
         TopBar(workout.title, dateLine(LocalDate.ofEpochDay(workout.epochDay)), onBack = { nav.back() })
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatTile("Время", "${(workout.durationSec ?: 0) / 60}", "мин", F.c.text, Modifier.weight(1f))
-            StatTile("Оценка", "${workout.rpe ?: "—"}", "из 10", F.c.text, Modifier.weight(1f))
+            StatTile(
+                "Оценка", "${workout.rpe ?: "—"}", "из 10", F.c.text,
+                Modifier.weight(1f).clickable(onClickLabel = "Изменить оценку") { rating = true },
+            )
             // Not in a warning colour: a load is a number to read, not a mistake.
             StatTile("Нагрузка", "${workout.load?.roundToInt() ?: "—"}", null, F.c.text, Modifier.weight(1f))
         }
+        GhostButton("Изменить оценку", { rating = true }, Modifier.fillMaxWidth())
+        rated?.let { Text(it, style = T.secondary(13.sp)) }
         if (workout.kind == Kind.LIFT) {
             val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
             val plan = repo.planOf(workout)
@@ -197,6 +205,18 @@ fun HistoryItemScreen(workoutId: Long) {
         }
         GhostButton("Удалить из истории", { confirm = true }, Modifier.fillMaxWidth(), color = F.c.bad)
     }
+    if (rating) RatingDialog(workout.rpe, run = workout.kind == Kind.RUN, onDismiss = { rating = false }) { v ->
+        rating = false
+        scope.launch {
+            val again = repo.setRating(workoutId, v)
+            rated = when {
+                workout.kind == Kind.LIFT -> "Оценка исправлена: нагрузка и «Свежесть» пересчитаны."
+                again -> "Оценка исправлена: план заново решил по этой пробежке, следующие пойдут от нового решения."
+                else -> "Оценка исправлена, нагрузка пересчитана. План по этой пробежке уже решён: после неё были другие пробежки, " +
+                    "и они шли от того решения."
+            }
+        }
+    }
     if (confirm) {
         AlertDialog(
             onDismissRequest = { confirm = false }, containerColor = F.c.surface,
@@ -208,9 +228,41 @@ fun HistoryItemScreen(workoutId: Long) {
     }
 }
 
+/** "How hard was it" again, 1 to 10, as at the end of the workout. */
+@Composable
+private fun RatingDialog(now: Int?, run: Boolean, onDismiss: () -> Unit, onSave: (Int) -> Unit) {
+    var v by remember { mutableStateOf(now ?: 0) }
+    AlertDialog(
+        onDismissRequest = onDismiss, containerColor = F.c.surface,
+        title = { Text("Насколько тяжело было?", style = T.title(20.sp)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    (1..5).forEach { x -> forma.app.ui.components.Chip("$x", v == x, { v = x }, Modifier.weight(1f), minWidth = 0.dp) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    (6..10).forEach { x -> forma.app.ui.components.Chip("$x", v == x, { v = x }, Modifier.weight(1f), minWidth = 0.dp) }
+                }
+                Text(
+                    (Texts.RPE.firstOrNull { it.first == v }?.second?.let { "$it. " } ?: "") +
+                        if (run) "По оценке бега план решает, усложнять ли следующий." else "От оценки зависят нагрузка и «Свежесть».",
+                    style = T.secondary(14.sp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton({ if (v in 1..10 && v != now) onSave(v) else onDismiss() }) {
+                Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent))
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
+    )
+}
+
 /**
  * The laps of a saved run put right: tap a lap — a press forgotten on the line (one lap of two laps' time) splits into
- * two, a press too many merges two into one. Laps of reps stay: the plan's next step was judged on them.
+ * two, a press too many merges two into one, a press late or early gets the lap's time typed by hand. Laps of reps stay:
+ * the plan's next step was judged on them.
  */
 @Composable
 private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
@@ -218,7 +270,11 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf<Int?>(null) }
     SectionLabel("Поправить круги")
-    Text("Забыл нажать «Круг» — круг вышел вдвое длиннее: нажми на него и раздели. Нажал дважды — соедини.", style = T.secondary(13.sp))
+    Text(
+        "Забыл нажать «Круг» — круг вышел вдвое длиннее: нажми на него и раздели. Нажал дважды — соедини. " +
+            "Нажал не вовремя — впиши время круга сам.",
+        style = T.secondary(13.sp),
+    )
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         laps.forEachIndexed { i, l ->
             if (l.rep == null) {
@@ -231,27 +287,35 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
     }
     val i = open ?: return
     val l = laps.getOrNull(i) ?: return
+    // The lap's time by hand: typed as seconds ("83,4") or as on a watch ("1:23,4").
+    var typed by remember(i, l.seconds) { mutableStateOf("") }
+    val time = parseLapTime(typed)?.takeIf { it >= 5 && it <= 3600 }
     fun save(next: List<forma.core.run.Lap>) {
         open = null
         scope.launch { repo.editRunLaps(workoutId, next) }
     }
-    AlertDialog(
-        onDismissRequest = { open = null }, containerColor = F.c.surface,
-        title = { Text("Круг ${l.number} — ${Ru.lap(l.seconds)}", style = T.title(20.sp)) },
-        text = { Text("Что было на самом деле?", style = T.secondary(14.sp)) },
-        confirmButton = {
-            androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.End) {
-                TextButton({ save(forma.core.run.LapEdit.split(laps, i)) }) { Text("Это 2 круга — разделить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
-                if (forma.core.run.LapEdit.editable(laps, i + 1)) {
-                    TextButton({ save(forma.core.run.LapEdit.merge(laps, i)) }) { Text("Соединить со следующим", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
-                }
-                if (i > 0 && forma.core.run.LapEdit.editable(laps, i - 1)) {
-                    TextButton({ save(forma.core.run.LapEdit.merge(laps, i - 1)) }) { Text("Соединить с предыдущим", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
-                }
-            }
-        },
-        dismissButton = { TextButton({ open = null }) { Text("Отмена", style = T.body(15.sp)) } },
-    )
+    // On the screen under the laps, not in a dialog: the keyboard for the time has room, and the laps stay in sight.
+    FCard(gap = 8.dp) {
+        Text("Круг ${l.number} — ${Ru.lapTenth(l.seconds)}", style = T.title(20.sp))
+        Text("Что было на самом деле?", style = T.secondary(14.sp))
+        NumberField(typed, { typed = it }, "Время круга", "с", placeholder = Ru.one(l.seconds))
+        Text(
+            if (time != null) "Будет ${Ru.lapTenth(time)}. Остальные круги не меняются."
+            else "Секунды — «83» или «83,4», либо как на часах — «1:23».",
+            style = T.secondary(13.sp).copy(color = if (typed.isNotBlank() && time == null) F.c.warn else F.c.text2),
+        )
+        if (time != null) {
+            TextButton({ save(forma.core.run.LapEdit.setTime(laps, i, time)) }) { Text("Поставить ${Ru.lapTenth(time)}", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+        }
+        TextButton({ save(forma.core.run.LapEdit.split(laps, i)) }) { Text("Это 2 круга — разделить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+        if (forma.core.run.LapEdit.editable(laps, i + 1)) {
+            TextButton({ save(forma.core.run.LapEdit.merge(laps, i)) }) { Text("Соединить со следующим", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+        }
+        if (i > 0 && forma.core.run.LapEdit.editable(laps, i - 1)) {
+            TextButton({ save(forma.core.run.LapEdit.merge(laps, i - 1)) }) { Text("Соединить с предыдущим", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+        }
+        TextButton({ open = null }) { Text("Отмена", style = T.body(15.sp)) }
+    }
 }
 
 /** The time of each kilometre on the road, as bars and as numbers. */

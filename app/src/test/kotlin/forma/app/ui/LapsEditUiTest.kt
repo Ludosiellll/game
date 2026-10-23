@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -73,7 +75,7 @@ class LapsEditUiTest {
         settle()
         compose.onNodeWithText("5 · 2:21").performScrollTo().performClick()
         settle()
-        compose.onNodeWithText("Это 2 круга — разделить").performClick()
+        compose.onNodeWithText("Это 2 круга — разделить").performScrollTo().performClick()
         settle()
         val summary = AppJson.decodeFromString(RunSummary.serializer(), runBlocking { repo.db.workouts().get(id)!!.summaryJson!! })
         assertEquals(listOf(76.0, 75.0, 77.0, 64.0, 70.5, 70.5, 80.0, 74.0), summary.laps.map { it.seconds })
@@ -82,5 +84,35 @@ class LapsEditUiTest {
         compose.onNodeWithText("Круги", ignoreCase = true).performScrollTo()
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-lapsedit.png")
+    }
+
+    /** A press late on the line: the lap's time typed by hand, as on a watch; the other laps stay. */
+    @Test fun aLapTimeIsTypedByHand() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = SettingsStore(ctx, "ui-laps-time")
+        runBlocking { store.clear() }
+        val repo = TrainingRepository(FormaDatabase.create(ctx, inMemory = true), store)
+        val laps = listOf(83.0, 95.0, 71.0, 84.0).mapIndexed { i, s -> Lap(s, number = i + 1) }
+        val id = runBlocking {
+            repo.completeOnboarding(Profile(name = "Денис", goal = Goal.HYBRID, experience = Experience.NOVICE, runLevel = RunLevel.BASE, trainingDays = setOf(2, 4, 6), bodyWeightKg = 80.0, lapMeters = 230))
+            repo.saveRun(repo.freeRun(230), RunResult(1.0, 4, laps.sumOf { it.seconds }.toInt(), distanceM = 4 * 230.0, laps = laps), System.currentTimeMillis(), emptyList()).first
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) { Box(Modifier.fillMaxSize().background(F.c.bg)) { HistoryItemScreen(id) } }
+            }
+        }
+        settle()
+        compose.onNodeWithText("2 · 1:35").performScrollTo().performClick()
+        settle()
+        compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("1:23,4")
+        settle()
+        compose.onNodeWithText("Будет 1:23,4. Остальные круги не меняются.").assertExists()
+        compose.onNodeWithText("Поставить 1:23,4").performScrollTo().performClick()
+        settle()
+        val summary = AppJson.decodeFromString(RunSummary.serializer(), runBlocking { repo.db.workouts().get(id)!!.summaryJson!! })
+        assertEquals(listOf(83.0, 83.4, 71.0, 84.0), summary.laps.map { it.seconds })
+        // The distance stays: as many laps as before.
+        assertEquals(4 * 230.0, runBlocking { repo.db.runs().get(id)!!.distanceM!! }, 1e-6)
     }
 }

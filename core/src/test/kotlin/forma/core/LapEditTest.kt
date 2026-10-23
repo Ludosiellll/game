@@ -29,10 +29,24 @@ class LapEditTest {
         assertEquals(fixed, LapEdit.merge(fixed, 2))
     }
 
+    @Test fun aLapTimedWrongGetsItsTimeByHand() {
+        val fixed = LapEdit.setTime(free, 2, 83.4)
+        assertEquals(listOf(76.0, 75.0, 83.4, 80.0), fixed.map { it.seconds })
+        assertEquals(free.map { it.number }, fixed.map { it.number })
+        // Exact as typed, not roughly timed — even when the lap was a GPS one.
+        val auto = free.map { it.copy(auto = true) }
+        assertTrue(!LapEdit.setTime(auto, 0, 70.0)[0].auto)
+        // A time out of reason changes nothing.
+        assertEquals(free, LapEdit.setTime(free, 1, 3.0))
+        assertEquals(free, LapEdit.setTime(free, 1, Double.NaN))
+        assertEquals(free, LapEdit.setTime(free, 9, 80.0))
+    }
+
     @Test fun lapsOfRepsStayAsTheyWere() {
         val laps = listOf(Lap(52.0, rep = 1, number = 1, of = 1), Lap(150.0, number = 1))
         assertEquals(laps, LapEdit.split(laps, 0))
         assertEquals(laps, LapEdit.merge(laps, 0))
+        assertEquals(laps, LapEdit.setTime(laps, 0, 50.0))
         assertTrue(!LapEdit.editable(laps, 0) && LapEdit.editable(laps, 1))
     }
 }

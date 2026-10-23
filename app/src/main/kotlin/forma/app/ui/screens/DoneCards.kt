@@ -140,7 +140,7 @@ fun OffPlanCard(w: WorkoutEntity, forDay: LocalDate?) {
             SectionLabel(
                 "  " + when {
                     forDay == null -> "Вне плана"
-                    // Done ahead of its day (that day then passed without it).
+                    // Done ahead of its day: that day counts it done.
                     forDay.toEpochDay() > w.epochDay -> "Заранее — за ${dayShort(forDay.dayOfWeek).lowercase()}"
                     else -> "Вместо пропущенной ${onDayShort(forDay.dayOfWeek)}"
                 },

@@ -13,13 +13,15 @@ object CatchUp {
     /**
      * One day of this week: what was planned and what was actually done (as sessions). [doneLegs]: for each done session
      * (in the same order), whether it worked the legs when its template cannot say (a friend's copied workout); null or
-     * missing — as its template says.
+     * missing — as its template says. [paused]: a day of a pause (nothing planned): what was done on it is beyond the
+     * plan, never a later day's done ahead.
      */
     data class Day(
         val day: Int,
         val planned: List<PlannedSession>,
         val done: List<PlannedSession>,
         val doneLegs: List<Boolean?> = emptyList(),
+        val paused: Boolean = false,
     )
 
     data class Suggestion(val session: PlannedSession, val plannedOn: Int)
@@ -34,11 +36,13 @@ object CatchUp {
      * Which planned sessions of the week are done, and by what. On its own day a session is done by one of its kind: the
      * same kind first (the hard run by the hard run, a lift by its template), then in order (a lift by a lift, whichever
      * template; a run by a run) — as the day shows it. A session done on a day where nothing of its kind was left to do
-     * closes a missed one from an earlier day of the week (from [firstDay]): a lift any missed lift, the same template
-     * first (another template or a friend's copied workout counts as the gym done); a run a missed run of its kind, and a
-     * hard run a missed easy one. Failing that, it was done ahead: it closes a later one the same way once that day is
-     * over (before [today], ISO; 8 — the whole week is over).
+     * closes another of the week (from [firstDay]): the same session first — the same template, a run of its kind — a
+     * missed one before it, else a later one (done ahead: «Низ» on Friday for Saturday's); then any lift (another
+     * template or a friend's copied workout counts as the gym done) or a hard run for an easy one, missed first. Done
+     * ahead, a later day's session is closed at once: done on its own day after all, the day's own one closes it and the
+     * earlier stays extra. [today] (ISO; 8 — the week is over) is kept for the callers' sake: a day ahead is not waited for.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun closes(week: List<Day>, firstDay: Int = 1, today: Int = 8): List<Close> {
         val out = mutableListOf<Close>()
         val open = mutableListOf<Pair<Int, Int>>()
@@ -60,18 +64,19 @@ object CatchUp {
             }
         }
         fun planned(o: Pair<Int, Int>) = week.first { it.day == o.first }.planned[o.second]
-        fun pick(s: PlannedSession, from: List<Pair<Int, Int>>) = if (s.kind == SessionKind.LIFT) {
-            from.firstOrNull { planned(it).kind == SessionKind.LIFT && planned(it).templateId == s.templateId }
-                ?: from.firstOrNull { planned(it).kind == SessionKind.LIFT }
+        fun sameIn(s: PlannedSession, from: List<Pair<Int, Int>>) = from.firstOrNull { same(planned(it), s) }
+        fun other(s: PlannedSession, from: List<Pair<Int, Int>>) = if (s.kind == SessionKind.LIFT) {
+            from.firstOrNull { planned(it).kind == SessionKind.LIFT }
         } else {
-            from.firstOrNull { planned(it).kind == s.kind }
-                ?: from.firstOrNull { s.isHardRun && planned(it).kind == SessionKind.RUN_EASY }
+            from.firstOrNull { s.isHardRun && planned(it).kind == SessionKind.RUN_EASY }
         }
         for ((doneDay, doneIndex) in spare.sortedBy { it.first }) {
             val s = week.first { it.day == doneDay }.done[doneIndex]
-            // Ahead only from this plan's days: a session of the plan before a mid-week change closes nothing later.
-            val ahead = if (doneDay >= firstDay) open.filter { it.first in doneDay + 1 until today } else emptyList()
-            val match = pick(s, open.filter { it.first < doneDay }) ?: pick(s, ahead) ?: continue
+            val before = open.filter { it.first < doneDay }
+            // Ahead only from this plan's days: a session of the plan before a mid-week change closes nothing later; nor one
+            // done on a pause day — nothing was expected then, it is beyond the plan.
+            val ahead = if (doneDay >= firstDay && !week.first { it.day == doneDay }.paused) open.filter { it.first > doneDay } else emptyList()
+            val match = sameIn(s, before) ?: sameIn(s, ahead) ?: other(s, before) ?: other(s, ahead) ?: continue
             open.remove(match)
             out += Close(match.first, match.second, doneDay, doneIndex)
         }

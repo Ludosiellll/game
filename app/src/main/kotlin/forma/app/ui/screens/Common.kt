@@ -140,6 +140,24 @@ fun parseClock(s: String): Double? {
     }
 }
 
+/**
+ * A lap time as typed: "83", "83,4", "1:23", "1:23,4" → seconds. Null for anything else — two digits of seconds after a
+ * colon, under 60 ("1:5" and "1:75" are typos).
+ */
+fun parseLapTime(s: String): Double? {
+    val parts = s.trim().replace(',', '.').split(':')
+    val sec = when (parts.size) {
+        1 -> parts[0].toDoubleOrNull()
+        2 -> {
+            val m = parts[0].toIntOrNull()?.takeIf { it >= 0 }
+            val rest = parts[1].takeIf { it.substringBefore('.').length == 2 }?.toDoubleOrNull()?.takeIf { it < 60 }
+            if (m == null || rest == null) null else m * 60 + rest
+        }
+        else -> null
+    }
+    return sec?.takeIf { it > 0 && it.isFinite() }
+}
+
 val DAY_FULL = listOf("Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье")
 val DAY_SHORT = listOf("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 private val MONTH_GEN = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
@@ -292,19 +310,24 @@ fun NextToday(onDone: () -> Unit) {
 
 /**
  * The next day of the plan after [today] and what it holds: the gym session, and each run with how to run it (the lap
- * time or pace to keep) — so after a run, or on a day off, the next one is never a guess.
+ * time or pace to keep) — so after a run, or on a day off, the next one is never a guess. A session done ahead is not
+ * next.
  */
 @Composable
 fun NextPlannedCard(today: LocalDate) {
     val repo = forma.app.ui.LocalRepo.current
     val program by repo.store.program.collectAsState(initial = null)
     val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    // Sessions of this week done ahead (Saturday's «Низ» on Friday) are not next: what is left of the plan is.
+    val monday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+    val week by androidx.compose.runtime.remember(monday) { repo.weekFlow(monday) }.collectAsState(initial = emptyList())
     val p = program ?: return
-    val next = androidx.compose.runtime.remember(p, today, settings) {
-        (1..14).map { today.plusDays(it.toLong()) }.firstOrNull { d -> !repo.paused(settings, d) && p.week.on(d.dayOfWeek.value).isNotEmpty() }
+    fun left(d: LocalDate) = p.week.on(d.dayOfWeek.value).filter { s -> week.firstOrNull { it.date == d }?.isDone(s) != true }
+    val next = androidx.compose.runtime.remember(p, today, settings, week) {
+        (1..14).map { today.plusDays(it.toLong()) }.firstOrNull { d -> !repo.paused(settings, d) && left(d).isNotEmpty() }
     } ?: return
-    val sessions = p.week.on(next.dayOfWeek.value)
-    val runs by androidx.compose.runtime.produceState<Map<PlannedSession, forma.core.run.RunWorkout>>(emptyMap(), p, next) {
+    val sessions = left(next)
+    val runs by androidx.compose.runtime.produceState<Map<PlannedSession, forma.core.run.RunWorkout>>(emptyMap(), p, next, sessions) {
         // A due trial only if that day is the one it falls on (not one today still holds).
         val trialOn = repo.trialDay(today)
         value = sessions.filter { it.isRun }.associateWith { repo.runFor(it.kind, next, trial = next == trialOn) }

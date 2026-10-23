@@ -68,6 +68,20 @@ data class RunSummary(
 enum class Feel { UNSET, GOOD, LOW, SICK }
 
 /**
+ * The last run saved: the running progress before it and after it, and the run as planned and as done. While the
+ * progress is still [after] (nothing built on it since), the run's rating put right decides it again.
+ */
+@kotlinx.serialization.Serializable
+data class LastRun(
+    val workoutId: Long,
+    val day: Long,
+    val before: forma.core.run.RunState,
+    val after: forma.core.run.RunState,
+    val workout: forma.core.run.RunWorkout,
+    val result: forma.core.run.RunResult,
+)
+
+/**
  * A day of the week with the plan and what was actually done. [onDay]: planned sessions of this day done on it (index in
  * [planned] → the workout); [doneLater]: planned sessions of this day done on another day of the week — caught up later
  * or done ahead (index → the workout); [catchUps]: workouts of this day that closed a session of another day (workout id

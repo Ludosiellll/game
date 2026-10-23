@@ -96,12 +96,16 @@ fun PlanScreen() {
                             // Done this week: said so; a run as it was run (the plan has moved on since), a free run in
                             // the place of a planned one as it is.
                             val done = weekItems.firstOrNull { it.date == dayDate }?.doneFor(s)
+                            // Done on another day of the week: caught up later, or ahead (Saturday's «Низ» on Friday).
+                            val later = weekItems.firstOrNull { it.date == dayDate }?.doneLaterFor(s)
+                            val laterLine = later?.let { "Сделано ${if (it.epochDay < dayDate.toEpochDay()) "заранее, " else ""}${onDayShort(java.time.LocalDate.ofEpochDay(it.epochDay).dayOfWeek)}" }
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Icon(if (s.kind == SessionKind.LIFT) Ic.dumbbell else Ic.run, null, tint = if (s.kind == SessionKind.LIFT) F.c.strength else F.c.endurance, modifier = Modifier.size(16.dp))
                                 if (s.kind == SessionKind.LIFT) {
                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                         Text(sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
                                         if (done != null) Text("Сделано", style = T.secondary(13.sp).copy(color = F.c.good))
+                                        else laterLine?.let { Text(it, style = T.secondary(13.sp).copy(color = F.c.good)) }
                                     }
                                 } else {
                                     // Each row on its own date this week: an easy run on a lifting day is shorter.
@@ -117,6 +121,7 @@ fun PlanScreen() {
                                         Text(if (free) done!!.title else w?.title ?: sessionTitle(s, p), style = T.body(15.sp, FontWeight.SemiBold))
                                         // How: the lap time or pace to keep, so the week says what to do, not only what.
                                         if (done != null) Text(if (free) "Сделано вместо плановой" else "Сделано", style = T.secondary(13.sp).copy(color = F.c.good))
+                                        else if (laterLine != null) Text(laterLine, style = T.secondary(13.sp).copy(color = F.c.good))
                                         else w?.let { Text(forma.app.ui.RunHow.short(it), style = T.secondary(13.sp)) }
                                     }
                                 }

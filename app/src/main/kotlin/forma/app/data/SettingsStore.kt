@@ -165,6 +165,7 @@ class SettingsStore(context: Context, name: String = "forma") {
         val settings = stringPreferencesKey("settings")
         val lift = stringPreferencesKey("lift_state")
         val custom = stringPreferencesKey("custom_exercises")
+        val lastRun = stringPreferencesKey("last_run")
     }
 
     /** Documents copied to the cloud, by cloud key, with the type that must decode them. */
@@ -229,6 +230,10 @@ class SettingsStore(context: Context, name: String = "forma") {
     suspend fun setProgram(p: Program) = write(Keys.program, Program.serializer(), p)
     suspend fun setRunState(r: RunState) = write(Keys.runState, RunState.serializer(), r)
     suspend fun setSettings(s: Settings) = write(Keys.settings, Settings.serializer(), s)
+
+    /** The last run saved on this phone, to decide again when its rating is put right; not copied to the cloud. */
+    suspend fun lastRunNow(): LastRun? = read(Keys.lastRun, LastRun.serializer()).first()
+    suspend fun setLastRun(r: LastRun) = write(Keys.lastRun, LastRun.serializer(), r)
 
     /** Settings changed by [f] in one step: two changes at once (a run saved while its debrief is shown) both stay. */
     suspend fun editSettings(f: (Settings) -> Settings) {

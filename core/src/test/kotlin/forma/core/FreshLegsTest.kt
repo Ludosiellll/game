@@ -102,18 +102,49 @@ class FreshLegsTest {
         assertEquals(3, ProgramGenerator.programWeek(moved, next))
     }
 
-    @Test fun aSessionDoneAheadOfItsDayClosesItOnceTheDayIsOver() {
+    @Test fun aSessionDoneAheadOfItsDayClosesItAtOnce() {
         val lift = PlannedSession(SessionKind.LIFT, "upper_a")
         val week = listOf(
             CatchUp.Day(3, emptyList(), listOf(lift)),
             CatchUp.Day(4, listOf(lift), emptyList()),
         )
         assertEquals(listOf(CatchUp.Close(4, 0, 3, 0)), CatchUp.closes(week, today = 5))
-        // Thursday itself: still to do, nothing closed yet.
-        assertEquals(emptyList(), CatchUp.closes(week, today = 4))
-        // Done on its day too: the earlier one stays extra.
+        // Thursday itself, and Wednesday when it was done: done ahead already.
+        assertEquals(listOf(CatchUp.Close(4, 0, 3, 0)), CatchUp.closes(week, today = 4))
+        assertEquals(listOf(CatchUp.Close(4, 0, 3, 0)), CatchUp.closes(week, today = 3))
+        // Done on its day too: the day's own closes it, the earlier one stays extra.
         val both = listOf(CatchUp.Day(3, emptyList(), listOf(lift)), CatchUp.Day(4, listOf(lift), listOf(lift)))
         assertEquals(listOf(CatchUp.Close(4, 0, 4, 0)), CatchUp.closes(both, today = 5))
+        // Done on a pause day: beyond the plan, not Thursday's ahead.
+        val paused = listOf(CatchUp.Day(3, emptyList(), listOf(lift), paused = true), CatchUp.Day(4, listOf(lift), emptyList()))
+        assertEquals(emptyList(), CatchUp.closes(paused, today = 4))
+    }
+
+    /**
+     * Denis's week of 19.10: Monday's hard run and Tuesday's «Верх · Б» missed, Thursday done, and on Friday «Низ» and a
+     * run for Saturday, which he cannot make. They close Saturday at once — «Низ» is Saturday's, not a catch-up of
+     * Tuesday's other workout — and Tuesday stays missed.
+     */
+    @Test fun saturdaysLegsDoneOnFridayAreSaturdaysNotTuesdaysCatchUp() {
+        val hard = PlannedSession(SessionKind.RUN_QUALITY)
+        val easy = PlannedSession(SessionKind.RUN_EASY)
+        val upperA = PlannedSession(SessionKind.LIFT, "upper_a")
+        val upperB = PlannedSession(SessionKind.LIFT, "upper_b")
+        val lower = PlannedSession(SessionKind.LIFT, "lower_a")
+        val week = listOf(
+            CatchUp.Day(1, listOf(hard), emptyList()),
+            CatchUp.Day(2, listOf(upperB), emptyList()),
+            CatchUp.Day(4, listOf(hard, upperA), listOf(upperA, easy)),
+            CatchUp.Day(5, emptyList(), listOf(lower, easy)),
+            CatchUp.Day(6, listOf(lower, easy), emptyList()),
+        )
+        val c = CatchUp.closes(week, today = 5)
+        assertTrue(CatchUp.Close(6, 0, 5, 0) in c, "$c")
+        assertTrue(CatchUp.Close(6, 1, 5, 1) in c, "$c")
+        assertTrue(c.none { it.day == 2 }, "$c")
+        // Another template on Friday would have made Tuesday's up.
+        val other = week.map { if (it.day == 5) it.copy(done = listOf(upperB)) else it }
+        assertTrue(CatchUp.Close(2, 0, 5, 0) in CatchUp.closes(other, today = 5))
     }
 
     @Test fun theHardRunClosesTheHardRunOfItsDayNotTheWarmUpJog() {

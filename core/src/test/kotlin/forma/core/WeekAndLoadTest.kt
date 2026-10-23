@@ -70,10 +70,11 @@ class WeekAndLoadTest {
         assertNotEquals(2, CatchUp.suggest(denis, 5, c)?.plannedOn)
     }
 
-    @Test fun aSessionDoneAheadDoesNotCloseItsDay() {
-        // Wednesday an extra lift: Thursday's gym is still to do.
+    @Test fun aSessionDoneAheadClosesItsOwnNotAnother() {
+        // Wednesday an extra «A»: Thursday's «B» is still to do; Saturday's «A» is done ahead.
         val w = week(denis, mapOf(1 to listOf(quality), 2 to listOf(liftA), 3 to listOf(liftA)))
         assertTrue(CatchUp.closes(w).none { it.day == 4 })
+        assertTrue(CatchUp.closes(w).any { it.day == 6 && it.doneDay == 3 })
     }
 
     @Test fun aCopiedWorkoutsLegsAreItsOwn() {
