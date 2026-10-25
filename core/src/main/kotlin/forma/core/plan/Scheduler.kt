@@ -278,38 +278,38 @@ object Scheduler {
                 val n = slots[s.day % 7]
                 n.lift != null && legs(s.lift, templates) && legs(n.lift, templates)
             }
-            if (!consecutiveFull) out += "Силовые не идут подряд на одни и те же мышцы: между ними есть день на восстановление."
+            if (!consecutiveFull) out += "Зал на одни и те же мышцы не идёт два дня подряд: между ними есть день на восстановление."
         }
         val hard = slots.filter { it.run?.isHardRun == true }
         if (hard.isNotEmpty() && hard.none { h -> legs(slots[(h.day + 5) % 7].lift, templates) }) {
-            out += "Накануне интервалов и длинной пробежки нет тренировки ног — бег будет качественнее."
+            out += "Накануне интервалов и длинной пробежки нет тренировки ног, так что бежать будет легче."
         }
         val long = slots.firstOrNull { it.run?.kind == SessionKind.RUN_LONG }
         if (long != null && long.day >= 6) out += "Длинная пробежка — в выходной, когда больше времени."
         if (aim.seriousRunning && aim.lift != LiftFocus.GENERAL && hard.isNotEmpty() && slots.any { it.lift != null }) {
-            out += "Бег почти не мешает росту мышц и силы, если тяжёлые ноги и тяжёлый бег разнесены хотя бы на 6 часов, лучше на сутки."
+            out += "Бег почти не мешает росту мышц и силы. Главное — разнести тяжёлые ноги и тяжёлый бег хотя бы на 6 часов, а лучше на сутки."
         }
         val hardWithLift = slots.filter { it.lift != null && it.run?.isHardRun == true }
         // Said only of the days the week really has (four days can put the legs alone and the easy run after the upper body).
         val easyAfterLegs = slots.any { legs(it.lift, templates) && it.run?.kind == SessionKind.RUN_EASY }
         val easyAfterUpper = slots.any { it.lift != null && !legs(it.lift, templates) && it.run?.kind == SessionKind.RUN_EASY }
         if (hardWithLift.isNotEmpty() && hardWithLift.none { legs(it.lift, templates) }) {
-            out += "Тяжёлый бег — в дни верха: руки и спина ему не мешают." + if (easyAfterLegs) " Ноги — в день лёгкого бега." else ""
+            out += "Тяжёлый бег — в дни верха тела: зал для рук и спины ему не мешает." + if (easyAfterLegs) " Ноги — в день лёгкого бега." else ""
         }
         if (slots.any { it.lift != null && it.run != null }) {
             val hardUpper = slots.any { it.lift != null && it.run?.isHardRun == true && !legs(it.lift, templates) }
             out += when {
-                aim.emphasis == Emphasis.RUN -> "В дни «бег + силовая» сначала бег. Если получится, разнеси их на 6+ часов."
-                hardUpper -> "В день верха тяжёлый бег — первым: ноги свежие, а верху бег почти не мешает." + when {
+                aim.emphasis == Emphasis.RUN -> "В дни «бег + зал» сначала бег. Если получится, разнеси их на 6 часов и больше."
+                hardUpper -> "В день верха тела тяжёлый бег — первым, пока ноги свежие. Руки и спину бег почти не утомляет." + when {
                     easyAfterLegs -> " В день ног — сначала зал, потом лёгкий бег."
                     easyAfterUpper -> " В день верха с лёгким бегом — сначала зал, потом бег."
                     else -> ""
                 }
-                else -> "В дни «силовая + лёгкий бег» за один заход — сначала силовая. Если можешь разнести, бег утром, зал через 6+ часов."
+                else -> "В дни «зал + лёгкий бег» сначала зал. Если можешь разнести, бег утром, а зал через 6 часов и больше."
             }
         }
         val rest = slots.count { it.lift == null && it.run == null }
-        if (rest > 0) out += "Дней полного отдыха: $rest. Прогресс случается во время восстановления."
+        if (rest > 0) out += "Дней полного отдыха: $rest. Сильнее ты становишься как раз во время отдыха."
         return out
     }
 

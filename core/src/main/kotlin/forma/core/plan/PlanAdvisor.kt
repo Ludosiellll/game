@@ -309,17 +309,17 @@ object PlanAdvisor {
                     .filter { it != ex.id && it !in present && find(it)?.let { a -> a.compound == ex.compound || i.role == SlotRole.ACCESSORY } == true }
                 if (alts.isNotEmpty()) changes += Change(
                     "skip:$k", Kind.SWAP, d.templateId, d.title, i.planId, i.exerciseId, alts, null, null, null, null,
-                    "«${ex.name}» ты пропускаешь в $n из $of последних тренировок — похоже, неудобно или не нравится. " +
-                        "Вот на ту же мышцу${m?.let { " (${it.ru.lowercase()})" } ?: ""} по-другому: план под то, что ты правда делаешь.",
+                    "«${ex.name}» ты пропускаешь в $n из $of последних тренировок. Похоже, неудобно или не нравится. " +
+                        "Вот другие упражнения на ту же мышцу${m?.let { " (${it.ru.lowercase()})" } ?: ""}: пусть в плане будет то, что ты правда делаешь.",
                     2, added = i.added,
-                ) else held += "«${ex.name}» ты пропускаешь в $n из $of тренировок, а замены на ту же мышцу не нашёл — его можно убрать в «Плане»."
+                ) else held += "«${ex.name}» ты пропускаешь в $n из $of тренировок. Замены на ту же мышцу я не нашёл. Убрать упражнение можно в «Плане»."
                 continue
             }
             val usual = h.doneSets[k] ?: continue
             if (usual in 1 until i.sets) changes += Change(
                 "real:$k", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, usual, null, null,
-                "«${ex.name}»: обычно ты делаешь ${Ru.sets(usual)} из ${i.sets}. Записать $usual — план совпадёт с тем, что ты " +
-                    "делаешь, а время тренировки посчитается по-настоящему.",
+                "«${ex.name}»: обычно ты делаешь ${Ru.sets(usual)} из ${i.sets}. Поставь в план $usual — так план совпадёт с тем, что ты " +
+                    "делаешь, и время тренировки посчитается верно.",
                 3, added = i.added,
             )
         }
@@ -328,8 +328,8 @@ object PlanAdvisor {
         // (sleep, food, a lighter week), not the exercises: then only the longest stuck gets another variation.
         val stuck = days.flatMap { d -> d.items.filter { i -> i.role != SlotRole.ACCESSORY && (input.stalled[i.exerciseId] ?: 0) >= STALL_WEEKS }.map { d to it } }
         val manyStuck = stuck.size >= MANY_STUCK
-        val warning = if (manyStuck) "Застой сразу в ${stuck.size} основных упражнениях. Так бывает, когда не хватает восстановления, " +
-            "а не упражнений: сначала сон, еда и лёгкая неделя. Другой вариант предлагаю только для самого долгого застоя." else null
+        val warning = if (manyStuck) "Сразу в ${stuck.size} основных упражнениях веса стоят на месте. Обычно это значит, что телу не хватает отдыха. " +
+            "Сначала сон, еда и лёгкая неделя. Замену предлагаю только там, где веса стоят дольше всего." else null
         val stallFor = if (manyStuck) stuck.sortedByDescending { (_, i) -> input.stalled[i.exerciseId] ?: 0 }.take(1) else stuck
         for ((d, i) in stallFor) {
             val weeks = input.stalled[i.exerciseId] ?: continue
@@ -343,8 +343,8 @@ object PlanAdvisor {
             if (alts.isEmpty()) continue
             changes += Change(
                 "stall:${d.templateId}:${i.planId}", Kind.SWAP, d.templateId, d.title, i.planId, i.exerciseId, alts, null, null, null, null,
-                "«${ex.name}» — ${Ru.weeks(weeks)} без нового максимума. Тот же рисунок движения в другом варианте на 4–6 недель " +
-                    "(другой угол, хват или пауза) нагружает мышцы иначе и обычно сдвигает застой; потом можно вернуть прежнее — сила перенесётся.",
+                "«${ex.name}»: ${Ru.weeks(weeks)} без нового рекорда. Попробуй на 4–6 недель другой вариант того же движения: " +
+                    "другой угол, хват или пауза. Мышцы получат новую нагрузку, и вес обычно снова растёт. Потом можно вернуть прежнее — сила сохранится.",
                 1, added = i.added,
             )
         }
@@ -357,14 +357,14 @@ object PlanAdvisor {
                 val turned = h.avoided.entries.firstOrNull { (id, _) -> find(id)?.let { it.pattern == Pattern.LUNGE && it.compound } == true }
                 val easiest = listOf("step_up", "reverse_lunge", "split_squat").firstOrNull(usable)
                 if (turned != null) {
-                    held += "Упражнение на одной ноге бегу полезно (бег — череда приземлений на одну ногу), но «${name(turned.key)}» " +
+                    held += "Упражнения на одной ноге полезны для бега: на каждом шаге ты приземляешься на одну ногу. Но «${name(turned.key)}» " +
                         "${turned.value} — это твой выбор, обратно не предлагаю." +
-                        (easiest?.let { " Захочешь попробовать — проще всего «${name(it)}»: без веса или с лёгкими гантелями." } ?: "")
+                        (easiest?.let { " Захочешь попробовать — проще всего «${name(it)}» без веса или с лёгкими гантелями." } ?: "")
                 } else legDay()?.let { d ->
                     changes += Change(
                         "oneleg:add", Kind.ADD, d.templateId, d.title, null, null, prefer(ONE_LEG), null, 3, 8 to 12, 120,
-                        "Ни одного упражнения на одной ноге: бег — череда приземлений на одну ногу, сила и устойчивость таза и колена " +
-                            "тренируются именно так.",
+                        "В плане нет упражнений на одной ноге. А в беге ты на каждом шаге приземляешься на одну ногу. " +
+                            "Так тренируются сила и устойчивость таза и колена.",
                         2,
                     )
                 }
@@ -372,23 +372,23 @@ object PlanAdvisor {
             if (!raceSoon && !has { it.id == "nordic_curl" || it.id == "glute_ham_raise" }) legDay()?.let { d ->
                 val nordic = prefer(listOf("nordic_curl", "glute_ham_raise"))
                 val curl = cur().flatMap { it.items }.firstOrNull { find(it.exerciseId)?.pattern == Pattern.KNEE_FLEXION }
-                val why = "Задняя поверхность бедра в беге работает на растяжение — в быстрых отрезках особенно, там она и травмируется."
+                val why = "В беге задняя поверхность бедра работает, растягиваясь. Особенно в быстрых отрезках — там она чаще всего и травмируется."
                 when {
                     nordic.isNotEmpty() -> changes += Change(
                         "add:nordic", Kind.ADD, d.templateId, d.title, null, null, nordic, null, 2, 4 to 8, 90,
-                        "$why Нордические сгибания тренируют её именно так: в исследованиях они снижали такие травмы примерно вдвое. " +
-                            "Первые две недели — по 1 подходу: с непривычки сильная крепатура." +
-                            (if (h.likesHard) "" else " Упражнение непривычное и тяжёлое: не хочется — нажми «Не предлагать»."),
+                        "$why Нордические сгибания тренируют её именно так. В исследованиях они снижали такие травмы примерно вдвое. " +
+                            "Первые две недели делай по 1 подходу: с непривычки мышцы сильно болят." +
+                            (if (h.likesHard) "" else " Упражнение тяжёлое и непривычное. Не хочешь — нажми «Не предлагать»."),
                         2,
                     )
                     // Not for one who avoids hard unusual exercises: the curl they do, done slower, gives part of it.
                     curl != null -> held += "Нордические сгибания не предлагаю: " +
-                        (h.avoided["nordic_curl"]?.let { "их $it" } ?: h.avoidsHard?.let { "$it — похоже, тяжёлые непривычные упражнения не по душе" } ?: "ты их не делаешь") +
-                        ". Часть той же пользы даст «${name(curl.exerciseId)}», если опускать вес медленно, 3–4 секунды. $why"
+                        (h.avoided["nordic_curl"]?.let { "их $it" } ?: h.avoidsHard?.let { "$it — похоже, тяжёлые непривычные упражнения тебе не нравятся" } ?: "ты их не делаешь") +
+                        ". Часть той же пользы даст «${name(curl.exerciseId)}», если опускать вес медленно, за 3–4 секунды. $why"
                     else -> prefer(listOf("seated_leg_curl", "leg_curl")).takeIf { it.isNotEmpty() }?.let { opts ->
                         changes += Change(
                             "add:hamstrings", Kind.ADD, d.templateId, d.title, null, null, opts, null, 2, 10 to 15, 75,
-                            "$why Сгибание ног с медленным опусканием (3–4 секунды) тренирует её на растяжение — без непривычных упражнений.",
+                            "$why Сгибание ног тренирует её так же, если опускать вес медленно, за 3–4 секунды. Ничего непривычного.",
                             2,
                         )
                     }
@@ -397,21 +397,21 @@ object PlanAdvisor {
             if (!raceSoon && !has { it.id == "seated_calf" }) legDay()?.let { d ->
                 changes += Change(
                     "add:seated_calf", Kind.ADD, d.templateId, d.title, null, null, listOf("seated_calf").filter(usable), null, 3, 12 to 20, 60,
-                    "Камбаловидная мышца несёт на каждом шаге бега больше, чем икроножная, а стоя работает в основном икроножная. " +
-                        "Подъёмы сидя (колено согнуто) нагружают именно камбаловидную — это и защита ахилла и голени.",
+                    "На каждом шаге бега больше всего работает камбаловидная мышца, она лежит под икроножной. Подъёмы на носки стоя " +
+                        "качают в основном икроножную. А сидя, с согнутым коленом, работает как раз камбаловидная. Это защищает ахилл и голень.",
                     2,
                 )
             }
-            if (raceSoon) held += "До забега ${Ru.days(input.daysToRace!!.toInt())}: новое для ног предложу после него — " +
-                "первые тренировки непривычного дают крепатуру на несколько дней."
+            if (raceSoon) held += "До забега ${Ru.days(input.daysToRace!!.toInt())}. Новое для ног предложу после него: " +
+                "от непривычных упражнений ноги болят несколько дней."
         }
 
         // 3. The hinge: the back of the body, in a week that trains the legs.
         if (!raceSoon && has { it.lowerBody && it.compound } && !has { it.pattern == Pattern.HINGE && it.compound }) legDay()?.let { d ->
             changes += Change(
                 "add:hinge", Kind.ADD, d.templateId, d.title, null, null, prefer(listOf("rdl", "db_rdl", "single_leg_rdl")), null, 3, 6 to 10, 120,
-                "Ноги в плане есть, а наклона нет: задняя поверхность бедра и ягодицы почти без работы в разгибании таза — " +
-                    "а это сила толчка и защита спины. Румынская тяга — самый простой вариант.",
+                "Ноги в плане есть, а упражнений с наклоном вперёд нет. Без них задняя поверхность бедра и ягодицы недорабатывают. " +
+                    "А от них зависят сила толчка и здоровая спина. Проще всего начать с румынской тяги.",
                 2,
             )
         }
@@ -420,9 +420,9 @@ object PlanAdvisor {
         val sessions = days.sumOf { it.times }
         val shortNow = volume(cur(), find).let { v -> MUSCLES.filter { m -> ranges.getValue(m).first.let { lo -> lo > 0 && (v[m] ?: 0.0) < lo - 1 } } }
         val oneDayShort = sessions == 1 && shortNow.size >= 3
-        if (oneDayShort) held += "Одна тренировка в неделю, а подходов не хватает сразу на ${shortNow.size} " +
+        if (oneDayShort) held += "Зал раз в неделю, а подходов не хватает сразу на ${shortNow.size} " +
             "${Ru.plural(shortNow.size, "мышцу", "мышцы", "мышц")} (${shortNow.joinToString(", ") { it.ru.lowercase() }}). В одну тренировку " +
-            "всё не уместить — лучше второй день в зале (План → Поменять дни), тогда предложу, что в него поставить."
+            "всё не влезет. Лучше добавь второй день в зале: План → Поменять дни. Тогда предложу, что в него поставить."
 
         // 4. Weekly sets per muscle. Short, with another muscle to spare: one exercise swapped for the other. Short alone:
         // more sets where it works already, else an exercise for it. Far over: a set less on its single-muscle work.
@@ -459,8 +459,8 @@ object PlanAdvisor {
                     val o = find(i.exerciseId)!!.primary.first()
                     changes += Change(
                         "rebalance:${m.name}:${i.planId}", Kind.SWAP, d.templateId, d.title, i.planId, i.exerciseId, iso, null, null, null, null,
-                        "${m.ru}: ${setsText(v0)} в неделю при норме $low–$high, а ${o.ru.lowercase()} — ${setsText(vol0[o] ?: 0.0)}, с запасом. " +
-                            "Замена перекладывает подходы туда, где их не хватает, а тренировка не удлиняется.",
+                        "${m.ru}: ${setsText(v0)} в неделю, а норма — $low–$high. Зато ${o.ru.lowercase()} — ${setsText(vol0[o] ?: 0.0)}, это с запасом. " +
+                            "Замена перенесёт подходы туда, где их мало, и тренировка не станет длиннее.",
                         2, added = i.added,
                     )
                     continue
@@ -475,8 +475,8 @@ object PlanAdvisor {
                     val to = minOf(MAX_SETS_ADVISED, i.sets + need)
                     changes += Change(
                         "vol:${m.name}:${i.planId}", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, to, null, null,
-                        "${m.ru}: ${setsText(v0)} в неделю — меньше нормы для твоей цели ($low–$high). Ещё ${Ru.sets(to - i.sets)} — дешевле " +
-                            "всего в упражнении, которое эту мышцу уже нагружает: без нового упражнения и почти без лишнего времени.",
+                        "${m.ru}: ${setsText(v0)} в неделю, а норма для твоей цели — $low–$high. Проще всего добавить ${Ru.sets(to - i.sets)} " +
+                            "в упражнение, которое уже качает эту мышцу. Новое не нужно, и времени почти не прибавится.",
                         2, added = i.added,
                     )
                     need -= (to - i.sets) * d.times
@@ -490,7 +490,7 @@ object PlanAdvisor {
                     val add = day?.let {
                         Change(
                             "add:${m.name}:${iso.first()}", Kind.ADD, it.templateId, it.title, null, null, iso, null, 3, if (m in LEGS) 8 to 12 else 10 to 15, 75,
-                            "${m.ru}: ${setsText(v0)} в неделю — меньше нормы для твоей цели ($low–$high), и прямой работы на эту мышцу почти нет.",
+                            "${m.ru}: ${setsText(v0)} в неделю, а норма для твоей цели — $low–$high. Упражнений именно на эту мышцу в плане почти нет.",
                             2,
                         )
                     }
@@ -498,8 +498,8 @@ object PlanAdvisor {
                     val sm0 = input.sessionMinutes
                     val longer = add?.let { c -> minutes(apply(cur(), listOf(c)).first { it.templateId == c.templateId }, input.timeRatio) }
                     if (add != null && (sm0 == null || longer!! <= sm0 + 10)) changes += add
-                    else if (add != null) held += "${m.ru}: ${setsText(v0)} в неделю при норме $low–$high, но с предложенным выше «${add.dayTitle}» " +
-                        "уже около ${longer} мин при твоих $sm0 — ещё одно упражнение не влезет. Больше времени или ещё день в зале — и предложу."
+                    else if (add != null) held += "${m.ru}: ${setsText(v0)} в неделю, а норма — $low–$high. Но с тем, что предложено выше, «${add.dayTitle}» " +
+                        "уже около ${longer} мин, а у тебя $sm0. Ещё одно упражнение не влезет. Будет больше времени или ещё день в зале — предложу."
                 }
             } else if (v0 > high + 2 && v > high + 2) {
                 val target = cur().flatMap { d -> d.items.map { d to it } }
@@ -510,8 +510,8 @@ object PlanAdvisor {
                     val (d, i) = target
                     changes += Change(
                         "less:${m.name}:${i.planId}", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, i.sets - 1, null, null,
-                        "${m.ru}: ${setsText(v0)} в неделю — больше нормы ($low–$high)" + (if (runner && m in LEGS) ", а ногам ещё бегать" else "") +
-                            ": лишние подходы уже не растят, а утомляют.",
+                        "${m.ru}: ${setsText(v0)} в неделю — это больше нормы ($low–$high)" + (if (runner && m in LEGS) ", а ногам ещё бегать" else "") +
+                            ". Лишние подходы только утомляют, мышцы от них уже не растут.",
                         3, added = i.added,
                     )
                 }
@@ -530,8 +530,8 @@ object PlanAdvisor {
             if (!has { it.pattern == Pattern.REAR_DELT }) upperDayFor(now, find, input.timeRatio)?.let { d ->
                 changes += Change(
                     "add:pull", Kind.ADD, d.templateId, d.title, null, null, prefer(listOf("face_pull", "reverse_fly", "reverse_pec_deck")), null, 3, 12 to 20, 60,
-                    "Жимов в неделе ${Ru.sets(push0)}, тяг — $pulls: плечи тянет вперёд. Тяга к лицу — противовес жимам для задней дельты " +
-                        "и лопаток, плечевой сустав скажет спасибо.",
+                    "Жимов в неделе ${Ru.sets(push0)}, а тяг — $pulls. Так плечи заваливаются вперёд. Тяга к лицу уравновешивает жимы: " +
+                        "работают задняя часть плеча и лопатки. Плечам так здоровее.",
                     3,
                 )
             }
@@ -554,8 +554,8 @@ object PlanAdvisor {
             val saves = ((last.restSec + 45) / 60.0 * input.timeRatio).roundToInt()
             changes += Change(
                 "time:${d.templateId}:${last.planId}", Kind.SETS, d.templateId, d.title, last.planId, last.exerciseId, listOf(last.exerciseId), last.sets, last.sets - 1, null, null,
-                "«${d.title}» выходит примерно на $min мин при твоих $sm. Подход ${if (last.role == SlotRole.ACCESSORY) "подсобного" else "второго по важности упражнения"} " +
-                    "экономит около $saves мин и почти ничего не стоит: главное остаётся.",
+                "«${d.title}» идёт около $min мин, а у тебя $sm. Если убрать подход ${if (last.role == SlotRole.ACCESSORY) "в добивающем упражнении" else "во вспомогательном упражнении"}, " +
+                    "сэкономишь около $saves мин. Главное останется.",
                 3, added = last.added,
             )
         }
@@ -565,7 +565,7 @@ object PlanAdvisor {
                 .sortedWith(compareBy({ if (cutShort(it.first, it.second)) 0 else 1 }, { if (it.second.added) 1 else 0 }, { -it.second.sets })).take(2)
             for ((d, i) in worst) changes += Change(
                 "rest:${d.templateId}:${i.planId}", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, i.sets - 1, null, null,
-                "Последние недели ты часто уставший: меньше подсобного — больше сил на главное" + (if (runner) " и на бег." else "."),
+                "Последние недели ты часто устаёшь. Меньше добивающих подходов — больше сил на главное" + (if (runner) " и на бег." else "."),
                 3, added = i.added,
             )
         }
@@ -576,7 +576,7 @@ object PlanAdvisor {
             if (c.kind != Kind.ADD || sm == null) return@map c
             val before = days.first { it.templateId == c.templateId }
             val with = minutes(apply(listOf(before), listOf(c)).first(), input.timeRatio)
-            if (with > sm + 10) c.copy(why = c.why + " С ним «${before.title}» — около $with мин при твоих $sm.") else c
+            if (with > sm + 10) c.copy(why = c.why + " С ним «${before.title}» займёт около $with мин, а у тебя $sm.") else c
         }
         val a = volume(days, find)
         val b = volume(apply(days, final), find)
@@ -584,18 +584,18 @@ object PlanAdvisor {
         // What is right already.
         val inRange = table.filter { it.low > 0 && it.now >= it.low - 1 && it.now <= it.high + 2 }.map { it.muscle.ru.lowercase() }
         if (inRange.isNotEmpty()) fine.add(0, "Подходов в неделю в норме: ${inRange.joinToString(", ")}.")
-        if (input.stalled.isNotEmpty() && stuck.isEmpty()) fine += "Застоя нет: основные упражнения растут."
+        if (input.stalled.isNotEmpty() && stuck.isEmpty()) fine += "Веса в основных упражнениях растут."
         if (sm != null) days.maxByOrNull { minutes(it, input.timeRatio) }?.let { d ->
             val min = minutes(d, input.timeRatio)
-            if (min <= sm + 10) fine += "По времени укладываешься: самая длинная — «${d.title}», около $min мин при твоих $sm."
+            if (min <= sm + 10) fine += "По времени укладываешься: самая длинная тренировка — «${d.title}», около $min мин из твоих $sm."
         }
         val n = final.size
         val summary = when {
             n == 0 -> "План уже хорошо собран под твою цель — менять нечего."
-            final.any { it.priority == 1 } -> "$n ${Ru.plural(n, "предложение", "предложения", "предложений")}; главное — застой в основных " +
-                "упражнениях. Всё на выбор: план меняется только тем, что ты отметишь."
-            else -> "$n ${Ru.plural(n, "предложение", "предложения", "предложений")} — на выбор. План и так рабочий, это доводка: " +
-                "меняется только то, что ты отметишь."
+            final.any { it.priority == 1 } -> "$n ${Ru.plural(n, "предложение", "предложения", "предложений")}. Главное — веса стоят в основных " +
+                "упражнениях. Выбирай сам: план поменяется только там, где ты отметишь."
+            else -> "$n ${Ru.plural(n, "предложение", "предложения", "предложений")} на выбор. План и так рабочий, это мелкие улучшения. " +
+                "Поменяется только то, что ты отметишь."
         }
         return Advice(days, final, table, fine, ranges, summary, warning, held, hidden = h.hidden.size)
     }

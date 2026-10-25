@@ -82,7 +82,7 @@ fun IdealPlanScreen() {
     var busy by remember { mutableStateOf(false) }
     var all by rememberSaveable { mutableStateOf(false) }
     ScrollScreen {
-        TopBar("Идеальный план", "Как есть — и каким может быть", onBack = { nav.back() })
+        TopBar("Идеальный план", "Какой он сейчас и каким может быть", onBack = { nav.back() })
         val result = loaded
         val a = result?.getOrNull()
         if (a == null) {
@@ -118,16 +118,16 @@ fun IdealPlanScreen() {
             SectionLabel("Разбор")
             Text(a.summary, style = T.body(16.sp, FontWeight.SemiBold))
             Text(
-                "Смотрю на всё сразу: цель и опыт, бег рядом с залом, подходы на каждую мышцу за неделю, баланс жимов и тяг, " +
-                    "как растут веса, сколько длится тренировка и как ты восстанавливаешься. И на то, что ты делаешь: что ты сам заменил, " +
-                    "убрал или пропускаешь, обратно не предлагаю; тяжёлые непривычные упражнения — только если видно, что они тебе по душе. " +
-                    "Ничего не меняется само — отметь, что берёшь.",
+                "Смотрю на всё: цель и опыт, бег, подходы на каждую мышцу за неделю, жимы и тяги, рост весов, " +
+                    "длину тренировки и как ты восстанавливаешься. Что ты сам заменил, убрал или пропускаешь, обратно не предлагаю. " +
+                    "Тяжёлые непривычные упражнения — только если видно, что они тебе нравятся. " +
+                    "Сам план не меняется: отметь, что берёшь.",
                 style = T.secondary(13.sp),
             )
         }
         a.warning?.let { Banner(it, F.c.warn) }
         if (taken > 0) Banner(
-            "Принято: $taken. Всё видно в «Плане» — там же любое изменение можно вернуть.", F.c.good, icon = Ic.check,
+            "Принято: $taken. Всё видно в «Плане», там же любое изменение можно вернуть.", F.c.good, icon = Ic.check,
         )
 
         // The most important first; a long list folds after a few (a ticked one stays in view).
@@ -171,8 +171,8 @@ fun IdealPlanScreen() {
             }
         }
         Text(
-            "Подход считается целиком для мышцы, которую упражнение нагружает первой, и наполовину — для помогающих. " +
-                "Норма — для твоей цели и опыта; ногам рядом с бегом нужно меньше: бег тоже их нагружает.",
+            "Подход идёт в счёт целиком для главной мышцы упражнения и наполовину — для помогающих. " +
+                "Норма зависит от цели и опыта. Если ты бегаешь, ногам нужно меньше: бег тоже их нагружает.",
             style = T.secondary(13.sp),
         )
 
@@ -248,7 +248,7 @@ private fun ChangeCard(
                 options.forEach { id -> Chip(name(id), selected = id == c.to, onClick = { onPick(id) }, minWidth = 0.dp) }
             }
         }
-        if (clash != null) Text("«${name(c.to)}» в этот день уже даёт «$clash» — выбери другой вариант.", style = T.secondary(13.sp).copy(color = F.c.warn))
+        if (clash != null) Text("«${name(c.to)}» в этот день уже стоит в изменении «$clash». Выбери другой вариант.", style = T.secondary(13.sp).copy(color = F.c.warn))
         Text(c.why, style = T.secondary(14.sp))
         // Not wanted: never again (until shown again at the bottom) — and the advisor learns from it.
         Text(

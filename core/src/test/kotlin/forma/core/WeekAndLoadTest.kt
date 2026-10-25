@@ -99,7 +99,7 @@ class WeekAndLoadTest {
         val run = program(Aim(LiftFocus.NONE, RunFocus.ENDURANCE, Emphasis.RUN), 1 to listOf(quality), 3 to listOf(easy), 6 to listOf(long))
         val lines = (1..7).flatMap { DayReasons.of(run, it) }
         assertTrue(lines.isNotEmpty())
-        lines.forEach { assertFalse("зал" in it.lowercase() || "ног:" in it || "ноги —" in it.lowercase(), it) }
+        lines.forEach { l -> assertFalse(listOf("зал", "тренировка ног", "тренировки ног", "ноги сегодня").any { it in l.lowercase() }, l) }
     }
 
     /** A run-only week with two hard days in a row: neither says "the day before and after — no hard running". */
@@ -108,12 +108,12 @@ class WeekAndLoadTest {
         val run = program(speed, 6 to listOf(quality), 7 to listOf(quality))
         val sat = DayReasons.of(run, 6)
         val sun = DayReasons.of(run, 7)
-        (sat + sun).forEach { assertFalse("накануне и назавтра" in it, it) }
-        assertTrue(sat.any { "накануне — без тяжёлого бега" in it }, sat.toString())
+        (sat + sun).forEach { assertFalse("за день до и на следующий день" in it, it) }
+        assertTrue(sat.any { "накануне тяжёлого бега нет" in it }, sat.toString())
         assertTrue(sun.any { "Накануне тоже тяжёлый бег" in it }, sun.toString())
         // Days apart: said as before.
         val apart = program(speed, 2 to listOf(quality), 6 to listOf(quality))
-        assertTrue(DayReasons.of(apart, 2).any { "накануне и назавтра — без тяжёлого бега" in it })
+        assertTrue(DayReasons.of(apart, 2).any { "за день до и на следующий день тяжёлого бега нет" in it })
     }
 
     // ---------- load ----------

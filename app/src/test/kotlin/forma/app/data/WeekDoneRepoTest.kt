@@ -169,7 +169,7 @@ class WeekDoneRepoTest {
     @Test fun aShortEasyRunSaysItMovesNoLength() {
         val st = RunState(runs = 6, walkStage = -1, easyMinutes = 50)
         val short = RunPlan.easy(st.copy(easyMinutes = 30))
-        assertEquals("Короткая пробежка длительность не меняет; обычная лёгкая — 50 мин.", Texts.run(RunOutcome.Same(50), plan = short))
+        assertEquals("Короткая пробежка длительность не меняет. Обычная лёгкая — 50 мин.", Texts.run(RunOutcome.Same(50), plan = short))
         assertEquals("Длительность пока прежняя: 50 мин.", Texts.run(RunOutcome.Same(50), plan = RunPlan.easy(st)))
     }
 }

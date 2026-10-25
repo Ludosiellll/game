@@ -42,11 +42,11 @@ class SessionOrderTest {
 
     @Test fun fatigueAndHeavyLegsAreSaid() {
         val tired = SessionOrder.advise(Day(Run.HARD, Legs.NONE, Emphasis.BALANCED, Fatigue.TIRED, legsHeavyFrom = "позавчера"))
-        assertTrue(tired.tips.any { "уставший" in it })
+        assertTrue(tired.tips.any { "устал" in it })
         assertTrue(tired.tips.any { "позавчера" in it })
         val light = SessionOrder.advise(Day(Run.EASY, Legs.NONE, Emphasis.BALANCED, Fatigue.TIRED, gymLight = true))
         assertTrue(light.tips.any { "сократи" in it })
-        assertTrue(light.tips.any { "облегчённый" in it })
+        assertTrue(light.tips.any { "Зал сегодня лёгкий" in it })
     }
 
     @Test fun afterTheFirstTheOtherIsAdjusted() {

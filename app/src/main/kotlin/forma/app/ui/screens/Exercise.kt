@@ -54,14 +54,14 @@ fun ExerciseScreen(exerciseId: String) {
         TopBar(ex.name, "${ex.equipment.ru} · ${ex.primary.joinToString { it.ru.lowercase() }}", onBack = { nav.back() })
         if (ex.load != LoadKind.TIMED && series.isNotEmpty()) {
             FCard(gap = 4.dp) {
-                Text("Максимум на 1 раз, расчёт", style = T.secondary(13.sp))
+                Text("Вес на 1 раз, расчёт", style = T.secondary(13.sp))
                 NumText(forma.app.ui.Texts.oneRm(ex, e1rm ?: series.last().value), style = T.number(40.sp).copy(color = F.c.strength))
                 if (series.size >= 2) LineChart(
                     listOf(Series(series.map { it.value }, F.c.strength, fill = true)),
                     xLabels = listOf(shortDate(LocalDate.ofEpochDay(series.first().epochDay)), shortDate(LocalDate.ofEpochDay(series.last().epochDay))),
-                    description = "Расчётный максимум по тренировкам",
+                    description = "Вес на 1 раз по тренировкам, расчёт",
                 )
-                Text("Точка — лучший подход тренировки, пересчитанный в один повтор с учётом запаса.", style = T.secondary(12.sp))
+                Text("Точка — лучший подход тренировки: сколько ты поднял бы на 1 раз, с учётом запаса.", style = T.secondary(12.sp))
             }
         }
         if (rec != null) {
@@ -72,7 +72,7 @@ fun ExerciseScreen(exerciseId: String) {
                 } else {
                     // Dumbbells: the weight of one of the two, as everywhere ("30 кг ×2").
                     val kg = if (ex.perHand && ex.load == LoadKind.EXTERNAL) "кг ×2" else "кг"
-                    StatTile("Лучший расчёт", if (rec.bestE1rm > 0) Ru.kg((rec.bestE1rm * 2).roundToInt() / 2.0) else "—", kg, F.c.strength, Modifier.weight(1f))
+                    StatTile("На 1 раз", if (rec.bestE1rm > 0) Ru.kg((rec.bestE1rm * 2).roundToInt() / 2.0) else "—", kg, F.c.strength, Modifier.weight(1f))
                     val (value, unit) = when {
                         ex.load != LoadKind.BODYWEIGHT_PLUS -> Ru.kg(rec.heaviest) to kg
                         rec.heaviest > 0 -> "+${Ru.kg(rec.heaviest)}" to "доп. кг"
@@ -93,7 +93,7 @@ fun ExerciseScreen(exerciseId: String) {
                     if (i > 0) Hairline()
                     Text(if (ex.load == LoadKind.TIMED) "${slot.reps} с" else forma.app.ui.Texts.weightReps(ex, slot.weight!!, slot.reps), style = T.title(22.sp))
                     Text(targetWhere(slot.slotKey, ex.load == LoadKind.TIMED, program, settings, repo), style = T.secondary(13.sp))
-                    if (slot.stalls > 0) Text("Без роста: ${slot.stalls} ${Ru.plural(slot.stalls, "тренировка", "тренировки", "тренировок")} подряд. После трёх — шаг назад на 10 %.", style = T.secondary(13.sp))
+                    if (slot.stalls > 0) Text("Без роста: ${slot.stalls} ${Ru.plural(slot.stalls, "тренировка", "тренировки", "тренировок")} подряд. После трёх вес станет на 10 % легче, чтобы снова расти.", style = T.secondary(13.sp))
                 }
             }
         }

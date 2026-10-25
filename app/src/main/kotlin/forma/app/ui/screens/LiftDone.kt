@@ -53,7 +53,7 @@ fun LiftDoneScreen(workoutId: Long) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatTile("Время", "${summary.minutes}", Ru.plural(summary.minutes, "минута", "минуты", "минут"), F.c.text, Modifier.weight(1f))
             StatTile("Подходы", "${summary.sets}", Ru.plural(summary.sets, "рабочий", "рабочих", "рабочих"), F.c.text, Modifier.weight(1f))
-            StatTile("Тоннаж", Ru.one(summary.volumeKg / 1000), "тонны", F.c.strength, Modifier.weight(1f))
+            StatTile("Поднято", Ru.one(summary.volumeKg / 1000), "тонны", F.c.strength, Modifier.weight(1f))
         }
         val records = summary.reports.filter { it.record }
         if (records.isNotEmpty()) {
@@ -63,7 +63,7 @@ fun LiftDoneScreen(workoutId: Long) {
                     Text("Новый рекорд силы", style = T.title(18.sp))
                 }
                 records.forEach { r ->
-                    Text("${r.name}: расчётный максимум ${Texts.oneRm(Catalog.find(r.exerciseId), r.e1rm ?: 0.0)}", style = T.body(15.sp))
+                    Text("${r.name}: вес на 1 раз — около ${Texts.oneRm(Catalog.find(r.exerciseId), r.e1rm ?: 0.0)}", style = T.body(15.sp))
                 }
             }
         }
@@ -103,7 +103,7 @@ fun LiftDoneScreen(workoutId: Long) {
                 }
             }
         }
-        Text("Нагрузка тренировки: ${summary.load.roundToInt()} (оценка × минуты). Она идёт в график тренированности и усталости.", style = T.secondary(13.sp))
+        Text("Нагрузка тренировки: ${summary.load.roundToInt()}. Это твоя оценка × минуты. По ней считаются форма, усталость и «Свежесть».", style = T.secondary(13.sp))
         NextToday { nav.tab(Screen.Today) }
     }
 }

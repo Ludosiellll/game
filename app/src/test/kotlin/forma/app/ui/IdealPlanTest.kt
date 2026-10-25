@@ -214,7 +214,7 @@ class IdealPlanTest {
         }
         compose.waitUntil(10_000) { settle(); compose.onAllNodes(hasText("Что можно улучшить", ignoreCase = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("+ Подъём на носки сидя · 3 × 12–20").assertExists()
-        compose.onNodeWithText("Камбаловидная мышца", substring = true).assertExists()
+        compose.onNodeWithText("камбаловидная мышца", substring = true).assertExists()
         compose.onNodeWithText("это твой выбор, обратно не предлагаю", substring = true).performScrollTo().assertExists()
         // Nothing ticked: nothing to take.
         compose.onNodeWithText("Отметь, что взять", ignoreCase = true).performScrollTo().assertExists()
