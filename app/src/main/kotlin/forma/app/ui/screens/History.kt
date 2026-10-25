@@ -180,12 +180,12 @@ fun HistoryItemScreen(workoutId: Long) {
                     StatTile("Темп", r.avgPace?.let { Ru.pace(it) } ?: "—", "мин/км", F.c.text, Modifier.weight(1f))
                     StatTile("Выполнено", "${(r.completed * 100).roundToInt()}%", "плана", F.c.text, Modifier.weight(1f))
                 }
-                if (r.workPace != null) Text("Темп на рабочих отрезках: ${Ru.pace(r.workPace)} /км", style = T.body(15.sp))
+                if (r.workPace != null) Text("Темп на отрезках, без разминки и отдыха: ${Ru.pace(r.workPace)} /км", style = T.body(15.sp))
                 if (r.vdotAfter != null) Text(formLine(r.vdotAfter, profile?.runGoal), style = T.secondary(14.sp))
             }
             val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
             if (summary?.manual == true) Text("Внесено вручную: бег без телефона.", style = T.secondary(14.sp))
-            summary?.cadence?.let { Text("Каденс: $it шагов в минуту", style = T.secondary(14.sp)) }
+            summary?.cadence?.let { Text("Шагов в минуту: $it", style = T.secondary(14.sp)) }
             if (r != null) RunDebrief(workout, r, summary)
             if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
             if (summary != null && summary.laps.any { it.rep == null }) LapsEditor(workout.id, summary.laps)
@@ -211,9 +211,9 @@ fun HistoryItemScreen(workoutId: Long) {
             val again = repo.setRating(workoutId, v)
             rated = when {
                 workout.kind == Kind.LIFT -> "Оценка исправлена: нагрузка и «Свежесть» пересчитаны."
-                again -> "Оценка исправлена: план заново решил по этой пробежке, следующие пойдут от нового решения."
-                else -> "Оценка исправлена, нагрузка пересчитана. План по этой пробежке уже решён: после неё были другие пробежки, " +
-                    "и они шли от того решения."
+                again -> "Оценка исправлена, и план заново решил, что делать после этой пробежки. Следующие пойдут уже по-новому."
+                else -> "Оценка исправлена, нагрузка пересчитана. План уже не поменяется: после этой пробежки были другие, " +
+                    "и они шли от прежнего решения."
             }
         }
     }
@@ -221,7 +221,7 @@ fun HistoryItemScreen(workoutId: Long) {
         AlertDialog(
             onDismissRequest = { confirm = false }, containerColor = F.c.surface,
             title = { Text("Удалить тренировку?", style = T.title(20.sp)) },
-            text = { Text("Она исчезнет из истории и графиков. Уже пересчитанные цели не откатятся.", style = T.secondary(14.sp)) },
+            text = { Text("Она пропадёт из истории и графиков. Веса и темпы, которые уже поменялись после неё, останутся как есть.", style = T.secondary(14.sp)) },
             confirmButton = { TextButton({ confirm = false; scope.launch { repo.deleteWorkout(workoutId); nav.back() } }) { Text("Удалить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.bad)) } },
             dismissButton = { TextButton({ confirm = false }) { Text("Отмена", style = T.body(15.sp)) } },
         )
@@ -245,7 +245,7 @@ private fun RatingDialog(now: Int?, run: Boolean, onDismiss: () -> Unit, onSave:
                 }
                 Text(
                     (Texts.RPE.firstOrNull { it.first == v }?.second?.let { "$it. " } ?: "") +
-                        if (run) "По оценке бега план решает, усложнять ли следующий." else "От оценки зависят нагрузка и «Свежесть».",
+                        if (run) "По этой оценке план решает, делать ли следующую пробежку тяжелее." else "От оценки зависят нагрузка и «Свежесть».",
                     style = T.secondary(14.sp),
                 )
             }
@@ -271,7 +271,7 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
     var open by remember { mutableStateOf<Int?>(null) }
     SectionLabel("Поправить круги")
     Text(
-        "Забыл нажать «Круг» — круг вышел вдвое длиннее: нажми на него и раздели. Нажал дважды — соедини. " +
+        "Забыл нажать «Круг», и круг вышел вдвое длиннее? Нажми на него и раздели. Нажал дважды — соедини. " +
             "Нажал не вовремя — впиши время круга сам.",
         style = T.secondary(13.sp),
     )
@@ -301,7 +301,7 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
         NumberField(typed, { typed = it }, "Время круга", "с", placeholder = Ru.one(l.seconds))
         Text(
             if (time != null) "Будет ${Ru.lapTenth(time)}. Остальные круги не меняются."
-            else "Секунды — «83» или «83,4», либо как на часах — «1:23».",
+            else "Впиши секунды, например «83» или «83,4». Или как на часах: «1:23».",
             style = T.secondary(13.sp).copy(color = if (typed.isNotBlank() && time == null) F.c.warn else F.c.text2),
         )
         if (time != null) {
@@ -329,7 +329,7 @@ private fun KmSplitsCard(splits: List<Double>) {
             description = "Время каждого километра: ${splits.joinToString(", ") { Ru.pace(it) }}",
         )
         Text(splits.mapIndexed { i, s -> "${i + 1} км — ${Ru.pace(s)}" }.joinToString(" · "), style = T.number(13.sp, FontWeight.SemiBold))
-        Text("Выше столбик — медленнее километр.", style = T.secondary(12.sp))
+        Text("Чем выше столбик, тем медленнее километр.", style = T.secondary(12.sp))
     }
 }
 

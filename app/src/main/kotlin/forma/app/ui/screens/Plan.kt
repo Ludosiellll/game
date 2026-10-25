@@ -69,7 +69,7 @@ fun PlanScreen() {
                 Text(cycle.second.replaceFirstChar { it.uppercase() }, style = T.secondary(14.sp))
             } else {
                 Text("Неделя $weekNo", style = T.title(22.sp))
-                Text("Новичкам плановая разгрузка не нужна: приложение даст лёгкую неделю само, если увидит, что веса откатываются.", style = T.secondary(14.sp))
+                Text("Новичку лёгкие недели по графику не нужны. Если веса пойдут назад, приложение само даст лёгкую неделю.", style = T.secondary(14.sp))
             }
         }
 
@@ -133,7 +133,7 @@ fun PlanScreen() {
                 }
             }
         }
-        Text("Нажми на день — там тренировка целиком: что, зачем и почему в этот день.", style = T.secondary(13.sp))
+        Text("Нажми на день, чтобы увидеть тренировку целиком: что делать, зачем и почему в этот день.", style = T.secondary(13.sp))
 
         GhostButton(if (p.templates.isNotEmpty() && p.aim.runs) "Поменять дни зала и бега" else "Поменять дни тренировок", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 48.dp)
 
@@ -160,7 +160,7 @@ fun PlanScreen() {
                             },
                             style = T.body(16.sp, FontWeight.SemiBold),
                         )
-                        Text("Как есть и каким может быть — с причинами. Меняется только то, что выберешь.", style = T.secondary(13.sp))
+                        Text("Что можно улучшить в плане и почему. Поменяется только то, что ты выберешь.", style = T.secondary(13.sp))
                     }
                     Icon(Ic.chevron, null, tint = F.c.text3, modifier = Modifier.size(18.dp))
                 }
@@ -197,7 +197,7 @@ private fun TemplateCard(t: Template) {
     val added = repo.addedTo(t.id, settings)
     FCard(gap = 0.dp) {
         Text(t.title, style = T.title(20.sp))
-        Text("Нажми на упражнение: подходы, повторы, отдых, замена или убрать.", style = T.secondary(12.sp), modifier = Modifier.padding(bottom = 8.dp))
+        Text("Нажми на упражнение, чтобы поменять подходы, повторы и отдых, заменить его или убрать.", style = T.secondary(12.sp), modifier = Modifier.padding(bottom = 8.dp))
         t.slots.forEachIndexed { i, s ->
             Hairline()
             val item = plan?.items?.firstOrNull { it.position == i && !it.addedForGood }
@@ -300,10 +300,10 @@ private fun TemplateCard(t: Template) {
                 scope.launch { if (own != null) repo.setRemoved(planId, true) else repo.removeAdded(t.id, planId) }
                 editing = -1
             },
-            removeNote = if (own != null) "Вернуть можно здесь же: убранное останется в списке серым." else "Добавить снова можно кнопкой «Добавить упражнение».",
+            removeNote = if (own != null) "Убранное останется в списке серым. Нажми на него, чтобы вернуть." else "Добавить снова можно кнопкой «Добавить упражнение».",
             swapNote = if (own != null && planned != own) {
-                "Вместо «${forma.core.model.Catalog.find(own.exerciseId)?.name ?: own.exerciseId}» — упражнение на одну мышцу, " +
-                    "ему нужны другие повторы: ${swapNote(own, planned)}."
+                "Вместо «${forma.core.model.Catalog.find(own.exerciseId)?.name ?: own.exerciseId}» теперь упражнение на одну мышцу. " +
+                    "Ему нужны другие повторы: ${swapNote(own, planned)}."
             } else null,
             onHistory = {
                 editing = -1
@@ -365,7 +365,7 @@ private fun PlanExerciseDialog(
                 if (lo != plannedReps.first || hi != plannedReps.second) {
                     Text(
                         "В плане ${plannedReps.first}–${plannedReps.second}." +
-                            if (timed) "" else " Вес под новый диапазон посчитаю по прошлым подходам, а если их не было — подберём в первой тренировке.",
+                            if (timed) "" else " Вес под новые повторы приложение посчитает по прошлым подходам. Если их не было, подберём вес в первой тренировке.",
                         style = T.secondary(12.sp),
                     )
                 }
@@ -376,9 +376,10 @@ private fun PlanExerciseDialog(
                     }
                 }
                 Text(
-                    if (rs != plannedRest) "В плане ${Ru.clock(plannedRest)}. Свой отдых приложение не меняет — он будет одинаковым после любого подхода."
-                    else "Это середина: после каждого подхода отдых считается заново — дольше после тяжёлого подхода и на большом весе, " +
-                        "короче, когда был запас, и с поправкой на то, как ты восстанавливаешься в этом упражнении. Выберешь своё — будет всегда таким.",
+                    if (rs != plannedRest) "В плане ${Ru.clock(plannedRest)}. Свой отдых приложение не меняет: он будет одинаковым после любого подхода."
+                    else "Это среднее время. После каждого подхода приложение подстраивает отдых. После тяжёлого подхода и на большом весе " +
+                        "он дольше, а если остался запас — короче. Ещё учитывается, как ты восстанавливаешься в этом упражнении. " +
+                        "Выберешь своё время — отдых всегда будет таким.",
                     style = T.secondary(12.sp),
                 )
                 val chosen = st
@@ -420,8 +421,8 @@ private fun PauseControl() {
             GhostButton("Вернуться сегодня", { scope.launch { repo.resume(today) } }, Modifier.fillMaxWidth())
         } else {
             Text(
-                "Отпуск, командировка или болезнь? Поставь паузу: пропуски не будут висеть, после возвращения первые тренировки " +
-                    "будут легче, а после паузы в неделю и больше цикл начнётся заново.",
+                "Отпуск, поездка или болезнь? Поставь паузу, и пропуски не будут висеть. После паузы первые тренировки " +
+                    "будут легче. Если пауза на неделю или дольше, цикл начнётся заново.",
                 style = T.secondary(14.sp),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

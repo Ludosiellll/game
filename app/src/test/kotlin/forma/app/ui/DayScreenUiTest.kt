@@ -111,7 +111,7 @@ class DayScreenUiTest {
         // The run first (the hard run before the gym), then the gym: each with its own why.
         compose.onAllNodesWithText("Зачем")[0].performScrollTo()
         compose.onNodeWithText("Что даёт телу").performScrollTo()
-        compose.onAllNodesWithText("Как дальше")[0].performScrollTo()
+        compose.onAllNodesWithText("Что дальше")[0].performScrollTo()
         compose.onRoot().captureRoboImage("build/shots/carbon-day.png")
         compose.onNodeWithText("Почему в этот день", ignoreCase = true).performScrollTo()
         compose.onNodeWithText("Тяжёлый бег — в день верха", substring = true).performScrollTo()
@@ -291,7 +291,7 @@ class DayScreenUiTest {
         show(withRace(repo(), monday)) { TodayScreen() }
         compose.onNodeWithText("Забег сегодня", ignoreCase = true).performScrollTo()
         // Monday's planned hard run is the race: one start, in its card.
-        compose.onNodeWithText("старт в её карточке", substring = true).assertExists()
+        compose.onNodeWithText("Старт — в её карточке", substring = true).assertExists()
         compose.onAllNodesWithText("К старту").assertCountEquals(0)
         compose.onNodeWithText("Забег · 1500 м").assertExists()
         compose.onRoot().captureRoboImage("build/shots/carbon-race-day.png")

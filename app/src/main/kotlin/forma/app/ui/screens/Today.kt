@@ -109,10 +109,10 @@ fun TodayScreen() {
     val afterSick by produceState<String?>(null, today, week, feel, settings) {
         val runs = repo.easyAfterSick(today)
         val lift = repo.liftAfterSick(today)
-        value = if (runs == 0 && !lift || feel == Feel.SICK) null else "После болезни: " + listOfNotNull(
-            if (runs > 0) "ещё $runs ${Ru.plural(runs, "пробежка", "пробежки", "пробежек")} — лёгкие" else null,
-            if (lift) "первая силовая — облегчённая" else null,
-        ).joinToString(", ") + ". Если снова станет хуже — «Болею»."
+        value = if (runs == 0 && !lift || feel == Feel.SICK) null else "После болезни начинаем мягко: " + listOfNotNull(
+            if (runs > 0) "ещё $runs ${Ru.plural(runs, "лёгкая пробежка", "лёгкие пробежки", "лёгких пробежек")}" else null,
+            if (lift) "первая силовая — полегче" else null,
+        ).joinToString(", ") + ". Станет хуже — снова отметь «Болею»."
     }
 
     val p = program ?: return
@@ -233,7 +233,7 @@ fun TodayScreen() {
                 when (zone) {
                     null -> if (loads.isEmpty()) "нет данных" else "копим данные"
                     forma.core.load.LoadStory.Zone.REST -> "нужен отдых"
-                    forma.core.load.LoadStory.Zone.BUILDING -> "в работе"
+                    forma.core.load.LoadStory.Zone.BUILDING -> "идёт нагрузка"
                     forma.core.load.LoadStory.Zone.BALANCE -> "равновесие"
                     forma.core.load.LoadStory.Zone.FRESH -> "можно грузиться"
                     forma.core.load.LoadStory.Zone.DETRAINING -> "долгий отдых"
@@ -310,8 +310,8 @@ fun TodayScreen() {
             title = { Text("Оказалось, не болел?", style = T.title(20.sp)) },
             text = {
                 Text(
-                    "Снимутся отметка «Болею» и пауза. Эти дни станут обычным пропуском, как если бы ты просто не тренировался. " +
-                        "Бег и зал пойдут по плану, без лёгкого возвращения.",
+                    "Уберём отметку «Болею» и паузу. Эти дни станут обычными пропусками, как будто ты просто не тренировался. " +
+                        "Бег и зал пойдут по плану, без мягкого возвращения.",
                     style = T.secondary(15.sp),
                 )
             },
@@ -335,9 +335,9 @@ const val SICK_PAUSE_DAYS = 3
  * same week, each alone otherwise; null in an ordinary week. [ladder]: the week holds hard runs, whose ladder step waits.
  */
 fun deloadText(gym: Boolean, runs: Boolean, ladder: Boolean = true): String? = when {
-    gym && runs -> "Разгрузочная неделя: в зале вдвое меньше подходов и вес −10 %, пробежки короче. Восстановление — тоже тренировка."
-    gym -> "Разгрузочная неделя: вдвое меньше подходов и вес −10 %. Восстановление — тоже тренировка."
-    runs -> "Облегчённая неделя бега: пробежки короче" + (if (ladder) ", шаг лестницы не двигается" else "") + ". Восстановление — тоже тренировка."
+    gym && runs -> "Неделя разгрузки: в зале вдвое меньше подходов и вес на 10 % легче, пробежки короче. Отдых тоже нужен, чтобы расти."
+    gym -> "Неделя разгрузки: вдвое меньше подходов и вес на 10 % легче. Отдых тоже нужен, чтобы расти."
+    runs -> "Лёгкая неделя бега: пробежки короче" + (if (ladder) ", тяжёлые пробежки не усложняются" else "") + ". Отдых тоже нужен, чтобы расти."
     else -> null
 }
 
@@ -489,8 +489,8 @@ private fun LiftCard(
             return@FCard
         }
         if (minutes != null && budget != null && ratio != 1.0 && minutes > budget * 1.15) Text(
-            "У тебя тренировки идут дольше расчёта (×${forma.core.text.Ru.one(ratio)}): выйдет около $minutes мин при твоих $budget. " +
-                "Не успеваешь — убери подсобное упражнение в «План» или сократи отдых.",
+            "Судя по твоим прошлым тренировкам, сегодня выйдет около $minutes мин, а у тебя $budget. " +
+                "Не успеваешь — убери лишнее упражнение в «Плане» или отдыхай меньше.",
             style = T.secondary(12.sp).copy(color = F.c.warn),
         )
         val items = plan?.items.orEmpty()
@@ -508,7 +508,7 @@ private fun LiftCard(
             }
         }
         val calib = items.count { it.prescription.calibrate }
-        if (calib > 0) Text("Первая тренировка с этими упражнениями: начни с подсказанного веса — после первого подхода приложение подберёт рабочий.", style = T.secondary(13.sp))
+        if (calib > 0) Text("Некоторые упражнения здесь у тебя впервые. Начни с подсказанного веса, а после первого подхода приложение подберёт рабочий.", style = T.secondary(13.sp))
         PrimaryButton(if (light) "Начать лёгкую тренировку" else "Начать тренировку", onStart, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
     }
 }
@@ -526,7 +526,7 @@ private fun DoneAhead(w: WorkoutEntity, other: Boolean) {
             style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good),
         )
     }
-    Text("Засчитано за сегодня. Хочешь — сделай и сегодня: тогда та тренировка будет лишней сверх плана.", style = T.secondary(13.sp))
+    Text("Засчитано за сегодня. Хочешь — сделай ещё раз, это будет тренировка сверх плана.", style = T.secondary(13.sp))
 }
 
 fun prescriptionShort(sets: Int, reps: Int, weight: Double?, exerciseId: String): String {
@@ -582,7 +582,7 @@ private fun RunCard(
                 Text(if (other) "Сделано: ${doneAs.title}" else "Сделано", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
             }
             if (other && s.kind == SessionKind.RUN_QUALITY) {
-                Text("«${w.title}» — в следующий тяжёлый день: план бега сдвигается только по самой тренировке.", style = T.secondary(13.sp))
+                Text("«${w.title}» будет в следующий тяжёлый день. План бега идёт дальше только после этой тренировки.", style = T.secondary(13.sp))
             }
             DoneRunDetails(doneAs)
         } else {
@@ -603,7 +603,7 @@ private fun RestCard(
             SectionLabel("Пропущено", color = if (s.isRun) F.c.endurance else F.c.strength)
             Text(sessionTitle(s, program), style = T.title(22.sp))
             Text(
-                "Стояло в плане на ${DAY_ACCUSATIVE[catchUp.plannedOn - 1]}. Можно сделать сегодня вместо отдыха — " +
+                "Было в плане на ${DAY_ACCUSATIVE[catchUp.plannedOn - 1]}. Можно сделать сегодня вместо отдыха, " +
                     "завтрашнему плану это не помешает.",
                 style = T.secondary(14.sp),
             )
@@ -617,7 +617,7 @@ private fun RestCard(
         SectionLabel("Отдых")
         Text("Сегодня день восстановления", style = T.title(22.sp))
         if (next == null) Text("На этой неделе тренировок больше нет. Новая неделя — с понедельника.", style = T.secondary(14.sp))
-        Text("Лёгкая прогулка или растяжка не помешают. Если очень хочется — можно потренироваться вне плана.", style = T.secondary(13.sp))
+        Text("Прогулка или растяжка не помешают. Очень хочется — можно потренироваться вне плана.", style = T.secondary(13.sp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GhostButton("Пробежка", onFree, Modifier.weight(1f))
             GhostButton("Силовая", onOther, Modifier.weight(1f))
@@ -639,8 +639,8 @@ private fun FeelRow(feel: Feel, tired: Boolean, onPick: (Feel) -> Unit) {
             }
         }
         val text = when {
-            feel == Feel.LOW -> "Лёгкий вариант: в силовой вдвое меньше подходов и вес −10 %, бег — только лёгкий. Прогресс и план не сдвинутся."
-            feel == Feel.UNSET && tired -> "Нагрузка последних дней высокая. Если плохо спал или чувствуешь усталость — выбери «Так себе»."
+            feel == Feel.LOW -> "Сегодня полегче: в силовой вдвое меньше подходов и вес на 10 % легче, бег только лёгкий. Прогресс и план от этого не собьются."
+            feel == Feel.UNSET && tired -> "Последние дни были тяжёлыми. Если плохо спал или устал, выбери «Так себе»."
             else -> null
         }
         if (text != null) Text(text, style = T.secondary(13.sp))
@@ -653,9 +653,9 @@ private fun SickCard(today: LocalDate, onTrainAnyway: () -> Unit, onPause: () ->
         SectionLabel("Отдых")
         Text("Сегодня выздоравливаем", style = T.title(22.sp))
         Text(
-            "При температуре, ломоте или кашле — никаких тренировок, пока не пройдёт. Пропущенное можно будет сделать в свободный " +
-                "день, а после перерыва первые тренировки станут легче сами. Болезнь на несколько дней — поставь паузу: " +
-                "пропуски не будут висеть.",
+            "Если есть температура, ломота или кашель, не тренируйся, пока не пройдёт. Пропущенное можно сделать в свободный " +
+                "день. После перерыва первые тренировки сами станут легче. Болеешь несколько дней — поставь паузу, " +
+                "и пропуски не будут висеть.",
             style = T.secondary(14.sp),
         )
         PrimaryButton(
@@ -678,8 +678,8 @@ private fun PauseCard(until: LocalDate, restarts: Boolean, onNotSick: (() -> Uni
         SectionLabel("Пауза")
         Text("Отдыхаем до ${shortDate(until)}", style = T.title(22.sp))
         Text(
-            "Пропусков за эти дни не будет. После возвращения первые силовые будут легче, бег — короче и спокойнее" +
-                if (restarts) ", а цикл начнётся заново." else ".",
+            "Эти дни не станут пропусками. После паузы первые силовые будут легче, а пробежки короче и спокойнее." +
+                if (restarts) " Цикл начнётся заново." else "",
             style = T.secondary(14.sp),
         )
         GhostButton("Вернуться сегодня", onBack, Modifier.fillMaxWidth())
@@ -708,13 +708,13 @@ private fun RaceCard(goal: forma.core.model.RunGoal, today: LocalDate, raceDone:
         )
         Text(
             when {
-                days == 0L && raceDone -> "Забег пройден — время в истории. Два дня — отдых или совсем лёгкий бег, потом план дальше."
-                days == 0L && runToday -> "Пробежка по плану сегодня — это забег: старт в её карточке ниже."
-                days == 0L -> "Разминка 12 минут и 3–4 ускорения. Первая половина — ровно по темпу цели, без рывка со старта. После финиша впиши время с табло."
-                days == 1L -> "Сегодня — 20 минут легко с 4 ускорениями или отдых. Ужин как обычно, ляг пораньше. Завтрак — за 2–3 часа до старта."
-                days <= 7 -> "Неделя забега: бег короче, за 3–5 дней — короткая тренировка в темпе цели, дальше только легко. Ноги в зале за 3 дня до забега — облегчённо."
-                days <= 14 -> "Подводка: последние две недели тренировки легче, шаги лестниц не двигаются — копится свежесть."
-                else -> "Контрольного до забега не будет: забег и есть проверка. С ${Ru.date(date.minusDays(14))} — подводка, тренировки легче."
+                days == 0L && raceDone -> "Забег пройден, время сохранено в истории. Два дня отдыхай или бегай совсем легко. Потом план пойдёт дальше."
+                days == 0L && runToday -> "Сегодняшняя пробежка по плану и есть забег. Старт — в её карточке ниже."
+                days == 0L -> "Разомнись 12 минут и сделай 3–4 коротких ускорения. Первую половину беги ровно в темпе цели, не рвись со старта. После финиша впиши время с табло."
+                days == 1L -> "Сегодня 20 минут легко с 4 ускорениями или отдых. Поужинай как обычно и ляг пораньше. Завтра позавтракай за 2–3 часа до старта."
+                days <= 7 -> "Неделя забега: бег короче. За 3–5 дней до старта — короткая тренировка в темпе цели, потом только легко. Ноги в зале за 3 дня до забега — полегче."
+                days <= 14 -> "Последние две недели до забега тренировки легче, а тяжёлые пробежки не усложняются. Так ты придёшь на старт свежим."
+                else -> "Контрольного до забега не будет: сам забег и есть проверка. С ${Ru.date(date.minusDays(14))} тренировки станут легче, чтобы прийти на старт свежим."
             },
             style = T.secondary(14.sp),
         )

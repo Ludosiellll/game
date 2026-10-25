@@ -93,13 +93,13 @@ fun DayScreen(date: LocalDate) {
         // "Завтра" over "Четверг, 15 октября"; a day further off is its name over its date.
         TopBar(title ?: DAY_FULL[date.dayOfWeek.value - 1], if (title != null) dateLine(date) else shortDate(date), onBack = { nav.back() })
         if (paused) {
-            forma.app.ui.components.Banner("Пауза: в этот день тренировок по плану нет, план стоит.", F.c.warn)
+            forma.app.ui.components.Banner("Пауза: в этот день тренировок нет, план ждёт.", F.c.warn)
         } else if (sessions.isEmpty() && item?.offPlan.isNullOrEmpty()) {
             FCard(gap = 6.dp) {
                 SectionLabel("Отдых")
                 Text("По плану — отдых", style = T.title(20.sp))
                 Text(
-                    "Мышцы, сердце и связки становятся сильнее не во время тренировки, а в отдыхе после неё. Прогулка или " +
+                    "Мышцы, сердце и связки крепнут как раз в отдыхе после тренировки. Прогулка или " +
                         "растяжка не помешают.",
                     style = T.secondary(14.sp),
                 )
@@ -160,12 +160,12 @@ private fun NotOnItsDayCard(s: PlannedSession, p: Program, later: WorkoutEntity?
         SectionLabel("Пропущено", color = F.c.bad)
         when {
             canCatchUp -> {
-                Text("Сегодня свободный день, и эта тренировка в него помещается: соседним тренировкам она не помешает.", style = T.secondary(14.sp))
+                Text("Сегодня у тебя свободный день. Эту тренировку можно сделать сегодня, соседним она не помешает.", style = T.secondary(14.sp))
                 forma.app.ui.components.PrimaryButton("Сделать в свободный день", onToday, Modifier.fillMaxWidth(), color = color, textColor = F.c.onData)
             }
             thisWeek -> Text(
-                "Пропущенное можно сделать в свободный день этой недели, если оно не помешает соседним тренировкам, — " +
-                    "главный экран предложит его сам.",
+                "Пропущенное можно сделать в свободный день на этой неделе, если оно не помешает соседним тренировкам. " +
+                    "Главный экран сам это предложит.",
                 style = T.secondary(14.sp),
             )
             else -> Text("Неделя прошла — план идёт дальше, догонять не нужно.", style = T.secondary(14.sp))
@@ -194,7 +194,7 @@ private fun DayRunCard(s: PlannedSession, date: LocalDate, done: WorkoutEntity?,
                 Text("Сделано: ${done.title}", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.good))
             }
             if (s.kind == forma.core.plan.SessionKind.RUN_QUALITY) {
-                Text("Тяжёлая тренировка перешла на следующий тяжёлый день: план бега сдвигается только по самой тренировке.", style = T.secondary(14.sp))
+                Text("Тяжёлая тренировка перешла на следующий тяжёлый день. План бега идёт дальше только после неё самой.", style = T.secondary(14.sp))
             }
             GhostButton("Как прошло — разбор", { nav.push(Screen.HistoryItem(done.id)) }, Modifier.fillMaxWidth(), height = 48.dp)
         }
@@ -240,7 +240,7 @@ private fun DayRunCard(s: PlannedSession, date: LocalDate, done: WorkoutEntity?,
         // How to run it and what follows: for a run ahead; a done one has its debrief and the plan's decisions.
         if (done == null) {
             Explained("Как бежать", listOf(workout.note, why.how).filter { it.isNotBlank() }.joinToString(" "))
-            if (why.next.isNotBlank()) Explained("Как дальше", why.next)
+            if (why.next.isNotBlank()) Explained("Что дальше", why.next)
         }
         Explained("Восстановление", "Тело обычно восстанавливается после этой тренировки за ${RunExplain.recoveryWords(why.recoveryHours)}.")
     }
@@ -290,7 +290,7 @@ private fun DayLiftCard(s: PlannedSession, p: Program, date: LocalDate, done: Wo
         Explained("Цели в зале", LIFT_FOCUS.firstOrNull { it.value == p.aim.normalized().lift }?.let { "${it.label} — ${it.text.replaceFirstChar { c -> c.lowercase() }}" } ?: "")
         val lifting by LocalRepo.current.store.liftState.collectAsState(initial = forma.app.data.LiftState())
         cycleWords(p, date, lifting.reactiveDeloadStart)?.let { Explained("Неделя цикла", "Неделя ${it.first} из ${p.blockWeeks}: ${it.second}") }
-        Explained("Как дальше", "После каждой тренировки вес и повторы пересчитываются по тому, как прошли подходы: все повторы с запасом — прибавка, не хватило — повтор или шаг назад.")
+        Explained("Что дальше", "После каждой тренировки приложение смотрит, как прошли подходы. Все повторы сделаны с запасом — вес растёт. Не хватило — тот же вес ещё раз или чуть легче.")
     }
 }
 
@@ -305,10 +305,10 @@ private fun Explained(title: String, text: String) {
 
 /** What a gym session works; [hardRun]: the day also has a hard run. */
 private fun focusWhy(f: Focus, hardRun: Boolean): String = when (f) {
-    Focus.UPPER -> "Верх: грудь, спина, плечи, руки. Бегу почти не мешает" + if (hardRun) " — поэтому стоит в день тяжёлого бега." else "."
-    Focus.LOWER -> "Низ: ноги, ягодицы, корпус. Сила ног делает шаг экономнее — это показано на бегунах; тяжёлые ноги стоят " +
-        "подальше от тяжёлого бега."
-    Focus.FULL -> "Всё тело: главные движения за одну тренировку."
+    Focus.UPPER -> "Верх тела: грудь, спина, плечи, руки. Бегу почти не мешает" + if (hardRun) ", поэтому стоит в день тяжёлого бега." else "."
+    Focus.LOWER -> "Низ тела: ноги, ягодицы, пресс и спина. Сильные ноги делают бег легче, это проверено на бегунах. Тяжёлые " +
+        "тренировки ног стоят подальше от тяжёлого бега."
+    Focus.FULL -> "Всё тело: главные упражнения за одну тренировку."
 }
 
 /**
@@ -322,12 +322,12 @@ internal fun cycleWords(p: Program, date: LocalDate, reactive: Long?): Pair<Int,
     val d = date.toEpochDay()
     return pos to when {
         pos == p.blockWeeks && reactive != null && d in reactive until reactive + 7 ->
-            "разгрузка раньше плана — веса откатывались. Вдвое меньше подходов, вес −10 %, потом новый цикл."
-        pos == p.blockWeeks -> "разгрузка — вдвое меньше подходов, вес −10 %. Дальше новый цикл с тех же весов."
-        reactive != null && d in reactive - 7 until reactive -> "рабочая неделя — запас как в плане. Следующая — разгрузка: веса откатывались."
-        off > 0 -> "вход в цикл — в каждом подходе оставляй на 1 повтор больше запаса."
-        off < 0 -> "пик цикла — запаса на 1 повтор меньше. Следующая неделя — разгрузка."
-        else -> "рабочая неделя — запас как в плане."
+            "разгрузка раньше плана, потому что веса пошли назад. Вдвое меньше подходов и вес на 10 % легче, потом новый цикл."
+        pos == p.blockWeeks -> "разгрузка. Вдвое меньше подходов и вес на 10 % легче. Потом новый цикл с тех же весов."
+        reactive != null && d in reactive - 7 until reactive -> "обычная неделя, запас как в плане. Следующая — разгрузка, потому что веса пошли назад."
+        off > 0 -> "начало цикла. В каждом подходе оставляй в запасе на 1 повтор больше."
+        off < 0 -> "самая тяжёлая неделя цикла. Запас на 1 повтор меньше, а следующая неделя — разгрузка."
+        else -> "обычная неделя, запас как в плане."
     }
 }
 
