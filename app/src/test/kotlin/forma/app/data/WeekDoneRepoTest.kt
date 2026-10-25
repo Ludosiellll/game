@@ -155,8 +155,8 @@ class WeekDoneRepoTest {
         assertFalse(deloadText(gym = true, runs = false)!!.contains("пробежк"))
         assertNull(deloadText(gym = false, runs = false))
         // Only easy runs: no ladder to speak of.
-        assertTrue(deloadText(gym = false, runs = true)!!.contains("шаг лестницы"))
-        assertFalse(deloadText(gym = false, runs = true, ladder = false)!!.contains("лестниц"))
+        assertTrue(deloadText(gym = false, runs = true)!!.contains("тяжёлые пробежки не усложняются"))
+        assertFalse(deloadText(gym = false, runs = true, ladder = false)!!.contains("не усложняются"))
         // "тест 16 мая", not "16 май".
         assertEquals("16 мая", soonDay(LocalDate.of(2027, 5, 16), LocalDate.of(2027, 5, 1)))
         assertEquals("16 окт", soonDay(LocalDate.of(2026, 10, 16), LocalDate.of(2026, 10, 1)))

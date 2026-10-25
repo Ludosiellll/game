@@ -83,7 +83,7 @@ class AfterSickTest {
         assertEquals(2, repo.easyAfterSick(monday))
         val first = repo.runFor(SessionKind.RUN_QUALITY, monday)
         assertEquals(RunType.EASY, first.type)
-        assertTrue(first.note.startsWith("После болезни сначала втягиваемся: ещё 2 лёгкие пробежки"), first.note)
+        assertTrue(first.note.startsWith("После болезни начинаем мягко: ещё 2 лёгкие пробежки"), first.note)
         assertTrue("ускорен" !in first.title, first.title)
         ran(repo, monday)
         // Tuesday's gym: the first after being sick — lighter, said why; the plan does not move.
@@ -129,7 +129,7 @@ class AfterSickTest {
         // Not a hard session in its place either: easy, said why.
         val w = repo.runFor(SessionKind.RUN_QUALITY, thursday)
         assertEquals(RunType.EASY, w.type)
-        assertTrue("Контрольный — не первой пробежкой после перерыва" in w.note, w.note)
+        assertTrue("После перерыва не начинаем с контрольного" in w.note, w.note)
         // Back running (Thursday done): the trial on the next hard day with fresh legs.
         ran(repo, thursday)
         assertNotNull(repo.trialDay(thursday.plusDays(1)))

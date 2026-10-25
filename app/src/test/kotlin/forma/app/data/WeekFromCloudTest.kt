@@ -73,7 +73,7 @@ class WeekFromCloudTest {
         at(thu)
         val e = egor.runFor(SessionKind.RUN_QUALITY, thu)
         assertEquals(RunType.EASY, e.type, e.title)
-        assertTrue("Тяжёлая — не первой пробежкой после перерыва" in e.note, e.note)
+        assertTrue("После перерыва не начинаем с тяжёлой пробежки" in e.note, e.note)
         // Run that day: the next hard day is hard again.
         db.workouts().insert(WorkoutEntity(epochDay = thu.toEpochDay(), kind = Kind.RUN, templateId = "EASY", title = "Лёгкий бег", startedAt = ms(thu, 14), finishedAt = ms(thu, 15), status = Status.DONE, rpe = 6, durationSec = 1500))
         egor.store.setRunState(egor.store.runStateNow().copy(lastRunDay = thu.toEpochDay(), runs = 2))
@@ -84,7 +84,7 @@ class WeekFromCloudTest {
         at(thu)
         val d = denis.runFor(SessionKind.RUN_QUALITY, thu)
         assertEquals(RunType.EASY, d.type)
-        assertTrue("Контрольный — не первой пробежкой после перерыва" in d.note, d.note)
+        assertTrue("После перерыва не начинаем с контрольного" in d.note, d.note)
     }
 
     /**

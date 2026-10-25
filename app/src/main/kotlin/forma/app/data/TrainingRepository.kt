@@ -384,7 +384,7 @@ class TrainingRepository(
         /** No trial within this many days after being sick. */
         const val SICK_NO_TRIAL_DAYS = 7
         /** Why the first gym session after being sick is lighter, said in it. */
-        const val SICK_LIFT = "После болезни — облегчённая: меньше подходов и вес легче, без отказа. Прогресс и план не сдвигаются."
+        const val SICK_LIFT = "После болезни тренировка полегче: меньше подходов и вес легче, до отказа не доходи. Прогресс и план от этого не собьются."
 
         /** Every pause as [from, until]: the ones before and the last one. */
         private fun pausesOf(s: Settings): List<List<Long>> =
@@ -633,8 +633,8 @@ class TrainingRepository(
                 item.slot.role == SlotRole.MAIN && item.warmups.isNotEmpty() -> item.copy(warmups = if (fresh) item.warmups else item.warmups.takeLast(2))
                 heavy && fresh -> item.copy(warmups = WarmUp.single(p.weight!!, ex.step, bar))
                 ex.load == LoadKind.TIMED || deload -> item
-                !ex.compound -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: упражнение на одну мышцу — первый подход сам разогреет.")
-                !fresh -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: ${ex.primary.joinToString(", ") { it.ru.lowercase() }} уже в работе после предыдущих упражнений.")
+                !ex.compound -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: упражнение на одну мышцу, первый подход сам её разогреет.")
+                !fresh -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: ${ex.primary.joinToString(", ") { it.ru.lowercase() }} уже в работе после прошлых упражнений.")
                 else -> item
             }
             warm += ex.primary + ex.secondary
@@ -792,9 +792,9 @@ class TrainingRepository(
         return LiftItem(
             position, spec, ex.id, ex.name, p, warm, ex.step, restShift = shift, restOwn = ownRest,
             restWhy = when {
-                shift > 0 -> "Отдых здесь у тебя на ${shift} с длиннее: в прошлых тренировках после обычного отдыха ты терял " +
-                    "в следующем подходе ${if (shift >= 60) "3 и больше" else "2 и больше"} повтора."
-                shift < 0 -> "Отдых здесь у тебя на ${-shift} с короче: в прошлых тренировках ты почти не терял повторов от подхода к подходу."
+                shift > 0 -> "Отдых здесь у тебя на ${shift} с длиннее. В прошлых тренировках после обычного отдыха ты терял " +
+                    "в следующем подходе ${if (shift >= 60) "3 повтора и больше" else "2 повтора и больше"}."
+                shift < 0 -> "Отдых здесь у тебя на ${-shift} с короче. В прошлых тренировках ты почти не терял повторов от подхода к подходу."
                 else -> null
             },
         )
@@ -1405,15 +1405,15 @@ class TrainingRepository(
         val longEasy = kind == SessionKind.RUN_EASY && program != null && longEasyDay(program, date, goal?.middleDistance == true)
         // Back from being sick: the first runs easy, no reps and no strides, whatever the day holds.
         val sickLeft = easyAfterSick(date)
-        val sickNote = "После болезни сначала втягиваемся: ещё $sickLeft ${Ru.plural(sickLeft, "лёгкая пробежка", "лёгкие пробежки", "лёгких пробежек")} — " +
-            "без отрезков и ускорений, темп разговорный. Если снова станет хуже — остановись и отметь «Болею»: здоровье важнее плана. "
+        val sickNote = "После болезни начинаем мягко: ещё $sickLeft ${Ru.plural(sickLeft, "лёгкая пробежка", "лёгкие пробежки", "лёгких пробежек")}, " +
+            "без отрезков и ускорений. Беги так, чтобы мог говорить. Станет хуже — остановись и отметь «Болею»: здоровье важнее плана. "
         val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when {
             toRace != null && toRace in 1..2 -> RunPlan.easy(st.copy(easyMinutes = minOf(st.easyMinutes, 20)), strides = 4).let {
                 it.copy(note = "До забега ${toRace} ${Ru.plural(toRace.toInt(), "день", "дня", "дней")}: только размяться, без усталости. " + it.note)
             }
             toRace != null && toRace in 3..5 && kind == SessionKind.RUN_QUALITY -> (
                 if (goal?.middleDistance == true) RunPlan.goalPace(st, goal, lap, cutback = true) else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap)
-            ).let { it.copy(note = "Последняя тяжёлая перед забегом — короткая: освежить темп, не устать. " + it.note) }
+            ).let { it.copy(note = "Последняя тяжёлая перед забегом. Она короткая: освежить темп и не устать. " + it.note) }
             toRace != null && toRace in 3..7 && kind != SessionKind.RUN_QUALITY ->
                 RunPlan.easy(st.copy(easyMinutes = (minOf(st.easyMinutes, st.longMinutes) * 0.7).toInt().coerceAtLeast(20)), strides = 4)
             sickLeft > 0 -> RunPlan.easy(guess ?: st, lighter, date.toEpochDay())
@@ -1427,8 +1427,8 @@ class TrainingRepository(
                 RunPlan.easy(guess ?: st, lighter, date.toEpochDay()).let { if (guess != null) RunPlan.provisional(it) else it }.let {
                     it.copy(
                         note = (
-                            if (needsTest(st, date, goal)) "Контрольный — не первой пробежкой после перерыва: сегодня лёгкий, чтобы втянуться, контрольный — в следующий тяжёлый день. "
-                            else "Тяжёлая — не первой пробежкой после перерыва: сегодня лёгкий, чтобы втянуться, тяжёлые — со следующего тяжёлого дня. "
+                            if (needsTest(st, date, goal)) "После перерыва не начинаем с контрольного. Сегодня лёгкий бег, чтобы втянуться, а контрольный — в следующий тяжёлый день. "
+                            else "После перерыва не начинаем с тяжёлой пробежки. Сегодня лёгкий бег, чтобы втянуться, а тяжёлые — со следующего тяжёлого дня. "
                             ) + it.note,
                     )
                 }

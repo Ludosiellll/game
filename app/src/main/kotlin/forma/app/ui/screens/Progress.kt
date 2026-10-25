@@ -94,11 +94,11 @@ private fun StrengthTab() {
     val index = remember(rows, bw) { Stats.strengthIndex(rows, bw) }
     val aimLifts = repo.store.profile.collectAsState(initial = null).value?.aim?.lifts
     if (rows.isEmpty() && aimLifts == false) {
-        Empty("Зала в твоей цели нет — здесь будет пусто. Захочешь добавить силовые — «Профиль» → цель.")
+        Empty("В твоей цели нет зала, поэтому здесь пусто. Захочешь добавить силовые — поменяй цель в «Ещё» → «Цель, дни и данные».")
         return
     }
     if (rows.isEmpty()) {
-        Empty("Графики силы появятся после первых тренировок. Каждый подход превращается в расчётный максимум на 1 повтор — по нему видно рост, даже если вес на штанге тот же.")
+        Empty("Графики силы появятся после первых тренировок. По каждому подходу приложение считает вес, который ты поднял бы на 1 раз. Так рост видно, даже если вес на штанге тот же.")
         return
     }
     FCard(gap = 4.dp) {
@@ -109,15 +109,16 @@ private fun StrengthTab() {
             if (index.size >= 2) Text("с ${shortDate(LocalDate.ofEpochDay(index.first().epochDay))}", style = T.secondary(13.sp), modifier = Modifier.padding(bottom = 8.dp))
         }
         if (index.size >= 2) LineChart(listOf(Series(index.map { it.value }, F.c.strength, fill = true)), xLabels = monthLabels(index), reference = 100.0, description = "Индекс силы по неделям")
-        Text("100 — твой старт. Считается по расчётному максимуму каждого упражнения.", style = T.secondary(12.sp))
+        Text("100 — твой старт. Считается по весу на 1 раз в каждом упражнении.", style = T.secondary(12.sp))
     }
     val outgrew by androidx.compose.runtime.produceState(false, rows) { value = repo.outgrewNovice() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     if (outgrew) FCard(gap = 6.dp) {
         Text("Ты уже не новичок", style = T.title(18.sp))
         Text(
-            "Большинство основных упражнений уже не растут от тренировки к тренировке — так и заканчивается период новичка. " +
-                "Дальше лучше работает план для среднего уровня: блоки с разгрузочной неделей и прибавки реже, но дольше. Прогресс по упражнениям сохранится.",
+            "Основные упражнения уже не растут от тренировки к тренировке. Значит, время новичка закончилось. " +
+                "Дальше лучше подойдёт план для среднего уровня: циклы по несколько недель с лёгкой неделей в конце. " +
+                "Вес будет расти реже, зато дольше. Прогресс по упражнениям сохранится.",
             style = T.body(14.sp),
         )
         GhostButton("Перейти на средний уровень", {
@@ -153,8 +154,8 @@ private fun StrengthTab() {
                     Text(
                         when {
                             ex.load == forma.core.model.LoadKind.TIMED -> "время удержания"
-                            ex.perHand && ex.load == forma.core.model.LoadKind.EXTERNAL -> "максимум на 1 раз, расчёт, на гантель"
-                            else -> "максимум на 1 раз, расчёт"
+                            ex.perHand && ex.load == forma.core.model.LoadKind.EXTERNAL -> "вес на 1 раз по расчёту, на гантель"
+                            else -> "вес на 1 раз по расчёту"
                         }, style = T.secondary(12.sp),
                     )
                 }
@@ -192,10 +193,10 @@ private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState
         )
         when {
             !hard -> Text(
-                "В неделе нет тяжёлых пробежек — без них к забегу не подготовиться. Добавь день или выбери бег «Скорость».",
+                "В неделе нет тяжёлых пробежек, а без них к забегу не подготовиться. Добавь день или выбери бег «Скорость».",
                 style = T.body(14.sp).copy(color = F.c.warn),
             )
-            now == null -> Text("Прогноз появится после контрольного забега — он встанет в план после пары пробежек.", style = T.secondary(13.sp))
+            now == null -> Text("Прогноз появится после контрольного забега. Приложение добавит его в план через пару пробежек.", style = T.secondary(13.sp))
             now <= goal.seconds + 0.5 -> Text(
                 "Прогноз сейчас: ${Ru.clock(now.roundToInt())} — цель по силам. Подтверди её на контрольном забеге.",
                 style = T.body(14.sp).copy(color = F.c.good),
@@ -234,7 +235,7 @@ private fun GoalPathCard(goal: forma.core.model.RunGoal, lapM: Int, path: forma.
             )
             trials.lastOrNull { it.meters != goal.meters }?.let { t ->
                 Text(
-                    "На стадионе контрольный — целые круги (${t.meters} м): время пересчитано на ${goalDistance(goal.meters)} по той же форме.",
+                    "На стадионе контрольный идёт целыми кругами, у тебя это ${t.meters} м. Время пересчитано на ${goalDistance(goal.meters)}.",
                     style = T.secondary(12.sp),
                 )
             }
@@ -244,7 +245,7 @@ private fun GoalPathCard(goal: forma.core.model.RunGoal, lapM: Int, path: forma.
                     xLabels = trials.indices.map { if (it == 0 || it == trials.lastIndex) shortDate(LocalDate.ofEpochDay(trials[it].epochDay)) else "" },
                     description = "Контрольные забеги на ${goalDistance(goal.meters)}: время по датам, линия — цель",
                 )
-                Text("Ниже — быстрее; серая линия — цель.", style = T.secondary(12.sp))
+                Text("Чем ниже, тем быстрее. Серая линия — цель.", style = T.secondary(12.sp))
             }
             trials.takeLast(4).reversed().forEachIndexed { i, t ->
                 if (i > 0) Hairline()
@@ -260,8 +261,8 @@ private fun GoalPathCard(goal: forma.core.model.RunGoal, lapM: Int, path: forma.
         val sessions = path.sessions
         if (sessions.isEmpty()) {
             Text(
-                "После первой такой тренировки здесь будут средний круг отрезков и сколько кругов прошло в темпе — по нажатиям «Круг» " +
-                    "(с часами — по среднему кругу, который впишешь).",
+                "После первой такой тренировки здесь появится средний круг отрезков и сколько кругов ты прошёл в темпе. " +
+                    "Считается по нажатиям «Круг». Если бежал с часами — по среднему кругу, который впишешь.",
                 style = T.secondary(13.sp),
             )
         } else {
@@ -283,7 +284,7 @@ private fun GoalPathCard(goal: forma.core.model.RunGoal, lapM: Int, path: forma.
                     xLabels = sessions.indices.map { if (it == 0 || it == sessions.lastIndex) shortDate(LocalDate.ofEpochDay(sessions[it].epochDay)) else "" },
                     description = "Средний круг отрезков в темпе цели по тренировкам, линия — круг цели",
                 )
-                Text("Ниже — быстрее; серая линия — круг цели.", style = T.secondary(12.sp))
+                Text("Чем ниже, тем быстрее. Серая линия — круг цели.", style = T.secondary(12.sp))
             }
             sessions.takeLast(4).reversed().forEachIndexed { i, s ->
                 if (i > 0) Hairline()
@@ -319,12 +320,13 @@ private fun RunTab() {
     }
     if (vdot != null) {
         FCard(gap = 6.dp) {
-            Text("VDOT — беговая форма", style = T.secondary(13.sp))
+            Text("Форма бега (VDOT)", style = T.secondary(13.sp))
             NumText(Ru.one(vdot), style = T.number(44.sp).copy(color = F.c.endurance))
             val middle = profile?.runGoal?.middleDistance == true
             Text(
-                if (middle) "По формулам Дэниелса. Меняется по контрольным забегам на дистанцию цели."
-                else "По формулам Дэниелса. Меняется по контрольным забегам и когда тяжёлые пробежки идут в темпе с запасом.",
+                if (middle) "Чем выше, тем быстрее ты бегаешь. Меняется после контрольных забегов на дистанцию цели. Считается по формулам Дэниелса."
+                else "Чем выше, тем быстрее ты бегаешь. Меняется после контрольных забегов и когда ты с запасом держишь темп в тяжёлых пробежках. " +
+                    "Считается по формулам Дэниелса.",
                 style = T.secondary(12.sp),
             )
         }
@@ -335,14 +337,14 @@ private fun RunTab() {
             }
         }
         // A forecast from short races for long ones assumes training for them: say so instead of promising it.
-        Text("Если готовиться к этой дистанции: на длинные нужны длинные пробежки, без них прогноз оптимистичен.", style = T.secondary(12.sp))
+        Text("Это время, если готовиться именно к этой дистанции. Для длинных нужны длинные пробежки, без них прогноз слишком хороший.", style = T.secondary(12.sp))
         val p = PaceTable.forVdot(vdot)
         SectionLabel("Темпы, мин/км")
         FCard(gap = 0.dp) {
             listOf(
                 "Лёгкий" to "${Ru.pace(p.easy.fast.toDouble())}–${Ru.pace(p.easy.slow.toDouble())}",
                 "Марафонский" to Ru.pace(p.marathon.toDouble()),
-                "Пороговый (темповый)" to Ru.pace(p.threshold.toDouble()),
+                "Темповый" to Ru.pace(p.threshold.toDouble()),
                 "Интервальный" to Ru.pace(p.interval.toDouble()),
                 "Повторный" to Ru.pace(p.repetition.toDouble()),
             ).forEachIndexed { i, (name, v) ->
@@ -362,8 +364,9 @@ private fun RunTab() {
     } else {
         val g = profile?.runGoal
         Empty(
-            if (g?.middleDistance == true) "Темпы и прогнозы появятся после контрольного забега на ${goalDistance(g.meters)} — он встанет в план после пары пробежек."
-            else "Темпы и прогнозы появятся после контрольного забега (12 минут) — он встанет в план после пары пробежек. Можно указать недавний результат в профиле.",
+            if (g?.middleDistance == true) "Темпы и прогнозы появятся после контрольного забега на ${goalDistance(g.meters)}. Приложение добавит его в план через пару пробежек."
+            else "Темпы и прогнозы появятся после контрольного забега на 12 минут. Приложение добавит его в план через пару пробежек. " +
+                "Или впиши недавний забег в «Ещё» → «Цель, дни и данные».",
         )
     }
     // Weekly distance and time.
@@ -391,11 +394,11 @@ private fun RunTab() {
                 xLabels = calm.indices.map { i -> if (i == 0 || i == calm.lastIndex) dayOf[calm[i].workoutId]?.let { shortDate(LocalDate.ofEpochDay(it)) } ?: "" else "" },
                 description = "Средний темп лёгкого, длинного и свободного бега по пробежкам",
             )
-            Text("Лёгкий, длинный и свободный бег — без отрезков и контрольных. Ниже — быстрее; лёгкий бег быстрее при той же лёгкости — так растёт база.", style = T.secondary(12.sp))
+            Text("Лёгкий, длинный и свободный бег, без отрезков и контрольных. Чем ниже, тем быстрее. Если лёгкий бег становится быстрее, а легко так же, значит, растёт выносливость.", style = T.secondary(12.sp))
         }
     }
     if (runs.isNotEmpty()) {
-        SectionLabel("Объём бега по неделям")
+        SectionLabel("Сколько бегал по неделям")
         FCard(gap = 6.dp) {
             val useKm = km.sum() > 0.5
             Text(if (useKm) "${Ru.one(km.last())} км на этой неделе" else "${minutes.last().roundToInt()} мин на этой неделе", style = T.title(20.sp))
@@ -404,7 +407,7 @@ private fun RunTab() {
                 xLabels = (0 until weeks).map { if (it == 0 || it == weeks - 1) shortDate(LocalDate.ofEpochDay(monday + it * 7L)) else "" },
                 description = "Беговой объём за 8 недель",
             )
-            Text("Длинная пробежка растёт не больше чем на 10 % от самой длинной за 30 дней — так меньше риск травм.", style = T.secondary(12.sp))
+            Text("Длинная пробежка растёт не больше чем на 10 % от самой длинной за 30 дней. Так меньше риск травм.", style = T.secondary(12.sp))
         }
     }
 }
@@ -417,7 +420,7 @@ private fun LoadTab() {
     val profile by repo.store.profile.collectAsState(initial = null)
     val today = forma.app.ui.rememberToday(repo)
     if (loads.isEmpty()) {
-        Empty(LoadExplain.UNITS + " Из неё считаются тренированность (за ~6 недель), усталость (за неделю) и свежесть.")
+        Empty(LoadExplain.UNITS + " По нагрузке приложение считает тренированность за последние 6 недель, усталость за неделю и свежесть.")
         return
     }
     val series = remember(loads, today) { TrainingLoad.series(loads, today.minusDays(120), today) }
@@ -450,7 +453,7 @@ private fun LoadTab() {
             listOf(Series(last.map { it.fitness }, F.c.endurance), Series(last.map { it.fatigue }, F.c.load, width = 2.dp)),
             xLabels = listOf(shortDate(last.first().date), shortDate(last.last().date)), description = "Тренированность и усталость за 8 недель",
         )
-        Text("Синяя — тренированность, оранжевая — усталость. Усталость выше тренированности — нагружаешься больше привычного.", style = T.secondary(12.sp))
+        Text("Синяя линия — тренированность, оранжевая — усталость. Если усталость выше, ты нагружаешься больше привычного.", style = T.secondary(12.sp))
         Explained("Тренированность", LoadExplain.fitness(st))
         Explained("Усталость", LoadExplain.fatigue(st))
         Explained("Свежесть", LoadExplain.freshness(st))
@@ -465,7 +468,7 @@ private fun LoadTab() {
                 listOf(Series(fresh.map { it.formPct }, F.c.accent)), height = 110.dp, reference = line,
                 xLabels = listOf(shortDate(fresh.first().date), shortDate(fresh.last().date)), description = "Свежесть по дням, линия — линия отдыха",
             )
-            Text("Серая линия — ${Ru.pct(line)}: ниже неё нужен отдых.", style = T.secondary(12.sp))
+            Text("Серая линия — ${Ru.pct(line)}. Если свежесть ниже неё, нужен отдых.", style = T.secondary(12.sp))
             Text(LoadExplain.personal(st.personal), style = T.body(14.sp))
         }
         SectionLabel("Когда был нужен отдых")
@@ -524,7 +527,7 @@ private fun LoadTab() {
     if (sets.values.none { it > 0 }) return
     SectionLabel("Подходы на мышцу за 7 дней")
     FCard(gap = 10.dp) {
-        Text("За последние 7 дней, сегодня тоже. Полоса — разумный диапазон в неделю для твоей цели (${target.first.roundToInt()}–${target.second.roundToInt()}). Подход для вспомогательной мышцы считается за половину.", style = T.secondary(12.sp))
+        Text("Считаются последние 7 дней вместе с сегодня. Полоса — сколько подходов в неделю хорошо для твоей цели: ${target.first.roundToInt()}–${target.second.roundToInt()}. Если мышца в упражнении только помогает, подход идёт за половину.", style = T.secondary(12.sp))
         Muscle.entries.forEach { m ->
             val v = sets[m] ?: 0.0
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -559,7 +562,7 @@ private fun BodyTab() {
     val nav = LocalNav.current
     val list by remember { repo.db.state().observeBodyWeight() }.collectAsState(initial = emptyList())
     if (list.isEmpty()) {
-        Empty("Записывай вес раз в неделю — приложение учтёт его в силе подтягиваний и относительной силе.")
+        Empty("Записывай вес тела раз в неделю. Приложение учтёт его, когда считает силу в подтягиваниях и силу относительно твоего веса.")
     } else {
         FCard(gap = 6.dp) {
             Text("Вес тела", style = T.secondary(13.sp))

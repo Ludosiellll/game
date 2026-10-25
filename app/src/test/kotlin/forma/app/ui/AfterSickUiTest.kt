@@ -85,7 +85,7 @@ class AfterSickUiTest {
         }
         compose.waitUntil(10_000) {
             settle()
-            compose.onAllNodesWithText("После болезни: ещё 2 пробежки — лёгкие, первая силовая — облегчённая", substring = true).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("После болезни начинаем мягко: ещё 2 лёгкие пробежки, первая силовая — полегче", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Лёгкий бег", substring = true).assertExists()
         // It was nothing after all: taken back, the day goes by the plan.

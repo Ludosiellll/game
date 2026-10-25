@@ -224,7 +224,7 @@ fun rememberLiftStart(today: LocalDate, go: (forma.app.ui.Screen) -> Unit): (tem
             title = { Text("«${a.title}» не закончена", style = T.title(20.sp)) },
             text = {
                 Text(
-                    since + "Продолжить её, закончить — или удалить и начать $title? Подходы начатой тренировки при удалении пропадут.",
+                    since + "Можно продолжить её, закончить или удалить и начать $title. Если удалить, её подходы пропадут.",
                     style = T.secondary(14.sp),
                 )
             },
