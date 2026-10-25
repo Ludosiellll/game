@@ -40,6 +40,10 @@ sealed interface Screen {
     @Serializable data class Friend(val userId: String, val name: String) : Screen
     /** «Идеальный план»: the gym plan as it is and as it could be, changes on choice. */
     @Serializable data object IdealPlan : Screen
+    /** The first look round the app; [first] — right after the questionnaire (then the main screen follows). */
+    @Serializable data class Tour(val first: Boolean) : Screen
+    @Serializable data object Help : Screen
+    @Serializable data object Coach : Screen
 }
 
 /** What the exercise library was opened for. */

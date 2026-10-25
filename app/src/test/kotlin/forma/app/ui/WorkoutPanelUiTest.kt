@@ -106,7 +106,10 @@ class WorkoutPanelUiTest {
         val repo = repo("panel-next")
         val id = start(repo)
         show(repo, id)
-        // What the exercise is, what works, why it is here.
+        // What the exercise is, what works, why it is here: folded, one tap away.
+        assertTrue(texts("Работают:").isEmpty())
+        compose.onNodeWithText("Зачем и какие мышцы", substring = true).performScrollTo().performClick()
+        settle()
         assertTrue(texts("Работают:").isNotEmpty())
         assertTrue(texts("Главное упражнение дня").isNotEmpty())
         compose.onNodeWithText("Подход сделан").performClick()

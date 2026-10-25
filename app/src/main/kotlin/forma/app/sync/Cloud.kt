@@ -30,6 +30,11 @@ import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.contentType
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -278,6 +283,49 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
             deleting = false
             _state.update { it.copy(deleting = false) }
         }
+    }
+
+    /** Plain HTTP for the coach function: the key to the model stays on the server, the user's token goes with the call. */
+    private val http by lazy { io.ktor.client.HttpClient(OkHttp) { install(io.ktor.client.plugins.HttpTimeout) { requestTimeoutMillis = 60_000 } } }
+
+    /**
+     * The coach's answer to the last of [turns] (the person's), with [context] — the summary of the person's training and
+     * of the app — from the `coach` function, which asks Gemini. Throws [CoachException] with the reason it did not answer.
+     */
+    suspend fun askCoach(turns: List<CoachTurn>, context: String): String {
+        val c = client ?: throw CoachException(CoachException.Reason.NOT_SET_UP)
+        if (!signedIn || currentUser(c) == null) throw CoachException(CoachException.Reason.NOT_SIGNED_IN)
+        val token = c.auth.currentAccessTokenOrNull() ?: throw CoachException(CoachException.Reason.NOT_SIGNED_IN)
+        val body = kotlinx.serialization.json.buildJsonObject {
+            put("context", kotlinx.serialization.json.JsonPrimitive(context))
+            put("messages", forma.app.data.AppJson.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(CoachTurn.serializer()), turns))
+        }
+        val res = try {
+            http.post("${BuildConfig.SUPABASE_URL.trimEnd('/')}/functions/v1/coach") {
+                header("Authorization", "Bearer $token")
+                header("apikey", BuildConfig.SUPABASE_KEY)
+                contentType(io.ktor.http.ContentType.Application.Json)
+                setBody(body.toString())
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw CoachException(if (e is java.io.IOException || e is HttpRequestTimeoutException) CoachException.Reason.OFFLINE else CoachException.Reason.FAILED)
+        }
+        val text = res.bodyAsText()
+        val json = runCatching { forma.app.data.AppJson.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject }.getOrNull()
+        val answer = (json?.get("text") as? kotlinx.serialization.json.JsonPrimitive)?.content
+        if (res.status.value == 200 && !answer.isNullOrBlank()) return answer
+        val error = (json?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
+        throw CoachException(
+            when {
+                res.status.value == 401 -> CoachException.Reason.NOT_SIGNED_IN
+                // Not deployed yet, or deployed without the key.
+                res.status.value == 404 || error == "no_key" -> CoachException.Reason.NOT_SET_UP
+                error == "busy" -> CoachException.Reason.BUSY
+                else -> CoachException.Reason.FAILED
+            },
+        )
     }
 
     /** The signed-in user with a fresh access token, or null. */

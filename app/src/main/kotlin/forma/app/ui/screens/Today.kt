@@ -132,6 +132,7 @@ fun TodayScreen() {
             }
             Text(labelText("Неделя $weekNo"), style = T.label())
         }
+        ScreenHint(Hints.TODAY, Hints.TODAY_TEXT)
 
         val a = active
         if (a != null) Banner("Тренировка «${a.title}» не закончена — продолжить", F.c.strength, icon = Ic.dumbbell) { nav.push(Screen.Workout(a.id)) }
@@ -257,7 +258,7 @@ fun TodayScreen() {
             val vdot = rs?.vdot
             if (aim?.runs == false) weekTile()
             else StatTile(
-                if (vdot != null) "VDOT" else "Бег",
+                if (vdot != null) "Форма бега" else "Бег",
                 when {
                     vdot != null -> Ru.one(vdot)
                     rs != null && !rs.canRunContinuously -> "${rs.walkStage / 3 + 1}/9"
@@ -277,6 +278,8 @@ fun TodayScreen() {
             GhostButton("Свободный бег", { nav.push(Screen.RunSetup(repo.freeRun(me?.lapMeters), null)) }, Modifier.weight(1f))
             if (p.templates.isNotEmpty()) GhostButton("Другая силовая", { pickTemplate = true }, Modifier.weight(1f))
         }
+        // Not sure what something means or what to do: the coach answers with the person's own training.
+        GhostButton("Спросить тренера", { nav.push(Screen.Coach) }, Modifier.fillMaxWidth())
     }
 
     if (pickTemplate) {

@@ -78,6 +78,10 @@ data class Settings(
     val demoted: Set<String> = emptySet(),
     /** «Идеальный план» changes the person said not to propose (change ids, [forma.core.plan.PlanAdvisor.Change.id]). */
     val adviceHidden: Set<String> = emptySet(),
+    /** The first look round the app was seen (after the questionnaire, or skipped). */
+    val tourSeen: Boolean = false,
+    /** Screens whose first-visit hint was closed with «Понятно» ([forma.app.ui.screens.Hints]). */
+    val hintsSeen: Set<String> = emptySet(),
 ) {
     /** Whether [day] is in a pause, the last one or one before it: no sessions are expected then. */
     fun pausedOn(day: java.time.LocalDate): Boolean {

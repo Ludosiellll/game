@@ -254,6 +254,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
     LaunchedEffect(voice) { if (voice) forma.app.run.VoiceCoach.checkRussian(context) { speaks = it } }
     ScrollScreen(bottomInset = true) {
         TopBar(if (workout.isOpenEnded) "Свободный бег" else workout.title, onBack = { nav.back() })
+        ScreenHint(Hints.RUN, Hints.RUN_TEXT)
         where?.invoke()
         if (voice && speaks == false) {
             Banner("В телефоне нет русского голоса: подсказок голосом не будет, только писки. Нажми — откроются настройки синтеза речи, там скачай русский.", F.c.warn) {

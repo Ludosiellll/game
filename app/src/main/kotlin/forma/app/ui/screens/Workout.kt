@@ -331,6 +331,7 @@ fun WorkoutScreen(workoutId: Long) {
                 TopBar(plan.title, "${Ru.clock(elapsed)} · ${plan.items.indexOf(item) + 1} из ${plan.items.size}", onBack = { nav.back() }) {
                     GhostButton("Завершить", { finishing = true }, height = 48.dp)
                 }
+                ScreenHint(Hints.WORKOUT, Hints.WORKOUT_TEXT)
                 if (plan.deload) Banner(plan.why ?: "Разгрузка: меньше подходов и вес легче. Не дожимай до отказа.", F.c.warn)
 
                 // Exercise switcher.
@@ -392,10 +393,17 @@ fun WorkoutScreen(workoutId: Long) {
                             Text(note, style = T.body(14.sp, FontWeight.SemiBold), modifier = Modifier.weight(1f))
                         }
                     }
-                    // What it is in this day, what works, why here in the order.
-                    Text(Texts.roleLine(item.slot.role, ex) + " " + Texts.orderWhy(item.slot.role, ex), style = T.secondary(13.sp))
-                    item.restWhy?.let { Text(it, style = T.secondary(13.sp)) }
-                    Text(Texts.muscles(ex), style = T.secondary(13.sp))
+                    // What it is in this day, what works, why here in the order: one tap away, not in the way of the sets.
+                    var about by remember(item.position) { mutableStateOf(false) }
+                    Text(
+                        if (about) "Зачем и какие мышцы ▴" else "Зачем и какие мышцы ▾", style = T.body(13.sp, FontWeight.Bold).copy(color = F.c.text2),
+                        modifier = Modifier.clickable(onClickLabel = if (about) "Свернуть" else "Показать, зачем упражнение") { about = !about }.padding(vertical = 4.dp),
+                    )
+                    if (about) {
+                        Text(Texts.roleLine(item.slot.role, ex) + " " + Texts.orderWhy(item.slot.role, ex), style = T.secondary(13.sp))
+                        item.restWhy?.let { Text(it, style = T.secondary(13.sp)) }
+                        Text(Texts.muscles(ex), style = T.secondary(13.sp))
+                    }
                     if (note == null) {
                         Text(
                             "Заметка к упражнению", style = T.body(13.sp, FontWeight.Bold).copy(color = F.c.accent),

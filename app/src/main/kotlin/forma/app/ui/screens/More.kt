@@ -27,6 +27,10 @@ fun MoreScreen() {
     ScrollScreen {
         Text(if (F.type.capsTitles) "ЕЩЁ" else "Ещё", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         FCard(gap = 0.dp) {
+            ListRow("Спросить тренера", "ИИ ответит по твоим тренировкам: почему так, что значат цифры, что делать", icon = Ic.user, iconTint = F.c.accent) { nav.push(Screen.Coach) }
+            Hairline()
+            ListRow("Как пользоваться", "Знакомство с приложением, что где и словарь слов", icon = Ic.info, iconTint = F.c.accent) { nav.push(Screen.Help) }
+            Hairline()
             ListRow("Калькуляторы", "1ПМ, блины, разминка, темп, прогноз, пульс", icon = Ic.calc, iconTint = F.c.accent) { nav.push(Screen.Calculators) }
             Hairline()
             ListRow("История", "Все тренировки и пробежки", icon = Ic.list, iconTint = F.c.accent) { nav.push(Screen.History) }

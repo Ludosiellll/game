@@ -72,6 +72,7 @@ fun ProgressScreen(initialTab: Int = 0) {
     var tab by rememberSaveable { mutableIntStateOf(progressTabRequest?.also { progressTabRequest = null } ?: initialTab) }
     ScrollScreen {
         Text(if (F.type.capsTitles) "ПРОГРЕСС" else "Прогресс", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
+        ScreenHint(Hints.PROGRESS, Hints.PROGRESS_TEXT)
         Segmented(listOf("Сила", "Бег", "Нагрузка", "Тело"), tab, { tab = it })
         when (tab) {
             0 -> StrengthTab()

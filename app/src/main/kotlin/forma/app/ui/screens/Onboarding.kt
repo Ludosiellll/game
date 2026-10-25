@@ -299,7 +299,8 @@ fun OnboardingScreen() {
                 if (step < last) "Дальше" else "Начать", {
                     if (step < last) step++ else scope.launch {
                         repo.completeOnboarding(draft.toProfile(Profile()))
-                        nav.replaceAll(Screen.Today)
+                        // A first look round the app before its main screen: what is where and what to press.
+                        nav.replaceAll(Screen.Tour(first = true))
                     }
                 },
                 Modifier.weight(2f), enabled = problem == null,
