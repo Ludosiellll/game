@@ -111,13 +111,13 @@ class RunExplainTest {
         val light = RunExplain.of(RunPlan.goalPace(state, goal, 230, cutback = true), goal).next
         assertTrue("облегчённая неделя" in light && "следующий шаг" !in light, light)
         val full = RunExplain.of(RunPlan.goalPace(state, goal, 230), goal).next
-        assertTrue("в темпе цели — не медленнее больше чем на 3 % — и с оценкой до 8 — следующий шаг" in full, full)
+        assertTrue("в темпе цели (медленнее не больше чем на 3 %) и с оценкой до 8 — следующий шаг" in full, full)
         assertTrue("облегчённая неделя" in RunExplain.of(RunPlan.intervals(state, cutback = true), goal).next)
         assertTrue("обычной длины" in RunExplain.of(RunPlan.easy(state), goal).next)
         assertTrue("не до конца" in RunExplain.of(RunPlan.long(state), goal).next)
         // A trial resets the paces of training, not the goal's own; the 12 minutes are measured by their distance.
         val trial = RunExplain.of(RunPlan.goalTest(state, goal, 230), goal).purpose
-        assertTrue("По времени" in trial && "темп цели — сама цель" in trial && "примерные" !in trial, trial)
+        assertTrue("По времени" in trial && "Темп цели не меняется" in trial && "примерные" !in trial, trial)
         assertTrue("По дистанции" in RunExplain.of(RunPlan.test(state)).purpose)
         assertTrue("кислота" !in RunExplain.of(RunPlan.tempo(state), goal).purpose)
         // Race pace early on: meant at 7, a step on up to 8 — an 8 is not "as meant".
@@ -127,7 +127,7 @@ class RunExplainTest {
         assertTrue("тяжелее задуманной (7), но шаг вперёд засчитывается до 8" in eight.text, eight.text)
         // Run/walk not finished: no promise of a repeat (a second miss goes a week back).
         val walk = RunReview.of(RunReview.Run(RunPlan.runWalk(RunState()), completed = 0.6), goal).first { it.title == "Как пробежал" }
-        assertTrue("шаг вперёд — когда получится целиком" in walk.text, walk.text)
+        assertTrue("когда пробежишь её целиком" in walk.text, walk.text)
     }
 
     /** The reasons follow what the day holds now: after a long break the hard day is an easy run for a while. */

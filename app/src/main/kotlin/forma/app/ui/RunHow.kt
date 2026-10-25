@@ -30,7 +30,7 @@ object RunHow {
                 val walk = w.segments.firstOrNull { it.kind == SegmentKind.WALK }
                 val first = run.firstOrNull()
                 if (first == null) "Бег с ходьбой"
-                else "Бег ${Ru.clock(first.seconds)}" + (walk?.let { " / шаг ${Ru.clock(it.seconds)}" } ?: "") + " × ${run.size}, бег разговорный"
+                else "Бег ${Ru.clock(first.seconds)}" + (walk?.let { " / ходьба ${Ru.clock(it.seconds)}" } ?: "") + " × ${run.size}, бег спокойный"
             }
             RunType.GOAL_PACE, RunType.INTERVALS, RunType.TEMPO -> {
                 val first = work.firstOrNull() ?: return w.note

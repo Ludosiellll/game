@@ -316,7 +316,7 @@ class RunService : Service() {
 
     /**
      * On the road, the pace against the target of the moment: a rep's range, an easy run's fast limit, a free run's own
-     * target. Off it for a while — said ("Медленнее цели — прибавь"). Not on a stadium: there each lap is judged.
+     * target. Off it for a while — said ("Медленнее цели, прибавь"). Not on a stadium: there each lap is judged.
      */
     private fun checkPace(tr: RunTracker) {
         val w = tr.workout
@@ -591,7 +591,7 @@ class RunService : Service() {
         /** Brought back by the system longer than this after a kill, the run does not go on: it most likely ended out there. */
         private const val MAX_GAP_MS = 30 * 60_000L
 
-        const val START_REFUSED = "Телефон не дал запустить пробежку. Попробуй ещё раз; если повторится — сними для «Формы» ограничения батареи."
+        const val START_REFUSED = "Телефон не дал запустить пробежку. Попробуй ещё раз. Если повторится, сними для «Формы» ограничения батареи."
         const val UNREADABLE = "Не получилось прочитать тренировку. Открой её заново и нажми «Старт»."
 
         fun start(

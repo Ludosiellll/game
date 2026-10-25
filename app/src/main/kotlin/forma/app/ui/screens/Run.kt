@@ -191,7 +191,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
         val fine = granted(Manifest.permission.ACCESS_FINE_LOCATION)
         if (gps && !fine && granted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
-            android.widget.Toast.makeText(context, "С примерной геопозицией дистанцию не посчитать — бег по времени. Нужна точная.", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(context, "Геопозиция примерная, дистанцию не посчитать. Будет только время. Для дистанции нужна точная.", android.widget.Toast.LENGTH_LONG).show()
         }
         val stride = forma.core.run.Stride.fit(settings.strideSamples.mapNotNull { if (it.size == 2) it[0] to it[1] else null })
         RunService.start(context, chosen, gps && fine, voice, settings.beeps, settings.vibration, settings.trackLine, settings.autoPause, stride)
@@ -225,7 +225,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { askLift = false },
             title = { Text("Силовая ещё открыта — закончить её сейчас?") },
-            text = { Text("Иначе время пробежки попадёт в силовую: она закончится, когда ты её закроешь.") },
+            text = { Text("Иначе время пробежки посчитается в силовую: она закончится, только когда ты её закроешь.") },
             confirmButton = {
                 androidx.compose.material3.TextButton({ askLift = false; finishOnOpen = openLift.id; nav.push(Screen.Workout(openLift.id)) }) { Text("Закончить", color = F.c.accent) }
             },
@@ -257,7 +257,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         ScreenHint(Hints.RUN, Hints.RUN_TEXT)
         where?.invoke()
         if (voice && speaks == false) {
-            Banner("В телефоне нет русского голоса: подсказок голосом не будет, только писки. Нажми — откроются настройки синтеза речи, там скачай русский.", F.c.warn) {
+            Banner("В телефоне нет русского голоса. Подсказок голосом не будет, только писки. Нажми — откроются настройки синтеза речи. Там скачай русский язык.", F.c.warn) {
                 val open = listOf(android.content.Intent("com.android.settings.TTS_SETTINGS"), android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA))
                 open.firstOrNull { runCatching { context.startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess }
             }
@@ -286,7 +286,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         } else {
             Text(
                 if (workout.lapMeters != null) "Секундомер и круги: время каждого круга — голосом и на экране."
-                else "Секундомер, дистанция и темп по GPS. Отсечки каждый километр голосом.",
+                else "Секундомер, дистанция и темп по GPS. Время каждого километра скажу голосом.",
                 style = T.secondary(15.sp),
             )
             val lapM = workout.lapMeters
@@ -301,7 +301,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
                 when {
                     targetBad -> if (lapM != null) "Не похоже на время круга — впиши секунды, например 75." else "Не похоже на темп — впиши минуты и секунды на км, например 5:30."
                     lapM != null -> "С целью после каждого круга скажу, быстро или медленно. Без неё — только время круга."
-                    else -> "С целью скажу, если убежишь из темпа. Без неё — только отсечки по километрам."
+                    else -> "С целью скажу, если уйдёшь из темпа. Без неё — только время каждого километра."
                 },
                 style = T.secondary(13.sp).copy(color = if (targetBad) F.c.warn else F.c.text2),
             )
@@ -316,9 +316,9 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
                     when {
                         !gps -> ""
                         // The line is learnt from presses on it: until one, GPS has nothing to count laps from.
-                        workout.reps == 0 && settings.trackLine != null -> " С GPS круг засчитается сам, даже без нажатия: примерно, ±2–3 с. Круги считаются от линии: начал не на ней — первый раз на линии станет стартом."
-                        workout.reps == 0 -> " Нажми «Круг» на линии хотя бы раз — с GPS дальше круги засчитаются сами, примерно (±2–3 с)."
-                        else -> " С GPS забытое в отрезке нажатие обычно не пропадёт: когда линия уже известна (её запоминают твои нажатия на ней), круг засчитается сам, примерно (±2–3 с)."
+                        workout.reps == 0 && settings.trackLine != null -> " С GPS круг засчитается и без нажатия, примерно (±2–3 с). Круги считаются от линии. Если начал не на ней, стартом станет первый проход через линию."
+                        workout.reps == 0 -> " Нажми «Круг» на линии хотя бы раз. Дальше с GPS круги засчитаются сами, примерно (±2–3 с)."
+                        else -> " Забыл нажать в отрезке — с GPS круг обычно засчитается сам, примерно (±2–3 с). Для этого приложение должно знать линию: оно запоминает её по твоим нажатиям."
                     },
                 F.c.endurance, icon = Ic.info,
             )
@@ -482,7 +482,7 @@ internal fun groupSegments(w: RunWorkout): List<Triple<String, String, String?>>
             RunType.GOAL_PACE -> "Отдых шагом или трусцой"
             else -> "Отдых трусцой"
         }
-        out += Triple(name, if (rests.all { it.seconds == rests.first().seconds }) "${rests.size} × ${Ru.clock(rests.first().seconds)}" else "${rests.size} отрезка", null)
+        out += Triple(name, if (rests.all { it.seconds == rests.first().seconds }) "${rests.size} × ${Ru.clock(rests.first().seconds)}" else "${rests.size} ${Ru.plural(rests.size, "раз", "раза", "раз")}", null)
     }
     w.segments.lastOrNull { it.kind == SegmentKind.COOLDOWN }?.let { out += Triple(CoachText.segmentName(w, w.segments.lastIndex), Ru.clock(it.seconds), null) }
     return out
@@ -636,7 +636,7 @@ fun RunActiveScreen() {
                 Banner("Автопауза: стоишь — время встало. Побежишь — продолжится само.", F.c.endurance)
             }
             if (u.restored && u.state == RunTracker.State.PAUSED) {
-                Banner("Телефон закрыл приложение во время пробежки. Время и дистанция до этого момента сохранены: ▶ — продолжить, «Стоп» — закончить.", F.c.warn)
+                Banner("Телефон закрыл приложение во время пробежки. Время и дистанция до этого момента сохранены. ▶ — продолжить, «Стоп» — закончить.", F.c.warn)
             }
 
             // Waiting on the line, the numbers are those of the rep about to start.
@@ -681,7 +681,7 @@ fun RunActiveScreen() {
                     val pace = u.pace
                     val inRange = pace != null && target != null && pace >= target.fast - 3 && pace <= target.slow + 3
                     StatTile(
-                        if (inRange) "Сейчас · в коридоре" else "Сейчас", pace?.let { Ru.pace(it) } ?: "–:––",
+                        if (inRange) "Сейчас · в цели" else "Сейчас", pace?.let { Ru.pace(it) } ?: "–:––",
                         u.cadence?.let { "мин/км · $it шаг/мин" } ?: "мин/км",
                         if (target == null) F.c.text else if (inRange) F.c.good else F.c.warn, Modifier.weight(1f),
                     )
@@ -714,7 +714,7 @@ fun RunActiveScreen() {
             }
             // A headset's button works with the screen off too (HeadsetLap); the volume key reaches the app only while its
             // screen is on (LapKey): said, not found out on the line.
-            if (lapM != null && !finished) Text("Круг — кнопкой гарнитуры; громкостью вниз — пока экран включён.", style = T.secondary(13.sp))
+            if (lapM != null && !finished) Text("Круг можно отметить кнопкой на наушниках. Или громкостью вниз, пока экран включён.", style = T.secondary(13.sp))
         }
 
         Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -906,7 +906,7 @@ fun LapsCard(laps: List<Lap>, test: Boolean) {
             Hairline()
             Text(
                 (if (full.size >= 2) "Круги от ${Ru.lap(full.min())} до ${Ru.lap(full.max())}. " else "") +
-                    "Начало — по плану (оранжевый — слишком быстро), вторая половина — быстрее, если есть силы.",
+                    "Начало — по плану, оранжевый значит слишком быстро. Вторая половина — быстрее, если есть силы.",
                 style = T.secondary(12.sp), modifier = Modifier.padding(top = 10.dp),
             )
         } else if (laps.any { it.verdict != null }) {
@@ -980,7 +980,7 @@ fun RunDoneScreen(workoutId: Long) {
         // Saved or thrown away already (another screen, another try).
         ScrollScreen(bottomInset = true) {
             TopBar("Пробежка", onBack = { nav.tab(Screen.Today) })
-            Text("Эта пробежка уже сохранена или удалена — она в истории, если была сохранена.", style = T.body(15.sp))
+            Text("Эта пробежка уже сохранена или удалена. Если сохранена, она в истории.", style = T.body(15.sp))
             PrimaryButton("На главную", { nav.tab(Screen.Today) }, Modifier.fillMaxWidth())
         }
         return
@@ -1033,8 +1033,8 @@ fun RunDoneScreen(workoutId: Long) {
                 Text(
                     when {
                         testTime.isNotBlank() && typed == null -> "Не похоже на время забега — впиши минуты и секунды через двоеточие, например 5:52."
-                        result.testSeconds != null && tracker.laps.any { it.auto } -> "По кнопке «Круг» и GPS: круг без нажатия засчитан примерно (±2–3 с). Если засекал сам — поправь."
-                        result.testSeconds != null -> "По кнопке «Круг». Если засекал сам — поправь."
+                        result.testSeconds != null && tracker.laps.any { it.auto } -> "Время по кнопке «Круг» и GPS. Круг без нажатия засчитан примерно (±2–3 с). Если засекал сам — поправь."
+                        result.testSeconds != null -> "Время по кнопке «Круг». Если засекал сам — поправь."
                         else -> "Впиши время с секундомера: без него забег не засчитается."
                     },
                     style = T.secondary(13.sp).copy(color = if (testTime.isNotBlank() && typed == null) F.c.warn else F.c.text2),
@@ -1062,7 +1062,7 @@ fun RunDoneScreen(workoutId: Long) {
                     when {
                         boardBad -> "Не похоже на дистанцию за это время — впиши километры, например 5,2."
                         result.distanceM != null -> "Без GPS дистанция посчитана по шагам, примерно. Бежал на дорожке — впиши с табло."
-                        else -> "Бежал на дорожке — впиши дистанцию с табло: будет темп."
+                        else -> "Бежал на дорожке — впиши дистанцию с табло, и будет виден темп."
                     },
                     style = T.secondary(13.sp).copy(color = if (boardBad) F.c.warn else F.c.text2),
                 )
@@ -1075,9 +1075,9 @@ fun RunDoneScreen(workoutId: Long) {
                 )
                 Text(
                     when {
-                        reps > w.reps -> "Больше плана при той же тяжести — следующий шаг будет крупнее."
+                        reps > w.reps -> "Больше плана. Если было не тяжелее задуманного, следующий шаг будет крупнее."
                         reps == w.reps -> "Ровно по плану. Сделал больше — нажми «+»: это учтётся."
-                        else -> "Меньше плана — шаг повторится, а не получится второй раз подряд — шаг назад."
+                        else -> "Меньше плана — шаг повторится. Не получится второй раз подряд — шаг назад."
                     },
                     style = T.secondary(13.sp),
                 )
