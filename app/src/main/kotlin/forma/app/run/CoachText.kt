@@ -20,7 +20,7 @@ object CoachText {
         return when (s.kind) {
             SegmentKind.WARMUP -> if (w.type == RunType.RUN_WALK) "Разминка шагом" else "Разминка"
             SegmentKind.COOLDOWN -> if (w.type == RunType.RUN_WALK) "Заминка шагом" else "Заминка"
-            SegmentKind.WALK -> "Шаг"
+            SegmentKind.WALK -> "Ходьба"
             SegmentKind.RECOVERY -> "Отдых трусцой"
             SegmentKind.RUN -> when (w.type) {
                 RunType.LONG -> "Длинная пробежка"
@@ -45,7 +45,7 @@ object CoachText {
     private fun hint(s: Segment): String = when (s.kind) {
         SegmentKind.WARMUP, SegmentKind.COOLDOWN, SegmentKind.RECOVERY -> "Спокойно."
         SegmentKind.WALK -> "Быстрым шагом."
-        SegmentKind.RUN -> "Разговорный темп."
+        SegmentKind.RUN -> "Спокойно, чтобы мог говорить."
         SegmentKind.WORK -> "Ровно и сильно."
     }
 
@@ -70,12 +70,12 @@ object CoachText {
             is Cue.Halfway -> "Половина отрезка."
             is Cue.MinuteLeft ->
                 if (RunTimeline.startOnLine(w) == c.index + 1) "Через минуту ${startWhat(w)}. Закончи круг и подходи к старту." else "Осталась минута."
-            is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)} и нажми «Круг», когда побежишь: ${startWhat(w)} начнётся с нажатия."
-            is Cue.Strides -> "Последние три минуты разминки: сделай 3–4 ускорения по 15 секунд, между ними трусца."
+            is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)}. Когда побежишь, нажми «Круг»: время пойдёт с нажатия."
+            is Cue.Strides -> "Последние три минуты разминки. Сделай 3–4 ускорения по 15 секунд, между ними трусца."
             is Cue.Countdown, is Cue.LapMark -> null
             is Cue.Finished ->
-                if (w.continuable) "План выполнен. Можно закончить или бежать дальше — время идёт, лишнее засчитается."
-                else "Тренировка завершена. Можно остановиться."
+                if (w.continuable) "План выполнен. Можешь закончить или бежать дальше: лишнее время тоже засчитается."
+                else "Тренировка закончена. Можно остановиться."
         }
     }
 
@@ -116,8 +116,8 @@ object CoachText {
 
     /** Off the pace on the road for a while: in a rep, on an easy run (only too fast matters there) or a free run's target. */
     fun pace(alert: forma.core.run.PaceAlarm.Alert, easy: Boolean): String = when (alert) {
-        forma.core.run.PaceAlarm.Alert.FAST -> if (easy) "Быстро для лёгкого бега — сбавь." else "Быстрее цели — держи темп."
-        forma.core.run.PaceAlarm.Alert.SLOW -> "Медленнее цели — прибавь."
+        forma.core.run.PaceAlarm.Alert.FAST -> if (easy) "Быстро для лёгкого бега, сбавь." else "Быстрее цели, чуть сбавь."
+        forma.core.run.PaceAlarm.Alert.SLOW -> "Медленнее цели, прибавь."
     }
 
     /**
@@ -132,8 +132,8 @@ object CoachText {
         val fast = judged.count { it.verdict == -1 }
         val slow = judged.count { it.verdict == 1 }
         return "Кругов в темпе: $on из ${judged.size}." + when {
-            fast * 10 >= judged.size * 3 -> " Много быстрых — в следующий раз ровнее, по писку."
-            slow * 10 >= judged.size * 3 -> " Много медленных — темп пока тяжёл, это нормально."
+            fast * 10 >= judged.size * 3 -> " Много быстрых. В следующий раз беги ровнее, по писку."
+            slow * 10 >= judged.size * 3 -> " Много медленных. Темп пока тяжёлый, это нормально."
             on == judged.size -> " Ровно, как надо."
             else -> ""
         } + " Подробный разбор — после сохранения."

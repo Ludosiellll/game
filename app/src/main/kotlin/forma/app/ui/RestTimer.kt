@@ -235,7 +235,7 @@ object RestTimer {
         if (nm.getNotificationChannel(CHANNEL) == null) {
             nm.createNotificationChannel(
                 NotificationChannel(CHANNEL, "Отдых между подходами", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Сколько осталось отдыхать; сигнал в конце даёт само приложение"
+                    description = "Сколько осталось отдыхать. Сигнал в конце даёт само приложение"
                     lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 },
             )

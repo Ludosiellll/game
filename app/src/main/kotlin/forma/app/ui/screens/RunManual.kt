@@ -128,7 +128,7 @@ fun RunManualScreen(workout: RunWorkout) {
             return@ScrollScreen
         }
         Text(
-            "Бегал с часами или секундомером, без телефона? Впиши, что они показали: план сдвинется так же, как после пробежки с телефоном.",
+            "Бегал с часами или секундомером, без телефона? Впиши, что они показали. План сдвинется так же, как после пробежки с телефоном.",
             style = T.secondary(14.sp),
         )
         SectionLabel("Когда")
@@ -175,7 +175,7 @@ fun RunManualScreen(workout: RunWorkout) {
             Text(
                 when {
                     lapBad -> if (lapM != null) "Не похоже на время круга — впиши секунды, например 52." else "Не похоже на темп — впиши минуты и секунды на км, например 4:30."
-                    target == null -> "Если знаешь — с ним видно, держится ли темп."
+                    target == null -> "Если знаешь, впиши: по нему видно, держишь ли темп."
                     lapM != null -> "Цель — круг ${Ru.lapRange(Track.lapSec(target.fast.toDouble(), lapM), Track.lapSec(target.slow.toDouble(), lapM))}. " +
                         "Без среднего круга шаг решится по ощущениям."
                     else -> "Цель — ${Ru.pace(target.fast.toDouble())}–${Ru.pace(target.slow.toDouble())} на км. Без темпа шаг решится по ощущениям."
@@ -197,7 +197,7 @@ fun RunManualScreen(workout: RunWorkout) {
                     repLaps.isNotEmpty() && lapsPace != null ->
                         "${laps.size} ${Ru.plural(laps.size, "круг", "круга", "кругов")}, средний в отрезках — ${Ru.lap(Track.lapSec(lapsPace, lapM))}."
                     laps.isNotEmpty() -> "${laps.size} ${Ru.plural(laps.size, "круг", "круга", "кругов")} — сохранятся как круги пробежки."
-                    else -> "С часов с кругами: время каждого круга через пробел. Сохранятся, как с кнопкой «Круг»."
+                    else -> "Если часы считали круги, впиши время каждого через пробел. Сохранятся, как с кнопкой «Круг»."
                 },
                 style = T.secondary(13.sp).copy(color = if (lapsBad) F.c.warn else F.c.text2),
             )
@@ -215,7 +215,7 @@ fun RunManualScreen(workout: RunWorkout) {
             kmBad -> Text("Не похоже на дистанцию — впиши километры, например 6,2.", style = T.secondary(13.sp).copy(color = F.c.warn))
             paceBad -> Text("Темп ${Ru.pace(pace!!)} на км — так не бегают: проверь время и дистанцию.", style = T.secondary(13.sp).copy(color = F.c.warn))
             pace != null -> Text("Средний темп ${Ru.pace(pace)} на км.", style = T.secondary(13.sp))
-            lapsShort -> Text("Кругов на ${Ru.distance(lapsDist)} за ${Ru.clock(timeSec!!)} — похоже, вписаны не все: впиши все круги или дистанцию.", style = T.secondary(13.sp).copy(color = F.c.warn))
+            lapsShort -> Text("Кругов на ${Ru.distance(lapsDist)} за ${Ru.clock(timeSec!!)} — похоже, вписаны не все. Впиши все круги или дистанцию.", style = T.secondary(13.sp).copy(color = F.c.warn))
             lapsDist > 0 -> Text("Не впишешь — посчитаю по кругам: ${Ru.distance(lapsDist)}.", style = T.secondary(13.sp))
         }
 
