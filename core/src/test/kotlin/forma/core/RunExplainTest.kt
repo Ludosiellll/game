@@ -58,8 +58,8 @@ class RunExplainTest {
             LocalDate.of(2026, 10, 12),
         )
         val monday = DayReasons.of(p, 1)
-        assertTrue(monday.any { "День без зала" in it }, monday.toString())
-        assertTrue(monday.any { "Завтра — ни тяжёлого бега, ни ног" in it || "Накануне" in it }, monday.toString())
+        assertTrue(monday.any { "В этот день нет зала" in it }, monday.toString())
+        assertTrue(monday.any { "Завтра нет ни тяжёлого бега, ни ног" in it || "Накануне" in it }, monday.toString())
         val tuesday = DayReasons.of(p, 2)
         assertTrue(tuesday.any { "Лёгкий бег" in it }, tuesday.toString())
         val thursday = DayReasons.of(p, 4)
@@ -141,7 +141,7 @@ class RunExplainTest {
             LocalDate.of(2026, 10, 12),
         )
         val monday = DayReasons.of(p, 1) { false }
-        assertTrue(monday.any { "Отдельный лёгкий день" in it } && monday.none { "тяжёлому бегу" in it }, monday.toString())
+        assertTrue(monday.any { "Лёгкий бег в отдельный день" in it } && monday.none { "тяжёлому бегу" in it }, monday.toString())
     }
 
     @Test fun anEasyRunTooFastIsSaidSo() {

@@ -65,7 +65,7 @@ class PlanAdvisorTest {
         val days = denis().map { d -> d.copy(items = d.items.filter { it.planId != "bulgarian" }) }
         val a = PlanAdvisor.advise(input(days))
         assertEquals(listOf("split_squat", "step_up", "reverse_lunge", "bulgarian"), a.changes.first { it.id == "oneleg:add" }.options)
-        assertTrue("непривычное и тяжёлое" in a.changes.first { it.id == "add:nordic" }.why)
+        assertTrue("тяжёлое и непривычное" in a.changes.first { it.id == "add:nordic" }.why)
         // One who does hard unusual exercises gets them first.
         val likes = PlanAdvisor.advise(input(days).copy(habits = PlanAdvisor.Habits(likesHard = true)))
         assertEquals("bulgarian", likes.changes.first { it.id == "oneleg:add" }.to)
@@ -128,7 +128,7 @@ class PlanAdvisorTest {
     @Test fun manyLiftsStuckAtOnceIsRecoveryNotTheExercises() {
         val a = PlanAdvisor.advise(input(denis()).copy(stalled = mapOf("bench" to 6, "row" to 5, "ohp" to 8, "squat" to 5)))
         assertEquals(listOf("stall:upper_b:ohp"), a.changes.filter { it.id.startsWith("stall:") }.map { it.id })
-        assertTrue(a.warning!!.startsWith("Застой сразу в 4 основных упражнениях"), a.warning)
+        assertTrue(a.warning!!.startsWith("Сразу в 4 основных упражнениях веса стоят на месте"), a.warning)
         assertEquals(null, PlanAdvisor.advise(input(denis())).warning)
     }
 
@@ -180,12 +180,12 @@ class PlanAdvisorTest {
         val days = denis()
         val a = PlanAdvisor.advise(input(days).copy(sessionMinutes = 40, timeRatio = 1.3))
         assertTrue(a.changes.any { it.id.startsWith("time:") }, a.changes.map { it.id }.toString())
-        assertTrue(a.changes.first { it.id.startsWith("time:") }.why.contains(" мин и почти ничего не стоит"))
+        assertTrue(a.changes.first { it.id.startsWith("time:") }.why.contains(" мин. Главное останется."))
         // A day that fits as it is is not cut for what the advisor itself adds: the addition says how long the day gets.
         val fits = PlanAdvisor.advise(input(days).copy(sessionMinutes = 44))
         assertTrue(fits.changes.none { it.id.startsWith("time:lower_a") }, fits.changes.map { it.id }.toString())
         assertTrue(fits.fine.any { "По времени укладываешься" in it }, fits.fine.toString())
-        assertTrue(fits.changes.first { it.id == "add:seated_calf" }.why.contains("С ним «Низ» — около"), fits.changes.first { it.id == "add:seated_calf" }.why)
+        assertTrue(fits.changes.first { it.id == "add:seated_calf" }.why.contains("С ним «Низ» займёт около"), fits.changes.first { it.id == "add:seated_calf" }.why)
         val tired = PlanAdvisor.advise(input(days).copy(tiredOften = true))
         // Denis's accessories are two sets each already (running comes too): nothing to take.
         assertTrue(tired.changes.none { it.id.startsWith("rest:") }, tired.changes.map { it.id + " " + it.setsFrom }.toString())
@@ -208,7 +208,7 @@ class PlanAdvisorTest {
         // The same day as the only one of the week, with time for everything: a second day, not one crammed session.
         val once = PlanAdvisor.advise(input(listOf(day.copy(times = 1))).copy(sessionMinutes = 120))
         assertTrue(once.changes.none { it.id.startsWith("add:CHEST") || it.id.startsWith("add:BICEPS") }, once.changes.map { it.id }.toString())
-        assertTrue(once.held.any { it.startsWith("Одна тренировка в неделю") && "второй день" in it }, once.held.toString())
+        assertTrue(once.held.any { it.startsWith("Зал раз в неделю") && "второй день" in it }, once.held.toString())
     }
 
     @Test fun aWeekWithoutTheGymHasNothingToSay() {

@@ -388,7 +388,7 @@ class GymFlowUiTest {
     /** A plank has no weight and no reserve to mark: after a hold it is not asked for "сколько ещё мог". */
     @Test fun aHoldHasItsOwnHint() {
         assertEquals(
-            "Следующий подход: 30 с. Удержишь во всех подходах — в следующий раз дольше.",
+            "Следующий подход: 30 с. Удержишь во всех — в следующий раз дольше.",
             Texts.nextSet(Catalog["plank"], NextSet(0.0, 30, 0, null, 2, plus = false, calibrate = false)),
         )
     }

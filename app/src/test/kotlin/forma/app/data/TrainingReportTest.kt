@@ -170,7 +170,7 @@ class TrainingReportTest {
             runs = b.runs.map { if (it.workoutId == w.id) it.copy(planJson = AppJson.encodeToString(RunWorkout.serializer(), short)) else it },
         )
         val text = TrainingReport.build(edited, monday, "test")
-        assertTrue(text.contains("Короткая пробежка длительность не меняет; обычная лёгкая — 40 мин."), text)
+        assertTrue(text.contains("Короткая пробежка длительность не меняет. Обычная лёгкая — 40 мин."), text)
         assertFalse(text.contains("Длительность пока прежняя"), text)
     }
 

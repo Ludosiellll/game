@@ -311,7 +311,7 @@ class DayScreenUiTest {
         compose.onRoot().captureRoboImage("build/shots/carbon-day-order.png")
         compose.onNodeWithText("Порядок", ignoreCase = true).performScrollTo()
         compose.onNodeWithText("Сначала бег, потом зал.").assertExists()
-        compose.onNodeWithText("верху тела бег почти не мешает", substring = true).assertExists()
+        compose.onNodeWithText("руки и спину бег почти не утомляет", substring = true).assertExists()
         compose.onRoot().captureRoboImage("build/shots/carbon-day-order.png")
     }
 }
