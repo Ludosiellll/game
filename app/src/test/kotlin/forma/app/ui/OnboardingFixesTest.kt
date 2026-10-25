@@ -168,12 +168,12 @@ class OnboardingFixesTest {
         d.birthYear = "1880"
         assertTrue(d.birthYearBad)
         d.birthYear = "2008"
-        assertEquals("Впиши вес: от него стартовые веса в зале.", d.aboutProblem)
+        assertEquals("Впиши вес: по нему подберём первые веса в зале.", d.aboutProblem)
         // Without the gym the weight is not for its starting weights.
         val (lift, run) = d.lift to d.run
         d.lift = LiftFocus.NONE
         d.run = RunFocus.SPEED
-        assertEquals("Впиши вес: от него расход энергии.", d.aboutProblem)
+        assertEquals("Впиши вес: по нему считаем, сколько калорий ты тратишь.", d.aboutProblem)
         d.lift = lift
         d.run = run
         d.weight = "7"

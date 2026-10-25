@@ -27,24 +27,24 @@ import forma.app.ui.theme.F
 data class Choice<T>(val value: T, val label: String, val text: String)
 
 val LIFT_FOCUS = listOf(
-    Choice(LiftFocus.STRENGTH, "Сила", "Тяжело и мало повторов: растут рабочие веса в базовых упражнениях."),
-    Choice(LiftFocus.POWERBUILDING, "Сила и масса", "Тяжёлая база и объём на мышцы: и веса, и форма."),
-    Choice(LiftFocus.MUSCLE, "Мышцы", "Гипертрофия: больше подходов по 6–15 повторов почти до отказа."),
-    Choice(LiftFocus.GENERAL, "Тонус", "Умеренно, 8–15 повторов: крепкое тело без гонки за весами."),
+    Choice(LiftFocus.STRENGTH, "Сила", "Тяжёлые веса и мало повторов. Растут веса в главных упражнениях: присед, жим, тяга."),
+    Choice(LiftFocus.POWERBUILDING, "Сила и масса", "Тяжёлые главные упражнения и подходы на рост мышц. Растут и веса, и мышцы."),
+    Choice(LiftFocus.MUSCLE, "Мышцы", "Больше подходов по 6–15 повторов, почти до отказа. Так быстрее растут мышцы."),
+    Choice(LiftFocus.GENERAL, "Тонус", "Средние веса, 8–15 повторов. Крепкое тело без гонки за весами."),
     Choice(LiftFocus.NONE, "Без зала", "Только бег."),
 )
 
 val RUN_FOCUS = listOf(
     Choice(RunFocus.NONE, "Без бега", "Только зал."),
-    Choice(RunFocus.HEALTH, "Для здоровья", "Лёгкий бег для сердца и восстановления, без интервалов."),
-    Choice(RunFocus.ENDURANCE, "Выносливость", "Растут длинные пробежки: 10 км, полумарафон и дальше."),
-    Choice(RunFocus.SPEED, "Скорость", "Интервалы, темповый бег и отрезки в темпе цели: быстрее на 1,5–10 км."),
+    Choice(RunFocus.HEALTH, "Для здоровья", "Спокойный бег для сердца и восстановления. Без быстрых отрезков."),
+    Choice(RunFocus.ENDURANCE, "Выносливость", "Учишься бегать долго: 10 км, полумарафон и дальше."),
+    Choice(RunFocus.SPEED, "Скорость", "Быстрые отрезки, темповый бег и бег в темпе цели. Цель — бегать быстрее на 1,5–10 км."),
 )
 
 val EMPHASIS = listOf(
     Choice(Emphasis.GYM, "Зал", "Бег 1–2 раза в неделю, остальное — зал."),
-    Choice(Emphasis.BALANCED, "Поровну", "Зал и бег поровну; тяжёлые ноги и тяжёлый бег — в разные дни."),
-    Choice(Emphasis.RUN, "Бег", "Бег в приоритете, зал 1–2 раза: сила для ног, спины и экономичного бега."),
+    Choice(Emphasis.BALANCED, "Поровну", "Зал и бег поровну. Тяжёлые ноги и тяжёлый бег ставим в разные дни."),
+    Choice(Emphasis.RUN, "Бег", "Главное — бег. Зал 1–2 раза в неделю: сильные ноги и спина, бегать легче."),
 )
 
 /** "Мышцы + выносливость · поровну", "Сила", "Бег · скорость". */
@@ -70,9 +70,9 @@ fun aimTitle(aim: Aim): String {
 
 /** What the week holds: the gym and running, the gym alone, running alone. */
 enum class Sides(val label: String, val text: String) {
-    BOTH("Зал и бег", "Неделя из зала и бега: где что — приложение разложит само."),
-    GYM("Только зал", "Без бега: в неделе только силовые."),
-    RUN("Только бег", "Без зала: в неделе только пробежки."),
+    BOTH("Зал и бег", "В неделе и зал, и бег. Приложение само решит, что в какой день."),
+    GYM("Только зал", "В неделе только тренировки в зале, без бега."),
+    RUN("Только бег", "В неделе только пробежки, без зала."),
 }
 
 /** The sides an aim trains. */
@@ -152,7 +152,7 @@ fun RunGoalPicker(d: ProfileDraft) {
     if (d.run == RunFocus.NONE) return
     // Racing needs hard runs: a goal is for the speed and endurance focus (running for health has only easy runs).
     if (d.racing) {
-        SectionLabel("Забег-цель (необязательно)", Modifier.padding(top = 6.dp))
+        SectionLabel("Забег, к которому готовишься (необязательно)", Modifier.padding(top = 6.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             GOAL_DISTANCES.forEach { (m, label) -> Chip(label, d.goalMeters == m, { d.goalMeters = if (d.goalMeters == m) null else m }) }
         }
@@ -164,18 +164,18 @@ fun RunGoalPicker(d: ProfileDraft) {
         val lap = d.lapOrNull
         Text(
             when {
-                d.goalTime.isBlank() -> "Например, ${goalExample(meters)}. По цели строятся отрезки в её темпе и контрольные забеги."
-                goal == null -> "Не похоже на время: впиши минуты и секунды, например ${goalExample(meters)}."
+                d.goalTime.isBlank() -> "Например, ${goalExample(meters)}. Под цель будут отрезки в её темпе и контрольные забеги на время."
+                goal == null -> "Не похоже на время. Впиши минуты и секунды, например ${goalExample(meters)}."
                 else -> buildString {
                     append("Темп ${Ru.pace(goal.pace)} на км")
                     if (lap != null) append(", " + Ru.nobreak("круг $lap м — за ${lapTenth(Track.lapSec(goal.pace, lap))}"))
                     append(". ")
                     if (goal.middleDistance) {
                         // "Endurance" for 1500 m is built by race pace and intervals: the goal plans the running.
-                        if (d.run != RunFocus.SPEED) append("С такой целью бег строится от неё: выносливость на ${goalDistance(meters)} растёт от отрезков и интервалов, а не от длинных пробежек. ")
-                        append("Каждая вторая тяжёлая пробежка — отрезки в этом темпе, контрольный забег на эту дистанцию — после первых пробежек и дальше раз в 5 недель.")
+                        if (d.run != RunFocus.SPEED) append("Весь бег строится под эту цель. Выносливость на ${goalDistance(meters)} растёт от отрезков и интервалов. Длинные пробежки для неё не главное. ")
+                        append("Каждая вторая тяжёлая пробежка — отрезки в этом темпе. Контрольный забег на эту дистанцию будет после первых пробежек, потом раз в 5 недель.")
                     }
-                    else append("Темпы пробежек — по текущей форме; прогноз к цели — в «Прогрессе».")
+                    else append("Темпы пробежек считаем по твоей форме сейчас. Насколько ты близко к цели, видно в «Прогрессе».")
                 }
             },
             style = T.secondary(13.sp),
@@ -184,9 +184,9 @@ fun RunGoalPicker(d: ProfileDraft) {
         val day = d.raceDay
         Text(
             when {
-                d.goalDate.isBlank() -> "Есть забег — впиши дату: последние две недели перед ним станут подводкой, а в его день будет сам забег."
-                day == null -> "Не похоже на дату (или она прошла): число и месяц через точку, например 15.06."
-                else -> "Забег ${Ru.date(day)}. За две недели — подводка: тренировки легче, за 3–5 дней — короткая в темпе цели, накануне — только размяться."
+                d.goalDate.isBlank() -> "Знаешь дату забега — впиши её. Последние две недели перед ним будут подводкой: тренировки легче, чтобы выйти на старт свежим. В сам день в плане будет забег."
+                day == null -> "Не похоже на дату или она уже прошла. Пиши число и месяц через точку, например 15.06."
+                else -> "Забег ${Ru.date(day)}. За две недели до него начнётся подводка: тренировки станут легче. За 3–5 дней будет короткая пробежка в темпе цели. Накануне — только разминка."
             },
             style = T.secondary(13.sp).let { if (d.goalDate.isNotBlank() && day == null) it.copy(color = F.c.warn) else it },
         )
@@ -200,7 +200,7 @@ fun RunGoalPicker(d: ProfileDraft) {
         NumberField(d.lapMeters, { d.lapMeters = it.filter(Char::isDigit) }, "Длина круга", "м", keyboard = KeyboardType.Number, placeholder = "400")
         Text(
             if (d.lapOrNull == null) "Впиши длину круга от 100 до 1000 м (обычный стадион — 400)."
-            else "Отрезки — в кругах. На каждом круге пищит, когда пора быть на линии; кнопка «Круг» скажет время круга и в темпе ли ты.",
+            else "Отрезки будут в кругах. Телефон пищит, когда пора быть на линии. Кнопка «Круг» скажет время круга и успеваешь ли ты в темп.",
             style = T.secondary(13.sp),
         )
     }
@@ -213,7 +213,7 @@ fun DoubleDaysToggle(d: ProfileDraft) {
     if (!aim.lifts || !aim.runs) return
     Toggle(
         "Зал и бег в один день",
-        "Зал и бег за один заход: в 3 дня помещаются 3 тренировки в зале и до 3 пробежек. Тяжёлый бег — в дни верха и первым, лёгкий — после ног.",
+        "Зал и бег за один приход. Так в 3 дня влезут 3 тренировки в зале и до 3 пробежек. Тяжёлый бег — в дни верха тела, и его делаешь первым. Лёгкий бег — после ног.",
         d.doubleDays,
     ) { d.doubleDays = it }
 }

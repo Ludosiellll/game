@@ -53,7 +53,7 @@ import kotlin.math.roundToInt
 fun CalculatorsScreen() {
     val nav = LocalNav.current
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = listOf("1ПМ", "Блины", "Разминка", "Темп", "Прогноз", "Пульс", "DOTS")
+    val tabs = listOf("Максимум", "Блины", "Разминка", "Темп", "Прогноз", "Пульс", "DOTS")
     ScrollScreen {
         TopBar("Калькуляторы", onBack = { nav.back() })
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -99,9 +99,9 @@ private fun OneRmCalc() {
     val res = rir.toIntOrNull()?.coerceIn(0, 6) ?: 0
     val e = OneRm.estimate(weight, reps, res)
     FCard(gap = 4.dp) {
-        Text("Максимум на 1 раз", style = T.secondary(13.sp))
+        Text("Вес, который ты поднимешь 1 раз", style = T.secondary(13.sp))
         NumText("${Ru.kg((e * 2).roundToInt() / 2.0)} кг", style = T.number(40.sp).copy(color = F.c.strength))
-        Text("По таблице RPE (RTS). Эпли: ${Ru.kg((OneRm.epley(weight, reps + res) * 2).roundToInt() / 2.0)}, Бжицки: ${if (reps + res < 37) Ru.kg((OneRm.brzycki(weight, reps + res) * 2).roundToInt() / 2.0) else "—"}. Точнее всего при 3–8 повторах.", style = T.secondary(12.sp))
+        Text("Посчитано по таблице RPE. Другие формулы: Эпли ${Ru.kg((OneRm.epley(weight, reps + res) * 2).roundToInt() / 2.0)}, Бжицки ${if (reps + res < 37) Ru.kg((OneRm.brzycki(weight, reps + res) * 2).roundToInt() / 2.0) else "—"}. Точнее всего при 3–8 повторах.", style = T.secondary(12.sp))
     }
     ResultRows(listOf(1, 2, 3, 5, 8, 10, 12, 15).map { n -> "${Ru.reps(n)} до отказа" to "${Ru.kg((OneRm.loadFor(e, n) * 2).roundToInt() / 2.0)} кг · ${(OneRm.fractionForRtf(n.toDouble()) * 100).roundToInt()}%" })
 }
@@ -141,7 +141,7 @@ private fun WarmUpCalc() {
     val w = parseNum(t) ?: return
     val sets = WarmUp.sets(w, 2.5, 20.0)
     ResultRows(sets.mapIndexed { i, s -> "Подход ${i + 1}" to "${Ru.kg(s.weight)} кг × ${s.reps}" } + ("Рабочий" to "${Ru.kg(w)} кг"))
-    Text("Отдых между разминочными 1–2 минуты, перед рабочим — от 2 минут.", style = T.secondary(13.sp))
+    Text("Между разминочными подходами отдыхай 1–2 минуты, перед рабочим — от 2 минут.", style = T.secondary(13.sp))
 }
 
 /** "50,6 с", "1:28,4": a lap time with tenths (a whole second off the goal lap adds up over the laps of a race). */
@@ -197,15 +197,16 @@ private fun RaceCalc() {
         NumberField(time, { time = it }, "Время", "мм:сс", Modifier.weight(1f), keyboard = KeyboardType.Text)
     }
     val d = parseNum(km)?.takeIf { it >= 0.4 }
-        ?: return Text("Впиши дистанцию от 0,4 км: например 0,8 для 800 м или 1,5.", style = T.secondary(13.sp).copy(color = F.c.bad))
+        ?: return Text("Впиши дистанцию от 0,4 км. Например, 0,8 для 800 м или 1,5.", style = T.secondary(13.sp).copy(color = F.c.bad))
     val s = parseClock(time)?.takeIf { it >= 30 && it / d in 100.0..1200.0 }
-        ?: return Text("Не похоже на время забега: минуты и секунды через двоеточие, например 5:30.", style = T.secondary(13.sp).copy(color = F.c.bad))
+        ?: return Text("Не похоже на время забега. Пиши минуты и секунды через двоеточие, например 5:30.", style = T.secondary(13.sp).copy(color = F.c.bad))
     val v = Vdot.fromRace(d * 1000, s)
     FCard(gap = 4.dp) {
-        Text("VDOT", style = T.secondary(13.sp))
+        Text("Форма бега (VDOT)", style = T.secondary(13.sp))
         NumText(Ru.one(v), style = T.number(40.sp).copy(color = F.c.endurance))
         Text(
-            "Прогноз по Дэниелсу. " + (if (d < 1.5) "По забегу короче 1,5 км прогноз на длинные дистанции грубее. " else "") +
+            "Чем выше число, тем ты быстрее. Прогноз по таблицам Дэниелса. " +
+                (if (d < 1.5) "Если забег короче 1,5 км, прогноз на длинные дистанции менее точный. " else "") +
                 "Марафон обычно выходит на 5–10 % медленнее, если бегаешь меньше 50 км в неделю.",
             style = T.secondary(12.sp),
         )
@@ -214,11 +215,11 @@ private fun RaceCalc() {
     val p = PaceTable.forVdot(v)
     ResultRows(
         listOf(
-            "Лёгкий" to "${Ru.pace(p.easy.fast.toDouble())}–${Ru.pace(p.easy.slow.toDouble())}",
+            "Лёгкий бег" to "${Ru.pace(p.easy.fast.toDouble())}–${Ru.pace(p.easy.slow.toDouble())}",
             "Марафонский" to Ru.pace(p.marathon.toDouble()),
-            "Пороговый" to Ru.pace(p.threshold.toDouble()),
-            "Интервальный" to Ru.pace(p.interval.toDouble()),
-            "Повторный" to Ru.pace(p.repetition.toDouble()),
+            "Темповый: тяжело, но держишь" to Ru.pace(p.threshold.toDouble()),
+            "Интервалы" to Ru.pace(p.interval.toDouble()),
+            "Короткие быстрые отрезки" to Ru.pace(p.repetition.toDouble()),
         ),
     )
 }
@@ -232,7 +233,7 @@ private fun HeartCalc() {
     var max by remember(profile) { mutableStateOf(profile?.maxHr?.toString() ?: "") }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NumberField(age, { age = it }, "Возраст", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number)
-        NumberField(rest, { rest = it }, "Пульс покоя", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number, placeholder = "—")
+        NumberField(rest, { rest = it }, "Пульс в покое", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number, placeholder = "—")
         NumberField(max, { max = it }, "Макс., если знаешь", modifier = Modifier.weight(1f), keyboard = KeyboardType.Number, placeholder = "—")
     }
     val a = age.toIntOrNull()?.coerceIn(10, 100) ?: return
@@ -240,8 +241,8 @@ private fun HeartCalc() {
     val hrMax = typed ?: HeartRate.maxTanaka(a)
     val zones = HeartRate.zones(hrMax, rest.toIntOrNull())
     // The formula note whenever the formula is used — also when a typed maximum was not believable.
-    Text("Максимум $hrMax уд/мин${if (typed == null) " по формуле Танаки (208 − 0,7 × возраст; точность ±11)" else ""}.", style = T.secondary(13.sp))
-    if (typed == null && max.isNotBlank()) Text("Введённый максимум не похож на настоящий (бывает 120–230) — взят расчётный.", style = T.secondary(12.sp).copy(color = F.c.warn))
+    Text("Максимальный пульс — $hrMax уд/мин${if (typed == null) ". Это расчёт по формуле Танаки: 208 − 0,7 × возраст, ошибка до ±11" else ""}.", style = T.secondary(13.sp))
+    if (typed == null && max.isNotBlank()) Text("Такой максимум не похож на настоящий: обычно он от 120 до 230. Взят расчётный.", style = T.secondary(12.sp).copy(color = F.c.warn))
     ResultRows(zones.map { z -> "${z.number}. ${z.name}" to "${z.low}–${z.high}" })
 }
 
@@ -252,9 +253,9 @@ private fun DotsCalc() {
     var total by remember { mutableStateOf("300") }
     var bw by remember(profile) { mutableStateOf(profile?.bodyWeightKg?.let { Ru.kg(it) } ?: "80") }
     var female by remember(profile) { mutableStateOf(profile?.sex == Sex.FEMALE) }
-    Text("Сумма приседа, жима и тяги с учётом веса тела — чтобы сравнивать силу людей разного веса.", style = T.secondary(13.sp))
+    Text("Сравнивает силу людей разного веса. Считается по сумме приседа, жима и тяги и весу тела.", style = T.secondary(13.sp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NumberField(total, { total = it }, "Сумма троеборья", "кг", Modifier.weight(1f))
+        NumberField(total, { total = it }, "Присед + жим + тяга", "кг", Modifier.weight(1f))
         NumberField(bw, { bw = it }, "Вес тела", "кг", Modifier.weight(1f))
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -266,6 +267,6 @@ private fun DotsCalc() {
     FCard(gap = 4.dp) {
         Text("Очки DOTS", style = T.secondary(13.sp))
         NumText(Ru.one(Points.dots(t, b, if (female) Sex.FEMALE else Sex.MALE)), style = T.number(40.sp).copy(color = F.c.strength))
-        Text("Формула DOTS из пауэрлифтинга: чем больше очков, тем сильнее относительно своего веса.", style = T.secondary(12.sp))
+        Text("Формула из пауэрлифтинга. Чем больше очков, тем ты сильнее для своего веса.", style = T.secondary(12.sp))
     }
 }
