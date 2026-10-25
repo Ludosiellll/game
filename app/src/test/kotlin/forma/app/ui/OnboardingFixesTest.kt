@@ -117,13 +117,46 @@ class OnboardingFixesTest {
         val d = ProfileDraft(denis)
         assertTrue(d.fieldsOk, d.problem.toString())
         d.runDays = emptySet()
-        assertEquals("Отметь хотя бы один день бега или выбери «Без бега».", d.weekProblem)
+        assertEquals("Отметь хотя бы один день бега или выбери в цели «Только зал».", d.weekProblem)
         assertTrue(!d.fieldsOk)
         d.run = RunFocus.NONE
         assertNull(d.weekProblem)
         val g = ProfileDraft(denis)
         g.gymDays = emptySet()
-        assertEquals("Отметь хотя бы один день зала или выбери «Без зала».", g.weekProblem)
+        assertEquals("Отметь хотя бы один день зала или выбери в цели «Только бег».", g.weekProblem)
+    }
+
+    /**
+     * The gym alone or running alone is the first choice, said as such (a "Без бега" chip among the running aims was not
+     * seen); a side dropped and taken back has its aim of before.
+     */
+    @Test fun theGymAloneOrRunningAloneIsTheFirstChoice() {
+        val d = ProfileDraft(denis)
+        compose.setContent {
+            CompositionLocalProvider(LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("carbon")) {
+                    Box(Modifier.fillMaxSize().background(F.c.bg)) {
+                        androidx.compose.foundation.layout.Column { forma.app.ui.screens.AimPicker(d) }
+                    }
+                }
+            }
+        }
+        settle()
+        compose.onNodeWithText("Только зал").performClick()
+        settle()
+        assertEquals(RunFocus.NONE, d.run)
+        assertEquals(LiftFocus.MUSCLE, d.lift)
+        compose.onNodeWithText("Бег — зачем", ignoreCase = true).assertDoesNotExist()
+        compose.onNodeWithText("Что важнее", ignoreCase = true).assertDoesNotExist()
+        compose.onNodeWithText("Только бег").performClick()
+        settle()
+        assertEquals(LiftFocus.NONE, d.lift)
+        assertEquals(RunFocus.SPEED, d.run)
+        compose.onNodeWithText("Зал — зачем", ignoreCase = true).assertDoesNotExist()
+        compose.onNodeWithText("Зал и бег").performClick()
+        settle()
+        assertEquals(Aim(LiftFocus.MUSCLE, RunFocus.SPEED, Emphasis.BALANCED), d.aim)
+        compose.onNodeWithText("Что важнее", ignoreCase = true).assertExists()
     }
 
     /** Birth year and weight are examples in empty fields, not 1995 and 75 saved silently; nonsense is called out. */

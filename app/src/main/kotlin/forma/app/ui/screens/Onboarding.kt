@@ -203,8 +203,8 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
         val a = aim
         return when {
             g == null || r == null -> if (days.isEmpty()) "Отметь хотя бы один день." else null
-            a.lifts && g.isEmpty() -> "Отметь хотя бы один день зала или выбери «Без зала»."
-            a.runs && r.isEmpty() -> "Отметь хотя бы один день бега или выбери «Без бега»."
+            a.lifts && g.isEmpty() -> "Отметь хотя бы один день зала или выбери в цели «Только бег»."
+            a.runs && r.isEmpty() -> "Отметь хотя бы один день бега или выбери в цели «Только зал»."
             else -> null
         }
     }
@@ -326,7 +326,7 @@ private fun Option(title: String, text: String?, selected: Boolean, onClick: () 
 
 @Composable
 private fun GoalStep(d: ProfileDraft) {
-    StepTitle("Цель", "Выбери, зачем тебе зал и зачем бег — неделя соберётся под это сочетание: сколько чего и в какие дни.")
+    StepTitle("Цель", "Зал, бег или и то и другое — и зачем. Неделя соберётся под это: сколько чего и в какие дни.")
     AimPicker(d)
     RunGoalPicker(d)
 }

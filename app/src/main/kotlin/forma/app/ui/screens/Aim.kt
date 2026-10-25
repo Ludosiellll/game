@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -66,22 +68,53 @@ fun aimTitle(aim: Aim): String {
     }
 }
 
-/** Gym focus, running focus and, when there are both, which comes first. At least one side always stays. */
+/** What the week holds: the gym and running, the gym alone, running alone. */
+enum class Sides(val label: String, val text: String) {
+    BOTH("Зал и бег", "Неделя из зала и бега: где что — приложение разложит само."),
+    GYM("Только зал", "Без бега: в неделе только силовые."),
+    RUN("Только бег", "Без зала: в неделе только пробежки."),
+}
+
+/** The sides an aim trains. */
+fun sidesOf(aim: Aim): Sides = when {
+    aim.lifts && aim.runs -> Sides.BOTH
+    aim.lifts -> Sides.GYM
+    else -> Sides.RUN
+}
+
+/**
+ * What the week holds first — the gym and running, the gym alone or running alone, said as such (a "Без бега" chip among
+ * the running aims was not seen as the way to drop running) — then the focus of each side kept, and, with both, which
+ * comes first. A side dropped and taken back gets its focus of before.
+ */
 @Composable
 fun AimPicker(d: ProfileDraft) {
-    SectionLabel("Зал")
-    ChoiceChips(LIFT_FOCUS, d.lift) { v ->
-        d.lift = v
-        if (v == LiftFocus.NONE && d.run == RunFocus.NONE) d.run = RunFocus.HEALTH
+    var keptLift by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(if (d.lift == LiftFocus.NONE) LiftFocus.POWERBUILDING else d.lift) }
+    var keptRun by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(if (d.run == RunFocus.NONE) RunFocus.HEALTH else d.run) }
+    val sides = sidesOf(Aim(d.lift, d.run, d.emphasis).normalized())
+    SectionLabel("Что будешь делать")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Sides.entries.forEach { s ->
+            Chip(s.label, sides == s, {
+                if (d.lift != LiftFocus.NONE) keptLift = d.lift
+                if (d.run != RunFocus.NONE) keptRun = d.run
+                d.lift = if (s == Sides.RUN) LiftFocus.NONE else keptLift
+                d.run = if (s == Sides.GYM) RunFocus.NONE else keptRun
+            }, Modifier.weight(1f), minWidth = 0.dp)
+        }
     }
-    Text(LIFT_FOCUS.first { it.value == d.lift }.text, style = T.secondary(13.sp))
-    SectionLabel("Бег", Modifier.padding(top = 6.dp))
-    ChoiceChips(RUN_FOCUS, d.run) { v ->
-        d.run = v
-        if (v == RunFocus.NONE && d.lift == LiftFocus.NONE) d.lift = LiftFocus.GENERAL
+    Text(sides.text, style = T.secondary(13.sp))
+    if (sides != Sides.RUN) {
+        SectionLabel("Зал — зачем", Modifier.padding(top = 6.dp))
+        ChoiceChips(LIFT_FOCUS.filter { it.value != LiftFocus.NONE }, d.lift) { v -> d.lift = v }
+        Text(LIFT_FOCUS.first { it.value == d.lift }.text, style = T.secondary(13.sp))
     }
-    Text(RUN_FOCUS.first { it.value == d.run }.text, style = T.secondary(13.sp))
-    if (d.lift != LiftFocus.NONE && d.run != RunFocus.NONE) {
+    if (sides != Sides.GYM) {
+        SectionLabel("Бег — зачем", Modifier.padding(top = 6.dp))
+        ChoiceChips(RUN_FOCUS.filter { it.value != RunFocus.NONE }, d.run) { v -> d.run = v }
+        Text(RUN_FOCUS.first { it.value == d.run }.text, style = T.secondary(13.sp))
+    }
+    if (sides == Sides.BOTH) {
         SectionLabel("Что важнее", Modifier.padding(top = 6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             EMPHASIS.forEach { c -> Chip(c.label, d.emphasis == c.value, { d.emphasis = c.value }, Modifier.weight(1f)) }

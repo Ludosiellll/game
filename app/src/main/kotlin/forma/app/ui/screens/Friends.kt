@@ -4,6 +4,8 @@ import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import forma.app.ui.components.Chip
+import forma.core.plan.SessionKind
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -397,12 +399,12 @@ fun FriendScreen(userId: String, name: String) {
     }
     FriendContent(
         name, progress, items, error, message,
-        onCopyProgram = { p ->
+        onCopyProgram = { p, part ->
             scope.launch {
                 val program = p.program()
                 when {
                     program == null -> message = "Программа друга не читается: пусть друг обновит приложение."
-                    !repo.copyProgram(program, p.name, p.customExercises()) ->
+                    !repo.copyProgram(program, p.name, p.customExercises(), part) ->
                         message = "Эту программу не получилось взять: в ней нет упражнений, которые знает этот телефон."
                     else -> nav.tab(Screen.Plan)
                 }
@@ -433,12 +435,13 @@ fun FriendContent(
     items: List<FeedItem>,
     error: String?,
     message: String?,
-    onCopyProgram: (FriendProgress) -> Unit,
+    onCopyProgram: (FriendProgress, forma.app.data.CopyPart) -> Unit,
     onCopy: (FeedItem) -> Unit,
     onRemove: () -> Unit,
     onBack: () -> Unit,
 ) {
     var confirmProgram by remember { mutableStateOf(false) }
+    var part by remember { mutableStateOf(forma.app.data.CopyPart.ALL) }
     var confirmRemove by remember { mutableStateOf(false) }
     ScrollScreen {
         TopBar(progress?.name ?: name, "Друг", onBack = onBack)
@@ -498,19 +501,39 @@ fun FriendContent(
         GhostButton("Удалить из друзей", { confirmRemove = true }, Modifier.fillMaxWidth())
     }
     if (confirmProgram && progress != null) {
+        // What of it to take: with the gym and running both in it, all, the gym alone or running alone.
+        val friend = progress.program()
+        val lifts = friend?.week?.days?.any { d -> d.sessions.any { it.kind == SessionKind.LIFT } } == true
+        val runs = friend?.week?.days?.any { d -> d.sessions.any { it.isRun } } == true
+        val parts = buildList {
+            if (lifts && runs) add(forma.app.data.CopyPart.ALL to "Зал и бег")
+            if (lifts) add(forma.app.data.CopyPart.GYM to "Только зал")
+            if (runs) add(forma.app.data.CopyPart.RUN to "Только бег")
+        }
+        val chosen = parts.firstOrNull { it.first == part }?.first ?: parts.firstOrNull()?.first ?: forma.app.data.CopyPart.ALL
         AlertDialog(
             onDismissRequest = { confirmProgram = false },
             containerColor = F.c.surface,
             title = { Text("Тренироваться по программе ${progress.name}?", style = T.title(20.sp)) },
             text = {
-                Text(
-                    "Твоя программа заменится: те же дни, тренировки и упражнения. Веса — твои: прогресс по каждому упражнению " +
-                        "сохранится, новые подберутся на первой тренировке. Твоя программа с заменами упражнений, подходами и отдыхом " +
-                        "сохранится: вернуть её — кнопка «Вернуть мою программу» в разделе «Цель, дни и данные».",
-                    style = T.secondary(14.sp),
-                )
+                androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (parts.size > 1) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            parts.forEach { (p, label) -> Chip(label, chosen == p, { part = p }, Modifier.weight(1f), minWidth = 0.dp) }
+                        }
+                    }
+                    Text(
+                        when (chosen) {
+                            forma.app.data.CopyPart.ALL -> "Твоя программа заменится: те же дни, тренировки и упражнения, зал и бег."
+                            forma.app.data.CopyPart.GYM -> "Возьмёшь только зал: дни, тренировки и упражнения ${progress.name}. Бега в неделе не будет."
+                            forma.app.data.CopyPart.RUN -> "Возьмёшь только бег: дни и виды пробежек ${progress.name}, темпы — по твоей форме. Зала в неделе не будет."
+                        } + (if (chosen != forma.app.data.CopyPart.RUN) " Веса — твои: прогресс по каждому упражнению сохранится, новые подберутся на первой тренировке." else "") +
+                            " Твоя программа сохранится: вернуть её — «Вернуть мою программу» в разделе «Цель, дни и данные».",
+                        style = T.secondary(14.sp),
+                    )
+                }
             },
-            confirmButton = { TextButton({ confirmProgram = false; onCopyProgram(progress) }) { Text("Скопировать", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
+            confirmButton = { TextButton({ confirmProgram = false; onCopyProgram(progress, chosen) }) { Text("Скопировать", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
             dismissButton = { TextButton({ confirmProgram = false }) { Text("Отмена", style = T.body(15.sp)) } },
         )
     }

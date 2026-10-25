@@ -67,6 +67,9 @@ data class RunSummary(
 /** How the person feels today: decides between the planned session, a lighter one and rest. */
 enum class Feel { UNSET, GOOD, LOW, SICK }
 
+/** What of a friend's program is taken: all of it, the gym alone (no running) or running alone (no gym). */
+enum class CopyPart { ALL, GYM, RUN }
+
 /**
  * The last run saved: the running progress before it and after it, and the run as planned and as done. While the
  * progress is still [after] (nothing built on it since), the run's rating put right decides it again.

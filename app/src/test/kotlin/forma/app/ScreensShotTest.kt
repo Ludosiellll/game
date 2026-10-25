@@ -568,7 +568,7 @@ class ScreensShotTest {
         screen = { forma.app.ui.screens.FriendsContent(ui, {}, {}, {}, { _, _ -> }, {}, { _, _ -> }, {}, {}, {}, {}) }
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-friends.png")
-        screen = { forma.app.ui.screens.FriendContent("Иван", progress, listOf(lift), null, null, {}, {}, {}, {}) }
+        screen = { forma.app.ui.screens.FriendContent("Иван", progress, listOf(lift), null, null, { _, _ -> }, {}, {}, {}) }
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-friend.png")
     }
