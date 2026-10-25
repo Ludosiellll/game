@@ -21,8 +21,25 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 }
 
+/**
+ * The caller is a signed-in person, not the app's public key: the platform has checked the token (verify_jwt), and a
+ * signed-in user's token says "authenticated" with their id — the public key alone would let anyone spend the quota.
+ */
+function signedIn(req: Request): boolean {
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const part = token.split(".")[1];
+  if (!part) return false;
+  try {
+    const claims = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=")));
+    return claims.role === "authenticated" && typeof claims.sub === "string" && claims.sub !== "";
+  } catch {
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "method" }, 405);
+  if (!signedIn(req)) return json({ error: "sign_in" }, 401);
   const key = Deno.env.get("GEMINI_API_KEY");
   if (!key) return json({ error: "no_key" }, 503);
   let body: { context?: unknown; messages?: unknown };
