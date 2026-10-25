@@ -78,13 +78,13 @@ fun ProfileScreen() {
     }
     val copiedFrom = program?.copiedFrom
     ScrollScreen {
-        TopBar("Цель, дни и данные", "План пересчитается, прогресс по упражнениям сохранится", onBack = { nav.back() })
+        TopBar("Цель, дни и данные", "План пересчитается, прогресс в упражнениях останется", onBack = { nav.back() })
         if (copiedFrom != null) {
             FCard(gap = 8.dp) {
-                Text("Сейчас программа друга ($copiedFrom)", style = T.title(18.sp))
+                Text("Сейчас ты тренируешься по программе друга ($copiedFrom)", style = T.title(18.sp))
                 Text(
-                    if (settings.ownPlan != null) "Твоя прежняя программа сохранена вместе с заменами упражнений, подходами и отдыхом — её можно вернуть."
-                    else "Можно вернуться к своей программе: она соберётся заново по твоему профилю.",
+                    if (settings.ownPlan != null) "Твоя прежняя программа сохранена: с заменами упражнений, подходами и отдыхом. Её можно вернуть."
+                    else "Можно вернуться к своей программе. Она соберётся заново по твоим данным.",
                     style = T.secondary(13.sp),
                 )
                 GhostButton("Вернуть мою программу", { confirmRestore = true }, Modifier.fillMaxWidth())
@@ -111,7 +111,7 @@ fun ProfileScreen() {
             }
         }
         if (d.raceShown) {
-            SectionLabel("Недавний забег или прикидка (необязательно)", Modifier.padding(top = 6.dp))
+            SectionLabel("Недавний забег на время (необязательно)", Modifier.padding(top = 6.dp))
             RaceFields(d, "Время недавнего забега")
         }
         RunGoalPicker(d)
@@ -134,8 +134,8 @@ fun ProfileScreen() {
             title = { Text("Сменить программу друга ($copiedFrom) на свою?", style = T.title(20.sp)) },
             text = {
                 Text(
-                    "Сейчас ты занимаешься по программе друга. После сохранения она уйдёт: цель и дни не менял — вернётся твоя программа " +
-                        "с её днями и заменами, поменял — план соберётся по ним. Прогресс по упражнениям сохранится.",
+                    "Сейчас ты занимаешься по программе друга. После сохранения её не будет. Если цель и дни те же, вернётся твоя программа " +
+                        "с её днями и заменами. Если поменял, план соберётся по новым. Прогресс в упражнениях сохранится.",
                     style = T.secondary(14.sp),
                 )
             },
@@ -150,8 +150,8 @@ fun ProfileScreen() {
             title = { Text("Вернуть мою программу?", style = T.title(20.sp)) },
             text = {
                 Text(
-                    "Программа друга ($copiedFrom) уйдёт. Вернутся твои цель, дни и тренировки — с заменами упражнений, подходами и отдыхом, " +
-                        "как были до копирования. Прогресс по упражнениям сохранится.",
+                    "Программа друга ($copiedFrom) уйдёт. Вернутся твои цель, дни и тренировки такими, как были до копирования: " +
+                        "с заменами упражнений, подходами и отдыхом. Прогресс в упражнениях сохранится.",
                     style = T.secondary(14.sp),
                 )
             },
@@ -187,7 +187,7 @@ fun WeekGrid(d: ProfileDraft, planGym: Set<Int>, planRun: Set<Int>) {
     SectionLabel("Неделя", Modifier.padding(top = 6.dp))
     Text(
         when {
-            aim.lifts && aim.runs -> "Отметь, в какие дни зал и в какие бег. Где отмечено и то и другое — зал и бег за один заход."
+            aim.lifts && aim.runs -> "Отметь, в какие дни зал и в какие бег. Можно отметить оба в один день: тогда зал и бег пойдут подряд."
             aim.lifts -> "Отметь дни зала."
             else -> "Отметь дни бега."
         },
@@ -224,14 +224,14 @@ fun WeekGrid(d: ProfileDraft, planGym: Set<Int>, planRun: Set<Int>) {
         ).joinToString(" · ").replaceFirstChar { it.uppercase() },
         style = T.secondary(13.sp).copy(color = if (rest == 0) F.c.warn else F.c.text2),
     )
-    if (rest == 0) Text("Без дня отдыха прогресс встаёт: оставь хотя бы один.", style = T.secondary(13.sp).copy(color = F.c.warn))
+    if (rest == 0) Text("Без дня отдыха прогресс встаёт. Оставь хотя бы один свободный день.", style = T.secondary(13.sp).copy(color = F.c.warn))
     // The plan holds up to 5 lifts and 6 runs a week (Scheduler.mixFixed): a day beyond that stays without a session.
     if (aim.lifts && gym.size > 5 || aim.runs && run.size > 6) {
-        Text("Зал — не больше 5 раз в неделю, бег — не больше 6: в лишний отмеченный день плана не будет.", style = T.secondary(13.sp))
+        Text("В плане максимум 5 дней зала и 6 дней бега в неделю. В лишние отмеченные дни тренировки не будет.", style = T.secondary(13.sp))
     }
     // Until 30 minutes of running are possible every run is run/walk, three a week at most (Scheduler.limitHard).
     if (aim.runs && d.runLevel == RunLevel.NONE && run.size > 3) {
-        Text("Пока бег с ходьбой — не больше 3 раз в неделю: в остальные отмеченные дни бега не будет.", style = T.secondary(13.sp))
+        Text("Пока ты бегаешь с ходьбой, бег будет не чаще 3 раз в неделю. В остальные отмеченные дни бега не будет.", style = T.secondary(13.sp))
     }
 }
 

@@ -74,7 +74,7 @@ fun SettingsScreen() {
         }
         SectionLabel("Тренировка")
         FCard(gap = 0.dp) {
-            Toggle("Таймер отдыха сам", "Запускается после каждого подхода", s.autoRest) { v -> save { it.copy(autoRest = v) } }
+            Toggle("Таймер отдыха", "Включается сам после каждого подхода", s.autoRest) { v -> save { it.copy(autoRest = v) } }
             Hairline()
             Toggle("Не гасить экран", "Во время тренировки в зале и пробежки", s.keepScreenOn) { v -> save { it.copy(keepScreenOn = v) } }
             Hairline()
@@ -84,9 +84,9 @@ fun SettingsScreen() {
             Hairline()
             Toggle("Вибрация", "Смена отрезка и конец отдыха", s.vibration) { v -> save { it.copy(vibration = v) } }
             Hairline()
-            Toggle("GPS по умолчанию", "Дистанция и темп на улице", s.gps) { v -> save { it.copy(gps = v) } }
+            Toggle("GPS по умолчанию", "На улице дистанция и темп считаются по GPS", s.gps) { v -> save { it.copy(gps = v) } }
             Hairline()
-            Toggle("Автопауза на остановках", "Лёгкий, длинный и свободный бег по улице: на светофоре время встаёт само. На стадионе — нет", s.autoPause) { v -> save { it.copy(autoPause = v) } }
+            Toggle("Автопауза на остановках", "Встал на светофоре — время само встаёт на паузу. Работает на улице в лёгком, длинном и свободном беге. На стадионе не работает", s.autoPause) { v -> save { it.copy(autoPause = v) } }
         }
         SectionLabel("Данные")
         FCard(gap = 0.dp) {

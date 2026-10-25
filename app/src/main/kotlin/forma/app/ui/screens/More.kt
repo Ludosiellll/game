@@ -29,13 +29,13 @@ fun MoreScreen() {
         FCard(gap = 0.dp) {
             ListRow("Спросить тренера", "ИИ ответит по твоим тренировкам: почему так, что значат цифры, что делать", icon = Ic.user, iconTint = F.c.accent) { nav.push(Screen.Coach) }
             Hairline()
-            ListRow("Как пользоваться", "Знакомство с приложением, что где и словарь слов", icon = Ic.info, iconTint = F.c.accent) { nav.push(Screen.Help) }
+            ListRow("Как пользоваться", "Что где в приложении и словарь слов", icon = Ic.info, iconTint = F.c.accent) { nav.push(Screen.Help) }
             Hairline()
-            ListRow("Калькуляторы", "1ПМ, блины, разминка, темп, прогноз, пульс", icon = Ic.calc, iconTint = F.c.accent) { nav.push(Screen.Calculators) }
+            ListRow("Калькуляторы", "Вес на 1 раз, блины, разминка, темп, прогноз, пульс", icon = Ic.calc, iconTint = F.c.accent) { nav.push(Screen.Calculators) }
             Hairline()
             ListRow("История", "Все тренировки и пробежки", icon = Ic.list, iconTint = F.c.accent) { nav.push(Screen.History) }
             Hairline()
-            ListRow("Упражнения", "Поиск, похожие, свои упражнения", icon = Ic.dumbbell, iconTint = F.c.accent) { nav.push(Screen.Library()) }
+            ListRow("Упражнения", "Найти упражнение, замену или добавить своё", icon = Ic.dumbbell, iconTint = F.c.accent) { nav.push(Screen.Library()) }
             Hairline()
             ListRow("Друзья", "Прогресс друзей, их тренировки и программы", icon = Ic.user, iconTint = F.c.accent) { nav.push(Screen.Friends) }
             Hairline()
@@ -46,7 +46,7 @@ fun MoreScreen() {
                 "Облако и резервная копия",
                 when {
                     cloud == null || !cloud.configured -> "Резервная копия в файл"
-                    cloud.email == null -> "Копия в Supabase, вход по почте и паролю; копия в файл"
+                    cloud.email == null -> "Копия в облаке по почте и паролю или в файл"
                     cloud.otherAccount -> "На телефоне данные другого аккаунта"
                     cloud.lastError != null -> listOfNotNull("Есть ошибка синхронизации", waitingText(waiting)).joinToString(" · ")
                     else -> waitingText(waiting) ?: "Синхронизация: ${lastSyncText(cloud.lastSyncAt)}"
@@ -60,7 +60,7 @@ fun MoreScreen() {
         }
         Text(
             if (cloud?.email != null) "Данные хранятся на телефоне, копия — в облаке."
-            else "Данные хранятся только на телефоне. Включи облако или сохраняй резервную копию в файл («Облако и резервная копия»), чтобы не потерять историю при смене телефона.",
+            else "Данные есть только на этом телефоне. Чтобы не потерять историю при смене телефона, включи облако или сохраняй копию в файл. Всё это — в разделе «Облако и резервная копия».",
             style = T.secondary(13.sp),
         )
     }

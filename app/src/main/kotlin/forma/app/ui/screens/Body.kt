@@ -46,7 +46,7 @@ fun BodyScreen() {
     val list by remember { repo.db.state().observeBodyWeight() }.collectAsState(initial = emptyList())
     var value by remember(list.isEmpty()) { mutableStateOf(list.lastOrNull()?.kg?.let { Ru.kg(it) } ?: "") }
     ScrollScreen {
-        TopBar("Вес тела", "Лучше утром, натощак, раз в неделю", onBack = { nav.back() })
+        TopBar("Вес тела", "Взвешивайся утром натощак, раз в неделю", onBack = { nav.back() })
         var saved by remember { mutableStateOf(false) }
         NumberField(value, { value = it; saved = false }, "Сегодня", "кг", placeholder = "70")
         val kg = parseNum(value)?.takeIf { it in 30.0..250.0 }
@@ -90,7 +90,7 @@ private fun Estimates(latestKg: Double?) {
     FCard(gap = 10.dp) {
         val h = p.heightCm
         if (h == null) {
-            Text("Укажи рост — посчитаю ИМТ, обмен покоя и расход энергии за день.", style = T.secondary(14.sp))
+            Text("Укажи рост, и я посчитаю ИМТ и сколько калорий ты тратишь в покое и за день.", style = T.secondary(14.sp))
             GhostButton("Указать рост", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth())
         } else {
             val bmi = Body.bmi(kg, h)
@@ -102,8 +102,8 @@ private fun Estimates(latestKg: Double?) {
                 StatTile("Расход", "≈${(daily / 50).roundToInt() * 50}", "ккал в день", F.c.load, Modifier.weight(1f))
             }
             Text(
-                "Оценки, не измерения. ИМТ не отличает мышцы от жира. Расход = обмен покоя × 1,3 плюс тренировки: " +
-                    "≈${(training / 50).roundToInt() * 50} ккал в неделю за последний месяц. Чтобы худеть, обычно ешь на 300–500 ккал меньше расхода.",
+                "Это примерные цифры. ИМТ не отличает мышцы от жира. Расход — это калории в покое × 1,3 плюс тренировки. " +
+                    "На тренировки за последний месяц уходило ≈${(training / 50).roundToInt() * 50} ккал в неделю. Чтобы худеть, обычно ешь на 300–500 ккал меньше расхода.",
                 style = T.secondary(12.sp),
             )
         }

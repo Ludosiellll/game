@@ -162,7 +162,7 @@ private fun addText(r: AddResult) = when (r) {
     AddResult.ACCEPTED -> "Готово — вы друзья."
     AddResult.ALREADY -> "Вы уже друзья."
     AddResult.NOT_FOUND -> "Такого кода нет. Проверь буквы и цифры."
-    AddResult.SELF -> "Это твой собственный код."
+    AddResult.SELF -> "Это твой код. Впиши код друга."
 }
 
 /**
@@ -170,14 +170,14 @@ private fun addText(r: AddResult) = when (r) {
  * when some exercises cannot be done here, [ask] gets their names to ask first. [say]: a line for the screen.
  */
 private suspend fun copyAsked(api: FriendsApi?, repo: TrainingRepository, nav: Navigator, item: FeedItem, ask: (List<String>) -> Unit, say: (String?) -> Unit) {
-    val plan = item.liftPlan() ?: return say("Эту тренировку нельзя повторить: в ней нет плана.")
+    val plan = item.liftPlan() ?: return say("Эту тренировку не повторить: в ней нет плана.")
     if (repo.db.workouts().active() != null) return say("Сначала закончи начатую тренировку.")
     val used = plan.items.map { it.exerciseId }.toSet()
     val own = runCatching { api?.progress(item.userId)?.customExercises() }.getOrNull().orEmpty()
     repo.importExercises(own.filter { it.id in used })
     val left = repo.copiedLeftOut(plan)
     when {
-        left.size >= plan.items.size -> say("Упражнений из этой тренировки нет на телефоне — повторить её не получится.")
+        left.size >= plan.items.size -> say("На этом телефоне нет упражнений из этой тренировки, поэтому повторить её не получится.")
         left.isNotEmpty() -> ask(left)
         else -> say(startCopy(repo, nav, item))
     }
@@ -185,10 +185,10 @@ private suspend fun copyAsked(api: FriendsApi?, repo: TrainingRepository, nav: N
 
 /** Starts today's session as the friend did it; returns a line for the screen when it cannot. */
 private suspend fun startCopy(repo: TrainingRepository, nav: Navigator, item: FeedItem): String? {
-    val plan = item.liftPlan() ?: return "Эту тренировку нельзя повторить: в ней нет плана."
+    val plan = item.liftPlan() ?: return "Эту тренировку не повторить: в ней нет плана."
     val id = repo.startCopiedLift(plan, item.name)
         ?: return if (repo.db.workouts().active() != null) "Сначала закончи начатую тренировку."
-        else "Упражнений из этой тренировки нет на телефоне — повторить её не получится."
+        else "На этом телефоне нет упражнений из этой тренировки, поэтому повторить её не получится."
     nav.push(Screen.Workout(id))
     return null
 }
@@ -202,8 +202,8 @@ private fun LeftOutDialog(names: List<String>, onCancel: () -> Unit, onStart: ()
         title = { Text("Повторить без части упражнений?", style = T.title(20.sp)) },
         text = {
             Text(
-                "Не войдут: ${names.joinToString(", ")}. Их нет на этом телефоне (своё упражнение друга не скачалось — нужен интернет) " +
-                    "или в тренировке больше 12 упражнений.",
+                "Не войдут: ${names.joinToString(", ")}. Их нет на этом телефоне, или в тренировке больше 12 упражнений. " +
+                    "Упражнения, которые друг добавил сам, скачиваются только через интернет.",
                 style = T.secondary(14.sp),
             )
         },
@@ -232,7 +232,7 @@ fun FriendsContent(
         if (!ui.signedIn) {
             FCard(gap = 10.dp) {
                 Text("Друзья работают через облако", style = T.title(20.sp))
-                Text("Войди или создай аккаунт: тогда друзья смогут добавить тебя по коду, а ты — видеть их тренировки и прогресс.", style = T.secondary(14.sp))
+                Text("Войди или создай аккаунт. Тогда друзья смогут добавить тебя по коду, а ты увидишь их тренировки и прогресс.", style = T.secondary(14.sp))
                 PrimaryButton("Войти в облако", onSignIn, Modifier.fillMaxWidth())
             }
             return@ScrollScreen
@@ -249,7 +249,7 @@ fun FriendsContent(
                 SectionLabel("Твой код")
                 // Letters and digits alike: the whole code at one size (number text would shrink the letters).
                 Text(me.code.chunked(4).joinToString(" "), style = T.number(34.sp))
-                Text("Друг вводит этот код у себя — и вы видите тренировки и прогресс друг друга.", style = T.secondary(13.sp))
+                Text("Друг вводит этот код у себя, и вы видите тренировки и прогресс друг друга.", style = T.secondary(13.sp))
                 PrimaryButton("Поделиться кодом", { onShare(me.code) }, Modifier.fillMaxWidth())
                 var name by remember(me.name) { mutableStateOf(me.name) }
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -261,8 +261,8 @@ fun FriendsContent(
             FCard(gap = 6.dp) {
                 SectionLabel("Что видят друзья")
                 Text(
-                    if (me.shareActivity) "Сейчас друзья видят все твои тренировки и пробежки, веса, расчётные максимумы и программу — и могут их повторить."
-                    else "Сейчас друзья не видят твоих тренировок: только имя.",
+                    if (me.shareActivity) "Сейчас друзья видят все твои тренировки и пробежки, веса, сколько ты поднимешь на 1 раз и программу. Тренировки и программу они могут повторить."
+                    else "Сейчас друзья не видят твоих тренировок, только имя.",
                     style = T.secondary(13.sp),
                 )
                 Toggle("Тренировки и прогресс", "Что делал, веса, пробежки, программа", me.shareActivity) { onSharing(it, me.shareBody) }
@@ -403,9 +403,9 @@ fun FriendScreen(userId: String, name: String) {
             scope.launch {
                 val program = p.program()
                 when {
-                    program == null -> message = "Программа друга не читается: пусть друг обновит приложение."
+                    program == null -> message = "Не получается открыть программу друга. Пусть друг обновит приложение."
                     !repo.copyProgram(program, p.name, p.customExercises(), part) ->
-                        message = "Эту программу не получилось взять: в ней нет упражнений, которые знает этот телефон."
+                        message = "Эту программу не получилось взять: в ней нет упражнений, которые есть на этом телефоне."
                     else -> nav.tab(Screen.Plan)
                 }
             }
@@ -524,11 +524,11 @@ fun FriendContent(
                     }
                     Text(
                         when (chosen) {
-                            forma.app.data.CopyPart.ALL -> "Твоя программа заменится: те же дни, тренировки и упражнения, зал и бег."
+                            forma.app.data.CopyPart.ALL -> "Твоя программа сменится на программу друга: те же дни, тренировки и упражнения, зал и бег."
                             forma.app.data.CopyPart.GYM -> "Возьмёшь только зал: дни, тренировки и упражнения ${progress.name}. Бега в неделе не будет."
-                            forma.app.data.CopyPart.RUN -> "Возьмёшь только бег: дни и виды пробежек ${progress.name}, темпы — по твоей форме. Зала в неделе не будет."
-                        } + (if (chosen != forma.app.data.CopyPart.RUN) " Веса — твои: прогресс по каждому упражнению сохранится, новые подберутся на первой тренировке." else "") +
-                            " Твоя программа сохранится: вернуть её — «Вернуть мою программу» в разделе «Цель, дни и данные».",
+                            forma.app.data.CopyPart.RUN -> "Возьмёшь только бег: дни и виды пробежек ${progress.name}. Темпы будут по твоей форме. Зала в неделе не будет."
+                        } + (if (chosen != forma.app.data.CopyPart.RUN) " Веса останутся твои. Для новых упражнений вес подберём на первой тренировке." else "") +
+                            " Свою программу можно вернуть в «Цель, дни и данные» кнопкой «Вернуть мою программу».",
                         style = T.secondary(14.sp),
                     )
                 }

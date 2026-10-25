@@ -382,7 +382,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
             is HttpRequestException, is HttpRequestTimeoutException, is IOException -> "Нет связи с сервером. Синхронизация повторится сама, когда появится интернет."
             is RestException -> when {
                 e.statusCode == 401 || e.statusCode == 403 -> "Сервер не принял вход. Выйди и войди снова."
-                e.statusCode >= 500 -> "Сервер Supabase не отвечает. Возможно, бесплатный проект уснул после недели без запросов: открой его в панели Supabase."
+                e.statusCode >= 500 -> "Сервер Supabase не отвечает. Бесплатный проект засыпает, если им не пользовались неделю. Открой его в панели Supabase, и он проснётся."
                 else -> "Ошибка сервера: ${e.error}"
             }
             else -> e.message ?: e::class.simpleName ?: "Неизвестная ошибка"
@@ -394,9 +394,9 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
          */
         fun describeDelete(e: Throwable): String = when {
             e is RestException && (e.statusCode == 404 || e.error.contains("PGRST202") || e.error.contains("delete_my_account")) ->
-                "Удаление аккаунта ещё не включено на сервере: нужно применить миграцию delete_account в проекте Supabase. Ничего не удалено."
+                "Ничего не удалено: на сервере ещё нет удаления аккаунта. Нужно применить миграцию delete_account в проекте Supabase."
             e is HttpRequestException || e is HttpRequestTimeoutException || e is IOException ->
-                "Нет ответа от сервера — неизвестно, удалён ли аккаунт. Попробуй удалить ещё раз, когда появится интернет: повторное нажатие безопасно."
+                "Сервер не ответил, поэтому неясно, удалён ли аккаунт. Попробуй удалить ещё раз, когда появится интернет. Нажать снова безопасно."
             else -> "Аккаунт не удалён. " + describe(e)
         }
 
@@ -405,9 +405,9 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
             e is AuthRestException -> when (e.error) {
                 "invalid_credentials" -> "Неверная почта или пароль."
                 "email_exists", "user_already_exists" -> "Аккаунт с этой почтой уже есть — войди."
-                "weak_password" -> "Пароль слишком простой: нужно минимум 8 символов, лучше с цифрами."
+                "weak_password" -> "Пароль слишком простой. Нужно минимум 8 символов, лучше с цифрами."
                 "email_not_confirmed" ->
-                    "Почта ещё не подтверждена: открой письмо от Supabase и нажми ссылку. Или выключи подтверждение почты в настройках проекта."
+                    "Почта ещё не подтверждена. Открой письмо от Supabase и нажми на ссылку. Или выключи подтверждение почты в настройках проекта."
                 "email_address_not_authorized" ->
                     "Supabase не может отправить письмо на эту почту. В проекте нужно выключить подтверждение почты: Authentication → Sign In / Providers → Email → Confirm email."
                 "over_email_send_rate_limit", "over_request_rate_limit" -> "Слишком много попыток подряд. Подожди немного и попробуй снова."

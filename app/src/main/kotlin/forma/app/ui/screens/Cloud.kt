@@ -114,9 +114,9 @@ fun CloudScreen() {
             title = { Text("${workoutsWord(n).replaceFirstChar { it.uppercase() }} не в облаке", style = T.title(20.sp)) },
             text = {
                 Text(
-                    "На телефоне ${workoutsWord(n)}, которых нет в облаке " + (state.previousEmail ?: "прежнего аккаунта") + ": " +
-                        "при замене они пропадут навсегда. Чтобы сохранить их, сначала войди в прежний аккаунт — они загрузятся сами, " +
-                        "или сохрани копию в файл ниже.",
+                    "На телефоне ${workoutsWord(n)}, которых нет в облаке " + (state.previousEmail ?: "прежнего аккаунта") + ". " +
+                        "При замене они пропадут навсегда. Чтобы их сохранить, войди в прежний аккаунт, и они загрузятся сами. " +
+                        "Или сохрани копию в файл ниже.",
                     style = T.secondary(14.sp),
                 )
             },
@@ -156,15 +156,15 @@ fun CloudContent(
         TopBar("Облако и данные", onBack = onBack)
         when {
             !state.configured -> FCard {
-                Text("В этой сборке облако не настроено.", style = T.body(15.sp))
+                Text("В этой версии приложения облако не подключено.", style = T.body(15.sp))
             }
             !state.ready -> Text("Проверяю вход…", style = T.secondary(14.sp))
             state.email == null -> {
                 FCard {
-                    Text("Копия тренировок в Supabase", style = T.title(22.sp))
+                    Text("Копия тренировок в облаке", style = T.title(22.sp))
                     Text(
-                        "Телефон остаётся главным: без интернета всё работает как раньше, а копия догоняет, когда появляется сеть. " +
-                            "Сменишь телефон — войдёшь, и вся история вернётся.",
+                        "Всё по-прежнему хранится на телефоне и работает без интернета. Копия обновится, когда появится сеть. " +
+                            "Сменишь телефон — войди, и вся история вернётся.",
                         style = T.secondary(14.sp),
                     )
                 }
@@ -181,9 +181,10 @@ fun CloudContent(
                     FCard {
                         Text("На телефоне данные другого аккаунта", style = T.title(20.sp))
                         Text(
-                            "Тренировки на этом телефоне синхронизировались с " + (state.previousEmail ?: "другим аккаунтом") + ". " +
+                            "Тренировки на этом телефоне связаны с " + (state.previousEmail ?: "другим аккаунтом") + ". " +
                                 "Чтобы чужая история не попала в этот аккаунт, синхронизация остановлена. " +
-                                "Можно убрать их с телефона и загрузить данные этого аккаунта — в облаке прежнего аккаунта останется то, что успело туда загрузиться.",
+                                "Можно убрать их с телефона и загрузить данные этого аккаунта. " +
+                                "В облаке прежнего аккаунта останется то, что успело туда загрузиться.",
                             style = T.secondary(14.sp),
                         )
                     }
@@ -196,9 +197,9 @@ fun CloudContent(
                         if (state.busy) "Синхронизирую…" else "Синхронизировать", onSync, Modifier.fillMaxWidth(),
                         icon = Ic.cloud, enabled = !state.busy && !state.deleting,
                     )
-                    Text("Синхронизация идёт сама: после каждой тренировки и дважды в день в фоне.", style = T.secondary(13.sp))
+                    Text("Синхронизация идёт сама: после каждой тренировки и ещё дважды в день.", style = T.secondary(13.sp))
                     GhostButton("Выйти", onSignOut, Modifier.fillMaxWidth(), height = 50.dp)
-                    Text("Выход не удаляет данные ни с телефона, ни из облака.", style = T.secondary(12.sp))
+                    Text("Если выйдешь, данные останутся и на телефоне, и в облаке.", style = T.secondary(12.sp))
                 }
             }
         }
@@ -211,7 +212,7 @@ fun CloudContent(
                 { if (!state.deleting && !state.busy) deleteStep = 1 }, Modifier.fillMaxWidth(),
                 color = if (state.deleting || state.busy) F.c.text3 else F.c.bad, height = 50.dp,
             )
-            Text("Удалятся аккаунт, все тренировки и прогресс в облаке и друзья. На телефоне данные останутся.", style = T.secondary(12.sp))
+            Text("Удалятся аккаунт, друзья, все тренировки и прогресс в облаке. На телефоне всё останется.", style = T.secondary(12.sp))
         }
     }
     // Twice asked: the first time what goes, the second time that it cannot be undone.
@@ -222,7 +223,7 @@ fun CloudContent(
             title = { Text("Удалить аккаунт?", style = T.title(20.sp)) },
             text = {
                 Text(
-                    "Аккаунт ${state.email ?: ""} и всё, что в облаке, — тренировки, прогресс, план, друзья — удалятся. " +
+                    "Аккаунт ${state.email ?: ""} удалится вместе со всем, что в облаке: тренировками, прогрессом, планом и друзьями. " +
                         "На этом телефоне данные останутся.",
                     style = T.secondary(14.sp),
                 )
@@ -236,7 +237,7 @@ fun CloudContent(
             onDismissRequest = { deleteStep = 0 },
             containerColor = F.c.surface,
             title = { Text("Точно удалить навсегда?", style = T.title(20.sp)) },
-            text = { Text("Это нельзя отменить: восстановить аккаунт и данные в облаке будет нельзя.", style = T.secondary(14.sp)) },
+            text = { Text("Это нельзя отменить. Аккаунт и данные в облаке уже не вернуть.", style = T.secondary(14.sp)) },
             confirmButton = { TextButton({ deleteStep = 0; onDeleteAccount() }) { Text("Удалить навсегда", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.bad)) } },
             dismissButton = { TextButton({ deleteStep = 0 }) { Text("Отмена", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
         )
@@ -270,12 +271,12 @@ fun DataSection() {
     }
     fun restore(b: forma.app.data.Backup) {
         scope.launch {
-            message = runCatching { "Восстановлено тренировок: ${backup.restore(b, cloud?.accountId())}." }.getOrElse { "Не восстановлено: ${it.message}" }
+            message = runCatching { "Восстановлено тренировок: ${backup.restore(b, cloud?.accountId())}." }.getOrElse { "Не получилось восстановить: ${it.message}" }
         }
     }
     SectionLabel("Резервная копия")
     FCard {
-        Text("Все тренировки, прогресс и настройки — в одном файле. Сохрани в облако или отправь себе.", style = T.secondary(14.sp))
+        Text("Все тренировки, прогресс и настройки в одном файле. Сохрани его в надёжное место или отправь себе.", style = T.secondary(14.sp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GhostButton("Сохранить", { exporter.launch("forma-${LocalDate.now()}.json") }, Modifier.weight(1f))
             GhostButton("Восстановить", {
@@ -285,7 +286,7 @@ fun DataSection() {
                 }
             }, Modifier.weight(1f))
         }
-        Text("Восстановление заменяет данные на телефоне. Если включено облако, копия из облака потом добавится к ним.", style = T.secondary(12.sp))
+        Text("Восстановление заменит данные на телефоне. Если облако включено, данные из облака потом добавятся к ним.", style = T.secondary(12.sp))
     }
     message?.let { Banner(it, F.c.accent) }
     val b = pending
@@ -296,8 +297,8 @@ fun DataSection() {
             title = { Text("Восстановить из файла?", style = T.title(20.sp)) },
             text = {
                 Text(
-                    "Это заменит всё на телефоне — тренировки, прогресс, план и настройки — данными файла: " +
-                        "${workoutsWord(b.workouts.count { it.status == forma.app.data.Status.DONE })}, копия от ${shortDate(java.time.Instant.ofEpochMilli(b.createdAt).atZone(java.time.ZoneId.systemDefault()).toLocalDate())}.",
+                    "Всё на телефоне заменится данными из файла: тренировки, прогресс, план и настройки. " +
+                        "В файле ${workoutsWord(b.workouts.count { it.status == forma.app.data.Status.DONE })}, копия от ${shortDate(java.time.Instant.ofEpochMilli(b.createdAt).atZone(java.time.ZoneId.systemDefault()).toLocalDate())}.",
                     style = T.secondary(14.sp),
                 )
             },
@@ -323,9 +324,9 @@ fun DataSection() {
                 // phone synced with: the file's workouts go there.
                 val email = cloudState?.takeIf { !it.otherAccount }?.email
                 Text(
-                    (if (email != null) "Эта копия — из другого облачного аккаунта, не из $email. После восстановления тренировки из файла загрузятся в облако $email. "
-                    else "Эта копия — из другого облачного аккаунта, не из того, с которым телефон синхронизировался раньше. " +
-                        "После восстановления тренировки из файла загрузятся в облако того, прежнего аккаунта, когда ты снова в него войдёшь. ") +
+                    (if (email != null) "Эта копия из другого аккаунта, не из $email. После восстановления тренировки из файла загрузятся в облако $email. "
+                    else "Эта копия из другого аккаунта, не из того, с которым телефон был связан раньше. " +
+                        "После восстановления тренировки из файла загрузятся в облако прежнего аккаунта, когда ты снова в него войдёшь. ") +
                         "Восстанавливай, только если это твои тренировки.",
                     style = T.secondary(14.sp),
                 )
@@ -367,7 +368,7 @@ fun CloudSignInScreen(restore: Boolean) {
             }.onFailure { error = Cloud.describeSignIn(it) }.getOrNull()
             when (signedIn) {
                 null -> Unit
-                false -> result = "Аккаунт создан. Supabase отправил письмо со ссылкой: подтверди почту, вернись сюда и войди."
+                false -> result = "Аккаунт создан. На почту пришло письмо со ссылкой. Подтверди почту, вернись сюда и войди."
                 true -> {
                     progress = if (restore) "Скачиваю данные из облака…" else "Синхронизирую…"
                     val sync = c.syncNow()
@@ -378,8 +379,8 @@ fun CloudSignInScreen(restore: Boolean) {
                         restore && repo.isOnboarded() -> { nav.replaceAll(Screen.Today); return@launch }
                         !restore && sync.isSuccess -> { nav.back(); return@launch }
                         else -> result = sync.fold(
-                            { if (restore) "Вход выполнен, но в облаке пока нет данных. Заполни профиль — копия начнёт сохраняться сама." else syncSummary(it) },
-                            { "Вход выполнен, но синхронизация не удалась: ${Cloud.describe(it)}" },
+                            { if (restore) "Ты вошёл, но в облаке пока пусто. Заполни профиль, и копия начнёт сохраняться сама." else syncSummary(it) },
+                            { "Ты вошёл, но синхронизация не удалась: ${Cloud.describe(it)}" },
                         )
                     }
                 }
@@ -418,7 +419,7 @@ fun CloudSignInContent(
     ScrollScreen(bottomInset = true) {
         TopBar(if (restore) "Восстановить из облака" else if (signUp) "Аккаунт в облаке" else "Вход в облако", onBack = onBack)
         if (!configured) {
-            FCard { Text("В этой сборке облако не настроено.", style = T.body(15.sp)) }
+            FCard { Text("В этой версии приложения облако не подключено.", style = T.body(15.sp)) }
             return@ScrollScreen
         }
         if (result != null) {
@@ -428,8 +429,8 @@ fun CloudSignInContent(
         }
         Text(
             when {
-                restore -> "Войди с той же почтой и паролем, что на старом телефоне: тренировки, план и прогресс вернутся."
-                signUp -> "Одна учётная запись на все твои телефоны. Пароль — минимум 8 символов."
+                restore -> "Войди с той же почтой и паролем, что на старом телефоне. Тренировки, план и прогресс вернутся."
+                signUp -> "Один аккаунт на все твои телефоны. Пароль — минимум 8 символов."
                 else -> "Войди, и тренировки начнут копироваться в облако."
             },
             style = T.secondary(14.sp),
@@ -451,7 +452,7 @@ fun CloudSignInContent(
         )
         error?.let { Banner(it, F.c.bad) }
         Text(
-            "Данные хранятся в твоём проекте Supabase. Каждая строка доступна только твоему аккаунту.",
+            "Данные хранятся в твоём проекте Supabase. Твои записи открыты только твоему аккаунту.",
             style = T.secondary(12.sp), modifier = Modifier.padding(top = 4.dp),
         )
     }

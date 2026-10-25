@@ -186,15 +186,15 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
 
     /** The goal step: the race goal and the stadium as shown. */
     val goalProblem: String? get() = when {
-        goalBad && goalTime.isBlank() -> "Впиши время забега-цели или сними выбор дистанции."
-        goalBad -> "Время цели не похоже на время: минуты и секунды через двоеточие, например 5:30."
-        goalDateBad -> "Дата забега: число и месяц через точку, например 15.06 — не в прошлом. Или оставь пустым."
+        goalBad && goalTime.isBlank() -> "Впиши, за какое время хочешь пробежать. Или сними выбор дистанции."
+        goalBad -> "Время цели не похоже на время. Пиши минуты и секунды через двоеточие, например 5:30."
+        goalDateBad -> "Дата забега: число и месяц через точку, например 15.06. Прошедшая дата не подойдёт. Или оставь поле пустым."
         lapBad -> "Впиши длину круга от 100 до 1000 м или выбери «Улица, парк»."
         else -> null
     }
 
     /** The recent race, when it is on the screen. */
-    val raceProblem: String? get() = if (raceTimeBad) "Время забега не похоже на время: впиши минуты и секунды через двоеточие или сними выбор дистанции." else null
+    val raceProblem: String? get() = if (raceTimeBad) "Время забега не похоже на время. Впиши минуты и секунды через двоеточие или сними выбор дистанции." else null
 
     /** The week laid out day by day: each side in the aim needs a day. */
     val weekProblem: String? get() {
@@ -213,7 +213,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     val aboutProblem: String? get() = when {
         birthYear.isBlank() -> "Впиши год рождения."
         birthYearBad -> "Год рождения — четыре цифры, например 2008."
-        weight.isBlank() -> if (aim.lifts) "Впиши вес: от него стартовые веса в зале." else "Впиши вес: от него расход энергии."
+        weight.isBlank() -> if (aim.lifts) "Впиши вес: по нему подберём первые веса в зале." else "Впиши вес: по нему считаем, сколько калорий ты тратишь."
         weightBad -> "Вес — от 30 до 250 кг."
         heightBad -> "Рост — от 120 до 230 см, или оставь поле пустым."
         restingHrBad -> "Пульс в покое — от 30 до 110 ударов, или оставь поле пустым."
@@ -279,7 +279,7 @@ fun OnboardingScreen() {
             }
         }
         if (step == 0 && cloud?.configured == true) {
-            Banner("Уже тренировался с «Формой»? Войди и восстанови данные из облака", F.c.accent, icon = forma.app.ui.theme.Ic.cloud) {
+            Banner("Уже тренировался с «Формой»? Войди, и твои данные вернутся из облака", F.c.accent, icon = forma.app.ui.theme.Ic.cloud) {
                 nav.push(Screen.CloudSignIn(restore = true))
             }
         }
@@ -327,27 +327,27 @@ private fun Option(title: String, text: String?, selected: Boolean, onClick: () 
 
 @Composable
 private fun GoalStep(d: ProfileDraft) {
-    StepTitle("Цель", "Зал, бег или и то и другое — и зачем. Неделя соберётся под это: сколько чего и в какие дни.")
+    StepTitle("Цель", "Выбери зал, бег или всё вместе и зачем тебе это. Под это приложение соберёт твою неделю.")
     AimPicker(d)
     RunGoalPicker(d)
 }
 
 @Composable
 private fun ExperienceStep(d: ProfileDraft) {
-    StepTitle("Опыт", "От этого зависят стартовые веса, объём и как часто нужна разгрузка.")
+    StepTitle("Опыт", "От опыта зависят первые веса, сколько подходов делать и как часто нужна лёгкая неделя.")
     if (d.lift != LiftFocus.NONE) {
         SectionLabel("Зал")
-        Option("Новичок", "Меньше полугода регулярных тренировок", d.experience == Experience.NOVICE) { d.experience = Experience.NOVICE }
+        Option("Новичок", "Регулярно тренируюсь меньше полугода или только начинаю", d.experience == Experience.NOVICE) { d.experience = Experience.NOVICE }
         Option("Средний", "От полугода до двух лет", d.experience == Experience.INTERMEDIATE) { d.experience = Experience.INTERMEDIATE }
         Option("Опытный", "Больше двух лет, знаю свои рабочие веса", d.experience == Experience.ADVANCED) { d.experience = Experience.ADVANCED }
     }
     if (d.run == RunFocus.NONE) return
     SectionLabel("Бег", Modifier.padding(top = 6.dp))
-    Option("Пока не пробегу 20 минут", "Начнём с бега чередуя с ходьбой", d.runLevel == RunLevel.NONE) { d.runLevel = RunLevel.NONE }
-    Option("Пробегу 20–30 минут", "Лёгкий бег есть, интервалов не было", d.runLevel == RunLevel.BASE) { d.runLevel = RunLevel.BASE }
-    Option("Бегаю регулярно", "Есть интервалы, длинные пробежки", d.runLevel == RunLevel.TRAINED) { d.runLevel = RunLevel.TRAINED }
+    Option("Пока не пробегу 20 минут", "Начнём с бега вперемешку с ходьбой", d.runLevel == RunLevel.NONE) { d.runLevel = RunLevel.NONE }
+    Option("Пробегу 20–30 минут", "Бегаю спокойно, быстрых отрезков ещё не делал", d.runLevel == RunLevel.BASE) { d.runLevel = RunLevel.BASE }
+    Option("Бегаю регулярно", "Делаю быстрые отрезки и длинные пробежки", d.runLevel == RunLevel.TRAINED) { d.runLevel = RunLevel.TRAINED }
     if (d.raceShown) {
-        SectionLabel("Лучший результат за последние 2 месяца (необязательно)", Modifier.padding(top = 6.dp))
+        SectionLabel("Лучшее время за последние 2 месяца (необязательно)", Modifier.padding(top = 6.dp))
         RaceFields(d, "Время")
     }
 }
@@ -380,7 +380,7 @@ private fun raceExample(km: Double): String = when {
 /** Under the race time: what a typo there would do. */
 @Composable
 fun RaceTimeHint(d: ProfileDraft) {
-    if (d.raceTimeBad) Text("Не похоже на время забега: впиши минуты и секунды через двоеточие, например ${raceExample(d.raceKm ?: 5.0)}.", style = T.secondary(13.sp).copy(color = F.c.bad))
+    if (d.raceTimeBad) Text("Не похоже на время забега. Впиши минуты и секунды через двоеточие, например ${raceExample(d.raceKm ?: 5.0)}.", style = T.secondary(13.sp).copy(color = F.c.bad))
 }
 
 /** A red line under a field whose value is not believable. */
@@ -426,11 +426,11 @@ fun BodyFields(d: ProfileDraft, onboarding: Boolean) {
     }
     if (d.birthYearBad) BadHint("Год рождения — четыре цифры, например 2008.")
     if (d.weightBad) BadHint("Вес — от 30 до 250 кг.")
-    NumberField(d.height, { d.height = it.filter(Char::isDigit) }, if (onboarding) "Рост (для расхода энергии и ИМТ, необязательно)" else "Рост", "см", keyboard = KeyboardType.Number, placeholder = "178")
+    NumberField(d.height, { d.height = it.filter(Char::isDigit) }, if (onboarding) "Рост — для калорий и ИМТ (необязательно)" else "Рост", "см", keyboard = KeyboardType.Number, placeholder = "178")
     if (d.heightBad) BadHint("Рост — от 120 до 230 см, или оставь поле пустым.")
     NumberField(
         d.restingHr, { d.restingHr = it.filter(Char::isDigit) },
-        if (onboarding) "Пульс в покое утром — для калькулятора пульса (необязательно)" else "Пульс в покое (для калькулятора пульса)",
+        if (onboarding) "Пульс утром в покое — для калькулятора пульса (необязательно)" else "Пульс в покое — для калькулятора пульса",
         "уд/мин", keyboard = KeyboardType.Number, placeholder = "60",
     )
     if (d.restingHrBad) BadHint("Пульс в покое — от 30 до 110 ударов, или оставь поле пустым.")
@@ -440,8 +440,8 @@ fun BodyFields(d: ProfileDraft, onboarding: Boolean) {
 private fun AboutStep(d: ProfileDraft) {
     StepTitle(
         "О себе",
-        if (d.aim.lifts) "Вес нужен для стартовых весов в зале, год рождения и рост — для расчёта расхода энергии."
-        else "Вес, год рождения и рост нужны для расчёта расхода энергии.",
+        if (d.aim.lifts) "По весу подберём первые веса в зале. Год рождения и рост нужны, чтобы считать калории."
+        else "Вес, год рождения и рост нужны, чтобы считать, сколько калорий ты тратишь.",
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Chip("Мужчина", d.sex == Sex.MALE, { d.sex = Sex.MALE }, Modifier.weight(1f))
@@ -455,7 +455,7 @@ private fun SummaryStep(d: ProfileDraft) {
     val profile = d.toProfile(Profile())
     val program = remember(profile) { runCatching { ProgramGenerator.generate(profile, LocalDate.now()) }.getOrNull() }
     var editWeek by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(d.gymDays != null) }
-    StepTitle("Твоя неделя", "Так выглядит план. Веса подберём на первых тренировках, дальше приложение будет подстраивать их само.")
+    StepTitle("Твоя неделя", "Так выглядит твой план. Веса подберём на первых тренировках. Дальше приложение будет менять их само.")
     if (program != null) {
         FCard(gap = 0.dp) {
             (1..7).forEach { day ->
@@ -470,7 +470,7 @@ private fun SummaryStep(d: ProfileDraft) {
             }
         }
         if ((1..7).all { program.week.on(it).isNotEmpty() }) {
-            Text("В неделе нет дня отдыха: без него прогресс встаёт. Оставь хотя бы один свободный день.", style = T.secondary(14.sp).copy(color = F.c.warn))
+            Text("В неделе нет дня отдыха, а без него прогресс встаёт. Оставь хотя бы один свободный день.", style = T.secondary(14.sp).copy(color = F.c.warn))
         }
         program.week.notes.forEach { Text("• $it", style = T.secondary(14.sp)) }
     }
