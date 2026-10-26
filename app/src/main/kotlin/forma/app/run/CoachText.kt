@@ -49,7 +49,8 @@ object CoachText {
         SegmentKind.WORK -> "Ровно и сильно."
     }
 
-    fun say(w: RunWorkout, e: RunEvent): String? = when (e) {
+    /** [gps]: GPS on a stadium starts the rep and times the laps by itself — the press is not needed. */
+    fun say(w: RunWorkout, e: RunEvent, gps: Boolean = false): String? = when (e) {
         // On a track the laps speak; GPS kilometres on a small loop are noise.
         is RunEvent.Kilometre -> if (w.lapMeters != null) null else "Километр ${e.km}. Темп ${paceWords(e.splitSec)}."
         is RunEvent.Timeline -> when (val c = e.cue) {
@@ -70,7 +71,8 @@ object CoachText {
             is Cue.Halfway -> "Половина отрезка."
             is Cue.MinuteLeft ->
                 if (RunTimeline.startOnLine(w) == c.index + 1) "Через минуту ${startWhat(w)}. Закончи круг и подходи к старту." else "Осталась минута."
-            is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)}. Когда побежишь, нажми «Круг»: время пойдёт с нажатия."
+            is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)}. " +
+                if (gps) "Старт засчитаю сам, когда побежишь. Можно и нажать «Круг»." else "Когда побежишь, нажми «Круг»: время пойдёт с нажатия."
             is Cue.Strides -> "Последние три минуты разминки. Сделай 3–4 ускорения по 15 секунд, между ними трусца."
             is Cue.Countdown, is Cue.LapMark -> null
             is Cue.Finished ->
@@ -126,7 +128,7 @@ object CoachText {
      */
     fun lapsSummary(w: RunWorkout, laps: List<Lap>): String? {
         if (w.type != RunType.GOAL_PACE && w.type != RunType.INTERVALS && w.type != RunType.TEMPO) return null
-        val judged = laps.filter { it.rep != null && !it.auto && (it.fast != null || it.slow != null) }
+        val judged = laps.filter { it.rep != null && !it.rough && (it.fast != null || it.slow != null) }
         if (judged.size < 2) return null
         val on = judged.count { it.verdict == 0 }
         val fast = judged.count { it.verdict == -1 }
@@ -150,7 +152,8 @@ object CoachText {
     }
 
     /** Said every minute while the plan waits for the start press. */
-    fun waitingReminder(w: RunWorkout): String = "Жду старта: нажми «Круг», когда побежишь."
+    fun waitingReminder(w: RunWorkout, gps: Boolean = false): String =
+        if (gps) "Жду старта: побеги с линии, старт засчитаю сам." else "Жду старта: нажми «Круг», когда побежишь."
 
     /** "5 минут 12 секунд" for a pace of 312 s/km. */
     fun paceWords(secPerKm: Int): String = Ru.durationWords(secPerKm)

@@ -97,6 +97,8 @@ dependencies {
     implementation(libs.supabase.postgrest)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.work.runtime)
+    // Only to ask the system to turn location on with one tap before a run (where the phone has Google Play).
+    implementation(libs.play.services.location)
 
     testImplementation(libs.junit)
     testImplementation(kotlin("test-junit"))

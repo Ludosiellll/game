@@ -78,6 +78,17 @@ class TrainingRepository(
     /** Something worth copying to the cloud was saved past the repository's own functions (the coach's edits). */
     internal fun changed() = onChange()
 
+    /**
+     * The stadium's lap length (metres) as measured by GPS on a run: the plan reads it when a run is planned, so the
+     * program stays as it is.
+     */
+    suspend fun setLapMeters(meters: Int) {
+        val p = store.profileNow() ?: return
+        if (p.lapMeters == meters) return
+        store.setProfile(p.copy(lapMeters = meters))
+        onChange()
+    }
+
     /** Midday of [date] in this phone's time zone (when a run entered for an earlier day is filed). */
     fun middayOf(date: LocalDate): Long = date.atTime(12, 0).atZone(zone()).toInstant().toEpochMilli()
 

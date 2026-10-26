@@ -102,6 +102,7 @@ import forma.core.run.Track
 import forma.core.text.Ru
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private fun segmentColor(kind: SegmentKind, work: Color, rest: Color, base: Color): Color = when (kind) {
@@ -174,14 +175,15 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
     var askLift by remember { mutableStateOf(false) }
     // What will not work without a permission refused, said before the start (the run starts all the same).
     var denied by remember { mutableStateOf<String?>(null) }
-    var gps by remember { mutableStateOf(settings.gps) }
+    // On a stadium GPS counts the laps and the start: on whatever the road default is (it can still be turned off here).
+    var gps by remember { mutableStateOf(settings.gps || workout.lapMeters != null) }
     var voice by remember { mutableStateOf(settings.voice) }
     // A free run may have the runner's own target: a lap time on a stadium, a pace on the road.
     var targetText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     val target = if (workout.isOpenEnded) freeTarget(targetText, workout.lapMeters) else null
     val targetBad = workout.isOpenEnded && targetText.isNotBlank() && target == null
     val chosen = if (target != null) workout.copy(targetPace = target) else workout
-    fun start() {
+    fun launchRun() {
         // One run at a time: an unfinished or unsaved one is shown instead of starting another over it.
         val current = RunSession.tracker
         if (current != null) {
@@ -194,8 +196,46 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
             android.widget.Toast.makeText(context, "Геопозиция примерная, дистанцию не посчитать. Будет только время. Для дистанции нужна точная.", android.widget.Toast.LENGTH_LONG).show()
         }
         val stride = forma.core.run.Stride.fit(settings.strideSamples.mapNotNull { if (it.size == 2) it[0] to it[1] else null })
-        RunService.start(context, chosen, gps && fine, voice, settings.beeps, settings.vibration, settings.trackLine, settings.autoPause, stride)
+        RunService.start(context, chosen, gps && fine, voice, settings.beeps, settings.vibration, settings.trackLine, settings.autoPause, stride, settings.trackLoop)
         nav.replaceTop(Screen.RunActive)
+    }
+    // The phone's location is off while GPS is wanted and allowed: the system is asked to turn it on — Google's one-tap
+    // dialog; where there is no Google Play, the settings page is offered. The run starts after the answer, whatever it is.
+    val turnOn = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { launchRun() }
+    var locationOff by remember { mutableStateOf(false) }
+    fun start() {
+        val lm = context.getSystemService(android.location.LocationManager::class.java)
+        val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!gps || !fine || RunSession.tracker != null || lm == null || androidx.core.location.LocationManagerCompat.isLocationEnabled(lm)) {
+            launchRun()
+            return
+        }
+        val request = com.google.android.gms.location.LocationSettingsRequest.Builder()
+            .addLocationRequest(com.google.android.gms.location.LocationRequest.Builder(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, 1000L).build())
+            .setAlwaysShow(true).build()
+        runCatching {
+            com.google.android.gms.location.LocationServices.getSettingsClient(context).checkLocationSettings(request)
+                .addOnSuccessListener { launchRun() }
+                .addOnFailureListener { e ->
+                    val r = (e as? com.google.android.gms.common.api.ResolvableApiException)?.resolution
+                    if (r != null) turnOn.launch(androidx.activity.result.IntentSenderRequest.Builder(r).build()) else locationOff = true
+                }
+        }.onFailure { locationOff = true }
+    }
+    if (locationOff) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { locationOff = false },
+            title = { Text("Геолокация выключена") },
+            text = { Text("Без неё GPS не посчитает круги, старт и дистанцию. Включи её в настройках и вернись к «Старту».") },
+            confirmButton = {
+                androidx.compose.material3.TextButton({
+                    locationOff = false
+                    runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+                }) { Text("Открыть настройки", color = F.c.accent) }
+            },
+            dismissButton = { androidx.compose.material3.TextButton({ locationOff = false; launchRun() }) { Text("Начать без GPS") } },
+            containerColor = F.c.surface, titleContentColor = F.c.text, textContentColor = F.c.text2,
+        )
     }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
@@ -309,16 +349,18 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         val track = workout.lapMeters != null
         if (track) {
             Banner(
-                "Стадион, круг ${workout.lapMeters} м. Жми «Круг», когда пересекаешь линию: приложение скажет время круга и в темпе ли ты. " +
-                    // The pacer beeps only in reps of laps (RunTimeline: Cue.LapMark).
-                    (if (workout.reps > 0) "Писк — момент, когда ты должен быть на линии. " else "") +
-                    "Кнопка «Круг» есть и в уведомлении." +
-                    when {
-                        !gps -> ""
-                        // The line is learnt from presses on it: until one, GPS has nothing to count laps from.
-                        workout.reps == 0 && settings.trackLine != null -> " С GPS круг засчитается и без нажатия, примерно (±2–3 с). Круги считаются от линии. Если начал не на ней, стартом станет первый проход через линию."
-                        workout.reps == 0 -> " Нажми «Круг» на линии хотя бы раз. Дальше с GPS круги засчитаются сами, примерно (±2–3 с)."
-                        else -> " Забыл нажать в отрезке — с GPS круг обычно засчитается сам, примерно (±2–3 с). Для этого приложение должно знать линию: оно запоминает её по твоим нажатиям."
+                "Стадион, круг ${workout.lapMeters} м. " +
+                    if (gps) {
+                        // The loop is fitted after the first lap (or known from the last session): then laps are timed to tenths.
+                        "Круги GPS засчитает сам, с точностью до нескольких десятых: после первого круга он запомнит стадион " +
+                            (if (settings.trackLoop != null) "(этот уже знает). " else "и дальше будет знать его сразу. ") +
+                            (if (workout.reps > 0) "Отрезок стартует сам, когда побежишь с линии; писк — момент, когда ты должен быть на ней. " else
+                                if (settings.trackLine == null) "Круги считаются от места старта. " else "Круги считаются от линии. ") +
+                            "Кнопка «Круг» остаётся — нажатие тоже засчитается."
+                    } else {
+                        "Жми «Круг», когда пересекаешь линию: приложение скажет время круга и в темпе ли ты. " +
+                            // The pacer beeps only in reps of laps (RunTimeline: Cue.LapMark).
+                            (if (workout.reps > 0) "Писк — момент, когда ты должен быть на линии. " else "") + "Кнопка «Круг» есть и в уведомлении."
                     },
                 F.c.endurance, icon = Ic.info,
             )
@@ -326,7 +368,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         FCard(gap = 4.dp) {
             ToggleRow(
                 "GPS: дистанция и темп",
-                if (track) "На стадионе круги считает кнопка — GPS можно выключить" else "На беговой дорожке выключи", gps,
+                if (track) "На стадионе GPS сам считает круги и старт" else "На беговой дорожке выключи", gps,
             ) { gps = it }
             Hairline()
             ToggleRow("Голосовые подсказки", if (track) "Начало отрезков, время каждого круга, финиш" else "Начало отрезков, километры, финиш", voice) { voice = it }
@@ -383,6 +425,35 @@ private fun openFirst(context: android.content.Context, vararg intents: android.
 }
 
 private fun autostartIntent() = android.content.Intent().setClassName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+
+/**
+ * The loop as run, measured by GPS, when it is far from the lap set (5 m and 4 % at least): the lap set decides every
+ * lap's target and the distance by laps, so it is said, and put right with a tap. The stadium is measured on lane 1,
+ * 30 cm from the kerb; a lap of another lane, or a guess, is off by metres.
+ */
+@Composable
+private fun LapLengthCard(set: Int?, measured: Int?) {
+    if (set == null || measured == null || abs(measured - set) < maxOf(5.0, set * 0.04)) return
+    val repo = LocalRepo.current
+    val scope = rememberCoroutineScope()
+    val profile by repo.store.profile.collectAsState(initial = null)
+    val done = profile?.lapMeters == measured
+    val pct = (abs(set - measured) * 100.0 / measured).roundToInt()
+    FCard(gap = 8.dp, outline = if (done) null else F.c.accent) {
+        SectionLabel("Длина круга", color = if (done) F.c.good else F.c.accent)
+        if (done) {
+            Text("Круг — $measured м: время на круг и дистанция теперь считаются от него.", style = T.body(15.sp))
+        } else {
+            Text(
+                "По GPS твой круг ≈ $measured м, а в настройках $set м. Время на круг считается от длины: цели по $set м на твоём круге — " +
+                    "темп на $pct\u00A0% ${if (set > measured) "медленнее" else "быстрее"} нужного, и дистанция ${if (set > measured) "завышена" else "занижена"}.",
+                style = T.body(15.sp),
+            )
+            Text("Это длина по линии, где ты бежишь. Бегаешь всегда там же — поставь $measured м.", style = T.secondary(13.sp))
+            PrimaryButton("Поставить $measured м", { scope.launch { repo.setLapMeters(measured) } }, Modifier.fillMaxWidth())
+        }
+    }
+}
 
 /** The runner said autostart is on (the phone does not tell): the reminder is hidden on this phone for good. */
 private fun autostartDone(context: android.content.Context) =
@@ -624,6 +695,7 @@ fun RunActiveScreen() {
                     when {
                         w.isOpenEnded -> "с начала"
                         over -> "сверх плана +${Ru.clock(u.overSec)} · «Стоп», когда хватит"
+                        waiting && u.gps -> CoachText.startWhere(w, tl.index + 1) + " и беги: старт засчитается сам (или жми «Круг»)"
                         waiting -> CoachText.startWhere(w, tl.index + 1) + " и жми «Круг», когда побежишь: " +
                             (if (w.testMeters != null) "время забега" else "отрезок") + " пойдёт с нажатия"
                         race -> "время забега · финиш — последнее нажатие «Круг»"
@@ -656,7 +728,7 @@ fun RunActiveScreen() {
                         target?.let { Ru.lapRange(Track.lapSec(it.fast.toDouble(), lapM), Track.lapSec(it.slow.toDouble(), lapM)) } ?: "—",
                         when {
                             w.isOpenEnded -> if (target != null) "твоя цель" else "свободный бег"
-                            waiting -> "отсчёт — с нажатия"
+                            waiting -> if (u.gps) "отсчёт — со старта" else "отсчёт — с нажатия"
                             repNo != null && lapsInRep != null && lapsInRep > 1 -> "круг ${minOf(lapNo, lapsInRep)} из $lapsInRep"
                             target == null -> "сейчас без темпа"
                             shown?.kind != SegmentKind.WORK -> "медленнее — нормально"
@@ -738,8 +810,8 @@ fun RunActiveScreen() {
                         Text(
                             when {
                                 !running -> "на паузе"
-                                waiting -> "жми, когда побежишь"
-                                else -> "жми на линии"
+                                waiting -> if (u.gps) "или просто беги" else "жми, когда побежишь"
+                                else -> if (u.gps) "GPS считает сам" else "жми на линии"
                             },
                             style = T.body(12.sp, FontWeight.SemiBold).copy(color = if (on) F.c.onAccent else F.c.text3),
                         )
@@ -924,7 +996,7 @@ private fun LapLine(laps: List<Lap>) {
         laps.forEachIndexed { i, l ->
             if (i > 0) append(" · ")
             // A lap GPS counted (no press) is roughly timed: "≈53".
-            withStyle(androidx.compose.ui.text.SpanStyle(color = colors[i])) { append((if (l.auto) "≈" else "") + Ru.lap(l.seconds).removeSuffix(" с")) }
+            withStyle(androidx.compose.ui.text.SpanStyle(color = colors[i])) { append((if (l.rough) "≈" else "") + Ru.lap(l.seconds).removeSuffix(" с")) }
         }
     }
     Text(text, style = T.number(14.sp, FontWeight.SemiBold))
@@ -967,6 +1039,15 @@ fun RunDoneScreen(workoutId: Long) {
     }
     // An easy or long run kept going past its plan: the extra counts unless the runner says it was not running — but not
     // after the hour-long auto-stop, which is a phone forgotten in a pocket far more often than a run.
+    // The loop's length as run, measured by GPS once the run is over (kept past the save, when the run itself is gone).
+    var measuredLap by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Int?>(null) }
+    var lapSet by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(tracker?.workout?.lapMeters) }
+    LaunchedEffect(tracker) {
+        val t = tracker ?: return@LaunchedEffect
+        if (measuredLap == null && t.workout.lapMeters != null && t.state == RunTracker.State.FINISHED) {
+            measuredLap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { t.lapLength() }?.roundToInt()
+        }
+    }
     var countExtra by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(tracker?.let { (it.timelineMs(android.os.SystemClock.elapsedRealtime()) / 1000).toInt() - it.workout.totalSeconds < 3600 - 60 } ?: true)
     }
@@ -1020,6 +1101,7 @@ fun RunDoneScreen(workoutId: Long) {
                     StatTile("Темп", tracker.averagePace(nowMs)?.let { Ru.pace(it) } ?: "—", result.cadence?.let { "средний · $it шаг/мин" } ?: "средний", F.c.text, Modifier.weight(1f))
                 }
             }
+            LapLengthCard(lapSet, measuredLap)
             val w = tracker.workout
             val testM = w.testMeters
             if (testM != null) {
@@ -1033,7 +1115,8 @@ fun RunDoneScreen(workoutId: Long) {
                 Text(
                     when {
                         testTime.isNotBlank() && typed == null -> "Не похоже на время забега — впиши минуты и секунды через двоеточие, например 5:52."
-                        result.testSeconds != null && tracker.laps.any { it.auto } -> "Время по кнопке «Круг» и GPS. Круг без нажатия засчитан примерно (±2–3 с). Если засекал сам — поправь."
+                        result.testSeconds != null && tracker.laps.any { it.rough } -> "Время по кнопке «Круг» и GPS. Круг без нажатия засчитан примерно (±2–3 с). Если засекал сам — поправь."
+                        result.testSeconds != null && tracker.laps.any { it.auto } -> "Время по GPS: круги засчитаны на линии стадиона, до нескольких десятых. Если засекал сам — поправь."
                         result.testSeconds != null -> "Время по кнопке «Круг». Если засекал сам — поправь."
                         else -> "Впиши время с секундомера: без него забег не засчитается."
                     },
@@ -1126,12 +1209,14 @@ fun RunDoneScreen(workoutId: Long) {
                             // time GPS laps count from the first one, and steps give the distance where GPS is lost. The
                             // run is saved already: a failure here must not offer to save it twice.
                             val line = tracker.line
+                            val loop = tracker.loopGround()
                             val strides = tracker.strideSamples()
-                            if (line != null || strides.isNotEmpty()) {
+                            if (line != null || strides.isNotEmpty() || loop != null) {
                                 runCatching {
                                     repo.updateSettings { st ->
                                         st.copy(
                                             trackLine = line?.let { listOf(it.first, it.second) } ?: st.trackLine,
+                                            trackLoop = loop ?: st.trackLoop,
                                             strideSamples = (st.strideSamples + strides.map { listOf(it.first, it.second) }).takeLast(150),
                                         )
                                     }
@@ -1153,6 +1238,7 @@ fun RunDoneScreen(workoutId: Long) {
             ) { Text("Не сохранять", style = T.secondary(14.sp)) }
         } else if (s != null) {
             Text("Сохранено", style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
+            LapLengthCard(lapSet, measuredLap)
             // How it went and why, from what was saved.
             val w by remember(s.first) { repo.db.workouts().observe(s.first) }.collectAsState(initial = null)
             val run by androidx.compose.runtime.produceState<forma.app.data.RunEntity?>(null, s.first) { value = repo.db.runs().get(s.first) }

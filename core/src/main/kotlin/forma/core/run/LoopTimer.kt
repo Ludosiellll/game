@@ -117,6 +117,12 @@ class LoopTimer(private val lapMeters: Int?) {
     /** Fixes in a row too far from where the filter expected them: the filter is lost, it starts again. */
     private var gated = 0
 
+    /** Crossings are being timed: the loop, the line on it and the way round are known. */
+    fun ready(): Boolean = following() && lineArc != null
+
+    /** The runner is followed round the loop (a run-up can be found), the line known or not. */
+    fun following(): Boolean = oval != null && dir != 0 && smoothed.isNotEmpty()
+
     /** Line crossings found since the last call, oldest first. */
     fun crossings(): List<Cross> = out.toList().also { out.clear() }
 
@@ -321,8 +327,16 @@ class LoopTimer(private val lapMeters: Int?) {
         }
         // The satellites' speed: how fast, not which way — taken the way the runner is going (a step back at the line is
         // no step forward); slow and undecided, left out.
-        val way = if (x1[1] < -0.3) -1.0 else 1.0
-        if (v != null) {
+        // Standing: ~0 either way. Running: forward (nobody runs a rep backwards). Walking: only when the places already
+        // say which way (a walk back to the line after a rep is no walk on).
+        val way = when {
+            v == null -> 0.0
+            v < 0.4 -> 1.0
+            v >= 1.8 -> if (x1[1] < -1.0) -1.0 else 1.0
+            abs(x1[1]) > 0.6 -> if (x1[1] > 0) 1.0 else -1.0
+            else -> 0.0
+        }
+        if (v != null && way != 0.0) {
             val hv = doubleArrayOf(0.0, 1.0, 0.0)
             val sv = quad(hv, c1) + SIG_DOP * SIG_DOP
             update(x1, c1, hv, way * v - x1[1], sv).let { (nx, nc) -> x1 = nx; c1 = nc }
@@ -411,7 +425,9 @@ class LoopTimer(private val lapMeters: Int?) {
 
     /**
      * A run-up after [sinceMs]: the runner went from slow (standing, walking, jogging) to [fast] m/s or more and kept it at
-     * least [HOLD_S]. Its start (active ms): the speed's rise taken back to where it began. Null when there is none yet.
+     * least [HOLD_S]. Its start (active ms): where the speed began to rise — from the satellites' own speeds, fitted with
+     * "steady, a straight rise, steady" (the smoothed speed spreads a sharp start over seconds both ways, so it would put
+     * the start half a second early). Null when there is none yet.
      */
     fun runUp(sinceMs: Long, fast: Double): Long? {
         val s = smoothed
@@ -443,9 +459,50 @@ class LoopTimer(private val lapMeters: Int?) {
         }
         val t1 = at(lo + 0.25 * rise) ?: return null
         val t2 = at(lo + 0.75 * rise) ?: return null
+        fitRise(tj)?.let { return (it * 1000).toLong() }
         if (t2 <= t1) return ((t1 - 0.3) * 1000).toLong()
         val accel = 0.5 * rise / (t2 - t1)
         return ((t1 - 0.25 * rise / accel) * 1000).toLong()
+    }
+
+    /**
+     * The start of the rise through time [tj] from the satellites' speeds around it: steady before (standing or a jog),
+     * a straight rise of 0.3–4 s, steady after; least squares over the start and the rise's length. Null without enough
+     * speeds (a phone that gives none).
+     */
+    private fun fitRise(tj: Double): Double? {
+        val pts = kept.filter { it[4] >= 0 && it[0] in (tj - 7.0)..(tj + 5.0) }.map { it[0] to it[4] }
+        if (pts.size < 6) return null
+        val before = pts.filter { it.first <= tj - 3.0 }.map { it.second }.sorted()
+        val after = pts.filter { it.first >= tj + 1.0 }.map { it.second }.sorted()
+        if (before.isEmpty() || after.size < 2) return null
+        val lo = before[before.size / 2]
+        val hi = after[after.size / 2]
+        if (hi - lo < 1.2) return null
+        var best = Double.MAX_VALUE
+        var start: Double? = null
+        var t0 = tj - 6.0
+        while (t0 <= tj) {
+            var len = 0.3
+            while (len <= 4.0) {
+                var cost = 0.0
+                for ((t, v) in pts) {
+                    val m = when {
+                        t <= t0 -> lo
+                        t >= t0 + len -> hi
+                        else -> lo + (hi - lo) * (t - t0) / len
+                    }
+                    cost += (v - m) * (v - m)
+                }
+                if (cost < best) {
+                    best = cost
+                    start = t0
+                }
+                len += 0.05
+            }
+            t0 += 0.02
+        }
+        return start
     }
 
     /** The smoothed speed along the loop at the newest state, m/s (null when the filter is not running). */

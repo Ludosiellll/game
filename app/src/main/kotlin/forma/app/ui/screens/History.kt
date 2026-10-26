@@ -280,7 +280,7 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
         laps.forEachIndexed { i, l ->
             if (l.rep == null) {
                 forma.app.ui.components.Chip(
-                    "${l.number} · ${if (l.auto) "≈" else ""}${Ru.lap(l.seconds)}", false, { open = i },
+                    "${l.number} · ${if (l.rough) "≈" else ""}${Ru.lap(l.seconds)}", false, { open = i },
                     minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.ACTION,
                 )
             }

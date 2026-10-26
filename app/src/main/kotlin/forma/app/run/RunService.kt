@@ -203,6 +203,8 @@ class RunService : Service() {
                 val tracker = RunTracker(workout)
                 // The stadium's line from the last session: laps GPS sees count from the first one.
                 intent.getDoubleArrayExtra(EXTRA_LINE)?.takeIf { it.size == 2 && workout.lapMeters != null }?.let { tracker.setLine(it[0], it[1]) }
+                // And its loop: laps are timed on it from the first one (dropped by itself on another stadium).
+                intent.getDoubleArrayExtra(EXTRA_LOOP)?.takeIf { workout.lapMeters != null }?.let { tracker.setLoop(it.toList()) }
                 intent.getDoubleArrayExtra(EXTRA_STRIDE)?.takeIf { it.size == 2 }?.let { tracker.setStride(it[0], it[1]) }
                 RunSession.begin(
                     tracker, gps, intent.getBooleanExtra(EXTRA_VOICE, true),
@@ -252,10 +254,15 @@ class RunService : Service() {
                     lapsSaid = true
                     CoachText.lapsSummary(tr.workout, tr.laps)?.let { coach?.speak(it) }
                 }
+                // The start of a rep from GPS: the runner ran off the line with no press. Timed from the run-up itself.
+                if (tr.autoStart(now())) {
+                    coach?.speak("Старт засчитан.", now = true)
+                    RunSession.save(now())
+                }
                 // A lap nobody pressed, seen by GPS crossing the line: in a rep, or any lap of a run without reps, it is
-                // said (roughly timed, and judged when there is a target).
+                // said and judged when there is a target — as a pressed one when timed on the loop, else as rough.
                 tr.autoLap(now())?.let { l ->
-                    coach?.speak(CoachText.autoLap(l), now = true)
+                    coach?.speak(if (l.exact) CoachText.lap(tr.workout, l, l.rep?.let { tr.repTimes().getOrNull(it - 1) }) else CoachText.autoLap(l), now = true)
                     RunSession.save(now())
                 }
                 checkPace(tr)
@@ -264,7 +271,7 @@ class RunService : Service() {
                 // Waiting on the line: a reminder every minute, in case the first one was missed.
                 if (tr.state == RunTracker.State.RUNNING && tr.waiting(now()) && now() - waitSaidAt > 60_000) {
                     waitSaidAt = now()
-                    coach?.speak(CoachText.waitingReminder(tr.workout))
+                    coach?.speak(CoachText.waitingReminder(tr.workout, RunSession.gpsEnabled && tr.workout.lapMeters != null))
                 }
                 RunSession.publish(now())
                 syncHeadset()
@@ -373,7 +380,7 @@ class RunService : Service() {
                     else -> Unit
                 }
             }
-            CoachText.say(w, e)?.let { c.speak(it) }
+            CoachText.say(w, e, RunSession.gpsEnabled && w.lapMeters != null)?.let { c.speak(it) }
         }
     }
 
@@ -392,7 +399,10 @@ class RunService : Service() {
         val fix = Fix(loc.time, loc.latitude, loc.longitude, if (loc.hasAccuracy()) loc.accuracy else 99f, if (loc.hasSpeed()) loc.speed else null)
         gpsWatch.fix(now(), fix.accuracy <= 25f)
         applyAutoPause(t, autoPauseOn(t) { autoPause.update(fix.speed, now(), t.state == RunTracker.State.RUNNING, fix.accuracy) })
-        val events = t.onFix(fix, now())
+        // When the fix was taken (the phone's own clock of it), not when it reached the app: deliveries come up to a second
+        // late and unevenly, and a lap timed to tenths needs the moment of the fix.
+        val at = (loc.elapsedRealtimeNanos / 1_000_000).takeIf { it in (now() - 3_000)..now() } ?: now()
+        val events = t.onFix(fix, at)
         if (t.state == RunTracker.State.RUNNING && fix.accuracy <= 25f) RunSession.points += fix
         handle(events)
     }
@@ -583,6 +593,7 @@ class RunService : Service() {
         const val EXTRA_BEEPS = "beeps"
         const val EXTRA_VIBRATION = "vibration"
         const val EXTRA_LINE = "line"
+        const val EXTRA_LOOP = "loop"
         const val EXTRA_AUTOPAUSE = "autopause"
         const val EXTRA_STRIDE = "stride"
         private const val CHANNEL = "run"
@@ -596,7 +607,7 @@ class RunService : Service() {
 
         fun start(
             ctx: Context, workout: RunWorkout, gps: Boolean, voice: Boolean, beeps: Boolean, vibration: Boolean,
-            line: List<Double>? = null, autoPause: Boolean = true, stride: Pair<Double, Double>? = null,
+            line: List<Double>? = null, autoPause: Boolean = true, stride: Pair<Double, Double>? = null, loop: List<Double>? = null,
         ) {
             val i = Intent(ctx, RunService::class.java).setAction(ACTION_START)
                 .putExtra(EXTRA_WORKOUT, AppJson.encodeToString(RunWorkout.serializer(), workout))
@@ -604,6 +615,7 @@ class RunService : Service() {
                 .putExtra(EXTRA_AUTOPAUSE, autoPause)
             if (stride != null) i.putExtra(EXTRA_STRIDE, doubleArrayOf(stride.first, stride.second))
             if (line != null && line.size == 2) i.putExtra(EXTRA_LINE, line.toDoubleArray())
+            if (loop != null && loop.size == 5) i.putExtra(EXTRA_LOOP, loop.toDoubleArray())
             RunSession.clearStartError()
             // Refused outright (a vendor's limits on starting in the background): said on the run screen.
             runCatching { ContextCompat.startForegroundService(ctx, i) }.onFailure { RunSession.failStart(START_REFUSED) }

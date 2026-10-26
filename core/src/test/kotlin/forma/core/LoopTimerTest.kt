@@ -318,6 +318,38 @@ class LoopTimerTest {
         assertTrue(lap in 200.0..213.0, "$lap")
     }
 
+    @Test fun zzDiagnoseRepPattern() {
+        val p = denis.perimeter
+        val v = p / 45.54
+        val pieces = mutableListOf(Piece(5.0, 0.0, 2.8), Piece(150.0, 2.8, 2.8), Piece(2.0, 2.8, 0.0))
+        repeat(5) {
+            pieces += Piece(10.0, 0.0, 0.0)
+            pieces += Piece(1.5, 0.0, v)
+            pieces += Piece(2 * p / v - 0.75, v, v)
+            pieces += Piece(2.25, v, 0.0)
+            pieces += Piece(5.0, -1.0, -1.0)
+            pieces += Piece(50.0, 0.0, 0.0)
+        }
+        for (seed in 0 until 4) {
+            val sim = simulate(denis, pieces, seed, lineArc = 5.0, lane = 0.0)
+            val timer = LoopTimer(207)
+            val (la, lo) = lineOf(denis, 5.0, Random(seed + 100))
+            timer.setLine(la, lo)
+            val found = mutableListOf<Double>()
+            val ups = mutableListOf<Double>()
+            var since = 0L
+            for (f in sim.fixes) {
+                timer.fix((f[0] * 1000).toLong(), f[1], f[2], f[3].toFloat(), f[4].toFloat())
+                found += timer.crossings().map { it.activeMs / 1000.0 }
+                val u = timer.runUp(since, 0.75 * v)
+                if (u != null && (ups.isEmpty() || u / 1000.0 > ups.last() + 30)) { ups += u / 1000.0; since = u + 30_000 }
+            }
+            val errs = sim.truth.map { c -> found.minByOrNull { abs(it - c) }?.let { it - c } }
+            println("seed $seed crossings err: " + errs.joinToString { "%.2f".format(it ?: 99.0) })
+            println("seed $seed starts true ${sim.starts.map { "%.1f".format(it) }} found ${ups.map { "%.2f".format(it) }}")
+        }
+    }
+
     @Test fun walkingAboutIsNoRunUp() {
         val pieces = listOf(Piece(5.0, 0.0, 2.5), Piece(80.0, 2.5, 2.5), Piece(5.0, 2.5, 0.0), Piece(20.0, 0.0, 0.0), Piece(3.0, 0.0, 1.4), Piece(30.0, 1.4, 1.4))
         val sim = simulate(denis, pieces, 11, lineArc = 5.0)

@@ -48,7 +48,7 @@ object GoalProgress {
             }
             val lapSec = reps.sumOf { it.seconds } / parts
             // Laps the GPS closed are about ±2 s: they count in the average, not in the judging.
-            val judged = reps.filter { !it.auto && it.verdict != null }
+            val judged = reps.filter { !it.rough && it.verdict != null }
             sessions += Session(w.epochDay, lapSec / lapM * 1000.0, judged.count { it.verdict == 0 }, judged.size)
         }
         return Result(trials, sessions)

@@ -14,14 +14,14 @@ object LapEdit {
     fun split(laps: List<Lap>, index: Int, parts: Int = 2): List<Lap> {
         val l = laps.getOrNull(index)?.takeIf { it.rep == null && parts >= 2 } ?: return laps
         val each = l.seconds / parts
-        return renumber(laps.take(index) + List(parts) { l.copy(seconds = each, auto = true) } + laps.drop(index + 1))
+        return renumber(laps.take(index) + List(parts) { l.copy(seconds = each, auto = true, exact = false) } + laps.drop(index + 1))
     }
 
     /** Laps [index] and [index] + 1 were one (a press too many): one lap of both times. */
     fun merge(laps: List<Lap>, index: Int): List<Lap> {
         val a = laps.getOrNull(index)?.takeIf { it.rep == null } ?: return laps
         val b = laps.getOrNull(index + 1)?.takeIf { it.rep == null } ?: return laps
-        return renumber(laps.take(index) + a.copy(seconds = a.seconds + b.seconds, auto = a.auto || b.auto) + laps.drop(index + 2))
+        return renumber(laps.take(index) + a.copy(seconds = a.seconds + b.seconds, auto = a.auto || b.auto, exact = !(a.rough || b.rough) && (a.exact || b.exact)) + laps.drop(index + 2))
     }
 
     /**
@@ -31,7 +31,7 @@ object LapEdit {
     fun setTime(laps: List<Lap>, index: Int, seconds: Double): List<Lap> {
         val l = laps.getOrNull(index)?.takeIf { it.rep == null } ?: return laps
         if (seconds.isNaN() || seconds < 5 || seconds > 3600) return laps
-        return laps.toMutableList().also { it[index] = l.copy(seconds = seconds, auto = false) }
+        return laps.toMutableList().also { it[index] = l.copy(seconds = seconds, auto = false, exact = false) }
     }
 
     /** Laps outside the reps numbered again in order (each run of them from 1). */

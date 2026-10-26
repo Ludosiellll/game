@@ -79,7 +79,7 @@ object RunReview {
     private fun reps(r: Run, goal: RunGoal?): Item? {
         val w = r.workout
         val lapM = w.lapMeters
-        val judged = r.laps.filter { it.rep != null && !it.auto && (it.fast != null || it.slow != null) }
+        val judged = r.laps.filter { it.rep != null && !it.rough && (it.fast != null || it.slow != null) }
         if (judged.size >= 2) {
             val on = judged.count { it.verdict == 0 }
             val fast = judged.count { it.verdict == -1 }

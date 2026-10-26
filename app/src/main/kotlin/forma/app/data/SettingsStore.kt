@@ -61,6 +61,8 @@ data class Settings(
     val ownPlan: OwnPlan? = null,
     /** The start line of the stadium (lat, lon) learnt from the lap presses: GPS laps count from the first one next time. */
     val trackLine: List<Double>? = null,
+    /** The stadium's loop as the runner runs it, fitted to GPS ([forma.core.run.Oval.toGround]): laps timed on it at once. */
+    val trackLoop: List<Double>? = null,
     /** (cadence, stride m) pairs measured where GPS was good: the stride model for distance by steps. */
     val strideSamples: List<List<Double>> = emptyList(),
     /** Run type → how many times its "what it gives the body" was shown after a run: read a few times, it folds away. */

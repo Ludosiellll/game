@@ -50,6 +50,8 @@ data class TrackerSnapshot(
     val away: Boolean = false,
     /** Seconds of each whole kilometre, active time (pauses left out). */
     val kmSplits: List<Int> = emptyList(),
+    /** The stadium's loop as fitted ([Oval.toGround]): line crossings timed on it. */
+    val loop: List<Double>? = null,
 )
 
 /** What a press of the lap button was. */
@@ -77,18 +79,23 @@ data class Lap(
     val rep: Int? = null,
     /** Share of a whole lap it covers: a rep of 6.5 laps starts with a half. */
     val part: Double = 1.0,
-    /** Not pressed: GPS saw the runner cross the line and no press came (about ±2 s). */
+    /** Not pressed: GPS saw the runner cross the line and no press came. */
     val auto: Boolean = false,
+    /** A lap GPS timed on the stadium's fitted loop ([LoopTimer]): to a few tenths, like a press. Without it about ±2 s. */
+    val exact: Boolean = false,
 ) {
     /** The press that closed the rep's last lap. */
     val closesRep: Boolean get() = of != null && number >= of
+
+    /** Timed only roughly: by GPS near the line, not on the fitted loop (about ±2 s). */
+    val rough: Boolean get() = auto && !exact
 
     /**
      * −1 faster than the target, 1 slower, 0 on it; null without a target. No [slow] bound: any slower lap is fine. A
      * lap GPS timed is off by up to two or three seconds: it is called fast or slow only when it clearly is.
      */
     val verdict: Int? get() {
-        val m = if (auto) 2.5 else 0.5
+        val m = if (rough) 2.5 else 0.5
         return when {
             fast == null && slow == null -> null
             fast != null && seconds < fast - m -> -1
@@ -279,7 +286,24 @@ class RunTracker(
 
     /** The start line on a stadium, from the GPS fixes at the presses (and remembered from the last session). */
     var line: Pair<Double, Double>? = null
-        private set
+        private set(v) {
+            field = v
+            v?.let { loop?.setLine(it.first, it.second) }
+        }
+
+    /** On a stadium: the loop fitted to the runner's fixes, and the line crossings timed on it to tenths. */
+    private val loop: LoopTimer? = workout.lapMeters?.let { LoopTimer(it) }
+
+    /** The loop from the last session on this stadium (see [Oval.toGround]): laps timed on it from the first one. */
+    fun setLoop(ground: List<Double>?) {
+        loop?.setGround(ground)
+    }
+
+    /** The loop as fitted (to keep for the next session), or null. */
+    fun loopGround(): List<Double>? = loop?.ground()
+
+    /** The loop's length as run (the lane, not the kerb), from two laps on; null before or off a stadium. */
+    fun lapLength(): Double? = loop?.lapLength()
 
     /** The last usable fix and its active time: where the runner is when they press. */
     private var lastRaw: Fix? = null
@@ -289,8 +313,11 @@ class RunTracker(
     private var away = false
     private var lastCross: Long? = null
 
-    /** Crossings seen by GPS (active ms, and the GPS distance there), waiting to see whether a press comes with them. */
-    private val pending = ArrayDeque<Pair<Long, Double>>()
+    /** A crossing seen by GPS: active ms, the GPS distance there, and whether it was timed on the fitted loop. */
+    private data class Crossing(val at: Long, val dist: Double, val exact: Boolean)
+
+    /** Crossings seen by GPS, waiting to see whether a press comes with them. */
+    private val pending = ArrayDeque<Crossing>()
 
     /** GPS distance at the last lap or start on the line: a crossing seen by GPS needs most of a lap run since. */
     private var lineDistM = 0.0
@@ -331,6 +358,7 @@ class RunTracker(
         lastFix = null
         lastSpeed = null
         speeds.clear()
+        loop?.pause()
     }
 
     fun resume(nowMs: Long) {
@@ -369,6 +397,59 @@ class RunTracker(
         val w = waitsAt ?: return false
         if (state != State.RUNNING && state != State.PAUSED) return false
         return w !in starts && w !in skippedReps && activeMs(nowMs) + skipMs - heldMs >= bounds[w].first - 1
+    }
+
+    /**
+     * The start found from GPS, no press needed: the plan waits on the line (or a rep of laps begins by the clock) and the
+     * runner went from slow to most of the rep's speed. The rep starts when the run-up began (to a few tenths), as if
+     * pressed then; a start from standing on the line also places the line there. True when a start was made (to say it).
+     */
+    fun autoStart(nowMs: Long): Boolean {
+        val lp = loop ?: return false
+        val lapM = workout.lapMeters ?: return false
+        if (state != State.RUNNING || !lp.following()) return false
+        val w = waitsAt?.takeIf { waiting(nowMs) }
+        val t = timelineMs(nowMs)
+        // The rep to start: the one the plan waits for, or one of laps that began by the clock in the last half minute
+        // with no start and no lap yet.
+        val i = w ?: workout.segments.indices.firstOrNull { j ->
+            val s = workout.segments[j]
+            s.kind == SegmentKind.WORK && s.laps != null && j !in starts && j !in skippedReps && j != waitsAt &&
+                t - bounds[j].first in 0..30_000 && taps.none { it >= bounds[j].first }
+        } ?: return false
+        val seg = workout.segments[i]
+        val fast = seg.lapSec?.let { 0.75 * lapM / it } ?: 3.0
+        // Active time of the wait's beginning, or of the rep's planned start (a few seconds earlier: an eager runner).
+        val begun = bounds[i].first - skipMs + heldMs - if (w != null) 1 else 0
+        val onset = lp.runUp(begun - 5_000, fast) ?: return false
+        val at = maxOf(onset, begun - 5_000)
+        if (w != null) {
+            val tl = maxOf(at, begun) + skipMs - heldMs
+            if (tl > bounds[w].first) heldMs += tl - bounds[w].first
+            starts[w] = bounds[w].first
+            lineT = bounds[w].first
+        } else {
+            starts[i] = at + skipMs - heldMs
+            lineT = starts[i]
+        }
+        lastPressMs = at
+        lineDistM = distanceM - (lp.speed() ?: 0.0) * (activeMs(nowMs) - at) / 2000.0
+        // Standing still on the line before a rep of whole laps: that is where the line is.
+        val laps = seg.laps
+        if (laps != null && laps % 1.0 == 0.0) {
+            val stood = recent.filter { it.first in (at - 3_000)..at }.map { it.second }
+            if (stood.size >= 2 && stood.all { (it.speed ?: 0f) < 0.7f && it.accuracy <= LINE_ACCURACY }) {
+                val lat = stood.map { it.lat }.average()
+                val lon = stood.map { it.lon }.average()
+                val ln = line
+                line = when {
+                    ln == null -> lat to lon
+                    Geo.haversine(ln.first, ln.second, lat, lon) <= 15.0 -> (ln.first + (lat - ln.first) * 0.3) to (ln.second + (lon - ln.second) * 0.3)
+                    else -> ln
+                }
+            }
+        }
+        return true
     }
 
     /** Ends the wait on the line: the plan goes on from the start of the rep. */
@@ -418,7 +499,12 @@ class RunTracker(
         val active = activeMs(nowMs)
         lastRaw = fix
         lastRawActive = active
+        recent.addLast(active to fix)
+        while (recent.size > 1 && active - recent.first().first > 40_000) recent.removeFirst()
+        // A free run on a stadium with no line known yet: it is where the run started (laps count from there).
+        if (line == null && workout.lapMeters != null && workout.reps == 0 && active <= 15_000 && fix.accuracy <= 10f) line = fix.lat to fix.lon
         watchLine(fix, active)
+        loop?.let { feedLoop(it, fix, active) }
         // The distance from the Doppler speed between this fix and the one before (under 0.5 m/s is standing).
         val sp = fix.speed?.takeIf { it >= 0f && it <= maxSpeed }
         var bySpeed: Double? = null
@@ -498,6 +584,39 @@ class RunTracker(
         calFrom = Triple(active, distanceM + add, steps)
     }
 
+    /** The fixes of the last 40 s (active ms): where the runner stood at a start found after it. */
+    private val recent = ArrayDeque<Pair<Long, Fix>>()
+
+    /** A fix for the loop's filter; the crossings it timed wait for a press like any (see [autoLap]). */
+    private fun feedLoop(lp: LoopTimer, fix: Fix, active: Long) {
+        lp.fix(active, fix.lat, fix.lon, fix.accuracy, fix.speed)
+        for (c in lp.crossings()) {
+            val back = (active - c.activeMs).coerceAtLeast(0)
+            if (!c.rough && upgrade(c.activeMs)) continue
+            pending.addLast(Crossing(c.activeMs, distanceM - c.speed * back / 1000.0, exact = !c.rough))
+            lastCross = c.activeMs
+        }
+    }
+
+    /**
+     * A crossing timed on the loop that GPS had seen before the loop was known (the first lap or two): the rough guess
+     * waiting is dropped, and a lap already made of it is timed again — the exact time, the next lap counted from it.
+     * True when it was such a lap (nothing more to do).
+     */
+    private fun upgrade(at: Long): Boolean {
+        pending.removeAll { !it.exact && kotlin.math.abs(it.at - at) <= UPGRADE_MS }
+        val k = lapList.lastIndex
+        if (k < 0) return false
+        val lap = lapList[k]
+        val t = planAt(at)
+        if (!lap.rough || kotlin.math.abs(taps[k] - t) > UPGRADE_MS) return false
+        val delta = t - taps[k]
+        lapList[k] = lap.copy(seconds = lap.seconds + delta / 1000.0, exact = true)
+        if (lineT == taps[k]) lineT = t
+        taps[k] = t
+        return true
+    }
+
     /** Adds a stretch of the way: work distance, the pace window and the kilometre marks. */
     private fun addDistance(add: Double, active: Long): List<RunEvent> {
         distanceM += add
@@ -569,7 +688,7 @@ class RunTracker(
         taps.toList(), lapList.toList(), skippedReps.sorted(), starts.toMap(), heldMs, lastPressMs,
         line?.let { listOf(it.first, it.second) }, freeLaps, steps, runSteps, runStepMs,
         stride?.let { listOf(it.first, it.second) }, strides.map { listOf(it.first, it.second) },
-        lineT, lineDistM, startedOff, away, kmSplitList.toList(),
+        lineT, lineDistM, startedOff, away, kmSplitList.toList(), loop?.ground(),
     )
 
     /** Start and end of every segment on the timeline, ms. */
@@ -635,6 +754,12 @@ class RunTracker(
             return p
         }
         lastPressMs = active
+        // A late press for a lap timed on the loop: the lap and the visit of the line stay as GPS had them — yet two late
+        // presses at one spot still say the line is there (a line kept from another day in the wrong place).
+        if (retimed is Press.Done && retimed.lap.exact) {
+            lateLine(active, retimed.lap)
+            return p
+        }
         lineDistM = distanceM
         lineT = t
         // Only a press that closes a lap is surely on the line: a start may be half a lap before it (6.5 laps). A press
@@ -652,6 +777,8 @@ class RunTracker(
         if (k < 0) return null
         val lap = lapList[k]
         if (!lap.auto) return null
+        // Timed on the loop: the late press is for it, and later than the line — the lap keeps the time GPS gave.
+        if (lap.exact) return if (t - taps[k] in 0..(((lap.slow ?: lap.fast)?.let { it / lap.part } ?: (lap.seconds / lap.part)) * 500).toLong()) Press.Done(lap) else null
         // Within half a lap of it: the next crossing is a whole lap away.
         val whole = (lap.slow ?: lap.fast)?.let { it / lap.part } ?: (lap.seconds / lap.part)
         val late = t - taps[k]
@@ -675,8 +802,8 @@ class RunTracker(
      * A lap at timeline [t]: pressed, or [auto] — a crossing GPS saw with no press. An automatic one never starts the
      * plan or ends a rep early (the plan goes on by the clock), and never comes while the plan waits on the line.
      */
-    private fun pressAt(t: Long, auto: Boolean, dist: Double = distanceM): Press {
-        if (workout.reps == 0) return pressFree(t, auto, dist)
+    private fun pressAt(t: Long, auto: Boolean, dist: Double = distanceM, exact: Boolean = false): Press {
+        if (workout.reps == 0) return pressFree(t, auto, dist, exact)
         val lapM = workout.lapMeters
         // The rep this press belongs to, unless all of its laps are pressed already.
         val rep = repAt(t)?.takeIf { i ->
@@ -718,16 +845,17 @@ class RunTracker(
             val of = laps?.let { kotlin.math.ceil(it).toInt() }
             // A time trial is run evenly at first; in its second half faster is what it is for.
             val free = workout.testMeters != null && of != null && (before + 1) * 2 > of
-            Lap((t - from) / 1000.0, if (free) null else range?.first ?: target, range?.second ?: target, before + 1, of, number, part, auto)
+            Lap((t - from) / 1000.0, if (free) null else range?.first ?: target, range?.second ?: target, before + 1, of, number, part, auto, exact)
         } else {
-            freeLap(t - from, before + 1, seg, lapM, auto)
+            freeLap(t - from, before + 1, seg, lapM, auto, exact)
         }
         if (!auto && tooShort(result)) return Press.Ignored
         taps += t
         lapList += result
         if (auto) lineDistM = dist
-        // The rep's last lap, pressed before its planned end: the rep is done, the recovery starts now.
-        if (rep != null && result.closesRep && !auto) {
+        // The rep's last lap, pressed (or timed on the loop) before its planned end: the rep is done, the recovery starts
+        // then. A rough GPS lap never ends a rep: two seconds off and the recovery starts at the wrong time.
+        if (rep != null && result.closesRep && (!auto || exact)) {
             val end = bounds[rep].last + 1
             if (t < end) {
                 skipMs += end - t
@@ -747,7 +875,7 @@ class RunTracker(
      * a lap the runner timed. Before the first lap a press is the start when it comes in the first seconds, soon after
      * GPS saw the line (the press for that visit), or as the first on the line after a start off it.
      */
-    private fun pressFree(t: Long, auto: Boolean, dist: Double): Press {
+    private fun pressFree(t: Long, auto: Boolean, dist: Double, exact: Boolean = false): Press {
         val lapM = workout.lapMeters
         val seg = workout.segments.getOrNull(segmentAt(t))
         val prev = taps.lastOrNull()
@@ -758,7 +886,7 @@ class RunTracker(
             lineDistM = dist
             lineT = t
             if (visit == null || lapM == null || way < 0.6 * lapM || way > 2.5 * lapM) return Press.Ignored
-            val lap = freeLap(t - visit, number, seg, lapM, auto = true)
+            val lap = freeLap(t - visit, number, seg, lapM, auto = true, exact = exact)
             taps += t
             lapList += lap
             return Press.Done(lap)
@@ -789,12 +917,12 @@ class RunTracker(
      * A lap outside the reps, [ms] long: an easy pace has only a fast limit (slower is fine); a free run's own target
      * ([RunWorkout.targetPace]) has both. A lap of run/walk mixes the two: no verdict.
      */
-    private fun freeLap(ms: Long, number: Int, seg: Segment?, lapM: Int?, auto: Boolean): Lap {
+    private fun freeLap(ms: Long, number: Int, seg: Segment?, lapM: Int?, auto: Boolean, exact: Boolean = false): Lap {
         val own = workout.targetPace?.takeIf { workout.isOpenEnded }
         val pace = seg?.pace?.takeIf { seg.kind != SegmentKind.WORK && workout.type != RunType.RUN_WALK }
         val fast = (own ?: pace)?.let { p -> lapM?.let { Track.lapSec(p.fast.toDouble(), it) } }
         val slow = own?.let { p -> lapM?.let { Track.lapSec(p.slow.toDouble(), it) } }
-        return Lap(ms / 1000.0, fast, slow, number, null, auto = auto)
+        return Lap(ms / 1000.0, fast, slow, number, null, auto = auto, exact = exact)
     }
 
     /**
@@ -906,6 +1034,8 @@ class RunTracker(
         }
         if (!away || d > 15.0) return
         away = false
+        // The loop is known: its crossings are timed there (see [feedLoop]), far better than this guess.
+        if (loop?.ready() == true) return
         // The satellites' speed, else the pace of the rep being run (a lap a little slower or faster changes the guess by a
         // fraction of a second; walking at the run's pace would put the crossing seconds early).
         val seg = RunTimeline.at(workout, (planAt(active) / 1000).toInt()).segment
@@ -913,7 +1043,7 @@ class RunTracker(
         val tc = active + (d / speed * 1000).toLong()
         val minGap = (lapM / 9.0 * 1000).toLong()
         if (lastCross?.let { tc - it >= minGap } != false) {
-            pending.addLast(tc to distanceM + d)
+            pending.addLast(Crossing(tc, distanceM + d, exact = false))
             lastCross = tc
         }
     }
@@ -926,11 +1056,12 @@ class RunTracker(
         if (state != State.RUNNING || workout.lapMeters == null) return null
         val now = activeMs(nowMs)
         var made: Lap? = null
-        while (pending.isNotEmpty() && now - pending.first().first >= AUTO_WAIT_MS) {
-            val (tc, dist) = pending.removeFirst()
-            if (pressTimes.any { kotlin.math.abs(it - tc) <= AUTO_WAIT_MS }) continue
+        while (pending.isNotEmpty() && now - pending.first().at >= if (pending.first().exact) EXACT_WAIT_MS else AUTO_WAIT_MS) {
+            val c = pending.removeFirst()
+            val wait = if (c.exact) EXACT_WAIT_MS else AUTO_WAIT_MS
+            if (pressTimes.any { kotlin.math.abs(it - c.at) <= wait }) continue
             // Before the first rep (the warm-up, the wait on the line) a crossing is distance only: pressAt finds no rep.
-            val p = pressAt(planAt(tc), auto = true, dist = dist)
+            val p = pressAt(planAt(c.at), auto = true, dist = c.dist, exact = c.exact)
             if (p is Press.Done) made = p.lap
         }
         return made
@@ -1024,6 +1155,12 @@ class RunTracker(
         /** A crossing GPS saw becomes a lap when no press came this close to it. */
         const val AUTO_WAIT_MS = 8_000L
 
+        /** A rough crossing and one timed on the loop this close are one. */
+        const val UPGRADE_MS = 10_000L
+
+        /** The same for a crossing timed on the fitted loop: it comes [LoopTimer.LAG_MS] after the line, a second more. */
+        const val EXACT_WAIT_MS = LoopTimer.LAG_MS + 1_000L
+
         /** Steps a minute assumed for a gap when the run has not measured its own cadence yet. */
         const val GAP_CADENCE = 160.0
 
@@ -1057,6 +1194,7 @@ class RunTracker(
             heldMs = s.heldMs
             lastPressMs = s.lastPressMs
             line = s.line?.takeIf { it.size == 2 }?.let { it[0] to it[1] }
+            setLoop(s.loop)
             freeLaps = s.freeLaps
             lineDistM = s.lineDistM ?: s.distanceM
             lineT = s.lineT
