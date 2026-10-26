@@ -104,7 +104,7 @@ private enum class Panel { MEMORY, CHANGES, ABOUT }
  * «Тренер»: a chat with an AI coach (Gemini, through the project's server function) that knows the training, the app's
  * rules and what it was told about the person. It explains, reviews workouts and makes changes within the app's limits —
  * the day, ratings, running and weights at once (with «Вернуть»), the gym plan, the goal and the stadium on «Принять».
- * A tab of its own; opened with [question] (a workout's review) it asks it at once.
+ * A tab of its own; opened with [question] (from a workout's review) it puts it in the field.
  */
 @Composable
 fun CoachScreen(question: String? = null, workoutId: Long? = null) {
@@ -117,7 +117,8 @@ fun CoachScreen(question: String? = null, workoutId: Long? = null) {
     val log by repo.store.coachLog.collectAsState(initial = emptyList())
     val busy by CoachTalk.busy.collectAsState()
     val failed by CoachTalk.failed.collectAsState()
-    var typed by rememberSaveable { mutableStateOf("") }
+    // Opened from a workout: its question is put in the field, sent when the person sends it (nothing changes unasked).
+    var typed by rememberSaveable { mutableStateOf(question.orEmpty()) }
     var panel by rememberSaveable { mutableStateOf<Panel?>(null) }
     fun send(q: String) {
         val c = api ?: return
@@ -128,8 +129,6 @@ fun CoachScreen(question: String? = null, workoutId: Long? = null) {
     }
     // A question that got no answer goes back into the field, to send again.
     LaunchedEffect(failed) { failed?.second?.let { if (typed.isBlank()) typed = it } }
-    var asked by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(question, signedIn) { if (question != null && !asked && signedIn) { asked = true; send(question) } }
     val list = rememberLazyListState()
     // The newest at the bottom in sight: after a question, an answer, and when the screen opens.
     val count = (if (panel != null) 1 else 0) + (if (chat.isEmpty()) 1 else 0) + chat.size + (if (busy) 1 else 0) + (if (failed != null) 1 else 0)
@@ -290,11 +289,17 @@ private fun ActCard(msgId: Long, index: Int, act: CoachChatAct, log: List<CoachL
         act.why?.let { Text("Почему: $it", style = T.secondary(14.sp)) }
         when (state) {
             CoachActState.PENDING -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrimaryButton("Принять", { scope.launch { runCatching { CoachTalk.accept(repo, msgId, index) }.onFailure { note = "Не получилось — попробуй ещё раз." } } }, Modifier.weight(1f))
+                PrimaryButton("Принять", {
+                    scope.launch {
+                        runCatching { CoachTalk.accept(repo, msgId, index) }
+                            .onSuccess { if (it?.state == CoachActState.PENDING) note = "С тех пор данные изменились — проверь и нажми «Принять» ещё раз." }
+                            .onFailure { note = "Не получилось — попробуй ещё раз." }
+                    }
+                }, Modifier.weight(1f))
                 GhostButton("Не надо", { scope.launch { CoachTalk.decline(repo, msgId, index) } }, Modifier.weight(1f))
             }
             CoachActState.DONE -> if (log.firstOrNull { it.id == act.logId }?.undo != null) GhostButton("Вернуть как было", {
-                scope.launch { if (!CoachTalk.undo(repo, msgId, index)) note = "Уже не вернуть: после этого всё изменилось." }
+                scope.launch { if (runCatching { CoachTalk.undo(repo, msgId, index) }.getOrDefault(false) != true) note = "Уже не вернуть: после этого всё изменилось." }
             }, Modifier.fillMaxWidth())
             else -> Unit
         }
@@ -332,7 +337,7 @@ private fun PanelCard(p: Panel, notes: List<String>, log: List<CoachLogEntry>) {
                         e.why?.let { Text("Почему: $it", style = T.secondary(13.sp)) }
                         if (e.undone) Text("Возвращено как было", style = T.secondary(13.sp))
                         else if (e.undo != null) GhostButton("Вернуть как было", {
-                            scope.launch { if (!CoachActions.undo(repo, e)) note = "Уже не вернуть: после этого всё изменилось." }
+                            scope.launch { if (runCatching { CoachActions.undo(repo, e) }.getOrDefault(false) != true) note = "Уже не вернуть: после этого всё изменилось." }
                         })
                     }
                 }
@@ -347,8 +352,9 @@ private fun PanelCard(p: Panel, notes: List<String>, log: List<CoachLogEntry>) {
                     style = T.body(14.sp),
                 )
                 Text(
-                    "Сам меняет: самочувствие на сегодня, паузу и «Болею», оценку тренировки, длину лёгкого бега, ускорения, " +
-                        "шаг веса и рабочий вес (до 10 %). Каждое такое изменение можно вернуть. Больше 6 изменений в день сам не делает.",
+                    "Сам меняет: самочувствие на сегодня, паузу и «Болею», оценку тренировки, длину лёгкого бега (раз в неделю), ускорения, " +
+                        "шаг веса и рабочий вес (до 10 %, раз в неделю). Каждое такое изменение можно вернуть, пока его не сдвинула " +
+                        "тренировка. Больше 6 изменений в день сам не делает.",
                     style = T.body(14.sp),
                 )
                 Text(

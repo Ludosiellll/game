@@ -84,15 +84,20 @@ object CoachTalk {
         }
     }
 
-    /** A call of the coach's checked: made at once, waiting for «Принять», or not possible (and why). */
-    private suspend fun act(repo: TrainingRepository, call: CoachCall): CoachChatAct =
-        when (val c = CoachActions.prepare(repo, call)) {
+    /**
+     * A call of the coach's checked: made at once, waiting for «Принять», or not possible (and why). One bad call never
+     * loses the answer and the changes already made with it.
+     */
+    private suspend fun act(repo: TrainingRepository, call: CoachCall): CoachChatAct {
+        val c = runCatching { CoachActions.prepare(repo, call) }.getOrElse { return CoachChatAct(call, "Не получилось разобрать изменение.", null, CoachActState.REFUSED) }
+        return when (c) {
             is CoachActions.Refused -> CoachChatAct(call, c.why, null, CoachActState.REFUSED)
             is CoachActions.Ready -> if (c.mode == CoachActions.Mode.CONFIRM) CoachChatAct(call, c.text, c.why, CoachActState.PENDING)
             else runCatching { CoachActions.make(repo, c) }.getOrNull()
                 ?.let { CoachChatAct(call, c.text, c.why, CoachActState.DONE, it.id) }
                 ?: CoachChatAct(call, "Не получилось: ${c.text}", c.why, CoachActState.REFUSED)
         }
+    }
 
     private suspend fun update(repo: TrainingRepository, msgId: Long, index: Int, f: (CoachChatAct) -> CoachChatAct) {
         repo.store.editCoachChat { list ->
@@ -103,12 +108,18 @@ object CoachTalk {
     private suspend fun actOf(repo: TrainingRepository, msgId: Long, index: Int): CoachChatAct? =
         repo.store.coachChatNow().firstOrNull { it.id == msgId }?.acts?.getOrNull(index)
 
-    /** «Принять»: the change checked again against the data as they are now, and made; or said why it cannot be. */
+    /**
+     * «Принять»: the change checked again against the data as they are now, and made; or said why it cannot be. When it
+     * now says something else than the card did (the data moved on since), it is not made: the card shows the new words
+     * and waits for «Принять» again.
+     */
     suspend fun accept(repo: TrainingRepository, msgId: Long, index: Int): CoachChatAct? {
         val act = actOf(repo, msgId, index)?.takeIf { it.state == CoachActState.PENDING } ?: return null
         val next = when (val c = CoachActions.prepare(repo, act.call)) {
             is CoachActions.Refused -> act.copy(text = c.why, state = CoachActState.REFUSED)
-            is CoachActions.Ready -> act.copy(text = c.text, state = CoachActState.DONE, logId = CoachActions.make(repo, c).id)
+            is CoachActions.Ready ->
+                if (c.text != act.text) act.copy(text = c.text)
+                else act.copy(text = c.text, state = CoachActState.DONE, logId = CoachActions.make(repo, c).id)
         }
         update(repo, msgId, index) { next }
         return next

@@ -96,6 +96,19 @@ class CoachTalkTest {
         assertTrue(repo.store.settingsNow().coachNotes.isEmpty())
     }
 
+    @Test fun anAcceptAfterTheDataMovedShowsTheNewWordsFirst() = runBlocking<Unit> {
+        val p = CoachActions.places(repo).first { !it.added }
+        val msg = CoachTalk.ask(repo, Fake(CoachReply("", listOf(call(CoachActions.SETS, "exercise" to p.exerciseId, "sets" to p.tuned.sets + 2)))), "подходов больше") { "" }
+        // The person changed the sets themselves meanwhile: the card's "from" is not true any more.
+        repo.updateSettings { it.copy(sets = it.sets + (p.key to p.tuned.sets + 1)) }
+        val again = CoachTalk.accept(repo, msg.id, 0)!!
+        assertEquals(CoachActState.PENDING, again.state)
+        assertTrue("${p.tuned.sets + 1} →" in again.text, again.text)
+        assertEquals(p.tuned.sets + 1, repo.store.settingsNow().sets[p.key], "nothing made yet")
+        assertEquals(CoachActState.DONE, CoachTalk.accept(repo, msg.id, 0)!!.state)
+        assertEquals(p.tuned.sets + 2, repo.store.settingsNow().sets[p.key])
+    }
+
     @Test fun declinedStaysAsItWas() = runBlocking<Unit> {
         val p = CoachActions.places(repo).first { !it.added }
         val msg = CoachTalk.ask(repo, Fake(CoachReply("", listOf(call(CoachActions.SETS, "exercise" to p.exerciseId, "sets" to 1)))), "меньше подходов") { "" }

@@ -80,7 +80,7 @@ class GuideUiTest {
         val nav = Navigator(Screen.Tour(first = true))
         show(repo, nav) { TourScreen(first = true) }
         compose.onRoot().captureRoboImage("build/shots/carbon-tour.png")
-        repeat(5) {
+        repeat(6) {
             compose.onNodeWithText("Дальше", ignoreCase = true).performScrollTo().performClick()
             settle()
         }

@@ -66,9 +66,12 @@ class CoachActionsTest {
     private suspend fun ready(c: CoachCall) = assertIs<CoachActions.Ready>(CoachActions.prepare(repo, c), c.toString())
     private suspend fun refused(c: CoachCall) = assertIs<CoachActions.Refused>(CoachActions.prepare(repo, c), c.toString())
 
-    /** A plan exercise with a weight (not a hold, not body weight alone), its slot set to [kg]. */
+    /** A plan exercise with a weight (not a hold, not body weight alone) in one rep range only, its slot set to [kg]. */
     private suspend fun weighted(kg: Double): CoachActions.Place {
-        val p = CoachActions.places(repo).first { !it.added && Catalog[it.exerciseId].load == LoadKind.EXTERNAL }
+        val all = CoachActions.places(repo)
+        val p = all.first { p ->
+            !p.added && Catalog[p.exerciseId].load == LoadKind.EXTERNAL && all.filter { it.exerciseId == p.exerciseId }.map { it.tuned.key }.distinct().size == 1
+        }
         db.state().upsertSlot(SlotStateEntity(p.tuned.key, p.tuned.exerciseId, kg, p.tuned.repMin, 0, 0, 3, clock))
         return p
     }
@@ -145,6 +148,9 @@ class CoachActionsTest {
         assertEquals(30, repo.store.runStateNow().easyMinutes)
         // Moved on by a run since: the coach's change is not taken back over it.
         val e2 = CoachActions.make(repo, ready(call(CoachActions.EASY, "minutes" to 34)))
+        // Changes in a row do not add up: the week's growth counts from before the first, a second one waits.
+        refused(call(CoachActions.EASY, "minutes" to 38))
+        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.EASY, "minutes" to 35)).mode)
         repo.store.setRunState(repo.store.runStateNow().copy(easyMinutes = 37))
         assertFalse(CoachActions.undo(repo, e2))
         assertEquals(37, repo.store.runStateNow().easyMinutes)
@@ -168,6 +174,42 @@ class CoachActionsTest {
         db.state().upsertSlot(db.state().slot(p.tuned.key)!!.copy(weight = 65.0))
         assertFalse(CoachActions.undo(repo, e2))
         assertEquals(65.0, db.state().slot(p.tuned.key)!!.weight)
+    }
+
+    @Test fun aWeightComesBackAloneTheRepsStay() = runBlocking<Unit> {
+        val p = weighted(60.0)
+        val e = CoachActions.make(repo, ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 62.5)))
+        // A session at the coach's weight moved the reps on, the weight held.
+        db.state().upsertSlot(db.state().slot(p.tuned.key)!!.copy(reps = p.tuned.repMin + 1, stalls = 1))
+        assertTrue(CoachActions.undo(repo, e))
+        val row = db.state().slot(p.tuned.key)!!
+        assertEquals(60.0, row.weight)
+        assertEquals(p.tuned.repMin + 1, row.reps)
+        assertEquals(1, row.stalls)
+    }
+
+    @Test fun oneWeightIsOneRepRange() = runBlocking<Unit> {
+        // The same exercise in a second session with other reps: two weights, the coach must say which.
+        val program = repo.store.programNow()!!
+        val p = weighted(60.0)
+        val other = program.templates.first { t -> t.id != p.templateId && t.slots.none { it.exerciseId == p.exerciseId } }
+        repo.addToPlan(other.id, p.exerciseId)
+        val added = CoachActions.places(repo).first { it.templateId == other.id && it.exerciseId == p.exerciseId }
+        if (added.tuned.key == p.tuned.key) return@runBlocking
+        db.state().upsertSlot(SlotStateEntity(added.tuned.key, p.exerciseId, 30.0, added.tuned.repMin, 0, 0, 3, clock))
+        val r = refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 62.5))
+        assertTrue("session" in r.why, r.why)
+        CoachActions.make(repo, ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 32.5, "session" to other.title)))
+        assertEquals(32.5, db.state().slot(added.tuned.key)!!.weight)
+        assertEquals(60.0, db.state().slot(p.tuned.key)!!.weight, "the other range untouched")
+    }
+
+    @Test fun aStepCannotCutTheWeightUnasked() = runBlocking<Unit> {
+        val p = weighted(77.5)
+        // 77.5 on 20 kg steps is 60: −23 % — the person says; 39 on 20 kg steps is 20 — never.
+        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.STEP, "exercise" to p.exerciseId, "step_kg" to 20)).mode)
+        db.state().upsertSlot(db.state().slot(p.tuned.key)!!.copy(weight = 39.0))
+        refused(call(CoachActions.STEP, "exercise" to p.exerciseId, "step_kg" to 20))
     }
 
     @Test fun theWeightStepOfTheGym() = runBlocking<Unit> {
@@ -224,6 +266,90 @@ class CoachActionsTest {
         assertEquals(230, repo.store.profileNow()!!.lapMeters)
         CoachActions.make(repo, ready(call(CoachActions.LAP, "meters" to 0)))
         assertNull(repo.store.profileNow()!!.lapMeters)
+    }
+
+    @Test fun aMuchShorterEasyRunWaits() = runBlocking<Unit> {
+        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.EASY, "minutes" to 20)).mode)
+        assertEquals(CoachActions.Mode.AUTO, ready(call(CoachActions.EASY, "minutes" to 25)).mode)
+    }
+
+    @Test fun aLongPauseComesBackExactly() = runBlocking<Unit> {
+        val start = repo.store.programNow()!!.startEpochDay
+        val e = CoachActions.make(repo, ready(call(CoachActions.PAUSE, "days" to 10)))
+        assertTrue(repo.store.programNow()!!.startEpochDay != start, "a week or more moves the block")
+        assertTrue(CoachActions.undo(repo, e))
+        assertEquals(start, repo.store.programNow()!!.startEpochDay)
+        val s = repo.store.settingsNow()
+        assertFalse(repo.paused(s, day))
+        assertNull(s.pauseUntil)
+    }
+
+    @Test fun sickInAHolidayAndBackKeepsTheHoliday() = runBlocking<Unit> {
+        repo.pause(day.minusDays(2), day.plusDays(5))
+        val e = CoachActions.make(repo, ready(call(CoachActions.SICK, "pause_days" to 0)))
+        assertTrue(CoachActions.undo(repo, e))
+        val s = repo.store.settingsNow()
+        assertEquals(Feel.UNSET, s.feelOn(day))
+        assertTrue(repo.paused(s, day.plusDays(3)), "the holiday stays")
+    }
+
+    @Test fun theGoalBackKeepsTheLadder() = runBlocking<Unit> {
+        repo.store.setRunState(repo.store.runStateNow().copy(goalStage = 3))
+        val e = CoachActions.make(repo, ready(call(CoachActions.GOAL, "meters" to 1500, "time" to "5:00")))
+        assertEquals(0, repo.store.runStateNow().goalStage)
+        assertTrue(CoachActions.undo(repo, e))
+        assertEquals(3, repo.store.runStateNow().goalStage)
+        assertEquals(330, repo.store.profileNow()!!.runGoal!!.seconds)
+    }
+
+    @Test fun aFriendsProgramKeepsItsGoalAndTheLapDoesNotRebuild() = runBlocking<Unit> {
+        val program = repo.store.programNow()!!
+        CoachActions.make(repo, ready(call(CoachActions.LAP, "meters" to 400)))
+        assertEquals(program, repo.store.programNow(), "the lap is read when a run is planned")
+        repo.store.setProgram(program.copy(copiedFrom = "Друг"))
+        refused(call(CoachActions.GOAL, "meters" to 1500, "time" to "5:20"))
+    }
+
+    @Test fun setsBackLeaveTheRepsAsThePersonMadeThem() = runBlocking<Unit> {
+        val p = CoachActions.places(repo).first { !it.added }
+        val e = CoachActions.make(repo, ready(call(CoachActions.SETS, "exercise" to p.exerciseId, "sets" to p.tuned.sets + 1)))
+        repo.updateSettings { it.copy(reps = it.reps + (p.key to listOf(3, 5))) }
+        assertTrue(CoachActions.undo(repo, e))
+        assertNull(repo.store.settingsNow().sets[p.key])
+        assertEquals(listOf(3, 5), repo.store.settingsNow().reps[p.key])
+        // Edited by the person since: not taken back over it.
+        val e2 = CoachActions.make(repo, ready(call(CoachActions.SETS, "exercise" to p.exerciseId, "sets" to p.tuned.sets + 1)))
+        repo.updateSettings { it.copy(sets = it.sets + (p.key to 1)) }
+        assertFalse(CoachActions.undo(repo, e2))
+    }
+
+    @Test fun anAddedExerciseComesBackWithItsNumbers() = runBlocking<Unit> {
+        val t = repo.store.programNow()!!.templates.first()
+        val id = Catalog.all.first { ex -> ex.load == LoadKind.EXTERNAL && !ex.compound && CoachActions.places(repo).none { it.templateId == t.id && it.exerciseId == ex.id } }.id
+        repo.addToPlan(t.id, id)
+        val key = TrainingRepository.addedKey(t.id, id)
+        repo.updateSettings { it.copy(sets = it.sets + (key to 5)) }
+        val e = CoachActions.make(repo, ready(call(CoachActions.REMOVE, "exercise" to id, "session" to t.id)))
+        assertFalse(id in repo.store.settingsNow().added[t.id].orEmpty())
+        assertTrue(CoachActions.undo(repo, e))
+        assertTrue(id in repo.store.settingsNow().added[t.id].orEmpty())
+        assertEquals(5, repo.store.settingsNow().sets[key])
+    }
+
+    @Test fun notANumberIsRefused() = runBlocking<Unit> {
+        val p = weighted(60.0)
+        refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to "NaN"))
+        refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to "Infinity"))
+        refused(call(CoachActions.EASY, "minutes" to "NaN"))
+        refused(call(CoachActions.STEP, "exercise" to p.exerciseId, "step_kg" to "NaN"))
+        refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to -10))
+    }
+
+    @Test fun noLongRunWhereThePlanHasOne() = runBlocking<Unit> {
+        val program = repo.store.programNow()!!
+        val days = program.week.days.map { d -> if (d === program.week.days.first()) d.copy(sessions = d.sessions + forma.core.plan.PlannedSession(SessionKind.RUN_LONG)) else d }
+        repo.store.setProgram(program.copy(week = program.week.copy(days = days)))
+        refused(call(CoachActions.LONG, "weeks" to 2))
     }
 
     @Test fun aBusyDayWaitsForThePerson() = runBlocking<Unit> {

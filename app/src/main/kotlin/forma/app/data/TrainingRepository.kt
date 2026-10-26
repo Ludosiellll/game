@@ -1720,7 +1720,9 @@ class TrainingRepository(
         val legs = legsOn(program, date)
         // The long easy run of a middle-distance week: up to an hour (after the legs, as an easy run after them).
         val coach = store.settingsNow().coachLong?.on(date) == true
-        val long = if (longEasyDay(program, date, middle, coach)) min(caps.longMax, if (legs) AFTER_LEGS_EASY else 60) else caps.longMax
+        // The coach's long run on a day with the gym (any): no longer than an easy run after the legs.
+        val gym = coach && program.week.on(date.dayOfWeek.value).any { it.kind == SessionKind.LIFT }
+        val long = if (longEasyDay(program, date, middle, coach)) min(caps.longMax, if (legs || gym) AFTER_LEGS_EASY else 60) else caps.longMax
         return caps.copy(easyMax = if (legs) min(caps.easyMax, AFTER_LEGS_EASY) else caps.easyMax, longMax = long)
     }
 
