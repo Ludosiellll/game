@@ -74,8 +74,11 @@ object CoachTalk {
                     else -> "не сделано: ${a.text}"
                 }
             }
-            val said = (reply.text + if (notes.isEmpty()) "" else "\n[Приложение — ${notes.joinToString("; ")}]").trim()
-            val msg = CoachChatMsg(nextId(repo), false, reply.text, acts, said)
+            // What the app did goes first (a long answer is cut at its end on the way to the model), and words of the model
+            // dressed as the app's are dropped: only the app says what was done.
+            val text = reply.text.lines().filterNot { it.trimStart().startsWith("[Приложение") }.joinToString("\n").trim()
+            val said = ((if (notes.isEmpty()) "" else "[Приложение — ${notes.joinToString("; ")}]\n") + text).trim()
+            val msg = CoachChatMsg(nextId(repo), false, text, acts, said)
             repo.store.editCoachChat { it + msg }
             return msg
         } catch (e: Exception) {

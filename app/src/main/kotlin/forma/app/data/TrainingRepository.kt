@@ -254,7 +254,7 @@ class TrainingRepository(
         SlotStateEntity(spec.key, spec.exerciseId, weight, reps, stalls, misses, sessions, now(), linear, steady, cutFrom, cutReps)
 
     /** Best session estimate of [exerciseId] over the 8 weeks before [day] (the floor for reductions). */
-    private suspend fun recentBest(exerciseId: String, day: Long, exclude: Long): Double? =
+    internal suspend fun recentBest(exerciseId: String, day: Long, exclude: Long): Double? =
         db.workouts().allDone().asSequence()
             .filter { it.kind == Kind.LIFT && it.id != exclude && it.epochDay in (day - 56)..day }
             .mapNotNull { w -> w.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() } }

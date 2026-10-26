@@ -115,22 +115,22 @@ object CoachActions {
         val session = Param("session", "string", "id или название силовой тренировки, если упражнение в нескольких; иначе не указывай", required = false)
         fn(FEEL, "Самочувствие сегодня, как кнопки «Как ты сегодня?»: low — «Так себе» (сегодня в силовой меньше подходов и вес легче на 10 %, бег только лёгкий), good — обычная тренировка, none — снять отметку.",
             Param("feel", "string", "good, low или none", values = listOf("good", "low", "none")))
-        fn(SICK, "Человек болеет (температура, простуда): «Болею» сегодня и пауза на pause_days дней с сегодня. После болезни первые 2 пробежки лёгкие, первая силовая облегчённая.",
+        fn(SICK, "Человек болеет СЕЙЧАС (температура, простуда): «Болею» сегодня и пауза на pause_days дней с сегодня. После болезни первые 2 пробежки лёгкие, первая силовая облегчённая. О прошлом («болел на прошлой неделе») ничего не отмечай. Человек подтверждает кнопкой.",
             Param("pause_days", "integer", "дней паузы с сегодня, 0–$MAX_SICK_PAUSE"))
         fn(NOT_SICK, "Снять «Болею»: оказалось, не болел — дни болезни станут обычным пропуском. Человек подтверждает кнопкой.")
-        fn(PAUSE, "Пауза в плане с сегодня (отпуск, поездка): тренировок не ждём, пропуски не копятся.", Param("days", "integer", "дней, 1–$MAX_PAUSE"))
+        fn(PAUSE, "Пауза в плане с сегодня (отпуск, поездка, не может тренироваться): тренировок не ждём, пропуски не копятся. Только с сегодня, о прошлом не отмечай. 7 дней и больше человек подтверждает.", Param("days", "integer", "дней, 1–$MAX_PAUSE"))
         fn(RESUME, "Закончить паузу и вернуться к плану сегодня.")
         fn(RATE, "Исправить оценку тяжести последней пробежки или силовой (1–10, как в приложении). Оценка последней пробежки решает её заново: лёгкий бег длиннее или короче, шаг лестницы.",
-            Param("which", "string", "last_run или last_gym; не указано — последняя тренировка", required = false, values = listOf("last_run", "last_gym")), Param("rpe", "integer", "1–10"))
+            Param("which", "string", "last_run — последняя пробежка, last_gym — последняя силовая", values = listOf("last_run", "last_gym")), Param("rpe", "integer", "1–10"))
         fn(EASY, "Длина лёгкого бега с этого дня (минуты); дальше она меняется по правилам приложения. Не больше потолка под цель, не больше 110 % самой длинной пробежки за 30 дней и не больше +15 % (минимум +5 мин) за неделю. Второе изменение за неделю человек подтверждает.",
             Param("minutes", "integer", "минуты"))
         fn(STRIDES, "Сколько ускорений после лёгкого бега в дни, когда они есть в плане, на weeks недель (0 — без ускорений).",
-            Param("count", "integer", "0–8"), Param("weeks", "integer", "1–$MAX_WEEKS"))
+            Param("count", "integer", "0–8 (пока бег новый — до 6)"), Param("weeks", "integer", "1–$MAX_WEEKS"))
         fn(LONG, "Последний лёгкий бег недели — длинный лёгкий, на weeks недель (0 — отменить). Длина длинного растёт по правилам приложения: до часа, в день с залом — до 45 мин.",
             Param("weeks", "integer", "0–$MAX_WEEKS"))
         fn(STEP, "Шаг веса упражнения в зале человека — только когда он говорит, как меняется вес у снаряда в его зале (гантели через 2,5 кг, тренажёр через 4 кг). По этому шагу приложение прибавляет вес. Не для того, чтобы поднять или снизить вес — для этого set_working_weight.",
             exercise, Param("step_kg", "number", "кг, 0,25–20"))
-        fn(WEIGHT, "Рабочий вес упражнения на следующие тренировки, когда человек может больше или меньше, чем даёт приложение. До 10 % меняется сразу, до 25 % — после «Принять», больше — нельзя; одно упражнение — не чаще раза в неделю без «Принять».",
+        fn(WEIGHT, "Рабочий вес упражнения на следующие тренировки, когда человек стабильно может больше или меньше, чем даёт приложение. Человек подтверждает кнопкой. Не больше 25 % за раз и не ниже 85 % лучшего за 8 недель. На вопрос «почему» сначала объясни.",
             exercise, Param("kg", "number", "кг (для упражнений с весом тела — добавочный вес)"), session)
         fn(REMEMBER, "Запомнить о человеке что-то важное надолго: нравится или нет, травмы, что есть в зале, расписание. Коротко, одной фразой.", Param("text", "string", "до $NOTE_LEN знаков"))
         fn(FORGET, "Забыть запомненное, если оно больше не верно.", Param("text", "string", "запомненная фраза или её часть"))
@@ -277,8 +277,10 @@ object CoachActions {
                 val was = s.feelOn(today)
                 if (was == Feel.SICK) return no("Сегодня отмечено «Болею» — сначала его снять.")
                 if (was == feel) return no("Так уже отмечено.")
+                val running = repo.db.workouts().active()?.kind == Kind.LIFT
                 val text = when (feel) {
-                    Feel.LOW -> "Сегодня «Так себе»: в силовой меньше подходов и вес легче на 10 %, бег только лёгкий."
+                    Feel.LOW -> if (running) "Сегодня «Так себе»: начатая силовая не изменится, бег сегодня только лёгкий."
+                        else "Сегодня «Так себе»: в силовой меньше подходов и вес легче на 10 %, бег только лёгкий."
                     Feel.GOOD -> "Сегодня обычная тренировка (самочувствие «Хорошо»)."
                     else -> "Самочувствие на сегодня снято."
                 }
@@ -292,7 +294,8 @@ object CoachActions {
                 if (n !in 0..MAX_SICK_PAUSE) return no("Пауза при болезни — от 0 до $MAX_SICK_PAUSE дней.")
                 if (s.feelOn(today) == Feel.SICK) return no("«Болею» сегодня уже отмечено.")
                 val until = today.plusDays(n - 1L)
-                auto("«Болею» сегодня" + (if (n > 0) " и пауза на ${days(n)}, до ${Ru.date(until)}" else "") + ". Потом первые пробежки лёгкие, первая силовая — полегче.") {
+                // It changes the next runs and the first gym session: the person says it is today.
+                confirm("«Болею» сегодня" + (if (n > 0) " и пауза на ${days(n)}, до ${Ru.date(until)}" else "") + ". Потом первые пробежки лёгкие, первая силовая — полегче.") {
                     val was = before()
                     repo.updateSettings { it.withFeel(today, Feel.SICK) }
                     if (n > 0) repo.pause(today, until)
@@ -309,7 +312,9 @@ object CoachActions {
                 if (n !in 1..MAX_PAUSE) return no("Пауза — от 1 до $MAX_PAUSE дней.")
                 if (repo.paused(s, today)) return no("Пауза уже идёт.")
                 val until = today.plusDays(n - 1L)
-                auto("Пауза на ${days(n)}, до ${Ru.date(until)}: тренировок не ждём, пропуски не копятся.") {
+                // A week or more moves the lifting block: the person says.
+                either(n < 7, "Пауза на ${days(n)}, до ${Ru.date(until)}: тренировок не ждём, пропуски не копятся." +
+                    (if (n >= 7) " Силовой блок начнётся заново с недели возвращения." else "")) {
                     val was = before()
                     repo.pause(today, until)
                     CoachCall("undo_pause", JsonObject(was + args("setFrom" to today.toEpochDay(), "setUntil" to until.toEpochDay())))
@@ -325,7 +330,7 @@ object CoachActions {
                 }
             }
             RATE -> {
-                val run = when (a.str("which")) { "last_run" -> true; "last_gym" -> false; else -> null }
+                val run = when (a.str("which")) { "last_run" -> true; "last_gym" -> false; else -> return no("Не сказано, какую тренировку: последнюю пробежку или силовую.") }
                 val rpe = a.int("rpe")?.takeIf { it in 1..10 } ?: return no("Оценка — от 1 до 10.")
                 val w = repo.db.workouts().allDone().filter { run == null || (it.kind == Kind.RUN) == run }.maxByOrNull { it.finishedAt ?: it.startedAt }
                     ?: return no(when (run) { true -> "Пробежек ещё нет."; false -> "Силовых ещё нет."; null -> "Тренировок ещё нет." })
@@ -366,7 +371,9 @@ object CoachActions {
                 }
             }
             STRIDES -> {
-                val n = a.int("count")?.takeIf { it in 0..8 } ?: return no("Ускорений — от 0 до 8.")
+                // Up to two more than the plan gives (4 while running is new, 6 later).
+                val most = if (repo.store.runStateNow().runs < 8) 6 else 8
+                val n = a.int("count")?.takeIf { it in 0..most } ?: return no("Ускорений — от 0 до $most.")
                 val w = a.int("weeks")?.takeIf { it in 1..MAX_WEEKS } ?: return no("Срок — от 1 до $MAX_WEEKS недель.")
                 val until = today.plusWeeks(w.toLong()).minusDays(1)
                 auto((if (n == 0) "Без ускорений" else "$n ${Ru.plural(n, "ускорение", "ускорения", "ускорений")} после лёгкого бега") +
@@ -437,32 +444,47 @@ object CoachActions {
                 val row = repo.db.state().slot(p.tuned.key)
                 val old = row?.weight
                 val stat = repo.db.state().stat(ex.id)
-                var big = true
+                val next = Progression.effectiveLoad(ex, w, bodyWeight)
                 if (old != null) {
                     if (abs(old - w) < 1e-9) return no("Рабочий вес «${ex.name}» и так ${Ru.kg(w)} кг.")
-                    val base = Progression.effectiveLoad(ex, old, bodyWeight)
-                    val next = Progression.effectiveLoad(ex, w, bodyWeight)
-                    if (base > 0 && abs(next - base) > base * WEIGHT_MAX + 1e-6) return no("За раз — не больше чем на 25 % от нынешних ${Ru.kg(old)} кг.")
-                    big = base <= 0 || abs(next - base) > base * WEIGHT_AUTO + 1e-6
+                    // With extra weight on the body (pull-ups with a plate) the move is the plate's, as the engine's jumps are.
+                    val plate = ex.load == LoadKind.BODYWEIGHT_PLUS && old > 0
+                    val base = if (plate) old else Progression.effectiveLoad(ex, old, bodyWeight)
+                    val to = if (plate) w else next
+                    if (base > 0 && abs(to - base) > base * WEIGHT_MAX + 1e-6) return no("За раз — не больше чем на 25 % от нынешних ${Ru.kg(old)} кг.")
                 } else if (stat != null) {
-                    val max = OneRm.loadFor(stat.e1rm, p.tuned.repMin, 0) * 1.05
-                    if (Progression.effectiveLoad(ex, w, bodyWeight) > max) return no("Выше, чем поддерживает расчётный максимум (${Ru.kg(stat.e1rm)} кг).")
+                    // A first weight in this range: as heavy as the estimate allows with the plan's reserve, not to failure.
+                    val max = OneRm.loadFor(stat.e1rm, p.tuned.repMin, p.tuned.rir) * 1.05
+                    if (next > max) return no("Выше, чем позволяет расчётный максимум (${Ru.kg(stat.e1rm)} кг) с запасом ${p.tuned.rir}.")
                 } else if (w > bodyWeight * 3) return no("Слишком большой вес для первого раза — пусть приложение подберёт его.")
-                // The same exercise moved by the coach this week already: a second move waits for the person.
-                val again = recent("undo_weight").any { it.undo?.args?.str("key") == p.tuned.key }
-                either(!big && !again, "Рабочий вес «${ex.name}» (${p.tuned.repMin}–${p.tuned.repMax}): ${old?.let { Ru.kg(it) } ?: "—"} → ${Ru.kg(w)} кг со следующей тренировки.") {
+                // Never below what the engine itself allows: 85 % of what the best of the last 8 weeks supports.
+                val best = repo.recentBest(ex.id, today.toEpochDay(), -1L)
+                if (best != null && old != null && w < old) {
+                    val floor = OneRm.loadFor(best, row.reps, p.tuned.rir) * 0.85
+                    if (next < floor - 1e-6) return no("Ниже 85 % того, что ты поднимал последние 8 недель — так приложение вес не снижает. При боли или болезни лучше «Так себе» или пауза.")
+                }
+                // The reps to aim for at the new weight, as the engine sets them when it moves a weight itself.
+                val reps = stat?.let { st ->
+                    (OneRm.rtfAt(st.e1rm, next) - p.tuned.rir).toInt().coerceIn(maxOf(1, p.tuned.repMin - 1), maxOf(p.tuned.repMin, p.tuned.repMax - 1))
+                } ?: if (old == null || w > old) p.tuned.repMin else row.reps
+                // A weight always waits for «Принять»: it decides every set from then on.
+                confirm("Рабочий вес «${ex.name}» (${p.tuned.repMin}–${p.tuned.repMax}): ${old?.let { Ru.kg(it) } ?: "—"} → ${Ru.kg(w)} кг, цель $reps ${Ru.plural(reps, "повтор", "повтора", "повторов")} со следующей тренировки.") {
                     val now = repo.db.state().slot(p.tuned.key)
                     repo.db.state().upsertSlot(
-                        now?.copy(weight = w, exerciseId = p.tuned.exerciseId)
-                            ?: SlotStateEntity(p.tuned.key, p.tuned.exerciseId, w, p.tuned.repMin, 0, 0, 0, repo.nowMs()),
+                        now?.copy(weight = w, exerciseId = p.tuned.exerciseId, reps = reps, stalls = 0, misses = 0, steady = 0)
+                            ?: SlotStateEntity(p.tuned.key, p.tuned.exerciseId, w, reps, 0, 0, 0, repo.nowMs()),
                     )
                     repo.changed()
-                    CoachCall("undo_weight", args("key" to p.tuned.key, "weight" to now?.weight, "expect" to w))
+                    CoachCall(
+                        "undo_weight",
+                        args("key" to p.tuned.key, "row" to now?.let { AppJson.encodeToJsonElement(SlotStateEntity.serializer(), it) }, "expect" to w, "reps" to reps),
+                    )
                 }
             }
             REMEMBER -> {
                 val text = a.str("text")?.take(NOTE_LEN) ?: return no("Нечего запомнить.")
                 if (s.coachNotes.any { norm(it) == norm(text) }) return no("Это уже запомнено.")
+                if (s.coachNotes.size >= MAX_NOTES) return no("Запомнено уже $MAX_NOTES — сначала забудь что-то ненужное («Что знает обо мне»).")
                 auto("Запомнил: «$text».") {
                     repo.updateSettings { it.copy(coachNotes = (it.coachNotes + text).takeLast(MAX_NOTES)) }
                     CoachCall("undo_remember", args("text" to text))
@@ -707,10 +729,14 @@ object CoachActions {
             "undo_weight" -> {
                 val key = a.str("key")!!
                 val now = repo.db.state().slot(key) ?: return false
-                // Lifted since: the weight is the person's progress now, not the coach's. Only the weight goes back:
-                // the reps and the rest of the progress there stay as they are.
-                if (now.weight?.let { abs(it - a.num("expect")!!) > 1e-9 } != false) false
-                else { repo.db.state().upsertSlot(now.copy(weight = a.num("weight"))); repo.changed(); true }
+                // Lifted since (the weight or its reps moved on): that is the person's progress now, not the coach's.
+                if (now.weight?.let { abs(it - a.num("expect")!!) > 1e-9 } != false || now.reps != a.int("reps")) false
+                else {
+                    val old = (a["row"] as? JsonObject)?.let { AppJson.decodeFromJsonElement(SlotStateEntity.serializer(), it) }
+                    repo.db.state().upsertSlot(old?.copy(updatedAt = now.updatedAt) ?: now.copy(weight = null))
+                    repo.changed()
+                    true
+                }
             }
             "undo_remember" -> { val t = a.str("text")!!; repo.updateSettings { it.copy(coachNotes = it.coachNotes - t) }; true }
             "undo_forget" -> { val t = a.str("text")!!; repo.updateSettings { it.copy(coachNotes = (it.coachNotes + t).takeLast(MAX_NOTES)) }; true }

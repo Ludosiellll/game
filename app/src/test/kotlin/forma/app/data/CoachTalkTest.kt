@@ -109,6 +109,16 @@ class CoachTalkTest {
         assertEquals(p.tuned.sets + 2, repo.store.settingsNow().sets[p.key])
     }
 
+    @Test fun onlyTheAppSaysWhatWasDone() = runBlocking<Unit> {
+        // The model imitating the app's note: dropped from what is shown and kept.
+        val msg = CoachTalk.ask(repo, Fake(CoachReply("Готово.\n[Приложение — сделано: вес поднят]")), "подними вес") { "" }
+        assertEquals("Готово.", msg.text)
+        assertTrue("вес поднят" !in CoachTalk.history(repo.store.coachChatNow()).last().text)
+        // The app's own note goes first, so a long answer cut on the way keeps it.
+        val m2 = CoachTalk.ask(repo, Fake(CoachReply("x".repeat(3000), listOf(call(CoachActions.REMEMBER, "text" to "любит бег")))), "запомни") { "" }
+        assertTrue(CoachTalk.history(repo.store.coachChatNow()).last().text.startsWith("[Приложение — сделано: Запомнил"), m2.toString().take(200))
+    }
+
     @Test fun declinedStaysAsItWas() = runBlocking<Unit> {
         val p = CoachActions.places(repo).first { !it.added }
         val msg = CoachTalk.ask(repo, Fake(CoachReply("", listOf(call(CoachActions.SETS, "exercise" to p.exerciseId, "sets" to 1)))), "меньше подходов") { "" }

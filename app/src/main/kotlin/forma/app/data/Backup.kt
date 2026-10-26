@@ -42,14 +42,15 @@ class BackupManager(private val repo: TrainingRepository) {
      * All tables read in one transaction: a sync or a saved run in between cannot leave sets without their workout.
      * [signedIn]: the account signed in now, written into the file when the phone has not synced yet.
      */
-    suspend fun snapshot(signedIn: String? = null): Backup {
+    /** [points]: with the runs' GPS points (a backup); the coach's summary goes without them — there can be many. */
+    suspend fun snapshot(signedIn: String? = null, points: Boolean = true): Backup {
         val b = repo.db.backup()
         val st = repo.store
         return repo.db.withTransaction {
             Backup(
                 createdAt = System.currentTimeMillis(), profile = st.profileNow(), program = st.programNow(),
                 runState = st.runStateNow(), settings = st.settingsNow(), liftState = st.liftStateNow(),
-                workouts = b.workouts(), sets = b.sets(), runs = b.runs(), points = b.points(), slots = b.slots(), stats = b.stats(),
+                workouts = b.workouts(), sets = b.sets(), runs = b.runs(), points = if (points) b.points() else emptyList(), slots = b.slots(), stats = b.stats(),
                 bodyWeights = b.bodyWeights(), customExercises = st.customNow(), account = account(signedIn),
             )
         }

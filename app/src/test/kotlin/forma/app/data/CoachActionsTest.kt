@@ -156,19 +156,21 @@ class CoachActionsTest {
         assertEquals(37, repo.store.runStateNow().easyMinutes)
     }
 
-    @Test fun weightsMoveALittleByThemselvesMoreOnAccept() = runBlocking<Unit> {
+    @Test fun aWeightAlwaysWaitsForAcceptAndSetsItsReps() = runBlocking<Unit> {
         val p = weighted(60.0)
         val small = ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 62.5))
-        assertEquals(CoachActions.Mode.AUTO, small.mode)
+        // A weight decides every set from then on: never made unasked.
+        assertEquals(CoachActions.Mode.CONFIRM, small.mode)
         val e = CoachActions.make(repo, small)
-        assertEquals(62.5, db.state().slot(p.tuned.key)!!.weight)
-        // The same exercise again this week, even a little: the person says.
-        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 65)).mode)
-        // More than 10 %: the person says; more than 25 %: never.
+        val row = db.state().slot(p.tuned.key)!!
+        assertEquals(62.5, row.weight)
+        // Heavier: the reps start from the bottom of the range, as when the engine adds weight with no estimate.
+        assertEquals(p.tuned.repMin, row.reps)
+        assertEquals(0, row.stalls)
+        // More than 25 %: never.
         refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 80))
         assertTrue(CoachActions.undo(repo, e))
         assertEquals(60.0, db.state().slot(p.tuned.key)!!.weight)
-        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 70)).mode)
         // Lifted since (the weight moved on): the coach's change stays the person's progress.
         val e2 = CoachActions.make(repo, ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 62.5)))
         db.state().upsertSlot(db.state().slot(p.tuned.key)!!.copy(weight = 65.0))
@@ -176,16 +178,32 @@ class CoachActionsTest {
         assertEquals(65.0, db.state().slot(p.tuned.key)!!.weight)
     }
 
-    @Test fun aWeightComesBackAloneTheRepsStay() = runBlocking<Unit> {
+    @Test fun aWeightComesBackWithItsRepsUnlessLiftedSince() = runBlocking<Unit> {
         val p = weighted(60.0)
-        val e = CoachActions.make(repo, ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 62.5)))
-        // A session at the coach's weight moved the reps on, the weight held.
         db.state().upsertSlot(db.state().slot(p.tuned.key)!!.copy(reps = p.tuned.repMin + 1, stalls = 1))
+        val e = CoachActions.make(repo, ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 62.5)))
         assertTrue(CoachActions.undo(repo, e))
-        val row = db.state().slot(p.tuned.key)!!
-        assertEquals(60.0, row.weight)
-        assertEquals(p.tuned.repMin + 1, row.reps)
-        assertEquals(1, row.stalls)
+        val back = db.state().slot(p.tuned.key)!!
+        assertEquals(60.0, back.weight)
+        assertEquals(p.tuned.repMin + 1, back.reps)
+        assertEquals(1, back.stalls)
+        // A session at the coach's weight moved the reps on: not taken back over it.
+        val e2 = CoachActions.make(repo, ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 62.5)))
+        db.state().upsertSlot(db.state().slot(p.tuned.key)!!.copy(reps = p.tuned.repMin + 1))
+        assertFalse(CoachActions.undo(repo, e2))
+    }
+
+    @Test fun neverBelowWhatTheEngineAllows() = runBlocking<Unit> {
+        val p = weighted(80.0)
+        // A best of 110 kg (estimated max) in the last weeks: the engine never goes under 85 % of what it supports.
+        val summary = LiftSummary(listOf(SlotReport(p.exerciseId, "x", forma.core.strength.Outcome.NotDone, 110.0, false)), 1000.0, 3, 40, 200.0)
+        db.workouts().insert(
+            WorkoutEntity(
+                epochDay = day.toEpochDay() - 3, kind = Kind.LIFT, templateId = p.templateId, title = "x", startedAt = clock - 3 * 86_400_000L,
+                finishedAt = clock - 3 * 86_400_000L + 3_600_000, status = Status.DONE, summaryJson = AppJson.encodeToString(LiftSummary.serializer(), summary),
+            ),
+        )
+        refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 62.5))
     }
 
     @Test fun oneWeightIsOneRepRange() = runBlocking<Unit> {
@@ -343,6 +361,28 @@ class CoachActionsTest {
         refused(call(CoachActions.EASY, "minutes" to "NaN"))
         refused(call(CoachActions.STEP, "exercise" to p.exerciseId, "step_kg" to "NaN"))
         refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to -10))
+    }
+
+    @Test fun theRatingSaysWhichWorkout() = runBlocking<Unit> {
+        // «last workout» is a run or the gym — the coach must say which.
+        refused(call(CoachActions.RATE, "rpe" to 5))
+    }
+
+    @Test fun sicknessAndALongPauseWaitForThePerson() = runBlocking<Unit> {
+        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.SICK, "pause_days" to 0)).mode)
+        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.PAUSE, "days" to 7)).mode)
+        assertEquals(CoachActions.Mode.AUTO, ready(call(CoachActions.PAUSE, "days" to 3)).mode)
+    }
+
+    @Test fun stridesNoMoreThanTwoAboveThePlan() = runBlocking<Unit> {
+        // Four runs so far: the plan gives 4 strides, the coach at most 6.
+        refused(call(CoachActions.STRIDES, "count" to 8, "weeks" to 2))
+        ready(call(CoachActions.STRIDES, "count" to 6, "weeks" to 2))
+    }
+
+    @Test fun aFullMemoryAsksToForgetFirst() = runBlocking<Unit> {
+        repo.updateSettings { it.copy(coachNotes = List(30) { i -> "заметка $i" }) }
+        refused(call(CoachActions.REMEMBER, "text" to "колено ноет"))
     }
 
     @Test fun noLongRunWhereThePlanHasOne() = runBlocking<Unit> {
