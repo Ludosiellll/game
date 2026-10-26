@@ -1,9 +1,8 @@
 // «Спросить тренера»: a signed-in user's question about their own training, answered by Gemini with the summary of the
 // training the app sends. The app may also send the changes the coach can make (function declarations): Gemini answers
 // with text and the calls it chose, and the app checks and makes them itself — this function only passes them on. The keys
-// stay here (the GEMINI_API_KEY secret, and GEMINI_API_KEY2 — another account's — used only when the first one is broken:
-// refused, unreachable, Google failing; never to go past the first one's limit, which Google's terms forbid), never in
-// the app; verify_jwt stays on, so only a signed-in user of this project reaches this code.
+// stay here (the GEMINI_API_KEY secret, and GEMINI_API_KEY2 — the owner's second key, used when the first one fails or its
+// limit is spent), never in the app; verify_jwt stays on, so only a signed-in user of this project reaches this code.
 // Nothing is stored.
 
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash-lite";
@@ -97,8 +96,7 @@ Deno.serve(async (req) => {
     // Room for the model's own short thinking, which counts toward the limit.
     generationConfig: { maxOutputTokens: 2500 },
   });
-  // The first key; the next one only when this one is broken (refused, unreachable, Google failing) — a spent limit (429)
-  // is waited out, not gone round with another account's key.
+  // The first key; the next one when this one fails (refused, unreachable, Google failing) or its limit is spent (429).
   let res: Response | null = null;
   for (const key of keys) {
     try {
@@ -111,7 +109,7 @@ Deno.serve(async (req) => {
       res = null;
       continue;
     }
-    if (res.ok || res.status === 429) break;
+    if (res.ok) break;
   }
   if (!res) return json({ error: "provider" }, 502);
   if (!res.ok) return json({ error: res.status === 429 ? "busy" : "provider", status: res.status }, 502);
