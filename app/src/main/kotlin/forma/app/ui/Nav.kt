@@ -43,7 +43,7 @@ sealed interface Screen {
     /** The first look round the app; [first] — right after the questionnaire (then the main screen follows). */
     @Serializable data class Tour(val first: Boolean) : Screen
     @Serializable data object Help : Screen
-    @Serializable data object Coach : Screen
+    @Serializable data class Coach(val question: String? = null, val workoutId: Long? = null) : Screen
 }
 
 /** What the exercise library was opened for. */

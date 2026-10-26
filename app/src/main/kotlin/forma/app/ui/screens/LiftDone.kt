@@ -104,6 +104,7 @@ fun LiftDoneScreen(workoutId: Long) {
             }
         }
         Text("Нагрузка тренировки: ${summary.load.roundToInt()}. Это твоя оценка × минуты. По ней считаются форма, усталость и «Свежесть».", style = T.secondary(13.sp))
+        CoachReviewCard(workout.id, workout.title, java.time.LocalDate.ofEpochDay(workout.epochDay))
         NextToday { nav.tab(Screen.Today) }
     }
 }

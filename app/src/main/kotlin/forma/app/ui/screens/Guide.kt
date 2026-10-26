@@ -170,7 +170,7 @@ fun HelpScreen() {
     ScrollScreen {
         TopBar("Как пользоваться", onBack = { nav.back() })
         PrimaryButton("Знакомство с приложением", { nav.push(Screen.Tour(first = false)) }, Modifier.fillMaxWidth())
-        GhostButton("Спросить тренера (ИИ)", { nav.push(Screen.Coach) }, Modifier.fillMaxWidth())
+        GhostButton("Спросить тренера (ИИ)", { nav.tab(Screen.Coach()) }, Modifier.fillMaxWidth())
         SectionLabel("Экраны")
         FCard(gap = 10.dp) {
             SCREENS.forEachIndexed { i, (name, text) ->

@@ -1159,6 +1159,7 @@ fun RunDoneScreen(workoutId: Long) {
             val savedW = w
             val savedRun = run
             if (savedW != null && savedRun != null) RunDebrief(savedW, savedRun, s.second)
+            if (savedW != null && savedRun != null) CoachReviewCard(savedW.id, savedW.title, java.time.LocalDate.ofEpochDay(savedW.epochDay))
             // The plan the run was run to: a shorter run than usual says so instead of "the length stays".
             val savedPlan = remember(savedRun) {
                 savedRun?.let { runCatching { forma.app.data.AppJson.decodeFromString(RunWorkout.serializer(), it.planJson) }.getOrNull() }

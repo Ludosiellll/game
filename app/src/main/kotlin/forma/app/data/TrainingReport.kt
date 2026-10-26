@@ -366,6 +366,18 @@ object TrainingReport {
         appendLine()
     }
 
+    /** One workout as the report writes it (the coach's review of it reads this): the plan, what was done, the outcome. */
+    fun workout(w: WorkoutEntity, sets: List<SetEntity>, run: RunEntity?): String = buildString {
+        appendLine(listOfNotNull(
+            if (w.kind == Kind.LIFT) "зал" else "бег",
+            w.durationSec?.let { "${(it / 60.0).roundToInt()} мин" },
+            w.rpe?.let { "тяжесть $it/10" },
+            if (w.deload) "разгрузка" else null,
+        ).joinToString(" · "))
+        if (w.kind == Kind.LIFT) lift(w, sets) else run?.let { run(w, it) }
+        w.note?.takeIf { it.isNotBlank() }?.let { appendLine("Заметка: $it") }
+    }
+
     private fun StringBuilder.lift(w: WorkoutEntity, sets: List<SetEntity>) {
         val plan = w.planJson?.let { runCatching { AppJson.decodeFromString(LiftPlan.serializer(), it) }.getOrNull() }
         val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }

@@ -65,6 +65,12 @@ class TrainingRepository(
     /** Today by the repository's clock (tests and simulations move it). */
     fun today(): LocalDate = dayOf(now())
 
+    /** The repository's clock, ms. */
+    fun nowMs(): Long = now()
+
+    /** Something worth copying to the cloud was saved past the repository's own functions (the coach's edits). */
+    internal fun changed() = onChange()
+
     /** Midday of [date] in this phone's time zone (when a run entered for an earlier day is filed). */
     fun middayOf(date: LocalDate): Long = date.atTime(12, 0).atZone(zone()).toInstant().toEpochMilli()
 
@@ -1402,7 +1408,9 @@ class TrainingRepository(
         if (toRace == 0L && goal != null && st.canRunContinuously) return RunPlan.race(st, goal)
         val taper = toRace != null && toRace in 1..14
         val lighter = cutback || taper
-        val longEasy = kind == SessionKind.RUN_EASY && program != null && longEasyDay(program, date, goal?.middleDistance == true)
+        val settings = store.settingsNow()
+        val coachLong = settings.coachLong?.on(date) == true
+        val longEasy = kind == SessionKind.RUN_EASY && program != null && longEasyDay(program, date, goal?.middleDistance == true, coachLong)
         // Back from being sick: the first runs easy, no reps and no strides, whatever the day holds.
         val sickLeft = easyAfterSick(date)
         val sickNote = "После болезни начинаем мягко: ещё $sickLeft ${Ru.plural(sickLeft, "лёгкая пробежка", "лёгкие пробежки", "лёгких пробежек")}, " +
@@ -1442,7 +1450,9 @@ class TrainingRepository(
                 val liftDay = program?.week?.on(date.dayOfWeek.value)?.any { it.kind == SessionKind.LIFT } == true
                 val short = liftDay && profile?.doubleDays != true
                 val base = guess ?: st
-                val strides = if (program != null && stridesOn(program, date, goal?.middleDistance == true) && st.returnEasy == 0) RunPlan.strides(st, lighter) else 0
+                // The coach's count, where the plan has strides (no more than 4 in a lighter week).
+                val own = settings.coachStrides?.takeIf { it.on(date) }?.value?.let { if (lighter) minOf(it, 4) else it }
+                val strides = if (program != null && stridesOn(program, date, goal?.middleDistance == true, coachLong) && st.returnEasy == 0) own ?: RunPlan.strides(st, lighter) else 0
                 RunPlan.easy(if (short) base.copy(easyMinutes = minOf(base.easyMinutes, 30)) else base, lighter, date.toEpochDay(), strides)
                     .let { if (guess != null) RunPlan.provisional(it) else it }
             }
@@ -1680,21 +1690,22 @@ class TrainingRepository(
 
     /**
      * A middle-distance week with two easy runs or more and no long run: its last easy run (not on a leg day when another
-     * one is free of it) is a long easy run of up to an hour — the aerobic base the reps stand on.
+     * one is free of it) is a long easy run of up to an hour — the aerobic base the reps stand on. [coach]: the coach set a
+     * long easy run ([Settings.coachLong]) — then any week with an easy run and no long one has it, on the same day.
      */
-    private fun longEasyDay(program: Program, date: LocalDate, middle: Boolean): Boolean {
-        if (!middle || program.week.days.any { d -> d.sessions.any { it.kind == SessionKind.RUN_LONG } }) return false
+    private fun longEasyDay(program: Program, date: LocalDate, middle: Boolean, coach: Boolean = false): Boolean {
+        if (!middle && !coach || program.week.days.any { d -> d.sessions.any { it.kind == SessionKind.RUN_LONG } }) return false
         val easy = easyDays(program)
-        if (easy.size < 2) return false
+        if (easy.isEmpty() || easy.size < 2 && !coach) return false
         val monday = date.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
         val pick = easy.lastOrNull { !legsOn(program, monday.plusDays(it - 1L)) } ?: easy.last()
         return date.dayOfWeek.value == pick
     }
 
     /** Strides go with the first two easy runs of a week that has hard runs (not the long easy one). */
-    private fun stridesOn(program: Program, date: LocalDate, middle: Boolean): Boolean {
+    private fun stridesOn(program: Program, date: LocalDate, middle: Boolean, coachLong: Boolean = false): Boolean {
         if (program.week.days.none { d -> d.sessions.any { it.kind == SessionKind.RUN_QUALITY } }) return false
-        return date.dayOfWeek.value in easyDays(program).filter { !longEasyDay(program, date.with(java.time.DayOfWeek.of(it)), middle) }.take(2)
+        return date.dayOfWeek.value in easyDays(program).filter { !longEasyDay(program, date.with(java.time.DayOfWeek.of(it)), middle, coachLong) }.take(2)
     }
 
     /**
@@ -1708,7 +1719,8 @@ class TrainingRepository(
         val caps = ProgramGenerator.runCaps(program, middle)
         val legs = legsOn(program, date)
         // The long easy run of a middle-distance week: up to an hour (after the legs, as an easy run after them).
-        val long = if (longEasyDay(program, date, middle)) min(caps.longMax, if (legs) AFTER_LEGS_EASY else 60) else caps.longMax
+        val coach = store.settingsNow().coachLong?.on(date) == true
+        val long = if (longEasyDay(program, date, middle, coach)) min(caps.longMax, if (legs) AFTER_LEGS_EASY else 60) else caps.longMax
         return caps.copy(easyMax = if (legs) min(caps.easyMax, AFTER_LEGS_EASY) else caps.easyMax, longMax = long)
     }
 

@@ -1,5 +1,7 @@
 package forma.app.ui
 
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -79,6 +81,10 @@ val LocalSettings = staticCompositionLocalOf { Settings() }
 /** Null in previews and tests: cloud screens then show "not configured". */
 val LocalCloud = staticCompositionLocalOf<Cloud?> { null }
 
+/** Who answers the coach's questions when not the cloud: a stand-in in tests (null — the cloud, when signed in). */
+val LocalCoachApi = staticCompositionLocalOf<forma.app.sync.CoachApi?> { null }
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun AppRoot() {
     val repo = LocalRepo.current
@@ -116,13 +122,14 @@ fun AppRoot() {
                         holder.SaveableStateProvider(entry.id) { ScreenFor(entry.screen) }
                     }
                 }
-                if (nav.current in TABS) BottomBar(nav)
+                // Typing (the coach's chat): the keyboard takes the bar's place, the field sits right on it.
+                if (nav.current in TABS && !WindowInsets.isImeVisible) BottomBar(nav)
             }
         }
     }
 }
 
-private val TABS = listOf(Screen.Today, Screen.Plan, Screen.Progress, Screen.More)
+private val TABS = listOf(Screen.Today, Screen.Plan, Screen.Coach(), Screen.Progress, Screen.More)
 
 @Composable
 private fun ScreenFor(screen: Screen) {
@@ -154,7 +161,7 @@ private fun ScreenFor(screen: Screen) {
         Screen.IdealPlan -> forma.app.ui.screens.IdealPlanScreen()
         is Screen.Tour -> forma.app.ui.screens.TourScreen(screen.first)
         Screen.Help -> forma.app.ui.screens.HelpScreen()
-        Screen.Coach -> forma.app.ui.screens.CoachScreen()
+        is Screen.Coach -> forma.app.ui.screens.CoachScreen(screen.question, screen.workoutId)
     }
 }
 
@@ -165,6 +172,7 @@ private fun BottomBar(nav: Navigator) {
         Row(Modifier.fillMaxWidth().height(if (F.type.capsTitles) 60.dp else 72.dp)) {
             TabItem("Сегодня", Ic.home, nav.current == Screen.Today) { nav.tab(Screen.Today) }
             TabItem("План", Ic.calendar, nav.current == Screen.Plan) { nav.tab(Screen.Plan) }
+            TabItem("Тренер", Ic.chat, nav.current == Screen.Coach()) { nav.tab(Screen.Coach()) }
             TabItem("Прогресс", Ic.chart, nav.current == Screen.Progress) { nav.tab(Screen.Progress) }
             TabItem("Ещё", Ic.more, nav.current == Screen.More) { nav.tab(Screen.More) }
         }

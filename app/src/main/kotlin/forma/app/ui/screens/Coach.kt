@@ -1,19 +1,40 @@
 package forma.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -22,144 +43,415 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import forma.app.BuildConfig
-import forma.app.data.BackupManager
-import forma.app.data.TrainingReport
-import forma.app.data.TrainingRepository
+import forma.app.data.CoachActState
+import forma.app.data.CoachActions
+import forma.app.data.CoachChatAct
+import forma.app.data.CoachChatMsg
+import forma.app.data.CoachLogEntry
+import forma.app.data.CoachTalk
+import forma.app.sync.CoachApi
 import forma.app.sync.CoachException
 import forma.app.sync.CoachTurn
 import forma.app.ui.LocalCloud
+import forma.app.ui.LocalCoachApi
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
+import forma.app.ui.LocalSettings
 import forma.app.ui.Screen
-import forma.app.ui.components.Chip
 import forma.app.ui.components.FCard
 import forma.app.ui.components.GhostButton
 import forma.app.ui.components.PrimaryButton
-import forma.app.ui.components.TopBar
+import forma.app.ui.components.RoundIcon
+import forma.app.ui.components.SectionLabel
 import forma.app.ui.theme.F
+import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
-import forma.core.plan.SessionKind
+import forma.core.text.Ru
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
-/** Questions to start with: what newcomers ask, about their own day and numbers. */
+/** Questions to start with: what newcomers ask, about their day and numbers, and what the coach can change. */
 private val STARTERS = listOf(
     "Почему сегодня такая тренировка?",
-    "Объясни простыми словами мои цифры",
-    "Как прошла неделя?",
-    "Не успеваю в зал — что делать?",
-    "Что съесть до и после тренировки?",
+    "Разбери мою последнюю тренировку",
+    "Как идёт мой прогресс?",
+    "Сегодня плохо себя чувствую — давай полегче",
+    "Почему мне дают меньше веса, чем я могу?",
+    "Прошлая пробежка была лёгкой, хочу бегать дольше",
 )
 
-/** The summary sent with a question: today, the training as the readable report has it, and how the app works. */
-suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today()): String {
-    val program = repo.store.programNow()
-    val todayLines = program?.week?.on(today.dayOfWeek.value).orEmpty().map { s ->
-        if (s.kind == SessionKind.LIFT) {
-            val plan = runCatching { repo.liftPlan(s.templateId!!, today) }.getOrNull()
-            "- Силовая «${plan?.title ?: s.templateId}»" + (plan?.let { p -> ": " + p.items.joinToString("; ") { "${it.name} ${it.prescription.sets}×${it.prescription.reps}" + (it.prescription.weight?.let { w -> " ${forma.core.text.Ru.kg(w)} кг" } ?: "") } } ?: "")
-        } else {
-            val w = runCatching { repo.runFor(s.kind, today) }.getOrNull()
-            "- Бег «${w?.title}»: ${w?.note.orEmpty()}"
+/** Who answers: the stand-in of tests, or the cloud when the person is signed in; and whether they can ask now. */
+@Composable
+private fun coachApi(): Pair<CoachApi?, Boolean> {
+    val stand = LocalCoachApi.current
+    if (stand != null) return stand to true
+    val cloud = LocalCloud.current
+    val email = cloud?.state?.collectAsState()?.value?.email
+    return cloud to (cloud != null && email != null)
+}
+
+private enum class Panel { MEMORY, CHANGES, ABOUT }
+
+/**
+ * «Тренер»: a chat with an AI coach (Gemini, through the project's server function) that knows the training, the app's
+ * rules and what it was told about the person. It explains, reviews workouts and makes changes within the app's limits —
+ * the day, ratings, running and weights at once (with «Вернуть»), the gym plan, the goal and the stadium on «Принять».
+ * A tab of its own; opened with [question] (a workout's review) it asks it at once.
+ */
+@Composable
+fun CoachScreen(question: String? = null, workoutId: Long? = null) {
+    val repo = LocalRepo.current
+    val scope = rememberCoroutineScope()
+    val nav = LocalNav.current
+    val settings = LocalSettings.current
+    val (api, signedIn) = coachApi()
+    val chat by repo.store.coachChat.collectAsState(initial = emptyList())
+    val log by repo.store.coachLog.collectAsState(initial = emptyList())
+    val busy by CoachTalk.busy.collectAsState()
+    val failed by CoachTalk.failed.collectAsState()
+    var typed by rememberSaveable { mutableStateOf("") }
+    var panel by rememberSaveable { mutableStateOf<Panel?>(null) }
+    fun send(q: String) {
+        val c = api ?: return
+        if (q.isBlank() || busy) return
+        typed = ""
+        // Opened from a workout: its details go with every question here.
+        CoachTalk.send(repo, c, q.trim()) { coachContext(repo) + (workoutId?.let { id -> coachWorkoutFacts(repo, id)?.let { "\n\n$it" } } ?: "") }
+    }
+    // A question that got no answer goes back into the field, to send again.
+    LaunchedEffect(failed) { failed?.second?.let { if (typed.isBlank()) typed = it } }
+    var asked by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(question, signedIn) { if (question != null && !asked && signedIn) { asked = true; send(question) } }
+    val list = rememberLazyListState()
+    // The newest at the bottom in sight: after a question, an answer, and when the screen opens.
+    val count = (if (panel != null) 1 else 0) + (if (chat.isEmpty()) 1 else 0) + chat.size + (if (busy) 1 else 0) + (if (failed != null) 1 else 0)
+    LaunchedEffect(chat.size, busy, failed) { if (count > 0) list.scrollToItem(count - 1) }
+    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().let { if (nav.canGoBack) it.navigationBarsPadding() else it }) {
+        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (nav.canGoBack) { RoundIcon(Ic.back, "Назад", { nav.back() }, size = 42.dp); Spacer(Modifier.width(10.dp)) }
+            Avatar(40.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Тренер", style = T.title(22.sp))
+                Text(if (busy) "печатает…" else "ИИ · знает твои тренировки", style = T.secondary(13.sp).copy(color = if (busy) F.c.accent else F.c.text2))
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            fun toggle(p: Panel) {
+                panel = if (panel == p) null else p
+                // An opened panel is the first thing of the list: shown from its top.
+                if (panel != null) scope.launch { list.scrollToItem(0) }
+            }
+            ToolChip("Что знает обо мне", settings.coachNotes.size, panel == Panel.MEMORY) { toggle(Panel.MEMORY) }
+            ToolChip("Изменения", log.count { !it.undone }, panel == Panel.CHANGES) { toggle(Panel.CHANGES) }
+            ToolChip("Как это работает", null, panel == Panel.ABOUT) { toggle(Panel.ABOUT) }
+            if (chat.isNotEmpty()) ToolChip("Новый разговор", null, false) { scope.launch { CoachTalk.clear(repo) } }
+        }
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(), state = list,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            // A short talk sits by the field, as in a messenger.
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
+        ) {
+            panel?.let { p -> item(key = "panel") { PanelCard(p, settings.coachNotes, log) } }
+            if (chat.isEmpty()) item(key = "hello") { Welcome(enabled = signedIn && !busy, onAsk = ::send) }
+            items(chat, key = { it.id }) { m -> Message(m, log) }
+            if (busy) item(key = "typing") { Typing() }
+            failed?.let { (why, _) -> item(key = "failed") { Text(why, style = T.body(14.sp).copy(color = F.c.warn), modifier = Modifier.padding(horizontal = 8.dp)) } }
+        }
+        if (signedIn) InputBar(typed, { typed = it }, enabled = !busy, onSend = { send(typed) })
+        else SignIn { nav.push(Screen.Cloud) }
+    }
+}
+
+/** A small pill over the talk: a panel to open (with a count) or an action. */
+@Composable
+private fun ToolChip(text: String, count: Int?, selected: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Row(
+        Modifier.heightIn(min = 40.dp).clip(shape).background(if (selected) F.c.text else F.c.surface)
+            .border(1.dp, if (selected) F.c.text else F.c.line, shape)
+            .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        val fg = if (selected) F.c.bg else F.c.text
+        Text(text, style = T.body(14.sp, FontWeight.SemiBold).copy(color = fg), maxLines = 1)
+        if (count != null) Box(
+            Modifier.heightIn(min = 20.dp).widthIn(min = 20.dp).clip(RoundedCornerShape(50)).background(if (selected) F.c.bg else F.c.surface2)
+                .padding(horizontal = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) { Text("$count", style = T.body(12.sp, FontWeight.Bold).copy(color = if (selected) F.c.text else F.c.text2)) }
+    }
+}
+
+/** The coach's round mark: its initial on the accent. */
+@Composable
+private fun Avatar(size: androidx.compose.ui.unit.Dp) {
+    Box(Modifier.size(size).clip(CircleShape).background(F.c.accent), contentAlignment = Alignment.Center) {
+        Icon(Ic.chat, null, tint = F.c.onAccent, modifier = Modifier.size(size * 0.55f))
+    }
+}
+
+/** The first look: who the coach is, what it can do, questions to start with. */
+@Composable
+private fun Welcome(enabled: Boolean, onAsk: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        CoachBubble {
+            Text("Привет! Я тренер в «Форме» и вижу твои тренировки.", style = T.body(15.sp, FontWeight.Bold))
+            Text(
+                "Объясню, почему тренировка такая и как идёт прогресс. Разберу тренировку. Поменяю план по твоей просьбе: " +
+                    "скажу, что и почему, а ты сможешь вернуть как было.",
+                style = T.body(15.sp),
+            )
+        }
+        SectionLabel("Можно спросить", Modifier.padding(start = 4.dp, top = 4.dp))
+        STARTERS.forEach { q ->
+            val shape = RoundedCornerShape(F.shape.radiusSmall + 6.dp)
+            Box(
+                Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(shape).border(1.dp, F.c.line, shape)
+                    .clickable(enabled = enabled, role = Role.Button) { onAsk(q) }.padding(horizontal = 14.dp, vertical = 12.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) { Text(q, style = T.body(15.sp).copy(color = if (enabled) F.c.text else F.c.text3)) }
         }
     }
-    val b = BackupManager(repo).snapshot()
-    val feel = TrainingReport.feelWords(repo.store.settingsNow().feels)
-    val report = withContext(Dispatchers.Default) { TrainingReport.build(b, today, BuildConfig.VERSION_NAME, feel) }
-    return buildString {
-        appendLine("Сегодня ${forma.core.text.Ru.date(today)} ${today.year}.")
-        appendLine(if (todayLines.isEmpty()) "По плану сегодня отдых." else "По плану сегодня:\n" + todayLines.joinToString("\n"))
-        appendLine()
-        appendLine(report.take(30_000))
-        appendLine()
-        appendLine("## Как устроено приложение")
-        SCREENS.forEach { (name, text) -> appendLine("- $name: $text") }
-        appendLine("## Словарь приложения")
-        GLOSSARY.forEach { (word, text) -> appendLine("- $word: $text") }
+}
+
+/** A message: the person's on the right in the accent's tint; the coach's on the left, with its changes under it. */
+@Composable
+private fun Message(m: CoachChatMsg, log: List<CoachLogEntry>) {
+    if (m.mine) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Box(
+                Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp))
+                    .background(F.c.accent).padding(horizontal = 14.dp, vertical = 10.dp),
+            ) { SelectionContainer { Text(m.text, style = T.body(15.sp).copy(color = F.c.onAccent)) } }
+        }
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (m.text.isNotBlank()) CoachBubble { SelectionContainer { Text(m.text, style = T.body(15.sp)) } }
+        m.acts.forEachIndexed { i, a -> ActCard(m.id, i, a, log) }
+    }
+}
+
+@Composable
+private fun CoachBubble(content: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Column(
+            Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)).background(F.c.surface)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) { content() }
+    }
+}
+
+/** «печатает…» while the answer comes. */
+@Composable
+private fun Typing() {
+    CoachBubble { Text("Тренер думает…", style = T.secondary(15.sp)) }
+}
+
+/** A change under the coach's answer: made (with «Вернуть»), waiting for «Принять», or not made and why. */
+@Composable
+private fun ActCard(msgId: Long, index: Int, act: CoachChatAct, log: List<CoachLogEntry>) {
+    val repo = LocalRepo.current
+    val scope = rememberCoroutineScope()
+    var note by remember(msgId, index) { mutableStateOf<String?>(null) }
+    // Taken back elsewhere («Изменения»): shown so here too.
+    val state = if (act.state == CoachActState.DONE && log.firstOrNull { it.id == act.logId }?.undone == true) CoachActState.UNDONE else act.state
+    val pending = state == CoachActState.PENDING
+    val done = state == CoachActState.DONE
+    FCard(
+        Modifier.padding(start = 12.dp), gap = 8.dp, padding = PaddingValues(14.dp),
+        outline = when { pending -> F.c.accent; done -> F.c.good.copy(alpha = 0.6f); else -> null },
+    ) {
+        SectionLabel(
+            when (state) {
+                CoachActState.PENDING -> "Предлагаю изменить"
+                CoachActState.DONE -> "Сделано"
+                CoachActState.UNDONE -> "Возвращено как было"
+                CoachActState.DECLINED -> "Не стал менять"
+                CoachActState.REFUSED -> "Не получилось"
+            },
+            color = when (state) { CoachActState.DONE -> F.c.good; CoachActState.PENDING -> F.c.accent; else -> F.c.text3 },
+        )
+        Text(act.text, style = T.body(15.sp, if (pending || done) FontWeight.SemiBold else FontWeight.Medium).copy(color = if (pending || done) F.c.text else F.c.text2))
+        act.why?.let { Text("Почему: $it", style = T.secondary(14.sp)) }
+        when (state) {
+            CoachActState.PENDING -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrimaryButton("Принять", { scope.launch { runCatching { CoachTalk.accept(repo, msgId, index) }.onFailure { note = "Не получилось — попробуй ещё раз." } } }, Modifier.weight(1f))
+                GhostButton("Не надо", { scope.launch { CoachTalk.decline(repo, msgId, index) } }, Modifier.weight(1f))
+            }
+            CoachActState.DONE -> if (log.firstOrNull { it.id == act.logId }?.undo != null) GhostButton("Вернуть как было", {
+                scope.launch { if (!CoachTalk.undo(repo, msgId, index)) note = "Уже не вернуть: после этого всё изменилось." }
+            }, Modifier.fillMaxWidth())
+            else -> Unit
+        }
+        note?.let { Text(it, style = T.secondary(13.sp)) }
+    }
+}
+
+/** What opens under the chips: what the coach knows, its changes, how it works. */
+@Composable
+private fun PanelCard(p: Panel, notes: List<String>, log: List<CoachLogEntry>) {
+    val repo = LocalRepo.current
+    val scope = rememberCoroutineScope()
+    FCard(gap = 10.dp) {
+        when (p) {
+            Panel.MEMORY -> {
+                SectionLabel("Что тренер знает обо мне")
+                if (notes.isEmpty()) Text("Пока ничего. Расскажи тренеру, что тебе нравится, что нет, какие гантели в зале — он запомнит.", style = T.secondary(14.sp))
+                notes.forEach { n ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(n, style = T.body(14.sp), modifier = Modifier.weight(1f))
+                        GhostButton("Забыть", { scope.launch { repo.updateSettings { it.copy(coachNotes = it.coachNotes - n) } } })
+                    }
+                }
+            }
+            Panel.CHANGES -> {
+                SectionLabel("Что поменял тренер")
+                if (log.isEmpty()) Text("Пока ничего не менял.", style = T.secondary(14.sp))
+                var note by remember { mutableStateOf<String?>(null) }
+                var all by remember { mutableStateOf(false) }
+                val zone = java.time.ZoneId.systemDefault()
+                log.reversed().let { if (all) it else it.take(8) }.forEach { e ->
+                    val day = java.time.Instant.ofEpochMilli(e.at).atZone(zone).toLocalDate()
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("${Ru.date(day)} · ${e.text}", style = T.body(14.sp).copy(color = if (e.undone) F.c.text3 else F.c.text))
+                        e.why?.let { Text("Почему: $it", style = T.secondary(13.sp)) }
+                        if (e.undone) Text("Возвращено как было", style = T.secondary(13.sp))
+                        else if (e.undo != null) GhostButton("Вернуть как было", {
+                            scope.launch { if (!CoachActions.undo(repo, e)) note = "Уже не вернуть: после этого всё изменилось." }
+                        })
+                    }
+                }
+                if (log.size > 8 && !all) GhostButton("Показать все (${log.size})", { all = true })
+                note?.let { Text(it, style = T.secondary(13.sp)) }
+            }
+            Panel.ABOUT -> {
+                SectionLabel("Как это работает")
+                Text(
+                    "Тренер — ИИ (Gemini от Google). Он видит твой план, тренировки, бег, самочувствие и правила приложения, " +
+                        "на которых строятся тренировки.",
+                    style = T.body(14.sp),
+                )
+                Text(
+                    "Сам меняет: самочувствие на сегодня, паузу и «Болею», оценку тренировки, длину лёгкого бега, ускорения, " +
+                        "шаг веса и рабочий вес (до 10 %). Каждое такое изменение можно вернуть. Больше 6 изменений в день сам не делает.",
+                    style = T.body(14.sp),
+                )
+                Text(
+                    "Только после «Принять»: упражнения, подходы, повторы, отдых, цель, стадион и вес больше чем на 10 %. " +
+                        "Пределы приложения ИИ не обойдёт: бег растёт не больше чем на 10 % в неделю, вес — не больше чем на 25 % за раз.",
+                    style = T.body(14.sp),
+                )
+                Text(
+                    "При боли или болезни — к врачу. Вопросы и сводка тренировок (без имени и почты) уходят в Google; " +
+                        "на бесплатном тарифе Google может использовать переписку для улучшения моделей.",
+                    style = T.secondary(13.sp),
+                )
+            }
+        }
+    }
+}
+
+/** The field and the send button, on the keyboard when typing. */
+@Composable
+private fun InputBar(value: String, onChange: (String) -> Unit, enabled: Boolean, onSend: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().background(F.c.bg).padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        val shape = RoundedCornerShape(22.dp)
+        Box(
+            Modifier.weight(1f).heightIn(min = 48.dp).clip(shape).background(F.c.surface).border(1.dp, F.c.line, shape)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            if (value.isEmpty()) Text("Напиши тренеру…", style = T.body(16.sp).copy(color = F.c.text3))
+            BasicTextField(
+                value, { if (it.length <= 1000) onChange(it) },
+                Modifier.fillMaxWidth().semantics { contentDescription = "Сообщение тренеру" },
+                textStyle = T.body(16.sp), cursorBrush = SolidColor(F.c.accent), maxLines = 6,
+            )
+        }
+        val can = enabled && value.isNotBlank()
+        Box(
+            Modifier.size(48.dp).clip(CircleShape).background(if (can) F.c.accent else F.c.surface2)
+                .clickable(enabled = can, role = Role.Button, onClickLabel = "Отправить", onClick = onSend),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Ic.send, "Отправить", tint = if (can) F.c.onAccent else F.c.text3, modifier = Modifier.size(24.dp)) }
+    }
+}
+
+/** Not signed in: the coach works through the cloud. */
+@Composable
+private fun SignIn(onSignIn: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Тренер работает через облако: нужен вход по почте.", style = T.body(15.sp))
+        PrimaryButton("Войти в облако", onSignIn, Modifier.fillMaxWidth())
     }
 }
 
 /**
- * «Спросить тренера»: questions about one's own training answered by an AI (Gemini, through the project's server
- * function) with the summary of the training. It explains and advises; the plan is the app's, changed only by the person.
+ * The coach's word on a finished workout: what went well, what not, what to do next time — asked once by itself when the
+ * coach can answer, then kept on the phone. Nothing shown when the coach is not set up.
  */
 @Composable
-fun CoachScreen() {
+fun CoachReviewCard(workoutId: Long, title: String, day: LocalDate) {
     val repo = LocalRepo.current
-    val nav = LocalNav.current
-    val cloud = LocalCloud.current
-    val state = cloud?.state?.collectAsState()?.value
-    val scope = rememberCoroutineScope()
-    val turns = remember { mutableStateListOf<CoachTurn>() }
-    var typed by rememberSaveable { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    fun ask(question: String) {
-        val q = question.trim()
-        if (q.isEmpty() || busy) return
-        val c = cloud ?: run { error = CoachException.Reason.NOT_SET_UP.text; return }
-        turns += CoachTurn(CoachTurn.USER, q)
-        typed = ""
-        error = null
+    val (api, signedIn) = coachApi()
+    if (api == null || !signedIn) return
+    var text by remember(workoutId) { mutableStateOf<String?>(null) }
+    var error by remember(workoutId) { mutableStateOf<String?>(null) }
+    var busy by remember(workoutId) { mutableStateOf(false) }
+    var tries by remember(workoutId) { mutableIntStateOf(0) }
+    LaunchedEffect(workoutId, tries) {
+        repo.store.coachReview(workoutId)?.let { text = it; return@LaunchedEffect }
         busy = true
-        scope.launch {
-            try {
-                val answer = c.askCoach(turns.toList(), coachContext(repo))
-                turns += CoachTurn(CoachTurn.MODEL, answer)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: CoachException) {
-                error = e.reason.text
-            } catch (e: Exception) {
-                error = CoachException.Reason.FAILED.text
-            } finally {
-                busy = false
+        error = null
+        try {
+            val facts = coachWorkoutFacts(repo, workoutId) ?: return@LaunchedEffect
+            val reply = api.askCoach(listOf(CoachTurn(CoachTurn.USER, reviewQuestion(title, day))), coachContext(repo) + "\n\n" + facts)
+            if (reply.text.isNotBlank()) {
+                repo.store.setCoachReview(workoutId, reply.text)
+                text = reply.text
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: CoachException) {
+            error = e.reason.text
+        } catch (e: Exception) {
+            error = CoachException.Reason.FAILED.text
+        } finally {
+            busy = false
         }
     }
-    ScrollScreen {
-        TopBar("Спросить тренера", "ИИ · Gemini", onBack = { nav.back() })
-        Text(
-            "Ответы пишет ИИ по твоим тренировкам. План он не меняет — подскажет, где это сделать. При боли или болезни — к врачу. " +
-                "Вопрос и сводка тренировок (без имени и почты) уходят в Gemini от Google; на бесплатном тарифе Google может " +
-                "использовать переписку для улучшения моделей.",
-            style = T.secondary(12.sp),
-        )
-        if (cloud == null || state?.email == null) {
-            FCard(gap = 8.dp) {
-                Text("Тренер работает через облако: нужен вход по почте.", style = T.body(15.sp))
-                GhostButton("Войти в облако", { nav.push(Screen.Cloud) }, Modifier.fillMaxWidth())
+    val nav = LocalNav.current
+    FCard(gap = 10.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Avatar(28.dp)
+            SectionLabel("Разбор тренера")
+        }
+        when {
+            text != null -> SelectionContainer { Text(text!!, style = T.body(15.sp)) }
+            busy -> Text("Тренер смотрит тренировку…", style = T.secondary(14.sp))
+            error != null -> {
+                Text(error!!, style = T.secondary(14.sp))
+                GhostButton("Ещё раз", { tries++ })
             }
         }
-        if (turns.isEmpty()) {
-            Text("С чего начать:", style = T.secondary(14.sp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                STARTERS.forEach { q -> Chip(q, false, { ask(q) }) }
-            }
-        }
-        turns.forEach { t -> Bubble(t) }
-        if (busy) Text("Думаю…", style = T.secondary(14.sp))
-        error?.let { Text(it, style = T.body(14.sp).copy(color = F.c.warn)) }
-        TextInput(typed, { typed = it }, "Твой вопрос", placeholder = "Например: можно ли бегать на следующий день после ног?", maxLength = 500)
-        PrimaryButton(if (busy) "Думаю…" else "Спросить", { ask(typed) }, Modifier.fillMaxWidth(), enabled = !busy && typed.isNotBlank())
-        if (turns.isNotEmpty()) GhostButton("Новый разговор", { turns.clear(); error = null }, Modifier.fillMaxWidth())
-    }
-}
-
-/** One message: the person's on the right, the coach's on the left. */
-@Composable
-private fun Bubble(t: CoachTurn) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (t.mine) Arrangement.End else Arrangement.Start) {
-        Box(
-            Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(F.shape.radiusSmall + 6.dp))
-                .background(if (t.mine) F.c.accent.copy(alpha = 0.18f) else F.c.surface).padding(horizontal = 14.dp, vertical = 10.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) { Text(t.text, style = T.body(15.sp)) }
+        if (text != null) GhostButton("Обсудить с тренером", { nav.push(Screen.Coach("Давай обсудим мою тренировку ${Ru.date(day)} «$title».", workoutId)) }, Modifier.fillMaxWidth())
     }
 }

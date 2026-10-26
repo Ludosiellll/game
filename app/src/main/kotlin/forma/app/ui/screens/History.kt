@@ -203,6 +203,7 @@ fun HistoryItemScreen(workoutId: Long) {
                 }
             }
         }
+        CoachReviewCard(workout.id, workout.title, LocalDate.ofEpochDay(workout.epochDay))
         GhostButton("Удалить из истории", { confirm = true }, Modifier.fillMaxWidth(), color = F.c.bad)
     }
     if (rating) RatingDialog(workout.rpe, run = workout.kind == Kind.RUN, onDismiss = { rating = false }) { v ->

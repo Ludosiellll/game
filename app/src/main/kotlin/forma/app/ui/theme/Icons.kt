@@ -59,5 +59,7 @@ object Ic {
     val info = stroke("info", "M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0z", "M12 11v5M12 8h0", width = 2.2f)
     val trophy = stroke("trophy", "M8 4h8v5a4 4 0 0 1-8 0V4zM8 6H5a3 3 0 0 0 3 3M16 6h3a3 3 0 0 1-3 3M12 13v4M8.5 20h7")
     val pin = stroke("pin", "M18 10c0 5-6 11-6 11S6 15 6 10a6 6 0 0 1 12 0z", "M14 10a2 2 0 1 1-4 0a2 2 0 1 1 4 0z")
+    val chat = stroke("chat", "M5 4.5h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-8l-4.5 3.5v-3.5H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z", "M8 10h8M8 13.5h5")
+    val send = stroke("send", "M12 19V6M6.5 11.5L12 6l5.5 5.5", width = 2.6f)
     val sound = stroke("sound", "M5 9v6h4l5 4V5L9 9H5z", "M17 9.5a3.5 3.5 0 0 1 0 5")
 }

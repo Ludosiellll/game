@@ -279,7 +279,7 @@ fun TodayScreen() {
             if (p.templates.isNotEmpty()) GhostButton("Другая силовая", { pickTemplate = true }, Modifier.weight(1f))
         }
         // Not sure what something means or what to do: the coach answers with the person's own training.
-        GhostButton("Спросить тренера", { nav.push(Screen.Coach) }, Modifier.fillMaxWidth())
+        GhostButton("Спросить тренера", { nav.tab(Screen.Coach()) }, Modifier.fillMaxWidth())
     }
 
     if (pickTemplate) {

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -82,6 +83,12 @@ data class Settings(
     val tourSeen: Boolean = false,
     /** Screens whose first-visit hint was closed with «Понятно» ([forma.app.ui.screens.Hints]). */
     val hintsSeen: Set<String> = emptySet(),
+    /** What the coach (the AI) keeps in mind about the person: likes, dislikes, the gym's kit, old injuries. */
+    val coachNotes: List<String> = emptyList(),
+    /** The coach's own count of strides after easy runs, on the days the plan has them, until a day. */
+    val coachStrides: CoachTerm? = null,
+    /** The coach's long easy run: the last easy run of the week is a long one, until a day (the long run's own limits hold). */
+    val coachLong: CoachTerm? = null,
 ) {
     /** Whether [day] is in a pause, the last one or one before it: no sessions are expected then. */
     fun pausedOn(day: java.time.LocalDate): Boolean {
@@ -116,6 +123,55 @@ data class Settings(
         const val PAST_PAUSES = 30
     }
 }
+
+/** A change of the coach's that lasts until [until] (epoch day, inclusive): [value] as the change says. */
+@Serializable
+data class CoachTerm(val value: Int, val until: Long) {
+    fun on(day: java.time.LocalDate): Boolean = day.toEpochDay() <= until
+}
+
+/**
+ * A change the coach made or proposed and the person took: when, what it said, and how to take it back ([undo], an
+ * internal call of [CoachActions]); [undone] once taken back.
+ */
+@Serializable
+data class CoachLogEntry(
+    val id: Long,
+    val at: Long,
+    val text: String,
+    val undo: forma.app.sync.CoachCall? = null,
+    val undone: Boolean = false,
+    /** Why the coach made it, as it said. */
+    val why: String? = null,
+)
+
+/** Where a change of the coach's stands in the talk: made, waiting for «Принять», not wanted, not possible, taken back. */
+@Serializable
+enum class CoachActState { DONE, PENDING, DECLINED, REFUSED, UNDONE }
+
+/** A change the coach chose, as the talk keeps it: the call (to make it on «Принять»), what it does, why, where it stands. */
+@Serializable
+data class CoachChatAct(
+    val call: forma.app.sync.CoachCall,
+    val text: String,
+    val why: String? = null,
+    val state: CoachActState,
+    /** The log entry of the change once made ([CoachLogEntry.id]): «Вернуть» goes through it. */
+    val logId: Long? = null,
+)
+
+/**
+ * One message of the talk with the coach, kept on the phone: the person's or the coach's, with the changes the coach
+ * chose. [said]: what the model is told it said next time (its text and what the app did with its calls).
+ */
+@Serializable
+data class CoachChatMsg(
+    val id: Long,
+    val mine: Boolean,
+    val text: String,
+    val acts: List<CoachChatAct> = emptyList(),
+    val said: String? = null,
+)
 
 /**
  * One's own program as it was before a friend's was copied: the days and aim of the profile, the program, and the
@@ -170,6 +226,9 @@ class SettingsStore(context: Context, name: String = "forma") {
         val lift = stringPreferencesKey("lift_state")
         val custom = stringPreferencesKey("custom_exercises")
         val lastRun = stringPreferencesKey("last_run")
+        val coachLog = stringPreferencesKey("coach_log")
+        val coachReviews = stringPreferencesKey("coach_reviews")
+        val coachChat = stringPreferencesKey("coach_chat")
     }
 
     /** Documents copied to the cloud, by cloud key, with the type that must decode them. */
@@ -239,6 +298,46 @@ class SettingsStore(context: Context, name: String = "forma") {
     suspend fun lastRunNow(): LastRun? = read(Keys.lastRun, LastRun.serializer()).first()
     suspend fun setLastRun(r: LastRun) = write(Keys.lastRun, LastRun.serializer(), r)
 
+    /** What the coach changed on this phone, newest last (the last [COACH_LOG] kept); not copied to the cloud. */
+    val coachLog: Flow<List<CoachLogEntry>> = read(Keys.coachLog, ListSerializer(CoachLogEntry.serializer())).map { it.orEmpty() }
+    suspend fun coachLogNow(): List<CoachLogEntry> = coachLog.first()
+
+    /** The coach's log changed by [f] in one step. */
+    suspend fun editCoachLog(f: (List<CoachLogEntry>) -> List<CoachLogEntry>) {
+        val s = ListSerializer(CoachLogEntry.serializer())
+        store.edit { p ->
+            val now = p[Keys.coachLog]?.let { runCatching { AppJson.decodeFromString(s, it) }.getOrNull() }.orEmpty()
+            p[Keys.coachLog] = AppJson.encodeToString(s, f(now).takeLast(COACH_LOG))
+        }
+    }
+
+    /** The talk with the coach, oldest first (the last [COACH_CHAT] messages); kept on this phone only. */
+    val coachChat: Flow<List<CoachChatMsg>> = read(Keys.coachChat, ListSerializer(CoachChatMsg.serializer())).map { it.orEmpty() }
+    suspend fun coachChatNow(): List<CoachChatMsg> = coachChat.first()
+
+    /** The talk changed by [f] in one step. */
+    suspend fun editCoachChat(f: (List<CoachChatMsg>) -> List<CoachChatMsg>) {
+        val s = ListSerializer(CoachChatMsg.serializer())
+        store.edit { p ->
+            val now = p[Keys.coachChat]?.let { runCatching { AppJson.decodeFromString(s, it) }.getOrNull() }.orEmpty()
+            p[Keys.coachChat] = AppJson.encodeToString(s, f(now).takeLast(COACH_CHAT))
+        }
+    }
+
+    /** The coach's word on a workout, by workout id (the last [COACH_REVIEWS] kept); not copied to the cloud. */
+    suspend fun coachReview(workoutId: Long): String? = read(Keys.coachReviews, reviews).first()?.get(workoutId)
+
+    suspend fun setCoachReview(workoutId: Long, text: String) {
+        store.edit { p ->
+            val now = p[Keys.coachReviews]?.let { runCatching { AppJson.decodeFromString(reviews, it) }.getOrNull() }.orEmpty()
+            val next = (now - workoutId).entries.sortedBy { it.key }.takeLast(COACH_REVIEWS - 1).associate { it.key to it.value } + (workoutId to text)
+            p[Keys.coachReviews] = AppJson.encodeToString(reviews, next)
+        }
+    }
+
+    private val reviews: KSerializer<Map<Long, String>> =
+        kotlinx.serialization.builtins.MapSerializer(Long.serializer(), String.serializer())
+
     /** Settings changed by [f] in one step: two changes at once (a run saved while its debrief is shown) both stay. */
     suspend fun editSettings(f: (Settings) -> Settings) {
         store.edit { p ->
@@ -249,5 +348,11 @@ class SettingsStore(context: Context, name: String = "forma") {
 
     suspend fun clear() {
         store.edit { it.clear() }
+    }
+
+    companion object {
+        const val COACH_LOG = 50
+        const val COACH_REVIEWS = 40
+        const val COACH_CHAT = 80
     }
 }

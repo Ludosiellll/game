@@ -105,14 +105,15 @@ class GuideUiTest {
         assertTrue(Hints.TODAY in runBlocking { repo.store.settingsNow().hintsSeen })
     }
 
-    /** No cloud in this build: the coach says it needs the cloud, and a question says it is not set up. */
+    /** No cloud in this build: the coach says it needs the cloud and shows the way in; its questions wait. */
     @Test fun theCoachWithoutTheCloud() {
         val repo = repo("ui-coach")
-        show(repo, Navigator(Screen.Coach)) { CoachScreen() }
+        show(repo, Navigator(Screen.Coach())) { CoachScreen() }
         compose.onNodeWithText("Тренер работает через облако", substring = true).assertExists()
-        compose.onNodeWithText("Как прошла неделя?").performScrollTo().performClick()
+        compose.onNodeWithText("Войти в облако", ignoreCase = true).assertExists()
+        compose.onNodeWithText("Как идёт мой прогресс?").performScrollTo().performClick()
         settle()
-        compose.onNodeWithText("ИИ-тренер ещё не подключён", substring = true).assertExists()
+        compose.onNodeWithText("Тренер думает", substring = true).assertDoesNotExist()
         compose.onRoot().captureRoboImage("build/shots/carbon-coach.png")
     }
 

@@ -81,7 +81,7 @@ class NotSignedInException : IllegalStateException("not signed in")
  * The cloud copy in Supabase: sign-in with a one-time code from email, and the sync between the phone
  * and the project's tables. Everything keeps working without it; the sync catches up when online.
  */
-class Cloud(private val context: Context, private val repo: TrainingRepository) {
+class Cloud(private val context: Context, private val repo: TrainingRepository) : CoachApi {
     val configured: Boolean = BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_KEY.isNotBlank()
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -292,13 +292,14 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
      * The coach's answer to the last of [turns] (the person's), with [context] — the summary of the person's training and
      * of the app — from the `coach` function, which asks Gemini. Throws [CoachException] with the reason it did not answer.
      */
-    suspend fun askCoach(turns: List<CoachTurn>, context: String): String {
+    override suspend fun askCoach(turns: List<CoachTurn>, context: String, tools: kotlinx.serialization.json.JsonArray): CoachReply {
         val c = client ?: throw CoachException(CoachException.Reason.NOT_SET_UP)
         if (!signedIn || currentUser(c) == null) throw CoachException(CoachException.Reason.NOT_SIGNED_IN)
         val token = c.auth.currentAccessTokenOrNull() ?: throw CoachException(CoachException.Reason.NOT_SIGNED_IN)
         val body = kotlinx.serialization.json.buildJsonObject {
             put("context", kotlinx.serialization.json.JsonPrimitive(context))
             put("messages", forma.app.data.AppJson.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(CoachTurn.serializer()), turns))
+            if (tools.isNotEmpty()) put("tools", tools)
         }
         val res = try {
             http.post("${BuildConfig.SUPABASE_URL.trimEnd('/')}/functions/v1/coach") {
@@ -312,20 +313,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         } catch (e: Exception) {
             throw CoachException(if (e is java.io.IOException || e is HttpRequestTimeoutException) CoachException.Reason.OFFLINE else CoachException.Reason.FAILED)
         }
-        val text = res.bodyAsText()
-        val json = runCatching { forma.app.data.AppJson.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject }.getOrNull()
-        val answer = (json?.get("text") as? kotlinx.serialization.json.JsonPrimitive)?.content
-        if (res.status.value == 200 && !answer.isNullOrBlank()) return answer
-        val error = (json?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
-        throw CoachException(
-            when {
-                res.status.value == 401 -> CoachException.Reason.NOT_SIGNED_IN
-                // Not deployed yet, or deployed without the key.
-                res.status.value == 404 || error == "no_key" -> CoachException.Reason.NOT_SET_UP
-                error == "busy" -> CoachException.Reason.BUSY
-                else -> CoachException.Reason.FAILED
-            },
-        )
+        return CoachReply.parse(res.status.value, res.bodyAsText())
     }
 
     /** The signed-in user with a fresh access token, or null. */
