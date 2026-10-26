@@ -550,7 +550,7 @@ class RunService : Service() {
         val title = when {
             t.workout.isOpenEnded -> t.workout.title
             tl.finished -> "Готово"
-            waiting -> "Жду старта: жми «Круг» на линии"
+            waiting -> if (RunSession.gpsEnabled) "Жду старта: беги с линии" else "Жду старта: жми «Круг» на линии"
             else -> CoachText.segmentName(t.workout, tl.index)
         }
         val parts = mutableListOf<String>()

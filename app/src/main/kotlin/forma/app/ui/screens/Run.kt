@@ -432,7 +432,7 @@ private fun autostartIntent() = android.content.Intent().setClassName("com.miui.
  * 30 cm from the kerb; a lap of another lane, or a guess, is off by metres.
  */
 @Composable
-private fun LapLengthCard(set: Int?, measured: Int?) {
+internal fun LapLengthCard(set: Int?, measured: Int?) {
     if (set == null || measured == null || abs(measured - set) < maxOf(5.0, set * 0.04)) return
     val repo = LocalRepo.current
     val scope = rememberCoroutineScope()
@@ -442,15 +442,15 @@ private fun LapLengthCard(set: Int?, measured: Int?) {
     FCard(gap = 8.dp, outline = if (done) null else F.c.accent) {
         SectionLabel("Длина круга", color = if (done) F.c.good else F.c.accent)
         if (done) {
-            Text("Круг — $measured м: время на круг и дистанция теперь считаются от него.", style = T.body(15.sp))
+            Text("Круг — $measured\u00A0м: время на круг и дистанция теперь считаются от него.", style = T.body(15.sp))
         } else {
             Text(
-                "По GPS твой круг ≈ $measured м, а в настройках $set м. Время на круг считается от длины: цели по $set м на твоём круге — " +
+                "По GPS твой круг ≈ $measured\u00A0м, а в настройках $set\u00A0м. Время на круг считается от длины: цели по $set\u00A0м на твоём круге — " +
                     "темп на $pct\u00A0% ${if (set > measured) "медленнее" else "быстрее"} нужного, и дистанция ${if (set > measured) "завышена" else "занижена"}.",
                 style = T.body(15.sp),
             )
-            Text("Это длина по линии, где ты бежишь. Бегаешь всегда там же — поставь $measured м.", style = T.secondary(13.sp))
-            PrimaryButton("Поставить $measured м", { scope.launch { repo.setLapMeters(measured) } }, Modifier.fillMaxWidth())
+            Text("Это длина по линии, где ты бежишь. Бегаешь всегда там же — поставь $measured\u00A0м.", style = T.secondary(13.sp))
+            PrimaryButton("Поставить $measured\u00A0м", { scope.launch { repo.setLapMeters(measured) } }, Modifier.fillMaxWidth())
         }
     }
 }
@@ -739,7 +739,7 @@ fun RunActiveScreen() {
                     StatTile(
                         "Последний круг", l?.let { Ru.lap(it.seconds) } ?: "—",
                         when {
-                            l == null -> "жми «Круг» на линии"
+                            l == null -> if (u.gps) "засчитает GPS" else "жми «Круг» на линии"
                             l.verdict != null -> lapVerdict(l)
                             l.rep == null && w.reps > 0 -> "между отрезками"
                             else -> "круг ${u.laps}"
