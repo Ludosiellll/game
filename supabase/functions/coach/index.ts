@@ -3,7 +3,8 @@
 // with text and the calls it chose, and the app checks and makes them itself — this function only passes them on. The keys
 // stay here (the GEMINI_API_KEY secret, and GEMINI_API_KEY2 — the owner's second key, used when the first one fails or its
 // limit is spent), never in the app; verify_jwt stays on, so only a signed-in user of this project reaches this code.
-// Nothing is stored.
+// Nothing is stored. A person may ask only so often (see [allowed]), and when the COACH_USERS secret lists user ids, only
+// those people may ask at all: sign-up is open in the app, and the quota is the owner's.
 
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash-lite";
 const MAX_CONTEXT = 60_000;
@@ -11,6 +12,9 @@ const MAX_TURN = 6_000;
 const MAX_TURNS = 16;
 const MAX_TOOLS = 40;
 const MAX_CALLS = 6;
+/** Questions a person may ask: in ten minutes, and in a day (a chat is a few a minute; a script would be far more). */
+const PER_10_MIN = 30;
+const PER_DAY = 150;
 
 const SYSTEM = `Ты — тренер в приложении «Форма» (силовые в зале и бег). Отвечай по-русски, просто и по делу: 2–8 предложений или короткий список, без воды и вступлений. Обращайся на «ты».
 
@@ -22,7 +26,7 @@ const SYSTEM = `Ты — тренер в приложении «Форма» (с
 - человек спрашивает «почему» — сначала объясни по правилам и его числам; менять сразу не нужно, можешь предложить вопросом («Поднять рабочий вес до 8 кг?»);
 - если непонятно, что именно и насколько, сначала задай 1–2 коротких вопроса, ничего не меняя;
 - если понятно, что менять, — вызови нужные функции (можно несколько); в каждом вызове заполни why: коротко и просто, почему, по его данным и правилам; и напиши человеку пару слов текстом;
-- меняй осторожно и по правилам: бег растёт не больше чем на 10 % в неделю; из-за одного хорошего дня или хорошей еды нагрузку не поднимай; при боли не прибавляй;
+- меняй осторожно и по правилам: лёгкий бег — не больше +15 % за неделю, весь бег недели — не больше +10 %; из-за одного хорошего дня или хорошей еды нагрузку не поднимай; при боли не прибавляй;
 - изменения зального плана (упражнения, подходы, повторы, отдых), цели и стадиона приложение покажет человеку с кнопкой «Принять» — предлагай их, когда это правда нужно, и объясни зачем;
 - если нужной функции нет, скажи, где это сделать в приложении: дни недели — «Ещё → Цель, дни и данные»; время отдельного круга — «Ещё → История».
 Запомнить о человеке что-то важное надолго (нравится, не нравится, травмы, условия зала) — функция remember.
@@ -40,16 +44,39 @@ function json(body: unknown, status = 200): Response {
  * id — the public key alone would let anyone spend the quota. The token's signature is checked by the platform: this
  * function must stay deployed with verify_jwt on (never --no-verify-jwt), or this check means nothing.
  */
-function signedIn(req: Request): boolean {
+function signedIn(req: Request): string | null {
   const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   const part = token.split(".")[1];
-  if (!part) return false;
+  if (!part) return null;
   try {
     const claims = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=")));
-    return claims.role === "authenticated" && typeof claims.sub === "string" && claims.sub !== "";
+    // An anonymous sign-in (if the project ever allows it) is "authenticated" too, but nobody in particular.
+    if (claims.role !== "authenticated" || claims.is_anonymous === true) return null;
+    return typeof claims.sub === "string" && claims.sub !== "" ? claims.sub : null;
   } catch {
+    return null;
+  }
+}
+
+/** When each person asked lately, by user id (kept while this instance lives; a new one starts from none). */
+const asked = new Map<string, number[]>();
+
+/**
+ * A person within [PER_10_MIN] and [PER_DAY] questions, and on the COACH_USERS list when there is one. Counted in this
+ * instance's memory: it stops a script or a stranger burning the owner's quota in a loop, not a determined attack.
+ */
+function allowed(user: string): boolean {
+  const list = (Deno.env.get("COACH_USERS") ?? "").split(",").map((s) => s.trim()).filter((s) => s !== "");
+  if (list.length > 0 && !list.includes(user)) return false;
+  const now = Date.now();
+  const times = (asked.get(user) ?? []).filter((t) => now - t < 86_400_000);
+  if (times.length >= PER_DAY || times.filter((t) => now - t < 600_000).length >= PER_10_MIN) {
+    asked.set(user, times);
     return false;
   }
+  times.push(now);
+  asked.set(user, times);
+  return true;
 }
 
 type Declaration = { name: string; description: string; parametersJsonSchema: Record<string, unknown> };
@@ -70,7 +97,9 @@ function declarations(raw: unknown): Declaration[] {
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "method" }, 405);
-  if (!signedIn(req)) return json({ error: "sign_in" }, 401);
+  const user = signedIn(req);
+  if (!user) return json({ error: "sign_in" }, 401);
+  if (!allowed(user)) return json({ error: "busy" }, 429);
   const keys = [Deno.env.get("GEMINI_API_KEY"), Deno.env.get("GEMINI_API_KEY2")].filter((k): k is string => !!k);
   if (keys.length === 0) return json({ error: "no_key" }, 503);
   let body: { context?: unknown; messages?: unknown; tools?: unknown };

@@ -287,8 +287,79 @@ class CoachActionsTest {
     }
 
     @Test fun aMuchShorterEasyRunWaits() = runBlocking<Unit> {
-        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.EASY, "minutes" to 20)).mode)
+        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.EASY, "minutes" to 26)).mode)
+        assertEquals(CoachActions.Mode.AUTO, ready(call(CoachActions.EASY, "minutes" to 27)).mode)
+    }
+
+    @Test fun cutsOfTheEasyRunDoNotChainWeekByWeek() = runBlocking<Unit> {
+        // A tenth less today: made by itself.
+        val first = ready(call(CoachActions.EASY, "minutes" to 27))
+        assertEquals(CoachActions.Mode.AUTO, first.mode)
+        CoachActions.make(repo, first)
+        // A week later a tenth less again: nearly a fifth in two weeks — the person decides.
+        clock += 7 * 86_400_000L
+        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.EASY, "minutes" to 24)).mode)
+        // Past two weeks the cut counts from the minutes then.
+        clock += 7 * 86_400_000L
         assertEquals(CoachActions.Mode.AUTO, ready(call(CoachActions.EASY, "minutes" to 25)).mode)
+    }
+
+    /** [p]'s estimate set so that [kg] is just what the range's bottom with the plan's reserve allows. */
+    private suspend fun estimate(p: CoachActions.Place, kg: Double) {
+        val e1rm = kg / forma.core.strength.OneRm.loadFor(1.0, p.tuned.repMin, p.tuned.rir)
+        db.state().upsertStat(ExerciseStatEntity(p.exerciseId, e1rm, e1rm, clock))
+    }
+
+    @Test fun aHeavierWeightMustBeWithinReach() = runBlocking<Unit> {
+        val p = weighted(60.0)
+        estimate(p, 64.0)
+        // Within 25 % but past what the estimate gives for the range's reps: «цель 4 повтора» at a weight good for one.
+        val why = refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 72.5)).why
+        assertTrue("расчётному максимуму" in why, why)
+        // Within reach: a card to accept, its reps from the estimate.
+        assertEquals(CoachActions.Mode.CONFIRM, ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 62.5)).mode)
+    }
+
+    @Test fun aFirstWeightInANewRangeKeepsTheFloor() = runBlocking<Unit> {
+        val p = CoachActions.places(repo).first { p -> !p.added && Catalog[p.exerciseId].load == LoadKind.EXTERNAL }
+        assertNull(db.state().slot(p.tuned.key))
+        // Strong lately (a best of 110 kg estimated): a new range does not start from far below it.
+        val summary = LiftSummary(listOf(SlotReport(p.exerciseId, "x", forma.core.strength.Outcome.NotDone, 110.0, false)), 1000.0, 3, 40, 200.0)
+        db.workouts().insert(
+            WorkoutEntity(
+                epochDay = day.toEpochDay() - 3, kind = Kind.LIFT, templateId = p.templateId, title = "x", startedAt = clock - 3 * 86_400_000L,
+                finishedAt = clock - 3 * 86_400_000L + 3_600_000, status = Status.DONE, summaryJson = AppJson.encodeToString(LiftSummary.serializer(), summary),
+            ),
+        )
+        db.state().upsertStat(ExerciseStatEntity(p.exerciseId, 110.0, 110.0, clock))
+        refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 40))
+        val fair = forma.core.strength.OneRm.loadFor(110.0, p.tuned.repMin, p.tuned.rir)
+        ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to kotlin.math.floor(fair / 5) * 5))
+    }
+
+    @Test fun aNeverDoneExerciseIsFoundByItsFirstSession() = runBlocking<Unit> {
+        val p = CoachActions.places(repo).first { p -> !p.added && Catalog[p.exerciseId].load == LoadKind.EXTERNAL }
+        // "I used to lift 150": no number to start at — the first session finds the weight.
+        val why = refused(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to 150)).why
+        assertTrue("первая тренировка" in why, why)
+        val hint = forma.core.strength.Progression.startHint(Catalog[p.exerciseId], 70.0, false, 1.35)!!
+        ready(call(CoachActions.WEIGHT, "exercise" to p.exerciseId, "kg" to hint))
+    }
+
+    @Test fun runWalkHasNoStridesNorALongRunToSet() = runBlocking<Unit> {
+        repo.store.setRunState(repo.store.runStateNow().copy(walkStage = 2))
+        refused(call(CoachActions.STRIDES, "count" to 4, "weeks" to 2))
+        refused(call(CoachActions.LONG, "weeks" to 2))
+    }
+
+    @Test fun twoChangesInOneMillisecondKeepTheirOwnWayBack() = runBlocking<Unit> {
+        val still = TrainingRepository(db, repo.store, now = { clock })
+        val a = CoachActions.make(still, ready(call(CoachActions.REMEMBER, "text" to "любит бег")))
+        val b = CoachActions.make(still, ready(call(CoachActions.FEEL, "feel" to "low")))
+        assertTrue(a.id != b.id)
+        assertTrue(CoachActions.undo(still, b))
+        // The note stays: only the day's mark came back.
+        assertEquals(listOf("любит бег"), repo.store.settingsNow().coachNotes)
     }
 
     @Test fun aLongPauseComesBackExactly() = runBlocking<Unit> {

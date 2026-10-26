@@ -24,16 +24,16 @@ internal const val COACH_RULES = """## Как решает приложение
 Зал:
 - У упражнения подходы × диапазон повторов и «запас» — сколько повторов ещё мог бы сделать. Вес на следующую тренировку — рабочий вес упражнения в этом диапазоне; он всегда кратен шагу веса упражнения (вниз).
 - В первую неделю блока запас на 1 больше, в предпоследнюю — на 1 меньше; последняя неделя блока — разгрузка (меньше подходов, вес на 10 % легче). «Так себе» сегодня — тоже облегчённая тренировка.
-- Последний подход основных и вторых упражнений — «N+»: сделать цель, потом ещё, пока идёт, и остановиться с 1 в запасе (с 2 — ноги за 1–2 дня до тяжёлого бега). Лишние повторы показывают, насколько стал сильнее.
+- Последний подход каждого упражнения с весом (2+ подходов, не в разгрузку и не при подборе) — «N+»: сделать цель, потом ещё, пока идёт, и остановиться с 1 в запасе (с 2 — ноги в день тяжёлого бега и за 1–2 дня до него). Лишние повторы показывают, насколько стал сильнее.
 - Получилось: новичок в базовых добавляет вес каждую тренировку (двойной шаг при 2+ лишних в «+»); остальные сначала поднимаются по диапазону повторов, потом добавляют вес шагом. 4+ лишних в «+» — сразу к весу по расчётному максимуму (не больше +10 %, новичку +15 %). Ничего лишнего в «+» — вес держится.
-- Не получилось: почти — тот же вес; явно — вес на полпути к показанному (не больше −10 % за раз); три тренировки подряд без прогресса — −10 % и с низа диапазона. Никогда ниже 85 % лучшего расчётного максимума последних недель.
+- Не получилось: если в подходах остановился сам с запасом — вес и цель держатся. Иначе, пока есть куда, сначала снижается цель повторов до сделанного (вес тот же); потом почти — тот же вес; явно — вес на полпути к показанному (не больше −10 % за раз); три тренировки подряд без прогресса — −10 % и с низа диапазона. Если вес уже снижали, а повторы не выросли, — дело не в весе: вес держится, цель — сделанные повторы. Никогда ниже 85 % лучшего расчётного максимума последних недель.
 - После 2+ недель без упражнения — на 5–15 % легче. Первый раз — подбор веса: подходы с 1–2 в запасе.
 - Поэтому вес «меньше, чем могу» бывает: цель — не отказ, а запас; рост идёт через повторы и «+». Если человек стабильно делает больше — можно предложить рабочий вес (set_working_weight, он подтверждает) или поправить шаг под его зал (set_weight_step).
 Бег:
 - Темпы — от формы бега (VDOT) по контрольному забегу или результату.
 - Лёгкий: пробежал целиком и тяжесть до 5 — следующий на 3 мин длиннее; пробежал дольше плана — на половину лишнего (3–8 мин); тяжесть 7+ — на 5 мин короче. Потолок под цель; неделя бега не больше +10 % к прошлой; одна пробежка не длиннее 110 % самой длинной за 30 дней.
 - Длинный: тяжесть до 6 и целиком — растёт на 5–10 мин; 8+ или не добежал — на 5 мин короче.
-- Тяжёлые (отрезки в темпе цели, интервалы, темповый) идут по лестнице: три подряд в темпе — форма +1; неудачи — шаг назад. Контрольный забег раз в несколько недель.
+- Тяжёлые (отрезки в темпе цели, интервалы, темповый) идут по лестнице: три подряд в темпе — форма +1 (не чаще раза в 4 недели; с целью до 3 км форму меняет только контрольный забег); три неудачи — форма −1. Контрольный забег раз в несколько недель.
 - Ускорения: после лёгкого бега в неделю с тяжёлым бегом, 4 (6, когда бег регулярный), по 80 м за 15–20 с — быстро, но расслабленно и ровно, не в полную силу: скорость и техника без усталости.
 - После «Болею»: 2 пробежки лёгкие, контрольного нет неделю, первая силовая облегчённая. После перерыва больше недели первая пробежка лёгкая.
 - Оценка тяжести (1–10) после тренировки решает следующую: её можно исправить."""
@@ -51,7 +51,7 @@ internal const val COACH_RESEARCH = """## Исследования, на кот�
 - Бег мешает силовой тем больше, чем чаще и дольше (Wilson и др., 2012)."""
 
 /** The summary sent with a question: today, the training as the readable report has it, and how the app works. */
-suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today()): String {
+suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today(), reportChars: Int = 28_000): String {
     val program = repo.store.programNow()
     val settings = repo.store.settingsNow()
     val todayLines = program?.week?.on(today.dayOfWeek.value).orEmpty().map { s ->
@@ -78,7 +78,13 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
         appendLine(exercises(repo, today))
         appendLine(running(repo, today))
         changes(repo, today).takeIf { it.isNotEmpty() }?.let { appendLine(it) }
-        appendLine(report.take(28_000))
+        // The report's legend is at its end, past what the cut keeps once there are weeks of workouts: it goes first.
+        val legend = report.indexOf("## Обозначения").takeIf { it >= 0 }?.let { from ->
+            val to = report.indexOf("\n## ", from + 1).takeIf { it > 0 } ?: report.length
+            report.substring(from, to)
+        }
+        legend?.let { appendLine(it.trim()); appendLine() }
+        appendLine((if (legend != null) report.replace(legend, "") else report).take(reportChars))
         appendLine()
         appendLine(COACH_RULES)
         appendLine()
@@ -102,17 +108,22 @@ private suspend fun exercises(repo: TrainingRepository, today: LocalDate): Strin
         for (i in plan.items) {
             val p = i.prescription
             val stat = repo.db.state().stat(i.exerciseId)
+            val ex = forma.core.model.Catalog.find(i.exerciseId)
+            // A plate on pull-ups is on top of the body; the estimate is of the whole load: said so, or 0 vs 85 kg reads as room.
+            val plate = ex?.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS
+            val each = if (ex?.perHand == true) " (каждая гантель)" else ""
             val parts = listOfNotNull(
                 "${p.sets} × ${i.slot.repMin}–${i.slot.repMax}" + (if (p.reps != i.slot.repMin) " (цель сейчас ${p.reps})" else ""),
                 "запас ${p.rir}",
                 when {
                     p.calibrate -> "вес ещё подбирается"
-                    p.weight != null -> "следующий вес ${Ru.kg(p.weight!!)} кг"
+                    p.weight != null && plate -> if (p.weight!! < 0) "помощь ${Ru.kg(-p.weight!!)} кг" else "следующий вес +${Ru.kg(p.weight!!)} кг к весу тела"
+                    p.weight != null -> "следующий вес ${Ru.kg(p.weight!!)} кг$each"
                     else -> null
                 },
-                if (p.weight != null || p.calibrate) "шаг ${Ru.kg(i.step)} кг" else null,
+                if (p.weight != null || p.calibrate) "шаг ${Ru.kg(i.step)} кг$each" else null,
                 "отдых ${Ru.clock(i.slot.restSec)}",
-                stat?.let { "расчётный максимум ${Ru.kg(it.e1rm)} кг" },
+                stat?.let { "расчётный максимум ${Ru.kg(it.e1rm)} кг" + if (plate) " (вместе с весом тела)" else each },
                 if (i.addedForGood) "добавлено человеком" else null,
             )
             appendLine("- ${i.name} [${i.exerciseId}]: ${parts.joinToString(", ")}")

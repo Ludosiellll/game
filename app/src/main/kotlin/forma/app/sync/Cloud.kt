@@ -294,7 +294,21 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
      */
     override suspend fun askCoach(turns: List<CoachTurn>, context: String, tools: kotlinx.serialization.json.JsonArray): CoachReply {
         val c = client ?: throw CoachException(CoachException.Reason.NOT_SET_UP)
-        if (!signedIn || currentUser(c) == null) throw CoachException(CoachException.Reason.NOT_SIGNED_IN)
+        // The session refreshed on the way: offline, or signed out elsewhere (the refresh refused), said as such.
+        val user = try {
+            if (signedIn) currentUser(c) else null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw CoachException(
+                when (e) {
+                    is IOException, is HttpRequestException, is HttpRequestTimeoutException -> CoachException.Reason.OFFLINE
+                    is RestException, is NoSessionFoundException -> CoachException.Reason.NOT_SIGNED_IN
+                    else -> CoachException.Reason.FAILED
+                },
+            )
+        }
+        if (user == null) throw CoachException(CoachException.Reason.NOT_SIGNED_IN)
         val token = c.auth.currentAccessTokenOrNull() ?: throw CoachException(CoachException.Reason.NOT_SIGNED_IN)
         val body = kotlinx.serialization.json.buildJsonObject {
             put("context", kotlinx.serialization.json.JsonPrimitive(context))

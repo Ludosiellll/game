@@ -189,11 +189,30 @@ class CoachChatUiTest {
         }
         val api = Fake { CoachReply("Хорошая тренировка: все подходы в плане. В следующий раз отдыхай между подходами приседа дольше — 3 минуты.") }
         show(repo, api) { androidx.compose.foundation.layout.Column { CoachReviewCard(id, "Низ", LocalDate.of(2026, 10, 24)) } }
+        // Never talked to the coach: told first where the workouts go, asked with a tap — not by itself.
+        waitFor("Разобрать тренировку", 40_000)
+        compose.onNodeWithText("без имени и почты", substring = true).assertExists()
+        assertTrue(api.asked.isEmpty())
+        compose.onNodeWithText("Разобрать тренировку", ignoreCase = true).performClick()
         // The card's own coroutine resumes on the test's frames, slower than on a phone: more time.
         waitFor("отдыхай между подходами", 40_000)
         assertTrue(api.asked.single().startsWith("Разбери мою тренировку"))
         // Kept: not asked again.
         assertEquals("Хорошая тренировка: все подходы в плане. В следующий раз отдыхай между подходами приседа дольше — 3 минуты.", runBlocking { repo.store.coachReview(id) })
         compose.onRoot().captureRoboImage("build/shots/carbon-coach-review.png")
+    }
+
+    @Test fun aReviewComesByItselfAfterTalkingToTheCoach() {
+        val repo = repo("ui-coach-review-used")
+        val id = runBlocking {
+            repo.store.editCoachChat { listOf(forma.app.data.CoachChatMsg(1, true, "привет")) }
+            repo.db.workouts().insert(
+                WorkoutEntity(epochDay = LocalDate.of(2026, 10, 24).toEpochDay(), kind = Kind.LIFT, templateId = null, title = "Верх", startedAt = 0, finishedAt = 3_600_000, status = Status.DONE, rpe = 7, durationSec = 3600),
+            )
+        }
+        val api = Fake { CoachReply("Ровно по плану.") }
+        show(repo, api) { androidx.compose.foundation.layout.Column { CoachReviewCard(id, "Верх", LocalDate.of(2026, 10, 24)) } }
+        waitFor("Ровно по плану", 40_000)
+        assertEquals(1, api.asked.size)
     }
 }

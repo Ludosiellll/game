@@ -11,6 +11,8 @@ import forma.core.model.Experience
 import forma.core.model.Goal
 import forma.core.model.Profile
 import forma.core.model.RunLevel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -135,11 +137,55 @@ class CoachTalkTest {
         assertTrue(repo.store.coachChatNow().isEmpty())
     }
 
+    @Test fun acceptTappedTwiceMakesOneChange() = runBlocking<Unit> {
+        val p = CoachActions.places(repo).first { !it.added }
+        val msg = CoachTalk.ask(repo, Fake(CoachReply("", listOf(call(CoachActions.SETS, "exercise" to p.exerciseId, "sets" to p.tuned.sets + 1)))), "подход больше") { "" }
+        val two = listOf(
+            async(Dispatchers.Default) { CoachTalk.accept(repo, msg.id, 0) },
+            async(Dispatchers.Default) { CoachTalk.accept(repo, msg.id, 0) },
+        ).map { it.await() }
+        assertEquals(1, two.count { it?.state == CoachActState.DONE }, two.toString())
+        assertEquals(1, repo.store.coachLogNow().size)
+        assertEquals(CoachActState.DONE, repo.store.coachChatNow().last().acts[0].state)
+    }
+
+    @Test fun aNewTalkWhileAnsweringLeavesNoAnswerNorItsChanges() = runBlocking<Unit> {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val api = object : CoachApi {
+            override suspend fun askCoach(turns: List<CoachTurn>, context: String, tools: JsonArray): CoachReply {
+                gate.await()
+                return CoachReply("Запомнил.", listOf(call(CoachActions.REMEMBER, "text" to "любит бег")))
+            }
+        }
+        val asking = async(Dispatchers.Default) { CoachTalk.ask(repo, api, "запомни") { "" } }
+        while (repo.store.coachChatNow().isEmpty()) kotlinx.coroutines.delay(10)
+        CoachTalk.clear(repo)
+        gate.complete(Unit)
+        asking.await()
+        assertTrue(repo.store.coachChatNow().isEmpty())
+        assertTrue(repo.store.settingsNow().coachNotes.isEmpty())
+    }
+
+    @Test fun theModelReadsTheTalkFromThePersonsWordsInTurn() {
+        val chat = listOf(
+            CoachChatMsg(1, false, "ответ без вопроса"),
+            CoachChatMsg(2, true, "первый"),
+            CoachChatMsg(3, true, "второй"),
+            CoachChatMsg(4, false, "ответ"),
+            CoachChatMsg(5, true, "ещё"),
+        )
+        val h = CoachTalk.history(chat)
+        assertEquals(listOf(CoachTurn.USER, CoachTurn.MODEL, CoachTurn.USER), h.map { it.role })
+        assertEquals("первый\n\nвторой", h.first().text)
+    }
+
     @Test fun theHistoryIsTheLastMessages() = runBlocking<Unit> {
         val api = Fake(CoachReply("ответ"))
         repeat(12) { CoachTalk.ask(repo, api, "вопрос $it") { "" } }
         val turns = api.asked.last().first
-        assertEquals(CoachTalk.TURNS, turns.size)
+        // The last messages, from a question of the person's on (the coach's answer before it left out).
+        assertEquals(CoachTalk.TURNS - 1, turns.size)
+        assertEquals(CoachTurn.USER, turns.first().role)
         assertEquals(CoachTurn.USER, turns.last().role)
         assertEquals("вопрос 11", turns.last().text)
         CoachTalk.clear(repo)

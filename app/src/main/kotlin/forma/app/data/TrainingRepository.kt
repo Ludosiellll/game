@@ -46,7 +46,14 @@ import kotlin.math.roundToInt
 const val COPIED_TEMPLATE = "copy"
 
 /** "Верх А · копия: Денис" — the friend's name after a colon, so it never has to be declined. */
-fun copiedTitle(title: String, from: String): String = "${title.take(60)} · копия: ${from.take(40)}"
+fun copiedTitle(title: String, from: String): String = "${oneLine(title, 60)} · копия: ${oneLine(from, 40)}"
+
+/**
+ * A friend's words (a session's title, an exercise's name) as one plain line: they reach the AI coach as data, so no
+ * line breaks, headings or brackets that would read as the app's own text.
+ */
+fun oneLine(s: String, max: Int = 60): String =
+    s.replace(Regex("[\\r\\n\\t#\\[\\]<>`]"), " ").replace(Regex("\\s{2,}"), " ").trim().take(max)
 
 class TrainingRepository(
     val db: FormaDatabase,
@@ -906,32 +913,32 @@ class TrainingRepository(
 
     /** Adds [exerciseId] to every session of template [templateId] from now on, after the plan's own exercises. */
     suspend fun addToPlan(templateId: String, exerciseId: String): Boolean {
-        val s = withAdded(store.settingsNow(), templateId, exerciseId) ?: return false
-        store.setSettings(s)
+        // In one edit of the settings: a change made meanwhile (a run saved, the coach) is not written over.
+        var added = false
+        store.editSettings { s -> withAdded(s, templateId, exerciseId)?.also { added = true } ?: s }
+        if (!added) return false
         onChange()
         return true
     }
 
     /** Takes an exercise added for good out of template [templateId], with the numbers set for it there. */
     suspend fun removeAdded(templateId: String, exerciseId: String) {
-        val s = store.settingsNow()
-        val list = s.added[templateId].orEmpty() - exerciseId
         val key = addedKey(templateId, exerciseId)
-        store.setSettings(
+        store.editSettings { s ->
+            val list = s.added[templateId].orEmpty() - exerciseId
             s.copy(
                 added = if (list.isEmpty()) s.added - templateId else s.added + (templateId to list),
                 sets = s.sets - key, reps = s.reps - key, rest = s.rest - key,
-            ),
-        )
+            )
+        }
         onChange()
     }
 
     /** Puts [newId] in place of [oldId] among the exercises added for good to template [templateId]. */
     suspend fun replaceAdded(templateId: String, oldId: String, newId: String) {
-        val s = store.settingsNow()
-        val next = withReplacedAdded(s, templateId, oldId, newId)
-        if (next == s) return
-        store.setSettings(next)
+        var changed = false
+        store.editSettings { s -> withReplacedAdded(s, templateId, oldId, newId).also { changed = it != s } }
+        if (!changed) return
         onChange()
     }
 
@@ -941,7 +948,7 @@ class TrainingRepository(
      * plan comes through.
      */
     suspend fun tunePlan(planId: String, planned: SlotSpec, sets: Int, reps: Pair<Int, Int>, restSec: Int) {
-        store.setSettings(withTune(store.settingsNow(), planId, planned, sets, reps, restSec))
+        store.editSettings { withTune(it, planId, planned, sets, reps, restSec) }
         onChange()
     }
 
@@ -965,21 +972,19 @@ class TrainingRepository(
 
     /** Sets of [planId] in every session from now on; null (or the plan's own number) brings the plan's back. */
     suspend fun setPlanSets(planId: String, sets: Int?, planned: Int) {
-        store.setSettings(withSets(store.settingsNow(), planId, sets, planned))
+        store.editSettings { withSets(it, planId, sets, planned) }
         onChange()
     }
 
     /** The weight step of [exerciseId] in this gym from now on; its own step ([default]) clears the override. */
     suspend fun setStep(exerciseId: String, step: Double, default: Double) {
-        val s = store.settingsNow()
-        store.setSettings(s.copy(steps = if (step == default) s.steps - exerciseId else s.steps + (exerciseId to step)))
+        store.editSettings { s -> s.copy(steps = if (step == default) s.steps - exerciseId else s.steps + (exerciseId to step)) }
         onChange()
     }
 
     /** Takes [planId] out of every session from now on, or brings it back. */
     suspend fun setRemoved(planId: String, removed: Boolean) {
-        val s = store.settingsNow()
-        store.setSettings(s.copy(removed = if (removed) s.removed + planId else s.removed - planId))
+        store.editSettings { s -> s.copy(removed = if (removed) s.removed + planId else s.removed - planId) }
         onChange()
     }
 
@@ -1194,7 +1199,7 @@ class TrainingRepository(
         val known = store.customNow().map { it.id }.toSet()
         val missing = list.filter { it.custom && it.id !in known && Catalog.find(it.id) == null }
         if (missing.isEmpty()) return
-        store.setCustom(store.customNow() + missing.map { it.copy(archived = false) })
+        store.setCustom(store.customNow() + missing.map { it.copy(archived = false, name = oneLine(it.name).ifBlank { "Упражнение" }) })
         refreshCustom()
         onChange()
     }
@@ -1266,7 +1271,8 @@ class TrainingRepository(
         if (asDone.week.days.none { it.sessions.isNotEmpty() }) return false
         val used = asDone.templates.flatMap { t -> t.slots.map { it.exerciseId } }.toSet()
         importExercises(exercises.filter { it.id in used })
-        val safe = asDone.checked { id -> Catalog.find(id)?.archived == false } ?: return false
+        val safe = asDone.checked { id -> Catalog.find(id)?.archived == false }
+            ?.let { p -> p.copy(templates = p.templates.map { t -> t.copy(title = oneLine(t.title).ifBlank { "Тренировка" }) }) } ?: return false
         val days = safe.week.days.filter { it.sessions.isNotEmpty() }.map { it.day }.toSet().ifEmpty { profile.trainingDays }
         // The friend's week is the week now: the own days chosen before are not (the plan line and the grid show these).
         val updated = profile.copy(
@@ -1306,7 +1312,7 @@ class TrainingRepository(
      * sessions back are lighter by themselves (layoff and comeback rules).
      */
     suspend fun pause(from: LocalDate, until: LocalDate) {
-        store.setSettings(store.settingsNow().withPause(from.toEpochDay(), until.toEpochDay()))
+        store.editSettings { it.withPause(from.toEpochDay(), until.toEpochDay()) }
         if (until.toEpochDay() - from.toEpochDay() + 1 >= 7) {
             restartBlock(until.plusDays(1))
             // A week or more away is rest enough: a lighter week the app set before it is not needed any more.
@@ -1321,7 +1327,7 @@ class TrainingRepository(
         val s = store.settingsNow()
         val from = s.pauseFrom ?: return
         if (!paused(s, day)) return
-        store.setSettings(s.copy(pauseUntil = day.toEpochDay() - 1))
+        store.editSettings { it.copy(pauseUntil = day.toEpochDay() - 1) }
         // A long pause moved the block to the planned week of return: bring it to the actual one.
         val movedAhead = (store.programNow()?.startEpochDay ?: Long.MIN_VALUE) > mondayOf(day).toEpochDay()
         if (day.toEpochDay() - from >= 7 || movedAhead) restartBlock(day)

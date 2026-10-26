@@ -3,7 +3,12 @@ package forma.app.data
 import forma.app.sync.CoachApi
 import forma.app.sync.CoachCall
 import forma.app.sync.CoachTurn
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * The talk with the coach, kept on the phone ([SettingsStore.coachChat]): a question asked, the answer with the changes the
@@ -22,6 +27,19 @@ object CoachTalk {
 
     /** A question is being answered. */
     val busy = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    /**
+     * Changes are made one at a time, and once begun to the end: «Принять» tapped twice makes one change, and a screen
+     * left mid-way does not leave half of one (a pause writes the settings, the plan and the gym's state).
+     */
+    private val changing = Mutex()
+
+    private suspend fun <T> change(block: suspend () -> T): T = withContext(NonCancellable) { changing.withLock { block() } }
+
+    /** Runs [block] (an accept, an undo, a forget) on the talk's own scope: it outlives the screen that asked for it. */
+    fun launch(block: suspend () -> Unit) {
+        scope.launch { runCatching { block() } }
+    }
 
     /** Why the last question got no answer (said on the screen), and the question itself, to put back in the field. */
     val failed = kotlinx.coroutines.flow.MutableStateFlow<Pair<String, String>?>(null)
@@ -46,10 +64,20 @@ object CoachTalk {
         }
     }
 
-    /** The talk as the model reads it: the coach's messages as it is told it said them (with what the app did). */
-    fun history(chat: List<CoachChatMsg>): List<CoachTurn> = chat.takeLast(TURNS).mapNotNull { m ->
-        val text = if (m.mine) m.text else m.said ?: m.text
-        text.takeIf { it.isNotBlank() }?.let { CoachTurn(if (m.mine) CoachTurn.USER else CoachTurn.MODEL, it) }
+    /**
+     * The talk as the model reads it: the coach's messages as it is told it said them (with what the app did). It starts
+     * with the person's words, and two in a row of one side (a question lost to a closed app) are one turn: the model
+     * takes turns in turn.
+     */
+    fun history(chat: List<CoachChatMsg>): List<CoachTurn> {
+        val turns = chat.takeLast(TURNS).mapNotNull { m ->
+            val text = if (m.mine) m.text else m.said ?: m.text
+            text.takeIf { it.isNotBlank() }?.let { CoachTurn(if (m.mine) CoachTurn.USER else CoachTurn.MODEL, it) }
+        }.dropWhile { it.role != CoachTurn.USER }
+        return turns.fold(emptyList()) { acc, t ->
+            val last = acc.lastOrNull()
+            if (last != null && last.role == t.role) acc.dropLast(1) + last.copy(text = last.text + "\n\n" + t.text) else acc + t
+        }
     }
 
     private suspend fun nextId(repo: TrainingRepository): Long =
@@ -66,7 +94,9 @@ object CoachTalk {
         repo.store.editCoachChat { it + mine }
         try {
             val reply = api.askCoach(history(repo.store.coachChatNow()), context(), CoachActions.declarations)
-            val acts = reply.calls.map { act(repo, it) }
+            // «Новый разговор» while the answer was on its way: the talk it answers is gone, and so are its changes.
+            if (repo.store.coachChatNow().none { it.id == mine.id }) return CoachChatMsg(nextId(repo), false, reply.text)
+            val acts = change { reply.calls.map { act(repo, it) } }
             val notes = acts.map { a ->
                 when (a.state) {
                     CoachActState.DONE -> "сделано: ${a.text}"
@@ -116,8 +146,8 @@ object CoachTalk {
      * now says something else than the card did (the data moved on since), it is not made: the card shows the new words
      * and waits for «Принять» again.
      */
-    suspend fun accept(repo: TrainingRepository, msgId: Long, index: Int): CoachChatAct? {
-        val act = actOf(repo, msgId, index)?.takeIf { it.state == CoachActState.PENDING } ?: return null
+    suspend fun accept(repo: TrainingRepository, msgId: Long, index: Int): CoachChatAct? = change {
+        val act = actOf(repo, msgId, index)?.takeIf { it.state == CoachActState.PENDING } ?: return@change null
         val next = when (val c = CoachActions.prepare(repo, act.call)) {
             is CoachActions.Refused -> act.copy(text = c.why, state = CoachActState.REFUSED)
             is CoachActions.Ready ->
@@ -125,21 +155,40 @@ object CoachTalk {
                 else act.copy(text = c.text, state = CoachActState.DONE, logId = CoachActions.make(repo, c).id)
         }
         update(repo, msgId, index) { next }
-        return next
+        next
     }
 
     /** «Не надо». */
-    suspend fun decline(repo: TrainingRepository, msgId: Long, index: Int) =
+    suspend fun decline(repo: TrainingRepository, msgId: Long, index: Int) = change {
         update(repo, msgId, index) { if (it.state == CoachActState.PENDING) it.copy(state = CoachActState.DECLINED) else it }
+    }
 
     /** «Вернуть»: the change taken back. False when it cannot be any more (the same thing changed since). */
-    suspend fun undo(repo: TrainingRepository, msgId: Long, index: Int): Boolean {
-        val act = actOf(repo, msgId, index) ?: return false
-        val entry = repo.store.coachLogNow().firstOrNull { it.id == act.logId } ?: return false
-        if (!CoachActions.undo(repo, entry)) return false
+    suspend fun undo(repo: TrainingRepository, msgId: Long, index: Int): Boolean = change {
+        val act = actOf(repo, msgId, index) ?: return@change false
+        val entry = repo.store.coachLogNow().firstOrNull { it.id == act.logId } ?: return@change false
+        if (!CoachActions.undo(repo, entry)) return@change false
         update(repo, msgId, index) { it.copy(state = CoachActState.UNDONE) }
-        return true
+        true
     }
+
+    /** «Вернуть» from the list of changes (not from a card): the same lock as the cards'. */
+    suspend fun undoEntry(repo: TrainingRepository, entry: CoachLogEntry): Boolean = change { CoachActions.undo(repo, entry) }
+
+    /** Workout reviews being asked, by workout id: one request each, made to the end and kept whoever still watches. */
+    private val reviewing = mutableMapOf<Long, kotlinx.coroutines.Deferred<String?>>()
+
+    /**
+     * The coach's review of workout [workoutId]: the kept one, or asked once ([question] with [context]) and kept. A card
+     * that leaves (another screen, a rotation) does not lose it nor make it asked again.
+     */
+    fun review(repo: TrainingRepository, api: CoachApi, workoutId: Long, question: String, context: suspend () -> String): kotlinx.coroutines.Deferred<String?> =
+        synchronized(reviewing) {
+            reviewing[workoutId]?.takeIf { it.isActive } ?: scope.async {
+                repo.store.coachReview(workoutId) ?: api.askCoach(listOf(CoachTurn(CoachTurn.USER, question)), context()).text.trim()
+                    .takeIf { it.isNotBlank() }?.also { repo.store.setCoachReview(workoutId, it) }
+            }.also { reviewing[workoutId] = it }
+        }
 
     /** «Новый разговор»: the talk cleared (the changes made stay, with their «Вернуть» in «Что поменял тренер»). */
     suspend fun clear(repo: TrainingRepository) {

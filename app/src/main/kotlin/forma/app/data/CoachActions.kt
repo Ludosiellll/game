@@ -4,8 +4,11 @@ import forma.app.sync.CoachCall
 import forma.core.model.Catalog
 import forma.core.model.Exercise
 import forma.core.model.ExerciseSearch
+import forma.core.model.Experience
 import forma.core.model.LoadKind
+import forma.core.model.RunFocus
 import forma.core.model.RunGoal
+import forma.core.model.Sex
 import forma.core.plan.ProgramGenerator
 import forma.core.plan.SessionKind
 import forma.core.strength.OneRm
@@ -27,6 +30,7 @@ import kotlinx.serialization.json.putJsonObject
 import java.time.LocalDate
 import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
@@ -87,8 +91,8 @@ object CoachActions {
     /** A working weight changed by more than this share waits for «Принять»; by more than [WEIGHT_MAX], not at all. */
     private const val WEIGHT_AUTO = 0.10
     private const val WEIGHT_MAX = 0.25
-    /** A shorter easy run than this share of the current waits for «Принять». */
-    private const val EASY_CUT_AUTO = 0.75
+    /** A shorter easy run than this share of the minutes before the coach's changes of two weeks waits for «Принять». */
+    private const val EASY_CUT_AUTO = 0.90
 
     /** The functions the model is offered (Gemini function declarations, `parameters` as JSON Schema). */
     val declarations: JsonArray = buildJsonArray {
@@ -122,7 +126,7 @@ object CoachActions {
         fn(RESUME, "Закончить паузу и вернуться к плану сегодня.")
         fn(RATE, "Исправить оценку тяжести последней пробежки или силовой (1–10, как в приложении). Оценка последней пробежки решает её заново: лёгкий бег длиннее или короче, шаг лестницы.",
             Param("which", "string", "last_run — последняя пробежка, last_gym — последняя силовая", values = listOf("last_run", "last_gym")), Param("rpe", "integer", "1–10"))
-        fn(EASY, "Длина лёгкого бега с этого дня (минуты); дальше она меняется по правилам приложения. Не больше потолка под цель, не больше 110 % самой длинной пробежки за 30 дней и не больше +15 % (минимум +5 мин) за неделю. Второе изменение за неделю человек подтверждает.",
+        fn(EASY, "Длина лёгкого бега с этого дня (минуты); дальше она меняется по правилам приложения. Не больше потолка под цель, не больше 110 % самой длинной пробежки за 30 дней и не больше +15 % (минимум +5 мин) за неделю. Второе изменение за неделю и сокращение больше чем на 10 % за две недели человек подтверждает.",
             Param("minutes", "integer", "минуты"))
         fn(STRIDES, "Сколько ускорений после лёгкого бега в дни, когда они есть в плане, на weeks недель (0 — без ускорений).",
             Param("count", "integer", "0–8 (пока бег новый — до 6)"), Param("weeks", "integer", "1–$MAX_WEEKS"))
@@ -130,7 +134,7 @@ object CoachActions {
             Param("weeks", "integer", "0–$MAX_WEEKS"))
         fn(STEP, "Шаг веса упражнения в зале человека — только когда он говорит, как меняется вес у снаряда в его зале (гантели через 2,5 кг, тренажёр через 4 кг). По этому шагу приложение прибавляет вес. Не для того, чтобы поднять или снизить вес — для этого set_working_weight.",
             exercise, Param("step_kg", "number", "кг, 0,25–20"))
-        fn(WEIGHT, "Рабочий вес упражнения на следующие тренировки, когда человек стабильно может больше или меньше, чем даёт приложение. Человек подтверждает кнопкой. Не больше 25 % за раз и не ниже 85 % лучшего за 8 недель. На вопрос «почему» сначала объясни.",
+        fn(WEIGHT, "Рабочий вес упражнения на следующие тренировки, когда человек стабильно может больше или меньше, чем даёт приложение. Человек подтверждает кнопкой. Не больше 25 % за раз, тяжелее — только в пределах расчётного максимума с запасом плана, не ниже 85 % лучшего за 8 недель. Упражнение, которого ещё не было, первая тренировка подбирает сама. На вопрос «почему» сначала объясни.",
             exercise, Param("kg", "number", "кг (для упражнений с весом тела — добавочный вес)"), session)
         fn(REMEMBER, "Запомнить о человеке что-то важное надолго: нравится или нет, травмы, что есть в зале, расписание. Коротко, одной фразой.", Param("text", "string", "до $NOTE_LEN знаков"))
         fn(FORGET, "Забыть запомненное, если оно больше не верно.", Param("text", "string", "запомненная фраза или её часть"))
@@ -351,6 +355,8 @@ object CoachActions {
                 // The week's growth counts from before the coach's first change this week: calls in a row do not add up.
                 val earlier = recent("undo_easy")
                 val base = earlier.minByOrNull { it.at }?.undo?.args?.int("minutes") ?: st.easyMinutes
+                // Cuts too, over two weeks: a cut a week, each small, would halve the running with nobody asked.
+                val before = recent("undo_easy", 14).minByOrNull { it.at }?.undo?.args?.int("minutes") ?: st.easyMinutes
                 val up = maxOf(base + 5, (base * 1.15).toInt())
                 val limit = listOfNotNull(cap, longest?.let { (it * 1.10).toInt().coerceAtLeast(st.easyMinutes) }, up).min()
                 when {
@@ -362,8 +368,8 @@ object CoachActions {
                         else -> "не длиннее 110 % самой длинной пробежки за месяц."
                     })
                 }
-                // A second change in a week, or a much shorter run, waits for the person.
-                either(earlier.isEmpty() && min >= st.easyMinutes * EASY_CUT_AUTO, "Лёгкий бег: ${st.easyMinutes} → $min мин. Дальше длина меняется по правилам приложения.") {
+                // A second change in a week, or a run shorter by more than a tenth than two weeks ago, waits for the person.
+                either(earlier.isEmpty() && (min > st.easyMinutes || min >= before * EASY_CUT_AUTO), "Лёгкий бег: ${st.easyMinutes} → $min мин. Дальше длина меняется по правилам приложения.") {
                     val now = repo.store.runStateNow()
                     repo.store.setRunState(now.copy(easyMinutes = min))
                     repo.changed()
@@ -371,6 +377,8 @@ object CoachActions {
                 }
             }
             STRIDES -> {
+                // Run/walk has neither strides nor a long run: a change would be "made" and do nothing until it ends.
+                if (!repo.store.runStateNow().canRunContinuously) return no("Пока бег чередуется с ходьбой: ускорений нет, их добавит лестница приложения.")
                 // Up to two more than the plan gives (4 while running is new, 6 later).
                 val most = if (repo.store.runStateNow().runs < 8) 6 else 8
                 val n = a.int("count")?.takeIf { it in 0..most } ?: return no("Ускорений — от 0 до $most.")
@@ -387,6 +395,7 @@ object CoachActions {
             LONG -> {
                 val w = a.int("weeks")?.takeIf { it in 0..MAX_WEEKS } ?: return no("Срок — от 0 до $MAX_WEEKS недель.")
                 val program = repo.store.programNow() ?: return no("Нет плана.")
+                if (!repo.store.runStateNow().canRunContinuously) return no("Пока бег чередуется с ходьбой: длину ведёт лестница приложения.")
                 if (program.week.days.any { d -> d.sessions.any { it.kind == SessionKind.RUN_LONG } }) return no("Длинный бег в плане уже есть.")
                 if (program.week.days.none { d -> d.sessions.any { it.kind == SessionKind.RUN_EASY } }) return no("В неделе нет лёгкого бега.")
                 if (w == 0 && s.coachLong == null) return no("Длинного бега от тренера и так нет.")
@@ -456,11 +465,32 @@ object CoachActions {
                     // A first weight in this range: as heavy as the estimate allows with the plan's reserve, not to failure.
                     val max = OneRm.loadFor(stat.e1rm, p.tuned.repMin, p.tuned.rir) * 1.05
                     if (next > max) return no("Выше, чем позволяет расчётный максимум (${Ru.kg(stat.e1rm)} кг) с запасом ${p.tuned.rir}.")
-                } else if (w > bodyWeight * 3) return no("Слишком большой вес для первого раза — пусть приложение подберёт его.")
-                // Never below what the engine itself allows: 85 % of what the best of the last 8 weeks supports.
+                } else {
+                    // Never done: the first session finds the weight (warm-up sets up to it). A told "I used to lift 150" is
+                    // no number to start at: past half again the app's own guess, the session finds it.
+                    val profile = repo.store.profileNow()
+                    val trained = when (profile?.experience) { Experience.ADVANCED -> 1.7; Experience.INTERMEDIATE -> 1.35; else -> 1.0 }
+                    val own = profile?.let { repo.startFactor(it, trained) } ?: 1.0
+                    val hint = profile?.let { Progression.startHint(ex, it.bodyWeightKg, it.sex == Sex.FEMALE, trained * own) } ?: 0.0
+                    val most = max(hint * 1.5, hint + 2 * ex.stepAt(max(hint, 1.0)))
+                    if (w > most + 1e-6) return no("«${ex.name}» ещё не делал: первая тренировка сама подберёт вес разминочными подходами. Сейчас поставить можно до ${Ru.kg(down(most, ex.stepAt(most)))} кг.")
+                }
+                // A heavier weight must be within reach, as the engine judges its own jumps: the estimate gives at least the
+                // range's bottom less one rep with the plan's reserve. "Цель 4 повтора" at a weight the estimate gives 1 for
+                // would be failed sets, then cuts, for weeks.
+                if (stat != null && (old == null || w > old)) {
+                    val can = OneRm.rtfAt(stat.e1rm, next) - p.tuned.rir
+                    if (can < p.tuned.repMin - 1) return no(
+                        "На ${Ru.kg(w)} кг по расчётному максимуму (${Ru.kg(stat.e1rm)} кг) выйдет меньше ${p.tuned.repMin - 1} " +
+                            "${Ru.plural(p.tuned.repMin - 1, "повтора", "повторов", "повторов")} с запасом ${p.tuned.rir}. Максимум растёт от сделанных подходов: " +
+                            "добери повторы на нынешнем весе, и приложение прибавит само.",
+                    )
+                }
+                // Never below what the engine itself allows: 85 % of what the best of the last 8 weeks supports — a first
+                // weight in a new range too (it would then crawl back a step a session).
                 val best = repo.recentBest(ex.id, today.toEpochDay(), -1L)
-                if (best != null && old != null && w < old) {
-                    val floor = OneRm.loadFor(best, row.reps, p.tuned.rir) * 0.85
+                if (best != null && (old == null || w < old)) {
+                    val floor = OneRm.loadFor(best, row?.reps ?: p.tuned.repMin, p.tuned.rir) * 0.85
                     if (next < floor - 1e-6) return no("Ниже 85 % того, что ты поднимал последние 8 недель — так приложение вес не снижает. При боли или болезни лучше «Так себе» или пауза.")
                 }
                 // The reps to aim for at the new weight, as the engine sets them when it moves a weight itself.
@@ -616,8 +646,17 @@ object CoachActions {
                 if (goal == og) return no("Цель и так такая.")
                 // As TrainingRepository.updateProfile judges it: another distance or a time 5 % off starts the ladder anew.
                 val anew = og == null || og.meters != m || abs(sec - og.seconds) > og.seconds * 0.05
+                // A race up to 3 km plans the running for speed, a longer one for endurance: the week itself changes.
+                val aim = repo.store.programNow()?.aim
+                val was = aim?.let { ProgramGenerator.planAim(it, og?.middleDistance == true) }
+                val will = aim?.let { ProgramGenerator.planAim(it, goal.middleDistance) }
+                val shift = when {
+                    was == null || will == null || was.run == will.run -> ""
+                    will.run == RunFocus.SPEED -> " Забег до 3 км: бег станет скоростным — вместо длинного бега второй интенсивный, лёгкий бег до ${ProgramGenerator.caps(will).easyMax} мин."
+                    else -> " Забег длиннее 3 км: вернётся длинный бег (до ${ProgramGenerator.caps(will).longMax} мин), интенсивных станет меньше."
+                }
                 confirm("Цель: ${dist(m)} за ${Ru.clock(sec)}" + (date?.let { ", забег ${Ru.date(it)} ${it.year}" } ?: "") +
-                    (og?.let { " (была ${dist(it.meters)} за ${Ru.clock(it.seconds)})" } ?: "") + ". План бега пересчитается." +
+                    (og?.let { " (была ${dist(it.meters)} за ${Ru.clock(it.seconds)})" } ?: "") + ". План бега пересчитается." + shift +
                     (if (anew && og != null) " Отрезки в темпе цели начнутся с первой ступени." else "")) {
                     val st = repo.store.runStateNow()
                     repo.store.profileNow()?.let { repo.updateProfile(it.copy(runGoal = goal)) }
@@ -663,8 +702,12 @@ object CoachActions {
     /** Makes [ready] (accepted, or made at once) and logs it with its way back. Returns the log entry. */
     suspend fun make(repo: TrainingRepository, ready: Ready): CoachLogEntry {
         val undo = ready.make()
-        val entry = CoachLogEntry(repo.nowMs(), repo.nowMs(), ready.text, undo, why = ready.why)
-        repo.store.editCoachLog { it + entry }
+        // Ids are «Вернуть»'s handle: two changes in one millisecond must not share one.
+        var entry = CoachLogEntry(repo.nowMs(), repo.nowMs(), ready.text, undo, why = ready.why)
+        repo.store.editCoachLog { log ->
+            entry = entry.copy(id = maxOf(entry.id, (log.maxOfOrNull { it.id } ?: 0L) + 1))
+            log + entry
+        }
         return entry
     }
 

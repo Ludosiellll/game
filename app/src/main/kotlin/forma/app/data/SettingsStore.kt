@@ -327,6 +327,9 @@ class SettingsStore(context: Context, name: String = "forma") {
     /** The coach's word on a workout, by workout id (the last [COACH_REVIEWS] kept); not copied to the cloud. */
     suspend fun coachReview(workoutId: Long): String? = read(Keys.coachReviews, reviews).first()?.get(workoutId)
 
+    /** Any review kept: the person has had the coach look at a workout before. */
+    suspend fun hasCoachReviews(): Boolean = read(Keys.coachReviews, reviews).first()?.isNotEmpty() == true
+
     suspend fun setCoachReview(workoutId: Long, text: String) {
         store.edit { p ->
             val now = p[Keys.coachReviews]?.let { runCatching { AppJson.decodeFromString(reviews, it) }.getOrNull() }.orEmpty()

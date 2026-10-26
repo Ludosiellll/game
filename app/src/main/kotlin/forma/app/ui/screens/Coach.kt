@@ -122,7 +122,8 @@ fun CoachScreen(question: String? = null, workoutId: Long? = null) {
     var panel by rememberSaveable { mutableStateOf<Panel?>(null) }
     fun send(q: String) {
         val c = api ?: return
-        if (q.isBlank() || busy) return
+        // The flow's own value: the screen's copy is a frame behind, and a question sent into a busy talk is dropped.
+        if (q.isBlank() || CoachTalk.busy.value) return
         typed = ""
         // Opened from a workout: its details go with every question here.
         CoachTalk.send(repo, c, q.trim()) { coachContext(repo) + (workoutId?.let { id -> coachWorkoutFacts(repo, id)?.let { "\n\n$it" } } ?: "") }
@@ -155,7 +156,8 @@ fun CoachScreen(question: String? = null, workoutId: Long? = null) {
             ToolChip("Что знает обо мне", settings.coachNotes.size, panel == Panel.MEMORY) { toggle(Panel.MEMORY) }
             ToolChip("Изменения", log.count { !it.undone }, panel == Panel.CHANGES) { toggle(Panel.CHANGES) }
             ToolChip("Как это работает", null, panel == Panel.ABOUT) { toggle(Panel.ABOUT) }
-            if (chat.isNotEmpty()) ToolChip("Новый разговор", null, false) { scope.launch { CoachTalk.clear(repo) } }
+            // Not while an answer is on its way: it would land alone in the new talk.
+            if (chat.isNotEmpty() && !busy) ToolChip("Новый разговор", null, false) { scope.launch { CoachTalk.clear(repo) } }
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(), state = list,
@@ -265,8 +267,17 @@ private fun Typing() {
 @Composable
 private fun ActCard(msgId: Long, index: Int, act: CoachChatAct, log: List<CoachLogEntry>) {
     val repo = LocalRepo.current
-    val scope = rememberCoroutineScope()
     var note by remember(msgId, index) { mutableStateOf<String?>(null) }
+    // A tap is being made: the buttons wait (the talk makes one change at a time anyway, and once).
+    var working by remember(msgId, index) { mutableStateOf(false) }
+    fun run(block: suspend () -> Unit) {
+        if (working) return
+        working = true
+        // On the talk's own scope: a change begun is made to the end even if the screen is left.
+        CoachTalk.launch {
+            try { block() } finally { working = false }
+        }
+    }
     // Taken back elsewhere («Изменения»): shown so here too.
     val state = if (act.state == CoachActState.DONE && log.firstOrNull { it.id == act.logId }?.undone == true) CoachActState.UNDONE else act.state
     val pending = state == CoachActState.PENDING
@@ -290,16 +301,16 @@ private fun ActCard(msgId: Long, index: Int, act: CoachChatAct, log: List<CoachL
         when (state) {
             CoachActState.PENDING -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PrimaryButton("Принять", {
-                    scope.launch {
+                    run {
                         runCatching { CoachTalk.accept(repo, msgId, index) }
                             .onSuccess { if (it?.state == CoachActState.PENDING) note = "С тех пор данные изменились — проверь и нажми «Принять» ещё раз." }
                             .onFailure { note = "Не получилось — попробуй ещё раз." }
                     }
-                }, Modifier.weight(1f))
-                GhostButton("Не надо", { scope.launch { CoachTalk.decline(repo, msgId, index) } }, Modifier.weight(1f))
+                }, Modifier.weight(1f), enabled = !working)
+                GhostButton("Не надо", { run { CoachTalk.decline(repo, msgId, index) } }, Modifier.weight(1f))
             }
             CoachActState.DONE -> if (log.firstOrNull { it.id == act.logId }?.undo != null) GhostButton("Вернуть как было", {
-                scope.launch { if (runCatching { CoachTalk.undo(repo, msgId, index) }.getOrDefault(false) != true) note = "Уже не вернуть: после этого всё изменилось." }
+                run { if (runCatching { CoachTalk.undo(repo, msgId, index) }.getOrDefault(false) != true) note = "Уже не вернуть: после этого всё изменилось." }
             }, Modifier.fillMaxWidth())
             else -> Unit
         }
@@ -320,7 +331,7 @@ private fun PanelCard(p: Panel, notes: List<String>, log: List<CoachLogEntry>) {
                 notes.forEach { n ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(n, style = T.body(14.sp), modifier = Modifier.weight(1f))
-                        GhostButton("Забыть", { scope.launch { repo.updateSettings { it.copy(coachNotes = it.coachNotes - n) } } })
+                        GhostButton("Забыть", { CoachTalk.launch { repo.updateSettings { it.copy(coachNotes = it.coachNotes - n) } } })
                     }
                 }
             }
@@ -337,7 +348,7 @@ private fun PanelCard(p: Panel, notes: List<String>, log: List<CoachLogEntry>) {
                         e.why?.let { Text("Почему: $it", style = T.secondary(13.sp)) }
                         if (e.undone) Text("Возвращено как было", style = T.secondary(13.sp))
                         else if (e.undo != null) GhostButton("Вернуть как было", {
-                            scope.launch { if (runCatching { CoachActions.undo(repo, e) }.getOrDefault(false) != true) note = "Уже не вернуть: после этого всё изменилось." }
+                            CoachTalk.launch { if (runCatching { CoachTalk.undoEntry(repo, e) }.getOrDefault(false) != true) note = "Уже не вернуть: после этого всё изменилось." }
                         })
                     }
                 }
@@ -359,8 +370,8 @@ private fun PanelCard(p: Panel, notes: List<String>, log: List<CoachLogEntry>) {
                 )
                 Text(
                     "Только после «Принять»: рабочий вес, «Болею», пауза на неделю и больше, упражнения, подходы, повторы, отдых, цель, стадион. " +
-                        "Пределы приложения ИИ не обойдёт: бег растёт не больше чем на 15 % в неделю, вес — не больше чем на 25 % за раз " +
-                        "и не ниже 85 % лучшего за 8 недель.",
+                        "Пределы приложения ИИ не обойдёт: лёгкий бег растёт не больше чем на 15 % в неделю, а сократить его больше чем на 10 % " +
+                        "сам не может; вес — не больше чем на 25 % за раз, в пределах расчётного максимума и не ниже 85 % лучшего за 8 недель.",
                     style = T.body(14.sp),
                 )
                 Text(
@@ -412,8 +423,9 @@ private fun SignIn(onSignIn: () -> Unit) {
 }
 
 /**
- * The coach's word on a finished workout: what went well, what not, what to do next time — asked once by itself when the
- * coach can answer, then kept on the phone. Nothing shown when the coach is not set up.
+ * The coach's word on a finished workout: what went well, what not, what to do next time — kept on the phone once asked.
+ * Asked by itself for a person who has talked to the coach before; anyone else is told first that the workouts go to
+ * Google's AI, and asks with a tap. Nothing shown when the coach is not set up.
  */
 @Composable
 fun CoachReviewCard(workoutId: Long, title: String, day: LocalDate) {
@@ -424,17 +436,19 @@ fun CoachReviewCard(workoutId: Long, title: String, day: LocalDate) {
     var error by remember(workoutId) { mutableStateOf<String?>(null) }
     var busy by remember(workoutId) { mutableStateOf(false) }
     var tries by remember(workoutId) { mutableIntStateOf(0) }
+    // Talked to the coach before (a talk, a change, a review): reviews come by themselves. Null until known.
+    var used by remember(workoutId) { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(workoutId, tries) {
         repo.store.coachReview(workoutId)?.let { text = it; return@LaunchedEffect }
+        val known = used ?: (repo.store.coachChatNow().isNotEmpty() || repo.store.coachLogNow().isNotEmpty() || repo.store.hasCoachReviews())
+        used = known
+        if (!known && tries == 0) return@LaunchedEffect
         busy = true
         error = null
         try {
             val facts = coachWorkoutFacts(repo, workoutId) ?: return@LaunchedEffect
-            val reply = api.askCoach(listOf(CoachTurn(CoachTurn.USER, reviewQuestion(title, day))), coachContext(repo) + "\n\n" + facts)
-            if (reply.text.isNotBlank()) {
-                repo.store.setCoachReview(workoutId, reply.text)
-                text = reply.text
-            }
+            // The recent workouts are enough to compare with: not the whole history.
+            text = CoachTalk.review(repo, api, workoutId, reviewQuestion(title, day)) { coachContext(repo, reportChars = 8_000) + "\n\n" + facts }.await()
         } catch (e: CancellationException) {
             throw e
         } catch (e: CoachException) {
@@ -454,6 +468,11 @@ fun CoachReviewCard(workoutId: Long, title: String, day: LocalDate) {
         when {
             text != null -> SelectionContainer { Text(text!!, style = T.body(15.sp)) }
             busy -> Text("Тренер смотрит тренировку…", style = T.secondary(14.sp))
+            used == false && tries == 0 -> {
+                Text("ИИ-тренер (Gemini от Google) разберёт тренировку: что получилось, что нет и что сделать в следующий раз. " +
+                    "Для этого он получит сводку твоих тренировок — без имени и почты.", style = T.secondary(14.sp))
+                GhostButton("Разобрать тренировку", { tries++ }, Modifier.fillMaxWidth())
+            }
             error != null -> {
                 Text(error!!, style = T.secondary(14.sp))
                 GhostButton("Ещё раз", { tries++ })
