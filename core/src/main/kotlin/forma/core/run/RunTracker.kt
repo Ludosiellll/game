@@ -1,6 +1,7 @@
 package forma.core.run
 
 import kotlinx.serialization.Serializable
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -314,7 +315,7 @@ class RunTracker(
     private var lastCross: Long? = null
 
     /** A crossing seen by GPS: active ms, the GPS distance there, and whether it was timed on the fitted loop. */
-    private data class Crossing(val at: Long, val dist: Double, val exact: Boolean)
+    private data class Crossing(val at: Long, val dist: Double, val exact: Boolean, val speed: Double = 0.0)
 
     /** Crossings seen by GPS, waiting to see whether a press comes with them. */
     private val pending = ArrayDeque<Crossing>()
@@ -370,6 +371,17 @@ class RunTracker(
     fun finish(nowMs: Long) {
         if (state == State.PAUSED) resume(nowMs)
         if (state == State.RUNNING) {
+            // The last crossings come seconds after the line: taken now, before the clock stops — "Стоп" at the finish of a
+            // trial keeps its last lap.
+            loop?.let { lp ->
+                lp.pause()
+                val active = activeMs(nowMs)
+                for (c in lp.crossings()) {
+                    if (!c.rough && upgrade(c.activeMs)) continue
+                    pending.addLast(Crossing(c.activeMs, distanceM - c.speed * (active - c.activeMs).coerceAtLeast(0) / 1000.0, !c.rough, c.speed))
+                }
+            }
+            resolve(activeMs(nowMs), all = true)
             finishedActiveMs = activeMs(nowMs)
             state = State.FINISHED
         }
@@ -419,38 +431,57 @@ class RunTracker(
         } ?: return false
         val seg = workout.segments[i]
         val fast = seg.lapSec?.let { 0.75 * lapM / it } ?: 3.0
-        // Active time of the wait's beginning, or of the rep's planned start (a few seconds earlier: an eager runner).
+        // Active time of the wait's beginning, or of the rep's planned start; an eager runner goes a second or two before.
         val begun = bounds[i].first - skipMs + heldMs - if (w != null) 1 else 0
-        val onset = lp.runUp(begun - 5_000, fast) ?: return false
-        val at = maxOf(onset, begun - 5_000)
-        if (w != null) {
-            val tl = maxOf(at, begun) + skipMs - heldMs
+        // A rep of 6.5 laps starts half a lap before the line.
+        val part = seg.laps?.let { it % 1.0 }?.takeIf { it > 0.01 } ?: 0.0
+        val pm = lp.oval?.perimeter ?: return false
+        /** At the rep's start (within 20 m), or the line not known: a stride or a jog to the line elsewhere is no start. */
+        fun atStart(ms: Long): Boolean {
+            if (!lp.lineOnLoop()) return true
+            val past = lp.pastLine(ms) ?: return false
+            val d = abs(past - (1 - part) * pm) % pm
+            return minOf(d, pm - d) <= START_NEAR_M
+        }
+        val active = activeMs(nowMs)
+        // Off from standing (a stride from a jog is no start); or, on the line, through it at speed — a rolling start.
+        val stand = lp.runUp(begun - 2_000, fast)?.takeIf { on ->
+            val before = recent.filter { it.first in (on - 4_000)..(on - 500) }.map { it.second.speed }
+            on >= begun - 2_000 && atStart(on) && (before.isEmpty() || before.any { it == null } || before.size >= 2 && before.map { it!! }.sorted()[before.size / 2] < 1.3f)
+        }
+        val rolling = if (stand != null || part > 0.0 || !lp.lineOnLoop()) null else pending.firstOrNull { c ->
+            c.exact && c.at >= begun - 2_000 && c.speed >= fast && (lp.speed() ?: 0.0) >= 0.85 * fast
+        }?.at
+        val at = stand ?: rolling ?: return false
+        if (w != null && at >= begun) {
+            val tl = at + skipMs - heldMs
             if (tl > bounds[w].first) heldMs += tl - bounds[w].first
             starts[w] = bounds[w].first
-            lineT = bounds[w].first
         } else {
+            // Before the plan's start (or a rep by the clock): the laps count from the start itself.
             starts[i] = at + skipMs - heldMs
-            lineT = starts[i]
         }
+        lineT = starts[i]
         lastPressMs = at
-        lineDistM = distanceM - (lp.speed() ?: 0.0) * (activeMs(nowMs) - at) / 2000.0
-        // Standing still on the line before a rep of whole laps: that is where the line is.
-        val laps = seg.laps
-        if (laps != null && laps % 1.0 == 0.0) {
+        lineDistM = distanceM - (lp.speed() ?: 0.0) * (active - at) / 2000.0
+        // Standing still before a rep of whole laps, at its start: that is where the line is (a line kept from another day
+        // in the wrong place, or none, is put there).
+        if (part == 0.0 && stand != null) {
             val stood = recent.filter { it.first in (at - 3_000)..at }.map { it.second }
             if (stood.size >= 2 && stood.all { (it.speed ?: 0f) < 0.7f && it.accuracy <= LINE_ACCURACY }) {
                 val lat = stood.map { it.lat }.average()
                 val lon = stood.map { it.lon }.average()
                 val ln = line
-                line = when {
-                    ln == null -> lat to lon
-                    Geo.haversine(ln.first, ln.second, lat, lon) <= 15.0 -> (ln.first + (lat - ln.first) * 0.3) to (ln.second + (lon - ln.second) * 0.3)
-                    else -> ln
-                }
+                line = if (ln != null && lp.lineOnLoop() && Geo.haversine(ln.first, ln.second, lat, lon) <= 15.0) {
+                    (ln.first + (lat - ln.first) * 0.3) to (ln.second + (lon - ln.second) * 0.3)
+                } else lat to lon
             }
         }
         return true
     }
+
+    /** The line to keep for the next session: none that lies off the loop GPS found (see [LoopTimer.lineOnLoop]). */
+    fun keptLine(): Pair<Double, Double>? = line?.takeIf { loop?.oval == null || loop.lineOnLoop() }
 
     /** Ends the wait on the line: the plan goes on from the start of the rep. */
     private fun release(nowMs: Long) {
@@ -501,8 +532,6 @@ class RunTracker(
         lastRawActive = active
         recent.addLast(active to fix)
         while (recent.size > 1 && active - recent.first().first > 40_000) recent.removeFirst()
-        // A free run on a stadium with no line known yet: it is where the run started (laps count from there).
-        if (line == null && workout.lapMeters != null && workout.reps == 0 && active <= 15_000 && fix.accuracy <= 10f) line = fix.lat to fix.lon
         watchLine(fix, active)
         loop?.let { feedLoop(it, fix, active) }
         // The distance from the Doppler speed between this fix and the one before (under 0.5 m/s is standing).
@@ -593,9 +622,11 @@ class RunTracker(
         for (c in lp.crossings()) {
             val back = (active - c.activeMs).coerceAtLeast(0)
             if (!c.rough && upgrade(c.activeMs)) continue
-            pending.addLast(Crossing(c.activeMs, distanceM - c.speed * back / 1000.0, exact = !c.rough))
+            pending.addLast(Crossing(c.activeMs, distanceM - c.speed * back / 1000.0, exact = !c.rough, speed = c.speed))
             lastCross = c.activeMs
         }
+        // A free run with no line on this loop: the line is where the runner is when the loop is first followed.
+        if (workout.reps == 0 && lp.following() && !lp.lineOnLoop() && fix.accuracy <= LINE_ACCURACY && lp.near(fix.lat, fix.lon)) line = fix.lat to fix.lon
     }
 
     /**
@@ -792,7 +823,8 @@ class RunTracker(
             val end = bounds[rep].last + 1
             if (t < end) {
                 skipMs += end - t
-                lastTickSec = (end / 1000).toInt() - 1
+                // Cues already said up to now are not said again (the lap may come seconds after the line).
+                lastTickSec = maxOf(lastTickSec, (end / 1000).toInt() - 1)
             }
         }
         return Press.Done(fixed)
@@ -859,7 +891,8 @@ class RunTracker(
             val end = bounds[rep].last + 1
             if (t < end) {
                 skipMs += end - t
-                lastTickSec = (end / 1000).toInt() - 1
+                // Cues already said up to now are not said again (the lap may come seconds after the line).
+                lastTickSec = maxOf(lastTickSec, (end / 1000).toInt() - 1)
             }
         }
         return Press.Done(result)
@@ -1054,9 +1087,13 @@ class RunTracker(
      */
     fun autoLap(nowMs: Long): Lap? {
         if (state != State.RUNNING || workout.lapMeters == null) return null
-        val now = activeMs(nowMs)
+        return resolve(activeMs(nowMs), all = false)
+    }
+
+    /** The crossings waiting whose wait is over ([all]: every one, at the finish). Returns the last lap made. */
+    private fun resolve(now: Long, all: Boolean): Lap? {
         var made: Lap? = null
-        while (pending.isNotEmpty() && now - pending.first().at >= if (pending.first().exact) EXACT_WAIT_MS else AUTO_WAIT_MS) {
+        while (pending.isNotEmpty() && (all || now - pending.first().at >= if (pending.first().exact) EXACT_WAIT_MS else AUTO_WAIT_MS)) {
             val c = pending.removeFirst()
             val wait = if (c.exact) EXACT_WAIT_MS else AUTO_WAIT_MS
             if (pressTimes.any { kotlin.math.abs(it - c.at) <= wait }) continue
@@ -1154,6 +1191,9 @@ class RunTracker(
 
         /** A crossing GPS saw becomes a lap when no press came this close to it. */
         const val AUTO_WAIT_MS = 8_000L
+
+        /** A start found by GPS is a start within this of the rep's own start (the line, or part of a lap before it). */
+        const val START_NEAR_M = 20.0
 
         /** A rough crossing and one timed on the loop this close are one. */
         const val UPGRADE_MS = 10_000L

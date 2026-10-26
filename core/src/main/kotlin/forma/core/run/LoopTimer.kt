@@ -49,8 +49,9 @@ class LoopTimer(private val lapMeters: Int?) {
     private val steps = ArrayList<Step>()
     private var offSince: Double? = null
 
-    /** Index of the last line crossing given (the laps are numbered round the loop from the line). */
+    /** Index of the last line crossing given (the laps are numbered round the loop from the line), and when (s). */
     private var lastK: Long? = null
+    private var lastT: Double? = null
     private val out = ArrayList<Cross>()
 
     /** The smoothed progress and speed at the steps of the window, newest last (see [smooth]). */
@@ -87,7 +88,11 @@ class LoopTimer(private val lapMeters: Int?) {
         val o = oval ?: return
         val p = plane ?: return
         val (lat, lon) = line ?: return
-        lineArc = o.arc(p.x(lon), p.y(lat))
+        // A line far off this loop (kept from another stadium, or where a run started off the track) is no line here: put on
+        // the nearest point of the loop it would time every lap at the wrong place.
+        val x = p.x(lon)
+        val y = p.y(lat)
+        lineArc = if (abs(o.off(x, y)) <= 2 * Oval.NEAR_M) o.arc(x, y) else null
         // The laps count from now on: the progress so far is the lap being run.
         lastK = smoothed.lastOrNull()?.let { k(it.second[0]) }
     }
@@ -116,6 +121,33 @@ class LoopTimer(private val lapMeters: Int?) {
 
     /** Fixes in a row too far from where the filter expected them: the filter is lost, it starts again. */
     private var gated = 0
+
+    /** The line given is on this loop (see [placeLine]). */
+    fun lineOnLoop(): Boolean = lineArc != null
+
+    /** ([lat], [lon]) is on the loop, within a few metres. */
+    fun near(lat: Double, lon: Double): Boolean {
+        val o = oval ?: return false
+        val p = plane ?: return false
+        return abs(o.off(p.x(lon), p.y(lat))) <= Oval.NEAR_M
+    }
+
+    /**
+     * Where the runner was at [activeMs]: metres round the loop past the line (0 until the loop's length), from the smoothed
+     * states; null without the line or that moment in the window.
+     */
+    fun pastLine(activeMs: Long): Double? {
+        val o = oval ?: return null
+        val la = lineArc ?: return null
+        val s = smoothed
+        val t = activeMs / 1000.0
+        val i = (0 until s.size - 1).firstOrNull { t >= s[it].first && t <= s[it + 1].first } ?: return null
+        val (t0, a) = s[i]
+        val (t1, b) = s[i + 1]
+        val p = a[0] + (b[0] - a[0]) * (t - t0) / (t1 - t0).coerceAtLeast(1e-6)
+        val pm = o.perimeter
+        return ((p - dir * la) % pm + pm) % pm
+    }
 
     /** Crossings are being timed: the loop, the line on it and the way round are known. */
     fun ready(): Boolean = following() && lineArc != null
@@ -151,7 +183,7 @@ class LoopTimer(private val lapMeters: Int?) {
         kept.addLast(doubleArrayOf(t, x, y, accuracy.toDouble(), v ?: -1.0))
         while (kept.size > KEEP_FIXES) kept.removeFirst()
         val o = oval ?: return tryFit(t)
-        if (given && !stillGiven(o, x, y, v)) return
+        if (given && !stillGiven(o, x, y, v, t)) return
         step(o, t, x, y, accuracy.toDouble(), v)
         smooth()
         find(t)
@@ -212,19 +244,32 @@ class LoopTimer(private val lapMeters: Int?) {
     }
 
     /** The loop given from the last session must be where the runner runs: half the first fixes far off it — another one. */
-    private fun stillGiven(o: Oval, x: Double, y: Double, v: Double?): Boolean {
-        if (givenChecks >= 30 || (v ?: 0.0) < 1.5) return true
+    private fun stillGiven(o: Oval, x: Double, y: Double, v: Double?, t: Double): Boolean {
+        if (givenChecks >= 30) return true
+        // Another loop run elsewhere (another stadium, fitted from the fixes off this one): this one is not today's.
+        if (t - lastFit >= FIT_EVERY_S) {
+            lastFit = t
+            val elsewhere = kept.filter { it[3] <= FIT_ACCURACY && it[4] >= 1.0 && abs(o.off(it[1], it[2])) > Oval.NEAR_M }
+            val other = if (elsewhere.size >= 60) Oval.fit(DoubleArray(elsewhere.size) { elsewhere[it][1] }, DoubleArray(elsewhere.size) { elsewhere[it][2] }) else null
+            if (other != null && (lapMeters == null || other.perimeter in lapMeters * 0.6..lapMeters * 1.5)) return dropGiven()
+        }
+        // Running (not a walk from the car park) near the stadium, yet off the loop: not this loop. Far away counts for nothing.
+        if ((v ?: 0.0) < 2.2 || abs(o.off(x, y)) > 150.0) return true
         givenChecks++
         if (abs(o.off(x, y)) > Oval.NEAR_M) givenOff++
-        if (givenChecks >= 20 && givenOff * 2 > givenChecks) {
-            oval = null
-            given = false
-            lineArc = null
-            pause()
-            dir = 0
-            return false
-        }
+        if (givenChecks >= 20 && givenOff * 2 > givenChecks) return dropGiven()
         return true
+    }
+
+    private fun dropGiven(): Boolean {
+        oval = null
+        given = false
+        lineArc = null
+        pause()
+        tail = null
+        dir = 0
+        lastFit = Double.NEGATIVE_INFINITY
+        return false
     }
 
     /** Every [FIT_EVERY_S]: a loop from the fixes kept, once there are enough of them going round. */
@@ -379,12 +424,18 @@ class LoopTimer(private val lapMeters: Int?) {
         if (pts.size < 2) return
         val pm = o.perimeter
         val g0 = dir * la
+        // Only what came after the crossing given last: the window still holds it.
+        val from = lastT?.let { lt -> pts.indexOfFirst { it.first > lt }.let { if (it < 0) pts.size - 1 else maxOf(0, it - 1) } } ?: 0
         var k = (lastK ?: k(pts.first().second[0])) + 1
+        // Walked back over the line, well back — to a start part of a lap behind it (6.5 laps): the next crossing of the line
+        // is that lap's again. A step back at the line is no walk back.
+        val lk = lastK
+        if (lk != null && lastT != null && (from until pts.size).minOf { pts[it].second[0] } < g0 + lk * pm - maxOf(pm / 8, 20.0)) k = lk
         while (true) {
             val g = g0 + k * pm
-            val i = (0 until pts.size - 1).firstOrNull { pts[it].second[0] < g && pts[it + 1].second[0] >= g } ?: run {
+            val i = (from until pts.size - 1).firstOrNull { pts[it].second[0] < g && pts[it + 1].second[0] >= g } ?: run {
                 // Passed before the window began (a long gap): that lap is lost, the next one counts.
-                if (pts.first().second[0] >= g) {
+                if ((from until pts.size).minOf { pts[it].second[0] } >= g) {
                     lastK = k
                     k++
                     null
@@ -401,6 +452,7 @@ class LoopTimer(private val lapMeters: Int?) {
             if (tc > now - LAG_MS / 1000.0) return
             out += Cross((tc * 1000).toLong(), (s0[1] + s1[1]) / 2, k, rough)
             lastK = k
+            lastT = tc
             k++
         }
     }

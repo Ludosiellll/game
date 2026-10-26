@@ -1208,7 +1208,7 @@ fun RunDoneScreen(workoutId: Long) {
                             // The stadium's line as the presses placed it, and the strides measured where GPS was good: next
                             // time GPS laps count from the first one, and steps give the distance where GPS is lost. The
                             // run is saved already: a failure here must not offer to save it twice.
-                            val line = tracker.line
+                            val line = tracker.keptLine()
                             val loop = tracker.loopGround()
                             val strides = tracker.strideSamples()
                             if (line != null || strides.isNotEmpty() || loop != null) {

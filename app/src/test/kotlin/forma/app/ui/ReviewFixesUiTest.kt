@@ -191,7 +191,8 @@ class ReviewFixesUiTest {
         compose.onAllNodesWithText("4")[0].performScrollTo().performClick()
         settle()
         compose.onAllNodesWithText("Сохранить")[0].performScrollTo().performClick()
-        settle()
+        // The save writes to the database off the main thread: recreate once it is done, not after a fixed wait.
+        compose.waitUntil(10_000) { settle(); texts("Сохранено").isNotEmpty() || texts("СОХРАНЕНО").isNotEmpty() }
         tester.emulateSavedInstanceStateRestore()
         settle()
         val gone = texts("уже сохранена или удалена")
@@ -214,6 +215,7 @@ class ReviewFixesUiTest {
             }
         }
         val name = Catalog[t.slots.first().exerciseId].name
+        compose.waitUntil(10_000) { settle(); compose.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty() }
         compose.onAllNodesWithText(name)[0].performScrollTo().performClick()
         settle()
         compose.onAllNodesWithText("Сохранить")[0].performClick()

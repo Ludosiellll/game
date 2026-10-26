@@ -91,6 +91,9 @@ data class Oval(val cx: Double, val cy: Double, val angle: Double, val half: Dou
         /** Fixes this far off the loop are not on it (a step off the track, a jump of GPS). */
         const val NEAR_M = 8.0
 
+        /** Points a fit takes at most (see [fit]). */
+        private const val MAX_POINTS = 300
+
         fun fromGround(g: List<Double>?): Pair<Oval, Plane>? {
             if (g == null || g.size != 5 || g.any { !it.isFinite() }) return null
             val plane = Plane(g[0], g[1])
@@ -103,8 +106,13 @@ data class Oval(val cx: Double, val cy: Double, val angle: Double, val half: Dou
          * left out (a run to the bench, a jump of GPS). Null when they do not make a stadium's loop: too few, not round
          * the whole of it, or too far from it.
          */
-        fun fit(xs: DoubleArray, ys: DoubleArray): Oval? {
-            if (xs.size < 40 || xs.size != ys.size) return null
+        fun fit(all: DoubleArray, allY: DoubleArray): Oval? {
+            if (all.size < 40 || all.size != allY.size) return null
+            // At most [MAX_POINTS], evenly through the run: the shape is as good, and a phone fits it on the main thread
+            // between fixes without a dropped frame.
+            val every = (all.size + MAX_POINTS - 1) / MAX_POINTS
+            val xs = DoubleArray((all.size + every - 1) / every) { all[it * every] }
+            val ys = DoubleArray(xs.size) { allY[it * every] }
             var keep = BooleanArray(xs.size) { true }
             var o = start(xs, ys) ?: return null
             repeat(5) {
