@@ -1,6 +1,7 @@
 package forma.core.plan
 
 import forma.core.model.Aim
+import forma.core.model.Catalog
 import forma.core.model.Emphasis
 import forma.core.model.Experience
 import forma.core.model.LiftFocus
@@ -49,6 +50,12 @@ object Templates {
 
     private fun slot(aim: Aim, exp: Experience, id: String, role: SlotRole): SlotSpec {
         if (id == "plank") return SlotSpec(id, 3, 20, 60, 1, 60, SlotRole.ACCESSORY)
+        // A runner's calves are the one accessory not cut: the push-off of every stride and the Achilles' guard (Dorn et
+        // al. 2012, Mahieu et al. 2006) — 4 sets a week, the advisor's own floor for a runner, on the one leg day.
+        if (aim.seriousRunning && Catalog.find(id)?.pattern == forma.core.model.Pattern.CALF) {
+            val s = base(aim.lift, SlotRole.ACCESSORY)
+            return SlotSpec(id, 4, s.min, s.max, s.rir, s.rest, SlotRole.ACCESSORY)
+        }
         val s = scheme(aim, role)
         // Novices keep a bit more in reserve and fewer sets on main lifts while learning technique.
         val rir = if (exp == Experience.NOVICE) maxOf(s.rir, 2) else s.rir
@@ -94,13 +101,8 @@ object Templates {
         val upperA = build(aim, exp, "upper_a", "Верх · А", Focus.UPPER,
             "bench" to M, (if (novice) "cable_row" else "row") to M, "db_shoulder" to S, "lat_pulldown" to S,
             "db_curl" to A, "pushdown" to A)
-        // A runner's calves (the push-off of every stride, the Achilles' guard — Dorn et al. 2012, Mahieu et al. 2006):
-        // standing and seated (the soleus), so the week keeps the advisor's own floor of 4 sets after the runner's cut.
         val lowerA = build(aim, exp, "lower_a", "Низ · А", Focus.LOWER,
-            *listOfNotNull(
-                "squat" to M, "rdl" to S, (if (runner) "bulgarian" else "leg_press") to S, "leg_curl" to A, "calf_raise" to A,
-                if (runner) "seated_calf" to A else null, "plank" to A,
-            ).toTypedArray())
+            "squat" to M, "rdl" to S, (if (runner) "bulgarian" else "leg_press") to S, "leg_curl" to A, "calf_raise" to A, "plank" to A)
         val upperB = build(aim, exp, "upper_b", "Верх · Б", Focus.UPPER,
             "ohp" to M, (if (novice) "lat_pulldown" else "pullup") to M, "db_incline" to S, "cable_row" to S,
             "lateral_raise" to A, "hammer_curl" to A)

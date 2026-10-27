@@ -63,7 +63,8 @@ class PersonalRulesTest {
         // Pairs from logged sets: the rest between them from the times, failure where a set fell short unrated.
         val t = 1_000_000L
         val pairs = RestAdvice.pairsOf(listOf(DoneSet(80.0, 8, 2) to t, DoneSet(80.0, 7, null) to t + 180_000, DoneSet(85.0, 5, 1) to t + 360_000), 8)
-        assertEquals(listOf(RestAdvice.Pair(180 - 21 - 10, 10, 7)), pairs)
+        // The next set 5 kg heavier (within a tenth) pairs too: the unrated short set (failure at 7) carried to 85 kg.
+        assertEquals(listOf(RestAdvice.Pair(180 - 21 - 10, 10, 7), RestAdvice.Pair(180 - 15 - 10, 5, 6)), pairs)
     }
 
     @Test fun startGuessesLearnHowFarOffTheyWere() {

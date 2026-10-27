@@ -353,7 +353,9 @@ object Progression {
             // Sets of very different reps were mixed while searching: trust the heaviest one (fewest reps to
             // failure, least extrapolation), not the most optimistic estimate.
             val rated = done.mapIndexedNotNull { i, s -> if (s.reps > 0) s to assumedRir(s, i, p) else null }
-            val best = rated.minWith(compareBy<Pair<DoneSet, Int>> { (s, rir) -> s.reps + rir }.thenByDescending { it.first.weight })
+            // A second set at a weight already done is a tired repeat: the first set at that weight speaks for it.
+            val fresh = rated.filterIndexed { i, (s, _) -> rated.take(i).none { abs(it.first.weight - s.weight) < 1e-9 } }
+            val best = fresh.minWith(compareBy<Pair<DoneSet, Int>> { (s, rir) -> s.reps + rir }.thenByDescending { it.first.weight })
             val estimate = OneRm.estimate(effectiveLoad(ex, best.first.weight, bodyWeight), best.first.reps, best.second)
             val reps = spec.repMin
             val raw = supported(estimate, reps, spec.rir)
@@ -362,17 +364,21 @@ object Progression {
         }
 
         val target = p.reps
-        val w = p.weight
+        // The planned sets in the order done (the index tells which one was the "+" set). Sets done lighter than
+        // planned — usually after the app's own hint — count as small misses at the planned weight; within half a step
+        // below it is the plan's weight (a 65 kg plan on a stack that goes 64, 68). Every set at the plan or above it:
+        // the lowest weight they all reached is what was done, and what the reps are read against.
+        val planned = done.filter { it.reps > 0 }.take(p.sets)
+        val tol = ex.stepAt(p.weight) / 2
+        val lighter = planned.count { it.weight < p.weight - tol }
+        val w = if (lighter == 0 && planned.isNotEmpty()) max(p.weight, floorTo(planned.minOf { it.weight }, ex.stepAt(p.weight))) else p.weight
+        @Suppress("NAME_SHADOWING") val state = if (w > (state.weight ?: 0.0)) state.copy(weight = w) else state
         val step = ex.stepAt(w)
         val inc = spec.increment ?: step
         // 85 % of the total load (for assisted exercises that means more help, not 85 % of it).
         val floor = recentBest?.let { floorTo(toWeight(ex, OneRm.loadFor(it, target, p.rir) * FLOOR, bodyWeight), step) }
         fun floored(x: Double) = if (floor != null) max(x, min(floor, w)) else x
 
-        // The planned sets in the order done (the index tells which one was the "+" set). Sets done lighter than
-        // planned — usually after the app's own hint — count as small misses at the planned weight.
-        val planned = done.filter { it.reps > 0 }.take(p.sets)
-        val lighter = planned.count { it.weight < w - 1e-9 }
         if (lighter == planned.size) {
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.LIGHTER), e1rm)
         }
@@ -397,11 +403,18 @@ object Progression {
             // reserve beyond the plan; unknown when neither is there.
             val spare: Int? = when {
                 // Counted against one in reserve whatever the set was told: stopping earlier does not slow the weights.
-                top != null -> top.reps - target + ((top.rir ?: if (top.reps > target) p.topRir else TOP_RIR) - TOP_RIR)
+                top != null -> {
+                    val topRir = top.rir ?: if (top.reps > target) p.topRir else TOP_RIR
+                    // Done at another weight than [w] (heavier, after a hint): its reps as they would be at [w].
+                    val reps = if (abs(top.weight - w) < 1e-9) top.reps.toDouble()
+                    else OneRm.rtfAt(OneRm.estimate(effectiveLoad(ex, top.weight, bodyWeight), top.reps, topRir), effectiveLoad(ex, w, bodyWeight)) - topRir
+                    kotlin.math.floor(reps - target + (topRir - TOP_RIR)).toInt()
+                }
                 regular.all { it.rir != null } -> regular.minOf { it.rir!! - p.rir + (it.reps - target) }
                 else -> null
             }
-            val reportedEasy = regular.isNotEmpty() && regular.all { (it.rir ?: -1) >= p.rir + 2 }
+            // ...unless the "+" set, the set nearest failure, was rated with nothing to spare: ratings far from failure run high.
+            val reportedEasy = regular.isNotEmpty() && regular.all { (it.rir ?: -1) >= p.rir + 2 } && !(top?.rir != null && spare != null && spare <= 0)
             val linear = linearPhase(ex, spec, state, novice, w, inc)
             // One step of this exercise is a big share of the weight (light dumbbells): progress through reps first.
             val coarse = w > 0 && step / w > 0.10
@@ -466,13 +479,13 @@ object Progression {
         // Short of the target — but every set at the weight was stopped with the missing reps still in reserve (8 done,
         // "2 more" said, 9 planned with 1 left): the lifter stopped, the weight did not stop them. Seen in half-year
         // simulations: such a lifter's weights sank to 60–80 % of what they could lift. The weight and the target stay.
-        val atW = planned.filter { it.weight >= w - 1e-9 }
+        val atW = planned.filter { it.weight >= w - tol }
         // Most of the sets is enough: a reported reserve is a guess, off by one now and then.
         if (atW.isNotEmpty() && atW.count { s -> s.rir != null && s.reps + s.rir >= target + p.rir } * 2 > atW.size) {
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.STOPPED_EARLY), e1rm)
         }
-        val first = planned.firstOrNull { it.weight >= w - 1e-9 }?.reps ?: 0
-        val deficit = planned.sumOf { if (it.weight < w - 1e-9) 1 else max(0, target - it.reps) }
+        val first = planned.firstOrNull { it.weight >= w - tol }?.reps ?: 0
+        val deficit = planned.sumOf { if (it.weight < w - tol) 1 else max(0, target - it.reps) }
         val stalls = state.stalls + 1
         val near = first >= target - 1 && deficit <= max(1, p.sets - 1)
         val cutFrom = state.cutFrom
@@ -486,14 +499,14 @@ object Progression {
         if (target > spec.repMin && !(near && stalls < 2)) {
             // Room in the rep range: bring the rep target down to what was done before touching the weight
             // (double progression: the weight goes down only when even the bottom of the range is out of reach).
-            val doneAtW = planned.filter { it.weight >= w - 1e-9 }.map { it.reps }
+            val doneAtW = planned.filter { it.weight >= w - tol }.map { it.reps }
             val r = max(spec.repMin, min(target - 1, doneAtW.minOrNull() ?: spec.repMin))
             return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
         }
         if (w <= minWeight(ex, bodyWeight) + 1e-9 && !(near && stalls < 2)) {
             // Already at the lightest load (own body weight, the most help, the empty bar): the weight cannot come
             // down, so the rep target goes below the range to what was done and climbs from there.
-            val doneAtW = planned.filter { it.weight >= w - 1e-9 }.map { it.reps }
+            val doneAtW = planned.filter { it.weight >= w - tol }.map { it.reps }
             val r = max(1, min(target - 1, doneAtW.minOrNull() ?: 1))
             if (r < target) {
                 return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps),
@@ -599,15 +612,18 @@ object Progression {
         // Reserve as actually done: missed reps count as negative reserve, extra reps as extra reserve.
         val actual = when {
             last.reps < p.reps -> (last.rir ?: 0) - (p.reps - last.reps)
-            else -> last.rir ?: (p.rir + (last.reps - p.reps))
+            else -> (last.rir ?: p.rir) + (last.reps - p.reps)
         }
         if (abs(p.rir - actual) < 2) return null
         val planned = p.weight ?: last.weight
         val raw = toWeight(ex, OneRm.loadFor(e1rm, p.reps, p.rir), bodyWeight)
         // ±10 % of the total load the plan asked for (body weight included for body-weight exercises).
+        // Once a set at a heavier weight (the earlier hint) still shows reserve, the next step is measured from that
+        // set: each step is backed by a set at that weight. Never beyond +20 % of the plan in one session.
         val plannedLoad = effectiveLoad(ex, planned, bodyWeight)
-        val lo = toWeight(ex, plannedLoad * 0.9, bodyWeight) - 1e-9
-        val hi = toWeight(ex, plannedLoad * 1.1, bodyWeight) + 1e-9
+        val anchor = max(plannedLoad, effectiveLoad(ex, last.weight, bodyWeight))
+        val lo = toWeight(ex, anchor * 0.9, bodyWeight) - 1e-9
+        val hi = toWeight(ex, min(anchor * 1.1, plannedLoad * 1.2), bodyWeight) + 1e-9
         val bounded = raw.coerceIn(lo, hi)
         // Nearest weight on the step grid that stays within ±10 % of the plan; none — no hint.
         val down = floorTo(bounded, ex.stepAt(bounded))

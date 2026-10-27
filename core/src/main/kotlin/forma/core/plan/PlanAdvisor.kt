@@ -561,7 +561,9 @@ object PlanAdvisor {
         }
         if (input.tiredOften) {
             val worst = cur().flatMap { d -> d.items.map { d to it } }
-                .filter { (d, i) -> i.role == SlotRole.ACCESSORY && i.sets >= 3 && !touched(d, i) && find(i.exerciseId)?.load != LoadKind.TIMED }
+                // A runner's calves are not the extra work to drop when tired: they keep the legs whole for running.
+                .filter { (d, i) -> i.role == SlotRole.ACCESSORY && i.sets >= 3 && !touched(d, i) && find(i.exerciseId)?.load != LoadKind.TIMED &&
+                    !(runner && find(i.exerciseId)?.pattern == Pattern.CALF) }
                 .sortedWith(compareBy({ if (cutShort(it.first, it.second)) 0 else 1 }, { if (it.second.added) 1 else 0 }, { -it.second.sets })).take(2)
             for ((d, i) in worst) changes += Change(
                 "rest:${d.templateId}:${i.planId}", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, i.sets - 1, null, null,

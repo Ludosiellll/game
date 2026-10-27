@@ -172,7 +172,8 @@ class IdealPlanTest {
         assertTrue("в 4 из 4 последних тренировок" in skip.why, skip.why)
         assertTrue("leg_ext" !in skip.options && "bulgarian" !in skip.options && "step_up" in skip.options, skip.options.toString())
         val calves = a.changes.first { it.id == "real:calf_raise" }
-        assertEquals(2 to 1, calves.setsFrom to calves.setsTo)
+        // A runner's calf raises are 4 sets in the plan; he does one.
+        assertEquals(4 to 1, calves.setsFrom to calves.setsTo)
 
         val chosen = listOf(skip.pick("step_up"), calves)
         val preview = repo.planPreview(chosen)

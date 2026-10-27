@@ -55,8 +55,9 @@ class PlanAdvisorTest {
         assertTrue(a.fine.any { "Жимы и тяги в балансе" in it }, a.fine.toString())
         assertTrue(a.fine.any { "По времени укладываешься" in it }, a.fine.toString())
         val calves = a.volume.first { it.muscle == Muscle.CALVES }
-        assertEquals(2.0, calves.now)
-        assertEquals(5.0, calves.after)
+        // A runner's standing calf raises keep 4 sets (not cut to 2); the soleus comes on top.
+        assertEquals(4.0, calves.now)
+        assertEquals(7.0, calves.after)
         assertTrue(a.changes.all { it.why.isNotBlank() })
     }
 
