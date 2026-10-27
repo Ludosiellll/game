@@ -80,6 +80,7 @@ object TrainingReport {
             }
             p.finish?.let { appendLine("- Беговая цель: пробежать ${dist(it)} без остановки, время не задано.") }
             p.lapMeters?.let { appendLine("- Бегает на стадионе, круг $it м.") }
+            if (p.aim.lifts && p.gear != forma.core.model.Gear.GYM) appendLine("- Где занимается: ${p.gear.ru}" + (if (p.pullupBar) ", есть турник." else ", турника нет."))
             if (p.ownWeek) appendLine("- Своя неделя: " + listOfNotNull(
                 p.gymDays.orEmpty().takeIf { it.isNotEmpty() }?.let { "зал — ${days(it)}" },
                 p.runDays.orEmpty().takeIf { it.isNotEmpty() }?.let { "бег — ${days(it)}" },

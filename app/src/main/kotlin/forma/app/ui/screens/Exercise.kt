@@ -52,6 +52,12 @@ fun ExerciseScreen(exerciseId: String) {
     val e1rm = stats.firstOrNull { it.exerciseId == exerciseId }?.e1rm
     ScrollScreen {
         TopBar(ex.name, "${ex.equipment.ru} · ${ex.primary.joinToString { it.ru.lowercase() }}", onBack = { nav.back() })
+        forma.core.model.Cues.of(ex.id)?.let { cue ->
+            FCard(gap = 4.dp) {
+                Text("Как делать", style = T.secondary(13.sp))
+                Text(cue, style = T.body(15.sp))
+            }
+        }
         if (ex.load != LoadKind.TIMED && series.isNotEmpty()) {
             FCard(gap = 4.dp) {
                 Text("Вес на 1 раз, расчёт", style = T.secondary(13.sp))

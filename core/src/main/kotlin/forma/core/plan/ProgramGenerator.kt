@@ -36,13 +36,15 @@ object ProgramGenerator {
         val shared = if (own) (gym!! intersect run!!).isNotEmpty() else profile.doubleDays
         // Upper / lower / upper only when there are hard runs to put after the upper body; with easy runs alone the
         // full-body sessions (legs three times a week) stay.
-        val (templates, lighter) = lightStart(
+        // Made of what is there (a home without a barbell), then the bar's weight for a light beginner.
+        val (kit, home) = GearFit.fit(
             Templates.forWeek(plan, profile.experience, mix.lifts, shared = shared && mix.quality + mix.long > 0)
                 .map { Templates.fit(it, profile.sessionMinutes) },
             profile,
         )
+        val (templates, lighter) = lightStart(kit, profile)
         val laid = if (own) Scheduler.scheduleFixed(gym!!, run!!, mix, templates, plan) else Scheduler.schedule(days, mix, templates, plan)
-        val week = laid.copy(notes = laid.notes + listOfNotNull(lighter, manyLifts(profile, mix.lifts, own)))
+        val week = laid.copy(notes = laid.notes + listOfNotNull(home, lighter, manyLifts(profile, mix.lifts, own)))
         val block = when (profile.experience) {
             Experience.NOVICE -> 0
             Experience.INTERMEDIATE -> 5

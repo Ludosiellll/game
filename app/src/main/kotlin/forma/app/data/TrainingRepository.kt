@@ -11,6 +11,7 @@ import forma.core.model.LoadKind
 import forma.core.model.Profile
 import forma.core.model.Sex
 import forma.core.plan.CatchUp
+import forma.core.plan.Picks
 import forma.core.plan.PlannedSession
 import forma.core.plan.Program
 import forma.core.plan.ProgramGenerator
@@ -150,6 +151,7 @@ class TrainingRepository(
         val profile = keptAimOf(old, own?.let { withShapeOf(input, it.profile) } ?: input)
         store.setProfile(profile)
         store.setProgram(own?.let { ownProgram(profile, it) } ?: keepCycle(ProgramGenerator.generate(profile, today()), store.programNow()))
+        reapplyPicks()
         val raceChanged = old == null || old.raceMeters != profile.raceMeters || old.raceSeconds != profile.raceSeconds
         if (raceChanged || old.runLevel != profile.runLevel) {
             val init = ProgramGenerator.initialRunState(profile)
@@ -229,7 +231,10 @@ class TrainingRepository(
         val next = profile.copy(runLevel = forma.core.model.RunLevel.BASE)
         val fresh = runCatching { ProgramGenerator.generate(next, today()) }.getOrNull() ?: return
         store.setProfile(next)
-        if (store.programNow()?.copiedFrom == null) store.setProgram(keepCycle(fresh, store.programNow()))
+        if (store.programNow()?.copiedFrom == null) {
+            store.setProgram(keepCycle(fresh, store.programNow()))
+            reapplyPicks()
+        }
         // Not all at once: a runner's week has more runs than three run/walk sessions (seen in simulations: +60–90 % of
         // minutes in one week). The first week stays within 10 % of the last run/walk week — the easy runs are as long
         // as that allows — and the hard sessions come back after three easy runs.
@@ -265,6 +270,7 @@ class TrainingRepository(
         // Runs at every start: a profile the planner cannot lay out keeps its plan rather than crash the app each time.
         val fresh = runCatching { ProgramGenerator.generate(profile, today()) }.getOrNull() ?: return
         store.setProgram(keepCycle(fresh, program))
+        reapplyPicks()
         if (notify) onChange()
     }
 
@@ -1075,8 +1081,78 @@ class TrainingRepository(
         // The same exercise picked again changes nothing (a swap made before the rule below keeps its numbers).
         if ((store.settingsNow().swaps[planId] ?: planId) == (newId ?: planId)) return
         val slot = store.programNow()?.templates?.flatMap { it.slots }?.firstOrNull { it.exerciseId == planId }
-        store.editSettings { s -> withSwap(s, slot, planId, newId) }
+        // Made by hand: the person's own from now on, not undone when a pick is cleared.
+        store.editSettings { s -> withSwap(s, slot, planId, newId).let { it.copy(pickSwaps = it.pickSwaps - planId) } }
         onChange()
+    }
+
+    // ---------- «Мои упражнения» ----------
+
+    /** The places of the plan as done now (replacements in), for [Picks.resolve]. */
+    private fun pickPlaces(program: Program, s: Settings): List<Picks.Place> = program.templates.flatMap { t ->
+        t.slots.map { Picks.Place(t.id, it.exerciseId, swapOf(it, s) ?: it.exerciseId, it.role) }
+    }
+
+    /** The picks of [s] put into the plan: replacements for good where they say, the earlier ones of picks undone. */
+    private fun withPicks(s: Settings, program: Program, profile: Profile): Pair<Settings, Picks.Result> {
+        val likes = s.likes.mapNotNull { (k, v) -> runCatching { forma.core.model.Pattern.valueOf(k) }.getOrNull()?.let { it to v } }.toMap()
+        val r = Picks.resolve(pickPlaces(program, s), likes, s.dislikes, Picks.Rules.of(profile, s.removed), s.pickSwaps)
+        val slots = program.templates.flatMap { it.slots }
+        val out = r.swaps.entries.fold(s) { acc, (planId, to) ->
+            withSwap(acc, slots.firstOrNull { it.exerciseId == planId }, planId, to)
+                .let { it.copy(pickSwaps = if (to == planId) it.pickSwaps - planId else it.pickSwaps + planId) }
+        }
+        return out to r
+    }
+
+    /**
+     * «Мои упражнения» saved: [likes] per movement and [dislikes] kept and put into the plan. What changed for each place
+     * (plan id → exercise in its place) and what was kept and why.
+     */
+    suspend fun setPicks(likes: Map<forma.core.model.Pattern, List<String>>, dislikes: Set<String>): Picks.Result {
+        val program = store.programNow() ?: return Picks.Result(emptyMap(), emptyList())
+        val profile = store.profileNow() ?: return Picks.Result(emptyMap(), emptyList())
+        var result = Picks.Result(emptyMap(), emptyList())
+        store.editSettings { s ->
+            val kept = s.copy(likes = likes.filterValues { it.isNotEmpty() }.mapKeys { it.key.name }, dislikes = dislikes)
+            withPicks(kept, program, profile).also { result = it.second }.first
+        }
+        onChange()
+        return result
+    }
+
+    /** What resolving the picks would do now, without saving (the screen's preview). */
+    suspend fun previewPicks(likes: Map<forma.core.model.Pattern, List<String>>, dislikes: Set<String>): Picks.Result {
+        val program = store.programNow() ?: return Picks.Result(emptyMap(), emptyList())
+        val profile = store.profileNow() ?: return Picks.Result(emptyMap(), emptyList())
+        val s = store.settingsNow().copy(likes = likes.filterValues { it.isNotEmpty() }.mapKeys { it.key.name }, dislikes = dislikes)
+        return withPicks(s, program, profile).second
+    }
+
+    /** A movement of the plan for «Мои упражнения»: its places now as (session title, exercise done there). */
+    data class PickGroup(val pattern: forma.core.model.Pattern, val now: List<Pair<String, String>>)
+
+    /** The plan's movements in plan order (places taken out of the plan left out) and the rules picks follow. */
+    suspend fun pickGroups(): Pair<List<PickGroup>, Picks.Rules>? {
+        val program = store.programNow() ?: return null
+        val profile = store.profileNow() ?: return null
+        val s = store.settingsNow()
+        val groups = linkedMapOf<forma.core.model.Pattern, MutableList<Pair<String, String>>>()
+        for (t in program.templates) for (slot in t.slots) {
+            if (slot.exerciseId in s.removed) continue
+            val pattern = Catalog.find(slot.exerciseId)?.pattern ?: continue
+            groups.getOrPut(pattern) { mutableListOf() } += t.title to (swapOf(slot, s) ?: slot.exerciseId)
+        }
+        return groups.map { (k, v) -> PickGroup(k, v) } to Picks.Rules.of(profile, s.removed)
+    }
+
+    /** The plan laid out again (new places, other ids): the picks put in again, without saying anything. */
+    private suspend fun reapplyPicks() {
+        val s = store.settingsNow()
+        if (s.likes.isEmpty() && s.dislikes.isEmpty()) return
+        val program = store.programNow() ?: return
+        val profile = store.profileNow() ?: return
+        store.editSettings { withPicks(it, program, profile).first }
     }
 
     /** Sets of [planId] in every session from now on; null (or the plan's own number) brings the plan's back. */
@@ -1639,6 +1715,11 @@ class TrainingRepository(
     private suspend fun habitsOf(program: Program, settings: Settings, today: LocalDate): forma.core.plan.PlanAdvisor.Habits {
         val avoided = mutableMapOf<String, String>()
         settings.removed.forEach { avoided[it] = "ты убрал из плана" }
+        settings.dislikes.forEach { avoided.putIfAbsent(it, "ты отметил «не хочу»") }
+        // Only what can be done where the person trains (at home: no machines, no barbell).
+        store.profileNow()?.takeIf { it.gear != forma.core.model.Gear.GYM }?.let { p ->
+            Catalog.all.filter { !p.gear.fits(it, p.pullupBar) }.forEach { avoided.putIfAbsent(it.id, "нечем делать: ${p.gear.ru.lowercase()}") }
+        }
         val ws = db.workouts().allDone().filter { it.kind == Kind.LIFT && it.epochDay in today.toEpochDay() - 42..today.toEpochDay() }
         val setsOf = mutableMapOf<Long, List<SetEntity>>()
         val skipped = mutableMapOf<String, Pair<Int, Int>>()

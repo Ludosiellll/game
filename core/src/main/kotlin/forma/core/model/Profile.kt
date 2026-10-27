@@ -6,6 +6,34 @@ import java.time.DayOfWeek
 @Serializable
 enum class Sex { MALE, FEMALE }
 
+/**
+ * Where the gym part is done: a gym, at home with dumbbells and a bench, or at home with the body alone. The plan is
+ * made of what there is ([fits]).
+ */
+@Serializable
+enum class Gear(val ru: String) {
+    GYM("Зал"), DUMBBELLS("Дома: гантели и скамья"), BODY("Дома: свой вес");
+
+    /**
+     * [ex] can be done here; [bar]: a pull-up bar at home (pull-ups, hanging leg raises). Without one, nothing that needs
+     * a rig: dip bars, a back-extension bench, a hanging bar.
+     */
+    fun fits(ex: Exercise, bar: Boolean): Boolean = when (this) {
+        GYM -> true
+        DUMBBELLS -> (ex.equipment == Equipment.DUMBBELL || ex.equipment == Equipment.BODYWEIGHT) && rig(ex, bar)
+        BODY -> ex.equipment == Equipment.BODYWEIGHT && rig(ex, bar)
+    }
+
+    private fun rig(ex: Exercise, bar: Boolean) = ex.id !in RIG && (bar || ex.id !in BAR)
+
+    companion object {
+        /** Body-weight exercises that need a gym's rig, not a home. */
+        private val RIG = setOf("dip", "back_ext", "reverse_hyper", "glute_ham_raise", "handstand_pushup")
+        /** Done on a pull-up bar. */
+        private val BAR = setOf("pullup", "chinup", "neutral_pullup", "leg_raise", "knee_raise")
+    }
+}
+
 /** The five classic goals. Kept as presets and for profiles saved before [Aim] existed. */
 @Serializable
 enum class Goal { STRENGTH, MUSCLE, HYBRID, ENDURANCE, FITNESS }
@@ -144,6 +172,10 @@ data class Profile(
     val runDays: Set<Int>? = null,
     /** A goal in the gym, if any: one lift to a weight (see [forma.core.strength.GymGoal]). */
     val liftGoal: LiftGoal? = null,
+    /** Where the gym part is done; the plan is made of what is there. */
+    val gear: Gear = Gear.GYM,
+    /** At home: a pull-up bar is there. */
+    val pullupBar: Boolean = false,
     /**
      * The aim with both sides as it was before one was dropped («Только зал» / «Только бег»): what the side was for and
      * which came first, to come back with it. Null while both are in the week.

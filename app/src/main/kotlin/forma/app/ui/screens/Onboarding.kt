@@ -55,6 +55,7 @@ private data class DraftState(
     val goalMeters: Int? = null, val goalTime: String = "", val stadium: Boolean = false, val lapMeters: String = "400",
     val doubleDays: Boolean = false, val gymDays: Set<Int>? = null, val runDays: Set<Int>? = null,
     val goalDate: String = "",
+    val gear: forma.core.model.Gear = forma.core.model.Gear.GYM, val pullupBar: Boolean = false,
 )
 
 /**
@@ -70,7 +71,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
                     DraftState(
                         d.lift, d.run, d.emphasis, d.experience, d.runLevel, d.days, d.minutes, d.sex, d.birthYear, d.weight,
                         d.height, d.restingHr, d.raceKm, d.raceTime, d.goalMeters, d.goalTime, d.stadium, d.lapMeters, d.doubleDays,
-                        d.gymDays, d.runDays, d.goalDate,
+                        d.gymDays, d.runDays, d.goalDate, d.gear, d.pullupBar,
                     ),
                 )
             },
@@ -81,7 +82,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
                         days = s.days; minutes = s.minutes; sex = s.sex; birthYear = s.birthYear; weight = s.weight
                         height = s.height; restingHr = s.restingHr; raceKm = s.raceKm; raceTime = s.raceTime
                         goalMeters = s.goalMeters; goalTime = s.goalTime; stadium = s.stadium; lapMeters = s.lapMeters; doubleDays = s.doubleDays
-                        gymDays = s.gymDays; runDays = s.runDays; goalDate = s.goalDate
+                        gymDays = s.gymDays; runDays = s.runDays; goalDate = s.goalDate; gear = s.gear; pullupBar = s.pullupBar
                     }
                 }
             },
@@ -114,6 +115,9 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     var stadium by mutableStateOf(p.lapMeters != null)
     var lapMeters by mutableStateOf((p.lapMeters ?: 400).toString())
     var doubleDays by mutableStateOf(p.doubleDays)
+    /** Where the gym part is done, and a pull-up bar at home. */
+    var gear by mutableStateOf(p.gear)
+    var pullupBar by mutableStateOf(p.pullupBar)
     /** The week day by day (the profile screen): the gym and running days; null — laid out by the app over [days]. */
     var gymDays by mutableStateOf(p.gymDays)
     var runDays by mutableStateOf(p.runDays)
@@ -247,6 +251,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
             raceMeters = race?.first, raceSeconds = race?.second,
             runGoal = if (racing) runGoal else null, finishMeters = finish, lapMeters = if (runsShown) lapOrNull else null,
             doubleDays = doubleDays && aim.lifts && aim.runs,
+            gear = if (aim.lifts) gear else base.gear, pullupBar = pullupBar && gear != forma.core.model.Gear.GYM,
         ).let { p ->
             val gym = gymDays
             val run = runDays
@@ -348,6 +353,7 @@ private fun ExperienceStep(d: ProfileDraft) {
         Option("Новичок", "Регулярно тренируюсь меньше полугода или только начинаю", d.experience == Experience.NOVICE) { d.experience = Experience.NOVICE }
         Option("Средний", "От полугода до двух лет", d.experience == Experience.INTERMEDIATE) { d.experience = Experience.INTERMEDIATE }
         Option("Опытный", "Больше двух лет, знаю свои рабочие веса", d.experience == Experience.ADVANCED) { d.experience = Experience.ADVANCED }
+        GearPicker(d)
     }
     if (d.run == RunFocus.NONE) return
     SectionLabel("Бег", Modifier.padding(top = 6.dp))
@@ -510,3 +516,23 @@ internal fun parseRaceDay(text: String, today: LocalDate): LocalDate? {
     return day?.takeIf { !it.isBefore(today) && it.isBefore(today.plusYears(2)) }
 }
 
+
+/**
+ * Where the gym part is done: a gym, at home with dumbbells and a bench, or with the body alone (and a pull-up bar at
+ * home). The plan is made of what is there.
+ */
+@Composable
+fun GearPicker(d: ProfileDraft) {
+    SectionLabel("Где занимаешься", Modifier.padding(top = 6.dp))
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        forma.core.model.Gear.entries.forEach { g -> Chip(g.ru, d.gear == g, { d.gear = g }) }
+    }
+    if (d.gear != forma.core.model.Gear.GYM) {
+        Chip(if (d.pullupBar) "Есть турник ✓" else "Есть турник", d.pullupBar, { d.pullupBar = !d.pullupBar })
+        Text(
+            "План соберу из того, что есть дома: гантели, скамья, свой вес" + (if (d.pullupBar) ", турник" else "") +
+                ". Что нечем заменить, уберу и скажу об этом.",
+            style = T.secondary(13.sp),
+        )
+    }
+}

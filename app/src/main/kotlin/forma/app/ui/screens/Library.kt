@@ -239,6 +239,10 @@ private fun ExerciseRow(ex: Exercise, onClick: () -> Unit) {
                     },
                 style = T.secondary(13.sp),
             )
+            // How to do it, short: a beginner chooses by the movement, not by a name.
+            forma.core.model.Cues.of(ex.id)?.let {
+                Text(it, style = T.secondary(12.sp), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
         }
     }
 }

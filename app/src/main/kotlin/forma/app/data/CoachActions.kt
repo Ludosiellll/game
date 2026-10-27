@@ -93,6 +93,7 @@ object CoachActions {
     const val NOW_REMOVE = "workout_remove"
     const val NOW_ADD = "workout_add"
     const val NOW_SETS = "workout_sets"
+    const val PICKS = "set_exercise_picks"
 
     private const val MAX_SICK_PAUSE = 14
     private const val MAX_PAUSE = 21
@@ -156,6 +157,10 @@ object CoachActions {
         fn(REST, "Отдых между подходами упражнения во всех тренировках, где оно есть, секунды (изменение плана; человек подтверждает).", exercise,
             Param("seconds", "integer", "${TrainingRepository.MIN_REST}–${TrainingRepository.MAX_REST}"), session)
         fn(SWAP, "Заменить упражнение плана другим насовсем (изменение плана; человек подтверждает).", exercise, Param("new_exercise", "string", "название нового упражнения"))
+        fn(PICKS, "«Мои упражнения»: какие упражнения человеку нравятся и какие он не хочет делать (по движениям: присед, наклон, жимы, тяги…). Понравившиеся встают на места своего движения, «не хочу» заменяются похожими. Основа плана, упражнение цели в зале и при цели «Сила» штанга в главных остаются — приложение само соблюдает правила и в карточке скажет, что поменяется и что оставит. Человек подтверждает.",
+            Param("like", "string", "упражнения, которые нравятся, через запятую (id или названия)", required = false),
+            Param("dislike", "string", "упражнения, которые не хочет делать, через запятую", required = false),
+            Param("clear", "string", "упражнения, с которых снять отметку, через запятую", required = false))
         fn(REMOVE, "Убрать упражнение из плана насовсем (изменение плана; человек подтверждает).", exercise, session)
         fn(ADD, "Добавить упражнение в силовую тренировку насовсем (изменение плана; человек подтверждает).",
             Param("session", "string", "id или название силовой тренировки"), Param("exercise", "string", "название упражнения"))
@@ -684,6 +689,58 @@ object CoachActions {
                                 args("plan" to pid, "to" to was.swaps[pid], "sets" to was.sets[pid], "reps" to ints(was.reps[pid]), "rest" to was.rest[pid])
                             }),
                             "templates" to JsonArray(days.map { JsonPrimitive(it) }), "from" to to.id, "back" to p.exerciseId,
+                        ),
+                    )
+                }
+            }
+            PICKS -> {
+                // Not said: none; a name not found: null (refused).
+                fun list(key: String): List<Exercise>? = a.str(key).orEmpty().split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+                    .map { q -> catalog(q) ?: return null }
+                val like = list("like") ?: return no("Не нашёл одно из упражнений «${a.str("like")}».")
+                val dislike = list("dislike") ?: return no("Не нашёл одно из упражнений «${a.str("dislike")}».")
+                val clear = list("clear") ?: return no("Не нашёл одно из упражнений «${a.str("clear")}».")
+                if (like.isEmpty() && dislike.isEmpty() && clear.isEmpty()) return no("Не сказано, что нравится, а что нет.")
+                val (_, rules) = repo.pickGroups() ?: return no("Плана зала нет.")
+                like.firstNotNullOfOrNull { ex -> forma.core.plan.Picks.unavailable(ex, rules)?.let { "«${ex.name}» пока нельзя: $it." } }?.let { return no(it) }
+                val likes = s.likes.mapNotNull { (k, v) -> runCatching { forma.core.model.Pattern.valueOf(k) }.getOrNull()?.let { it to v.toMutableList() } }.toMap().toMutableMap()
+                val dislikes = s.dislikes.toMutableSet()
+                val drop = (clear + like + dislike).map { it.id }.toSet()
+                likes.values.forEach { it.removeAll(drop) }
+                dislikes.removeAll(drop)
+                like.forEach { likes.getOrPut(it.pattern) { mutableListOf() } += it.id }
+                dislikes += dislike.map { it.id }
+                val newLikes = likes.filterValues { it.isNotEmpty() }
+                val r = repo.previewPicks(newLikes, dislikes)
+                val changes = r.swaps.filter { (pid, to) -> (s.swaps[pid] ?: pid) != to }
+                val text = buildString {
+                    append("Мои упражнения: ")
+                    append(listOfNotNull(
+                        like.takeIf { it.isNotEmpty() }?.let { l -> "нравится — " + l.joinToString(", ") { it.name } },
+                        dislike.takeIf { it.isNotEmpty() }?.let { l -> "не хочу — " + l.joinToString(", ") { it.name } },
+                        clear.takeIf { it.isNotEmpty() }?.let { l -> "снять отметку — " + l.joinToString(", ") { it.name } },
+                    ).joinToString("; "))
+                    append(". ")
+                    append(
+                        if (changes.isEmpty()) "План от этого не меняется."
+                        else "В плане: " + changes.entries.joinToString("; ") { (pid, to) -> "«${name(s.swaps[pid] ?: pid)}» → «${name(to)}»" } + ".",
+                    )
+                    r.notes.forEach { append(" ").append(it) }
+                }
+                confirm(text) {
+                    val was = repo.store.settingsNow()
+                    val done = repo.setPicks(newLikes, dislikes)
+                    CoachCall(
+                        "undo_picks",
+                        args(
+                            "likes" to JsonObject(was.likes.mapValues { (_, v) -> JsonArray(v.map { JsonPrimitive(it) }) }),
+                            "dislikes" to JsonArray(was.dislikes.map { JsonPrimitive(it) }),
+                            "plans" to JsonArray(done.swaps.map { (pid, to) ->
+                                args(
+                                    "plan" to pid, "now" to to, "to" to was.swaps[pid], "pick" to (pid in was.pickSwaps),
+                                    "sets" to was.sets[pid], "reps" to ints(was.reps[pid]), "rest" to was.rest[pid],
+                                )
+                            }),
                         ),
                     )
                 }
@@ -1219,6 +1276,34 @@ object CoachActions {
                         }
                     }
                     for (t in ts) repo.replaceAdded(t, from, back)
+                    true
+                }
+            }
+            "undo_picks" -> {
+                val plans = (a["plans"] as JsonArray).map { it as JsonObject }
+                val s = repo.store.settingsNow()
+                // Only while every place is as the picks left it.
+                if (plans.any { p -> (s.swaps[p.str("plan")!!] ?: p.str("plan")) != p.str("now") }) false
+                else {
+                    for (p in plans) {
+                        val plan = p.str("plan")!!
+                        repo.setSwap(plan, p.str("to"))
+                        val sets = p.int("sets")
+                        val reps = p.ints("reps")
+                        val rest = p.int("rest")
+                        val pick = (p["pick"] as? JsonPrimitive)?.content == "true"
+                        repo.updateSettings { st ->
+                            st.copy(
+                                sets = sets?.let { st.sets + (plan to it) } ?: st.sets,
+                                reps = reps?.let { st.reps + (plan to it) } ?: st.reps,
+                                rest = rest?.let { st.rest + (plan to it) } ?: st.rest,
+                                pickSwaps = if (pick) st.pickSwaps + plan else st.pickSwaps - plan,
+                            )
+                        }
+                    }
+                    val likes = (a["likes"] as? JsonObject).orEmpty().mapValues { (_, v) -> (v as JsonArray).map { (it as JsonPrimitive).content } }
+                    val dislikes = (a["dislikes"] as? JsonArray).orEmpty().map { (it as JsonPrimitive).content }.toSet()
+                    repo.updateSettings { it.copy(likes = likes, dislikes = dislikes) }
                     true
                 }
             }

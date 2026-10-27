@@ -223,6 +223,7 @@ fun TodayScreen() {
                 if (feel != Feel.SICK && todays.all { todayItem?.isDone(it) == true }) NextPlannedCard(today)
             }
         }
+        PicksInvite()
         val strength = remember(rows, bw) { Stats.changePct(Stats.strengthIndex(rows, bw)) }
         fun toProgress(tab: Int) {
             progressTabRequest = tab
@@ -730,3 +731,32 @@ private fun RaceCard(goal: forma.core.model.RunGoal, today: LocalDate, raceDone:
     }
 }
 
+
+/**
+ * After the first week of the gym (three sessions done): «Мои упражнения» offered once — the exercises are known by now,
+ * so liking some means something. Gone once picks are made or «Не сейчас» is pressed.
+ */
+@Composable
+private fun PicksInvite() {
+    val repo = LocalRepo.current
+    val nav = LocalNav.current
+    val scope = rememberCoroutineScope()
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    val me by repo.store.profile.collectAsState(initial = null)
+    val lifts by produceState(0, settings) { value = repo.db.workouts().allDone().count { it.kind == forma.app.data.Kind.LIFT } }
+    if (me?.aim?.lifts != true || lifts < 3 || settings.likes.isNotEmpty() || settings.dislikes.isNotEmpty() || PICKS_SEEN in settings.hintsSeen) return
+    FCard(gap = 8.dp) {
+        SectionLabel("Мои упражнения")
+        Text("Подбери упражнения под себя", style = T.body(16.sp, FontWeight.SemiBold))
+        Text(
+            "Ты уже знаешь упражнения плана. Отметь, какие нравятся и какие не хочешь делать, — план подстроится, основа останется.",
+            style = T.secondary(14.sp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryButton("Выбрать", { nav.push(Screen.MyExercises) }, Modifier.weight(1f))
+            GhostButton("Не сейчас", { scope.launch { repo.updateSettings { it.copy(hintsSeen = it.hintsSeen + PICKS_SEEN) } } }, Modifier.weight(1f))
+        }
+    }
+}
+
+private const val PICKS_SEEN = "my_exercises_card"

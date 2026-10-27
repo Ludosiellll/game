@@ -392,6 +392,15 @@ fun WorkoutScreen(workoutId: Long) {
                             }
                         }
                     }
+                    // How to do it: open the first time on the exercise, a tap away after.
+                    forma.core.model.Cues.of(item.exerciseId)?.let { cue ->
+                        var how by androidx.compose.runtime.saveable.rememberSaveable(item.exerciseId) { mutableStateOf(item.prescription.calibrate) }
+                        Text(
+                            if (how) cue else "Как делать ›",
+                            style = T.secondary(14.sp),
+                            modifier = Modifier.clickable(onClickLabel = if (how) "Скрыть" else "Как делать") { how = !how },
+                        )
+                    }
                     val p = item.prescription
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (ex.load != LoadKind.TIMED) {

@@ -134,6 +134,16 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             ?: profile?.finish?.let { "пробежать $it м без остановки, время не задано" } ?: "цели нет") + ".")
         appendLine("- Зал: " + (forma.app.data.GymGoals.words(repo) ?: "цели нет (поставить — функция set_gym_goal)."))
         appendLine()
+        // «Мои упражнения» and where the gym is: the plan is made of them, the coach proposes within them (set_exercise_picks).
+        if (profile?.aim?.lifts == true) {
+            appendLine("## Мои упражнения")
+            appendLine("- Где занимается: ${profile.gear.ru}" + (if (profile.gear != forma.core.model.Gear.GYM) (if (profile.pullupBar) ", есть турник" else ", турника нет") else "") + ".")
+            val liked = settings.likes.values.flatten()
+            appendLine("- Нравится: " + (liked.joinToString(", ") { forma.core.model.Catalog.find(it)?.name ?: it }.ifEmpty { "не отмечено" }) + ".")
+            appendLine("- Не хочет: " + (settings.dislikes.joinToString(", ") { forma.core.model.Catalog.find(it)?.name ?: it }.ifEmpty { "не отмечено" }) + ".")
+            appendLine("- Отметить, что нравится или нет — функция set_exercise_picks; правила плана приложение соблюдает само.")
+            appendLine()
+        }
         if (settings.coachNotes.isNotEmpty()) {
             appendLine("## Что ты знаешь о человеке (запомнено)")
             settings.coachNotes.forEach { appendLine("- $it") }

@@ -168,6 +168,7 @@ object Catalog {
             compound = true, ratio = 0.25, aliases = "протяжка|pull through"),
         bw("back_ext", "Гиперэкстензия", Pattern.HINGE, listOf(HA, GL), listOf(BK), lower = true, share = 0.5,
             aliases = "гипер|гиперэкстензия|разгибание спины|back extension"),
+        bw("superman", "Супермен", Pattern.HINGE, listOf(BK), listOf(GL), compound = false, share = 0.4, aliases = "лодочка на животе|разгибания спины лёжа"),
         bw("reverse_hyper", "Обратная гиперэкстензия", Pattern.GLUTE, listOf(GL, HA), lower = true, compound = false, share = 0.35,
             aliases = "обратная гипер|reverse hyper"),
 
@@ -362,6 +363,7 @@ object Catalog {
         mc("leg_press_calf", "Подъём на носки в жиме ногами", Equipment.MACHINE, Pattern.CALF, listOf(CA), lower = true, ratio = 0.8,
             aliases = "икры в платформе|calf press"),
         db("db_calf", "Подъём на носки с гантелью", Pattern.CALF, listOf(CA), lower = true, ratio = 0.15, aliases = "икры с гантелью"),
+        bw("bw_calf", "Подъём на носки без веса", Pattern.CALF, listOf(CA), lower = true, compound = false, aliases = "икры дома|на носки на ступеньке"),
 
         // ---------- core ----------
         bw("plank", "Планка", Pattern.CORE, listOf(CO), kind = LoadKind.TIMED, compound = false, aliases = "plank"),

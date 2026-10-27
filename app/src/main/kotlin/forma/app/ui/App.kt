@@ -189,6 +189,7 @@ private fun ScreenFor(screen: Screen) {
         Screen.Friends -> forma.app.ui.screens.FriendsScreen()
         is Screen.Friend -> forma.app.ui.screens.FriendScreen(screen.userId, screen.name)
         Screen.IdealPlan -> forma.app.ui.screens.IdealPlanScreen()
+        Screen.MyExercises -> forma.app.ui.screens.MyExercisesScreen()
         Screen.GymGoal -> forma.app.ui.screens.GymGoalScreen()
         is Screen.Tour -> forma.app.ui.screens.TourScreen(screen.first)
         Screen.Help -> forma.app.ui.screens.HelpScreen()

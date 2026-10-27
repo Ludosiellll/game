@@ -79,6 +79,15 @@ data class Settings(
      * ([TrainingRepository.demotes]). Swaps made before that rule keep the plan's numbers: a plan the person shaped stays.
      */
     val demoted: Set<String> = emptySet(),
+    /**
+     * «Мои упражнения»: per movement ([forma.core.model.Pattern] name) the exercises the person likes, in the order picked;
+     * resolved into the plan as replacements for good ([forma.core.plan.Picks]).
+     */
+    val likes: Map<String, List<String>> = emptyMap(),
+    /** «Не хочу»: exercises the person does not want — replaced in the plan, not offered. */
+    val dislikes: Set<String> = emptySet(),
+    /** Plan exercise ids whose replacement in [swaps] the picks made (a pick cleared brings the plan's own back). */
+    val pickSwaps: Set<String> = emptySet(),
     /** «Идеальный план» changes the person said not to propose (change ids, [forma.core.plan.PlanAdvisor.Change.id]). */
     val adviceHidden: Set<String> = emptySet(),
     /** The first look round the app was seen (after the questionnaire, or skipped). */
