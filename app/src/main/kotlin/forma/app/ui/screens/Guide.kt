@@ -175,9 +175,12 @@ fun HelpScreen() {
     val repo = LocalRepo.current
     val scope = rememberCoroutineScope()
     var shown by remember { mutableStateOf(false) }
+    var news by rememberSaveable { mutableStateOf(false) }
+    if (news) WhatsNewDialog(listOf(RELEASES.last())) { news = false }
     ScrollScreen {
         TopBar("Как пользоваться", onBack = { nav.back() })
         PrimaryButton("Знакомство с приложением", { nav.push(Screen.Tour(first = false)) }, Modifier.fillMaxWidth())
+        GhostButton("Что нового в последнем обновлении", { news = true }, Modifier.fillMaxWidth())
         GhostButton("Спросить тренера (ИИ)", { nav.tab(Screen.Coach()) }, Modifier.fillMaxWidth())
         SectionLabel("Экраны")
         FCard(gap = 10.dp) {
@@ -250,5 +253,5 @@ object Hints {
     const val PLAN_TEXT = "Твоя неделя. Нажми на день — увидишь, что там и зачем. Не успеваешь в свой день — сделай в другой, засчитается."
     const val PROGRESS_TEXT = "Как растут веса и бег. Вкладки сверху: сила, бег, нагрузка, тело. Нажми на упражнение — его история."
     const val WORKOUT_TEXT = "Вес и повторы уже подставлены. Сделал подход — отметь, сколько ещё повторов мог («запас»), и нажми «Подход сделан». Отдых засечётся сам."
-    const val RUN_TEXT = "На стадионе круги и старт GPS засчитает сам — нажимать «Круг» не обязательно. Приложение пискнет, когда круг должен закончиться. Беги по ощущениям из описания, не на пределе."
+    const val RUN_TEXT = "На стадионе круги и старт GPS засчитает сам — нажимать «Круг» не обязательно. Каждый отрезок ждёт тебя на линии: отсчёт пойдёт, когда побежишь. Приложение пискнет, когда круг должен закончиться. Беги по ощущениям из описания, не на пределе."
 }

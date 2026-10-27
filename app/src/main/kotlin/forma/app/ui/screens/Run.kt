@@ -594,12 +594,6 @@ fun RunActiveScreen() {
         onDispose { activity?.showOverLock(false) }
     }
     val u = ui
-    val lapsByKey = u != null && u.workout.lapMeters != null && u.state == RunTracker.State.RUNNING
-    // The volume-down key presses "lap" (and leaves the volume alone) while a stadium run goes on.
-    DisposableEffect(lapsByKey) {
-        forma.app.run.LapKey.onLap = if (lapsByKey) ({ RunService.send(context, RunService.ACTION_LAP) }) else null
-        onDispose { forma.app.run.LapKey.onLap = null }
-    }
     // The run was on this screen and is gone (cleared from elsewhere: the cloud replaced the data): back, as before.
     val had = remember { booleanArrayOf(false) }
     if (u != null) had[0] = true
@@ -784,9 +778,9 @@ fun RunActiveScreen() {
                     style = T.secondary(14.sp),
                 )
             }
-            // A headset's button works with the screen off too (HeadsetLap); the volume key reaches the app only while its
-            // screen is on (LapKey): said, not found out on the line.
-            if (lapM != null && !finished) Text("Круг можно отметить кнопкой на наушниках. Или громкостью вниз, пока экран включён.", style = T.secondary(13.sp))
+            // A headset's button works with the screen off too (HeadsetLap). The volume keys stay the volume: pressed twice
+            // to turn the voice down, they made a lap of a few seconds.
+            if (lapM != null && !finished) Text("Круг можно отметить и кнопкой на наушниках.", style = T.secondary(13.sp))
         }
 
         Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -115,11 +115,12 @@ class AutoLapTest {
                     }
                 }
                 "rest" -> {
-                    // Standing and stepping about at the line until the plan says go.
+                    // Standing and stepping about at the line until the recovery is over; the rep waits for him there and
+                    // starts with his press.
                     s = Math.round(s / lapM) * lapM.toDouble() + sin(now / 3000.0) * 3
-                    val tl = t.timeline(now)
-                    if (tl.segment?.kind == SegmentKind.WORK && tl.index == workIdx[rep]) {
+                    if (t.waiting(now)) {
                         s = Math.round(s / lapM) * lapM.toDouble()
+                        assertEquals(Press.Start, t.press(now))
                         phase = "rep"; lapStart = now; repStart = now
                         lapsLeft = w.segments[workIdx[rep]].laps!!.toInt()
                     }

@@ -174,6 +174,12 @@ class RunService : Service() {
         val t = RunSession.tracker ?: return
         when (val p = t.press(now())) {
             Press.Ignored -> return
+            // GPS has him far from the line: a thumb on the screen mid-lap, most likely. Said, so a press that was meant
+            // is not lost without a word.
+            Press.OffLine -> {
+                coach?.speak("Круг не засчитан: ты не на линии.", now = true)
+                return
+            }
             Press.Start -> coach?.speak("Старт.", now = true)
             is Press.Done -> {
                 val l = p.lap

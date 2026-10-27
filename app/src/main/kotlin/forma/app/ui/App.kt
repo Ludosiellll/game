@@ -30,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -58,6 +59,10 @@ import forma.app.ui.screens.HistoryScreen
 import forma.app.ui.screens.LiftDoneScreen
 import forma.app.ui.screens.MoreScreen
 import forma.app.ui.screens.OnboardingScreen
+import forma.app.ui.screens.RELEASES
+import forma.app.ui.screens.WhatsNewDialog
+import forma.app.ui.screens.unseenReleases
+import kotlinx.coroutines.launch
 import forma.app.ui.screens.PlanScreen
 import forma.app.ui.screens.ProfileScreen
 import forma.app.ui.screens.ProgressScreen
@@ -93,6 +98,11 @@ fun AppRoot() {
     LaunchedEffect(Unit) { onboarded = repo.isOnboarded() }
     val s = settings ?: return
     val ready = onboarded ?: return
+    // A first install (the questionnaire still ahead) has nothing new to say: every release so far counts as seen.
+    LaunchedEffect(ready) {
+        if (!ready && s.newsSeen < RELEASES.last().id) repo.updateSettings { it.copy(newsSeen = RELEASES.last().id) }
+    }
+    val scope = rememberCoroutineScope()
     // Saved with the instance state: rotation, a theme or font change, split screen keep the screen and the stack.
     val nav = rememberSaveable(saver = Navigator.Saver) { Navigator(if (ready) Screen.Today else Screen.Onboarding) }
     // Each screen in the stack keeps its own state (search text, typed weights, the open tab) while others are on top.
@@ -124,6 +134,12 @@ fun AppRoot() {
                 }
                 // Typing (the coach's chat): the keyboard takes the bar's place, the field sits right on it.
                 if (nav.current in TABS && !WindowInsets.isImeVisible) BottomBar(nav)
+            }
+            // After an update: what is new, once, over the app — not over a run going on or the first questions.
+            val news = unseenReleases(s.newsSeen)
+            val busy = nav.current is Screen.RunActive || nav.current is Screen.Onboarding || nav.current is Screen.Tour
+            if (ready && news.isNotEmpty() && !busy) {
+                WhatsNewDialog(news) { scope.launch { repo.updateSettings { it.copy(newsSeen = RELEASES.last().id) } } }
             }
         }
     }

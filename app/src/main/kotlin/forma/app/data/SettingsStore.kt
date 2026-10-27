@@ -83,6 +83,8 @@ data class Settings(
     val adviceHidden: Set<String> = emptySet(),
     /** The first look round the app was seen (after the questionnaire, or skipped). */
     val tourSeen: Boolean = false,
+    /** The last release whose news was shown after an update ([forma.app.ui.screens.RELEASES] ids); 0 before any. */
+    val newsSeen: Int = 0,
     /** Screens whose first-visit hint was closed with «Понятно» ([forma.app.ui.screens.Hints]). */
     val hintsSeen: Set<String> = emptySet(),
     /** What the coach (the AI) keeps in mind about the person: likes, dislikes, the gym's kit, old injuries. */

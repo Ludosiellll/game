@@ -122,6 +122,12 @@ class LoopTimer(private val lapMeters: Int?) {
     /** Fixes in a row too far from where the filter expected them: the filter is lost, it starts again. */
     private var gated = 0
 
+    /**
+     * How much the satellites' speed scatters (m²/s²), learnt in the run: about [SIG_DOP]² for a phone on the body, far
+     * more for one in a swinging hand.
+     */
+    private var dopVar = SIG_DOP * SIG_DOP
+
     /** The line given is on this loop (see [placeLine]). */
     fun lineOnLoop(): Boolean = lineArc != null
 
@@ -134,17 +140,25 @@ class LoopTimer(private val lapMeters: Int?) {
 
     /**
      * Where the runner was at [activeMs]: metres round the loop past the line (0 until the loop's length), from the smoothed
-     * states; null without the line or that moment in the window.
+     * states (up to 3 s past the last one, at its speed); null without the line or that moment in the window.
      */
     fun pastLine(activeMs: Long): Double? {
         val o = oval ?: return null
         val la = lineArc ?: return null
         val s = smoothed
+        if (s.isEmpty()) return null
         val t = activeMs / 1000.0
-        val i = (0 until s.size - 1).firstOrNull { t >= s[it].first && t <= s[it + 1].first } ?: return null
-        val (t0, a) = s[i]
-        val (t1, b) = s[i + 1]
-        val p = a[0] + (b[0] - a[0]) * (t - t0) / (t1 - t0).coerceAtLeast(1e-6)
+        val (tl, last) = s.last()
+        val p = if (t > tl) {
+            // Just after the last fix (a press comes between two): on at the speed then, a few seconds at most.
+            if (t - tl > 3.0) return null
+            last[0] + last[1] * (t - tl)
+        } else {
+            val i = (0 until s.size - 1).firstOrNull { t >= s[it].first && t <= s[it + 1].first } ?: return null
+            val (t0, a) = s[i]
+            val (t1, b) = s[i + 1]
+            a[0] + (b[0] - a[0]) * (t - t0) / (t1 - t0).coerceAtLeast(1e-6)
+        }
         val pm = o.perimeter
         return ((p - dir * la) % pm + pm) % pm
     }
@@ -383,8 +397,13 @@ class LoopTimer(private val lapMeters: Int?) {
         }
         if (v != null && way != 0.0) {
             val hv = doubleArrayOf(0.0, 1.0, 0.0)
-            val sv = quad(hv, c1) + SIG_DOP * SIG_DOP
-            update(x1, c1, hv, way * v - x1[1], sv).let { (nx, nc) -> x1 = nx; c1 = nc }
+            val e = way * v - x1[1]
+            val pv = quad(hv, c1)
+            // Running, the scatter of the satellites' speed past the filter's own doubt, over the last fifteen fixes: a
+            // phone held in a swinging hand gives the hand's speed, a metre a second either way — the places then count
+            // for more.
+            if (v >= 1.8) dopVar = (dopVar + (e * e - pv - dopVar) / 15.0).coerceIn(SIG_DOP * SIG_DOP, MAX_DOP * MAX_DOP)
+            update(x1, c1, hv, e, pv + dopVar).let { (nx, nc) -> x1 = nx; c1 = nc }
         }
         steps += Step(t, x1, c1, xp, cp, dt)
         lastProgress = x1[0]
@@ -500,7 +519,10 @@ class LoopTimer(private val lapMeters: Int?) {
         val before = s.filter { it.first in (tj - 6.0)..tj }
         val lo = before.minOf { it.second[1] }
         val rise = fast - lo
-        if (rise < 1.2) return null
+        // A rise of more than a jog's wobble, to the speed reached (a pickup from a 2.3 m/s jog to the rep's 4 m/s
+        // passes [fast] a little above the jog, yet is a start).
+        val reached = s.subList(j, s.size).map { it.second[1] }.sorted().let { it[it.size / 2] }
+        if (maxOf(rise, reached - lo) < 1.2) return null
         fun at(level: Double): Double? {
             for (i in j downTo 1) {
                 val a = s[i - 1].second[1]
@@ -582,6 +604,12 @@ class LoopTimer(private val lapMeters: Int?) {
         private const val QA = 0.4
         private const val SIG_WHITE = 0.5
         private const val SIG_DOP = 0.2
+
+        /**
+         * The most the satellites' speed is taken to scatter (m/s; see [dopVar]). Tried on a hand swinging 1–2.5 m/s: with
+         * no limit the laps lose a tenth, with none learnt the run-up is lost (starts seconds off, laps made up).
+         */
+        private const val MAX_DOP = 0.6
 
         private fun wrap(d: Double, p: Double): Double = ((d + p / 2) % p + p) % p - p / 2
 

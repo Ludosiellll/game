@@ -35,10 +35,16 @@ object RunTimeline {
      * On a stadium the first rep (and the time trial) waits for the runner on the line: after the warm-up the plan stands
      * still until the lap button is pressed at the start, wherever on the track the warm-up ended. Its index, or null.
      */
-    fun startOnLine(workout: RunWorkout): Int? {
-        if (workout.lapMeters == null) return null
-        val i = workout.segments.indexOfFirst { it.kind == SegmentKind.WORK }
-        return i.takeIf { it > 0 && workout.segments[it].laps != null }
+    fun startOnLine(workout: RunWorkout): Int? = waitsOnLine(workout).firstOrNull()
+
+    /**
+     * Every rep of laps on a stadium waits for the runner on the line, not only the first: its time counts from his start
+     * (the press, or the start GPS sees), not from the end of the recovery by the clock — a rep that ran off without him
+     * gave lap times from a start he never made. The recovery is then as long as he takes, at least the plan's.
+     */
+    fun waitsOnLine(workout: RunWorkout): List<Int> {
+        if (workout.lapMeters == null) return emptyList()
+        return workout.segments.indices.filter { it > 0 && workout.segments[it].kind == SegmentKind.WORK && workout.segments[it].laps != null }
     }
 
     fun at(workout: RunWorkout, elapsed: Int): TimelineState {

@@ -11,7 +11,7 @@ import android.view.KeyEvent
 
 /**
  * The button of a headset (wired or Bluetooth) as the lap button on a stadium run: it works with the screen off, in a
- * pocket, where neither the screen's button nor the volume key does ([LapKey]). A media session, "playing", is held by
+ * pocket, where the screen's button does not. A media session, "playing", is held by
  * [RunService] only while a stadium run goes on there; paused, finished or stopped, the buttons are the music's again.
  *
  * Who gets the button is the system's choice: on Android 8 and later the media buttons go to the app that last played

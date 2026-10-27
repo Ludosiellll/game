@@ -30,22 +30,39 @@ class StadiumAutoTest {
     private val oval = Oval(0.0, 0.0, 0.3, 25.5, 16.3)
     private val plane = Plane(45.0, 10.0)
 
-    /** GPS once a second: the error of a real run (1.3 m, lasting ~4 s), the satellites' speed ±0.15 m/s. */
-    private class Gps(seed: Int) {
+    /**
+     * GPS once a second: the error of a real run (1.3 m, lasting ~4 s), the satellites' speed ±0.15 m/s. [swing]: the
+     * phone held in the hand — the arm swings it back and forth with the steps (m/s at its fastest, at [cadence] steps a
+     * minute), and the satellites see the hand's speed, not the body's, at the moment of each fix.
+     */
+    private class Gps(seed: Int, private val swing: Double = 0.0, private val cadence: Double = 174.0) {
         private val rnd = Random(seed)
         private fun gauss() = sqrt(-2 * kotlin.math.ln(1 - rnd.nextDouble())) * cos(2 * PI * rnd.nextDouble())
         private var ex = gauss() * 1.3
         private var ey = gauss() * 1.3
         private val keep = exp(-1.0 / 4.0)
+        // From the seed, not drawn: the runs without a swing keep their noise as before.
+        private val phase = seed * 2.399 % (2 * PI)
         fun fix(ms: Long, x: Double, y: Double, speed: Double, plane: Plane): Fix {
-            val f = Fix(ms, plane.lat(y + ey), plane.lon(x + ex), (1.5 + abs(gauss()) * 0.4).toFloat(), (abs(speed) + gauss() * 0.15).coerceAtLeast(0.0).toFloat())
+            // An arm swings once every two steps; standing, it does not.
+            val hand = if (abs(speed) > 0.5) swing * kotlin.math.sin(2 * PI * cadence / 120.0 * ms / 1000.0 + phase) else 0.0
+            val f = Fix(ms, plane.lat(y + ey), plane.lon(x + ex), (1.5 + abs(gauss()) * 0.4).toFloat(), (abs(speed + hand) + gauss() * 0.15).coerceAtLeast(0.0).toFloat())
             ex = keep * ex + sqrt(1 - keep * keep) * 1.3 * gauss()
             ey = keep * ey + sqrt(1 - keep * keep) * 1.3 * gauss()
             return f
         }
     }
 
-    @Test fun repsWithNoPressStartedTimedAndEnded() {
+    @Test fun repsWithNoPressStartedTimedAndEnded() = reps(swing = 0.0, tolerance = 0.8)
+
+    /**
+     * The same with the phone in the hand: the arm's swing in the satellites' speed. The laps stay to tenths; the start
+     * from the speeds alone wanders (the swing begins with the run-up), so a rep with no press at all is within 2 s — a
+     * press on the start takes that away.
+     */
+    @Test fun repsTimedWithThePhoneInTheHand() = reps(swing = 1.5, tolerance = 2.0)
+
+    private fun reps(swing: Double, tolerance: Double) {
         for (seed in 0 until 4) {
             val rnd = Random(seed)
             val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 3), RunGoal(1500, 330), 207)
@@ -53,7 +70,7 @@ class StadiumAutoTest {
             val lapsPerRep = w.segments[work[0]].laps!!.toInt()
             val p = oval.perimeter
             val t = RunTracker(w)
-            val gps = Gps(seed)
+            val gps = Gps(seed, swing)
             t.start(0)
             var arc = 0.0
             var v = 0.0
@@ -82,8 +99,8 @@ class StadiumAutoTest {
                     }
                     "stand" -> {
                         v = 0.0
-                        val tl = t.timeline((time * 1000).toLong())
-                        val go = if (rep == 0) time >= standUntil else tl.segment?.kind == SegmentKind.WORK && tl.index == work[rep] && time >= standUntil
+                        // Each rep waits for him on the line: he goes a moment after the wait begins (the countdown's end).
+                        val go = if (rep == 0) time >= standUntil else standUntil > 0.0 && time >= standUntil
                         if (go) {
                             phase = "rep"
                             onsets += time
@@ -117,9 +134,8 @@ class StadiumAutoTest {
                         }
                     }
                 }
-                if (phase == "stand" && rep > 0 && standUntil == 0.0) {
-                    val tl = t.timeline((time * 1000).toLong())
-                    if (tl.segment?.kind == SegmentKind.WORK && tl.index == work[rep]) standUntil = time + 0.4 + rnd.nextDouble() * 1.2
+                if (phase == "stand" && rep > 0 && standUntil == 0.0 && t.waiting((time * 1000).toLong())) {
+                    standUntil = time + 0.4 + rnd.nextDouble() * 1.2
                 }
                 arc += v * dt
                 if (time >= nextFix) {
@@ -144,10 +160,10 @@ class StadiumAutoTest {
             assertEquals(work.size, finishes.size, "seed $seed: all reps run")
             val times = t.repTimes()
             val truth = onsets.zip(finishes) { a, b -> b - a }
-            println("seed $seed reps: " + times.zip(truth).joinToString { (a, b) -> "%.2f/%.2f".format(a ?: -1.0, b) })
+            println("swing $swing seed $seed reps: " + times.zip(truth).joinToString { (a, b) -> "%.2f/%.2f".format(a ?: -1.0, b) })
             times.zip(truth).forEachIndexed { i, (got, real) ->
                 assertNotNull(got, "seed $seed rep ${i + 1} timed")
-                assertTrue(abs(got - real) < 0.8, "seed $seed rep ${i + 1}: $got vs $real")
+                assertTrue(abs(got - real) < tolerance, "seed $seed rep ${i + 1}: $got vs $real")
             }
             val repLaps = t.laps.filter { it.rep != null }
             assertEquals(work.size * lapsPerRep, repLaps.size, "seed $seed: ${t.laps}")

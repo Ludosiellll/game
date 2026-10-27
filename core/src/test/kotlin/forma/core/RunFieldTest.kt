@@ -70,13 +70,14 @@ class RunFieldTest {
         assertEquals(Press.Ignored, t.press(20_000))
         val lap = assertIs<Press.Done>(t.press(77_000)).lap
         assertEquals(75.0, lap.seconds, 1e-9)
-        // Without a target nothing says a lap is too short: any lap past the double-tap guard counts.
+        // Without a target only what no one runs is too short: 230 m in 18 s (12.8 m/s) is a touch, in 25 s a lap.
         val free = RunTracker(RunWorkout(RunType.FREE, "Свободный бег", emptyList(), lapMeters = lapM))
         free.start(0)
         assertEquals(Press.Start, free.press(2_000))
-        assertIs<Press.Done>(free.press(20_000))
+        assertEquals(Press.Ignored, free.press(20_000))
+        assertIs<Press.Done>(free.press(27_000))
         // And a double tap is still one press.
-        assertEquals(Press.Ignored, free.press(22_000))
+        assertEquals(Press.Ignored, free.press(29_000))
     }
 
     private fun easyRun(): RunTracker {

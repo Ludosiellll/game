@@ -219,16 +219,20 @@ class RaceGoalTest {
         assertEquals(0, first.verdict)
         assertEquals(1, first.rep)
         assertTrue(first.closesRep)
-        // Second rep starts after 51 s of work and 90 s of rest: 47 s is too fast, and the rest starts at once.
+        // The second rep waits on the line after 51 s of work and the rest, and starts with his press: 47 s is too fast,
+        // and the rest starts at once.
         val rep2 = warm + (51 + 105) * 1000L
+        assertEquals(Press.Start, t.press(rep2))
         assertEquals(-1, t.lap(rep2 + 47_000)!!.verdict)
-        // Third: 56 s, a bit after the beep — still that rep, too slow. It started 4 s sooner (rep 2 ended early).
+        // Third: 56 s, a bit after the beep — still that rep, too slow. It waits 4 s sooner (rep 2 ended early).
         val rep3 = rep2 + (47 + 105) * 1000L
+        assertEquals(Press.Start, t.press(rep3))
         assertEquals(1, t.lap(rep3 + 56_000)!!.verdict)
         assertEquals(listOf(52.0, 47.0, 56.0), t.laps.map { it.seconds })
         assertEquals(listOf(52.0, 47.0, 56.0, null, null), t.repTimes())
         // Half of the reps pressed: the pace comes from the laps.
         val rep4 = rep3 + (51 + 105) * 1000L
+        assertEquals(Press.Start, t.press(rep4))
         t.lap(rep4 + 51_000)
         val r = t.result(rep4 + 60_000, 7)
         assertEquals((52 + 47 + 56 + 51) / 0.92, r.workPace!!, 0.5)
@@ -266,8 +270,10 @@ class RaceGoalTest {
         assertEquals(Press.Start, t.press(warm))
         assertNotNull(t.lap(warm + 52_000))
         assertNull(t.lap(warm + 53_000))
-        // Twenty seconds later, still in that rep's grace: the rep is complete, so it is a lap of the recovery.
-        val extra = assertNotNull(t.lap(warm + 70_000))
+        // Eighteen seconds later: 230 m in 18 s is no lap at all (the volume key pressed twice made such ones).
+        assertNull(t.lap(warm + 70_000))
+        // Forty seconds later, still in that rep's grace: the rep is complete, so it is a lap of the recovery.
+        val extra = assertNotNull(t.lap(warm + 92_000))
         assertNull(extra.rep)
         assertNull(extra.verdict)
         assertEquals(listOf(52.0, null, null, null, null), t.repTimes())
@@ -358,8 +364,8 @@ class RaceGoalTest {
         t.start(0)
         val warm = 12 * 60 * 1000L
         t.skipSegment(warm + 1_000)
-        // Ten seconds into the rest: not a 61-second lap of the skipped rep.
-        val l = assertNotNull(t.lap(warm + 1_000 + 10_000))
+        // Half a minute into the rest: not a lap of the skipped rep.
+        val l = assertNotNull(t.lap(warm + 1_000 + 30_000))
         assertNull(l.rep)
         assertEquals(listOf(null, null, null, null, null), t.repTimes())
         assertEquals(0, t.repsDone(warm + 20_000))

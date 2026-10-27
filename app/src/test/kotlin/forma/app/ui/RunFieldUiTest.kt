@@ -2,7 +2,6 @@ package forma.app.ui
 
 import android.os.Looper
 import android.os.PowerManager
-import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,7 +31,6 @@ import forma.app.data.RunSummary
 import forma.app.data.Settings
 import forma.app.data.SettingsStore
 import forma.app.data.TrainingRepository
-import forma.app.run.LapKey
 import forma.app.run.RunSession
 import forma.app.ui.screens.HistoryItemScreen
 import forma.app.ui.screens.RunActiveScreen
@@ -85,7 +83,6 @@ class RunFieldUiTest {
 
     @After fun tearDown() {
         RunSession.clear()
-        LapKey.onLap = null
     }
 
     private fun settle() {
@@ -223,12 +220,11 @@ class RunFieldUiTest {
         show(repo) { RunActiveScreen() }
         assertTrue(texts("км по шагам").isNotEmpty())
         assertTrue(texts("дистанция по шагам").isNotEmpty())
-        // A road run: the volume key is the volume, the headset's button the music's.
-        assertNull(LapKey.onLap)
+        // A road run: the headset's button is the music's.
         assertTrue(texts("кнопкой на наушниках").isEmpty())
     }
 
-    @Test fun onTheStadiumTheVolumeKeyPressesLap() {
+    @Test fun onTheStadiumTheHeadsetButtonIsSaid() {
         val repo = repo("ui-field-key")
         val easy = runBlocking { repo.runFor(SessionKind.RUN_EASY, repo.today()) }
         assertEquals(230, easy.lapMeters)
@@ -238,18 +234,10 @@ class RunFieldUiTest {
         RunSession.gpsEnabled = false
         RunSession.publish(60_000)
         show(repo) { RunActiveScreen() }
-        assertNotNull(LapKey.onLap)
-        // The volume key works only while the screen is on, the headset's button with it off too: said on the screen,
-        // not found out on the line.
-        assertTrue(texts("Круг можно отметить кнопкой на наушниках. Или громкостью вниз, пока экран включён.").isNotEmpty())
-        assertTrue(LapKey.down(KeyEvent.KEYCODE_VOLUME_DOWN, null))
-        assertTrue(LapKey.up(KeyEvent.KEYCODE_VOLUME_DOWN))
-        assertTrue(!LapKey.down(KeyEvent.KEYCODE_VOLUME_UP, null))
-        // Paused: no lap to press, the key is the volume again.
-        t.pause(61_000)
-        RunSession.publish(61_000)
-        settle()
-        assertNull(LapKey.onLap)
+        // The headset's button works with the screen off too: said on the screen, not found out on the line. The volume
+        // keys stay the volume (turned down twice, they made a lap of 6 s).
+        assertTrue(texts("Круг можно отметить и кнопкой на наушниках.").isNotEmpty())
+        assertTrue(texts("громкост").isEmpty())
     }
 
     @Test fun aStartThatFailedIsSaidNotSkipped() {

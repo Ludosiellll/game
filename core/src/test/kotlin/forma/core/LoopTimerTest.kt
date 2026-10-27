@@ -31,7 +31,7 @@ class LoopTimerTest {
     private class Sim(val fixes: List<DoubleArray>, val truth: List<Double>, val truthSpeed: List<Double>, val starts: List<Double>)
 
     /** Runs [pieces] round [oval] in a lane [lane] m out, GPS once a second; the line [lineArc] m round from the arc's 0. */
-    private fun simulate(oval: Oval, pieces: List<Piece>, seed: Int, lineArc: Double, lane: Double = 0.6, sigma: Double = 1.3, tau: Double = 4.0): Sim {
+    private fun simulate(oval: Oval, pieces: List<Piece>, seed: Int, lineArc: Double, lane: Double = 0.6, sigma: Double = 1.3, tau: Double = 4.0, swing: Double = 0.0): Sim {
         val rnd = Random(seed)
         fun gauss() = sqrt(-2 * kotlin.math.ln(1 - rnd.nextDouble())) * cos(2 * PI * rnd.nextDouble())
         val dt = 0.01
@@ -75,7 +75,10 @@ class LoopTimerTest {
             }
             // The phone's own accuracy grows with its error (on the real run 1.5–2.2 m for an error of 1.3 m).
             val acc = 1.15 * sigma + abs(gauss()) * 0.4
-            val v = maxOf(0.0, speeds[i] + gauss() * 0.15)
+            // The phone in a swinging hand: the satellites see the hand's speed (the arm swings once in two steps, ~174 a
+            // minute), and only while running.
+            val hand = if (speeds[i] > 0.5) swing * kotlin.math.sin(2 * PI * 1.45 * t + seed * 2.399) else 0.0
+            val v = maxOf(0.0, abs(speeds[i] + hand) + gauss() * 0.15)
             fixes += doubleArrayOf(t, plane.lat(y), plane.lon(x), acc, v)
             ex = keep * ex + sqrt(1 - keep * keep) * sigma * gauss()
             ey = keep * ey + sqrt(1 - keep * keep) * sigma * gauss()
@@ -326,5 +329,48 @@ class LoopTimerTest {
             timer.fix((f[0] * 1000).toLong(), f[1], f[2], f[3].toFloat(), f[4].toFloat())
             assertNull(timer.runUp(((f[0] - 20) * 1000).toLong().coerceAtLeast(90_000), 3.75).takeIf { f[0] > 92 }, "at ${f[0]}")
         }
+    }
+
+    /**
+     * The phone held in the hand, as Denis runs: the arm swings it, and the satellites' speed is the hand's (1.5 m/s either
+     * way at the steps' beat, seen at one moment a second). Laps still to tenths, none lost or made up; the start from the
+     * speeds wanders more (a press on the start is as good), yet is found.
+     */
+    @Test fun aPhoneInASwingingHandStillTimesTheLaps() {
+        val all = mutableListOf<Double>()
+        var missed = 0
+        var extra = 0
+        for (seed in 0 until 8) {
+            for ((kind, pieces) in listOf("easy" to easy(Random(seed)), "reps" to reps(Random(seed)))) {
+                val sim = simulate(denis, pieces, seed * 7 + kind.length, lineArc = 5.0, lane = 0.4 + 0.5 * Random(seed).nextDouble(), swing = 1.5)
+                val r = replay(sim, denis, 5.0, seed, 207)
+                all += r.errors
+                missed += r.missed
+                extra += r.extra
+            }
+        }
+        val starts = mutableListOf<Double>()
+        for (seed in 0 until 30) {
+            val rnd = Random(seed)
+            val v = 4.5 + rnd.nextDouble(-0.4, 0.4)
+            val up = 1.5 + rnd.nextDouble() * 1.5
+            val pieces = listOf(Piece(5.0, 0.0, 2.5), Piece(60.0, 2.5, 2.5), Piece(4.0, 2.5, 0.0), Piece(15.0, 0.0, 0.0), Piece(up, 0.0, v), Piece(40.0, v, v))
+            val sim = simulate(denis, pieces, seed, lineArc = 5.0, swing = 1.5)
+            val onset = 5.0 + 60 + 4 + 15
+            val timer = LoopTimer(207)
+            var found: Long? = null
+            for (f in sim.fixes) {
+                timer.fix((f[0] * 1000).toLong(), f[1], f[2], f[3].toFloat(), f[4].toFloat())
+                timer.crossings()
+                if (found == null && f[0] > onset - 10) found = timer.runUp(((onset - 8) * 1000).toLong(), 0.75 * v)
+            }
+            starts += assertNotNull(found, "seed $seed: the start found") / 1000.0 - onset
+        }
+        println("in the hand: crossings sd %.3f p95 %.3f, missed $missed extra $extra; start mean %.2f sd %.2f p95 %.2f"
+            .format(sd(all), p95(all), starts.average(), sd(starts), p95(starts)))
+        assertEquals(0, missed, "laps missed")
+        assertEquals(0, extra, "laps made up")
+        assertTrue(sd(all) < 0.3 && p95(all) < 0.6, "crossings sd ${sd(all)} p95 ${p95(all)}")
+        assertTrue(p95(starts) < 1.5, "start p95 ${p95(starts)}")
     }
 }

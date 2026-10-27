@@ -1,14 +1,12 @@
 package forma.app
 
 import android.os.Bundle
-import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.lifecycleScope
 import forma.app.data.Status
-import forma.app.run.LapKey
 import forma.app.ui.AppRoot
 import forma.app.ui.LocalCloud
 import forma.app.ui.LocalRepo
@@ -32,11 +30,6 @@ class MainActivity : ComponentActivity() {
             CompositionLocalProvider(LocalRepo provides repo, LocalCloud provides cloud) { AppRoot() }
         }
     }
-
-    /** On the run screen of a stadium run the volume-down key is "lap" (see [LapKey]). */
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean = LapKey.down(keyCode, event) || super.onKeyDown(keyCode, event)
-
-    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean = LapKey.up(keyCode) || super.onKeyUp(keyCode, event)
 
     /**
      * Over the lock screen, and waking the screen when brought up, only while a run is on: the runner sees the clock and
