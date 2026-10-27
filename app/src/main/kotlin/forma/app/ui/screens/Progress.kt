@@ -214,6 +214,29 @@ private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState
     }
 }
 
+/**
+ * The goal to run a distance without stopping (no time): where the run/walk start is, or how far the longest run has
+ * gone; reached — a time can be set next.
+ */
+@Composable
+private fun FinishCard(meters: Int, st: forma.core.run.RunState?, runs: List<forma.app.data.RunEntity>) {
+    val best = runs.filter { it.type != forma.core.run.RunType.RUN_WALK.name }.mapNotNull { it.distanceM }.maxOrNull()
+    FCard(gap = 6.dp) {
+        Text("Цель", style = T.secondary(13.sp))
+        Text("Пробежать ${goalDistance(meters)}", style = T.title(26.sp).copy(color = F.c.endurance))
+        Text(
+            when {
+                best != null && best >= meters -> "Взята: самая длинная пробежка — ${goalDistance(best.roundToInt())}. " +
+                    "Теперь можно поставить время в профиле, и план пойдёт к нему."
+                st != null && !st.canRunContinuously -> "Сейчас бег с ходьбой: этап ${st.walkStage + 1} из ${RunPlan.walkLadderSize}. " +
+                    "В конце — 30 минут бега без остановки, это примерно 4–5 км."
+                best != null -> "Самая длинная пробежка — ${goalDistance(best.roundToInt())} из ${goalDistance(meters)}. Длинная пробежка недели растёт понемногу."
+                else -> "Длинная пробежка недели растёт понемногу. Пробегай её спокойно, чтобы мог говорить."
+            },
+            style = T.body(14.sp).let { if (best != null && best >= meters) it.copy(color = F.c.good) else it },
+        )
+    }
+}
 
 /** The way to the goal: trials over its distance, then the average lap and the laps on pace in the goal-pace sessions. */
 @Composable
@@ -312,6 +335,7 @@ private fun RunTab() {
     val program by repo.store.program.collectAsState(initial = null)
     val hard = program?.week?.days?.any { d -> d.sessions.any { it.kind == forma.core.plan.SessionKind.RUN_QUALITY } } != false
     profile?.runGoal?.let { GoalCard(it, st, profile?.lapMeters, hard) }
+    profile?.finish?.let { FinishCard(it, st, runs) }
     // On a stadium: the trials over the goal distance and how the laps at its pace go.
     val goal = profile?.runGoal
     val lapM = profile?.lapMeters

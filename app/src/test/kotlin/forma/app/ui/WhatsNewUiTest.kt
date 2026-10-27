@@ -17,7 +17,6 @@ import forma.app.data.SettingsStore
 import forma.app.data.TrainingRepository
 import forma.app.ui.screens.RELEASES
 import forma.app.ui.screens.WhatsNewDialog
-import forma.app.ui.screens.unseenReleases
 import forma.app.ui.theme.FormaTheme
 import forma.app.ui.theme.Looks
 import forma.core.model.Experience
@@ -58,7 +57,8 @@ class WhatsNewUiTest {
 
     @Test fun theNewsOfTheLastUpdateReadsPlainly() {
         var closed = false
-        compose.setContent { FormaTheme(Looks.byId("carbon")) { WhatsNewDialog(unseenReleases(0)) { closed = true } } }
+        // The first release's texts (the window shows the newest three; this one reads the first).
+        compose.setContent { FormaTheme(Looks.byId("carbon")) { WhatsNewDialog(RELEASES.take(1)) { closed = true } } }
         settle()
         compose.onNodeWithText("Что нового").assertExists()
         compose.onNodeWithText("Отрезок ждёт тебя").assertExists()

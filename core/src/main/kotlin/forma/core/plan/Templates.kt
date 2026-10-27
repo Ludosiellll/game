@@ -87,13 +87,16 @@ object Templates {
         val S = SlotRole.SECONDARY
         val A = SlotRole.ACCESSORY
         val runner = aim.seriousRunning
+        // A runner's one-leg work: the Bulgarian split squat once squatting is known; before that the split squat (the
+        // same pattern, both feet on the floor) — the Bulgarian is hard and asks for balance a beginner has yet to learn.
+        val oneLeg = if (novice) "split_squat" else "bulgarian"
 
         val fullA = build(aim, exp, "full_a", "Всё тело · А", Focus.FULL,
             "squat" to M, "bench" to M, (if (novice) "cable_row" else "row") to S,
             "lateral_raise" to A, "plank" to A)
         val fullB = build(aim, exp, "full_b", "Всё тело · Б", Focus.FULL,
             (if (novice) "rdl" else "deadlift") to M, "ohp" to M, (if (novice) "lat_pulldown" else "pullup") to S,
-            (if (runner) "bulgarian" else "db_lunge") to S, "db_curl" to A, "pushdown" to A)
+            (if (runner) oneLeg else "db_lunge") to S, "db_curl" to A, "pushdown" to A)
         val fullC = build(aim, exp, "full_c", "Всё тело · В", Focus.FULL,
             (if (novice) "goblet_squat" else "leg_press") to M, "db_incline" to M, "db_row" to S,
             "hip_thrust" to S, "face_pull" to A, (if (runner) "calf_raise" else "leg_raise") to A)
@@ -102,7 +105,7 @@ object Templates {
             "bench" to M, (if (novice) "cable_row" else "row") to M, "db_shoulder" to S, "lat_pulldown" to S,
             "db_curl" to A, "pushdown" to A)
         val lowerA = build(aim, exp, "lower_a", "Низ · А", Focus.LOWER,
-            "squat" to M, "rdl" to S, (if (runner) "bulgarian" else "leg_press") to S, "leg_curl" to A, "calf_raise" to A, "plank" to A)
+            "squat" to M, "rdl" to S, (if (runner) oneLeg else "leg_press") to S, "leg_curl" to A, "calf_raise" to A, "plank" to A)
         val upperB = build(aim, exp, "upper_b", "Верх · Б", Focus.UPPER,
             "ohp" to M, (if (novice) "lat_pulldown" else "pullup") to M, "db_incline" to S, "cable_row" to S,
             "lateral_raise" to A, "hammer_curl" to A)

@@ -78,6 +78,7 @@ object TrainingReport {
                 appendLine("- Беговая цель: ${dist(g.meters)} за ${Ru.clock(g.seconds)} (темп ${Ru.pace(g.pace)} /км)." +
                     (g.date?.let { " Забег — ${Ru.date(LocalDate.ofEpochDay(it))}, за две недели до него подводка." } ?: ""))
             }
+            p.finish?.let { appendLine("- Беговая цель: пробежать ${dist(it)} без остановки, время не задано.") }
             p.lapMeters?.let { appendLine("- Бегает на стадионе, круг $it м.") }
             if (p.ownWeek) appendLine("- Своя неделя: " + listOfNotNull(
                 p.gymDays.orEmpty().takeIf { it.isNotEmpty() }?.let { "зал — ${days(it)}" },

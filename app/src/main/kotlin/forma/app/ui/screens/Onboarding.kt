@@ -95,7 +95,9 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     var run by mutableStateOf(p.aim.run)
     var emphasis by mutableStateOf(p.aim.emphasis)
     var experience by mutableStateOf(p.experience)
-    var runLevel by mutableStateOf(p.runLevel)
+    // The first launch starts from "can't run 20 minutes yet": tapped through, a beginner gets the run/walk start,
+    // not the runs of someone who runs already (a runner says so in one tap).
+    var runLevel by mutableStateOf(if (blankBody) RunLevel.NONE else p.runLevel)
     var days by mutableStateOf(p.trainingDays)
     var minutes by mutableStateOf(p.sessionMinutes)
     var sex by mutableStateOf(p.sex)
@@ -105,7 +107,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     var restingHr by mutableStateOf(p.restingHr?.toString() ?: "")
     var raceKm by mutableStateOf(p.raceMeters?.let { it / 1000.0 })
     var raceTime by mutableStateOf(p.raceSeconds?.let { forma.core.text.Ru.clock(it.toInt()) } ?: "")
-    var goalMeters by mutableStateOf(p.runGoal?.meters)
+    var goalMeters by mutableStateOf(p.runGoal?.meters ?: p.finish)
     var goalTime by mutableStateOf(p.runGoal?.let { forma.core.text.Ru.clock(it.seconds) } ?: "")
     /** The race's day, when there is one: "15.06" or "15.06.2027". */
     var goalDate by mutableStateOf(p.runGoal?.date?.let { LocalDate.ofEpochDay(it).format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")) } ?: "")
@@ -150,8 +152,14 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     /** The race's day as typed (the year may be left out: this one, or the next if the day has passed), or null. */
     val raceDay: LocalDate? get() = parseRaceDay(goalDate, LocalDate.now())
 
-    /** A race day typed that is not a date, or one already past. */
-    val goalDateBad: Boolean get() = racing && goalMeters != null && goalDate.isNotBlank() && raceDay == null
+    /** A race day typed that is not a date, or one already past (asked only with a time). */
+    val goalDateBad: Boolean get() = racing && goalMeters != null && goalTime.isNotBlank() && goalDate.isNotBlank() && raceDay == null
+
+    /**
+     * A distance from 3 km picked without a time: the goal is to run it without stopping (a beginner's «пробежать 5 км»).
+     * A middle distance is a race against the clock: it needs the time.
+     */
+    val finish: Int? get() = goalMeters?.takeIf { racing && goalTime.isBlank() && it >= 3000 }
 
     /**
      * The recent race, if its time is a believable one: minutes and seconds ("25:30", not "2530" — 42 hours), at a pace
@@ -167,8 +175,8 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     /** A race distance picked and a time typed that is not one (only while the race is on the screen). */
     val raceTimeBad: Boolean get() = raceShown && raceKm != null && raceTime.isNotBlank() && race == null
 
-    /** A goal distance picked without a believable time: saving would quietly drop the goal and its progress. */
-    val goalBad: Boolean get() = racing && goalMeters != null && runGoal == null
+    /** A goal time typed that is not a believable one: saving would quietly drop the goal and its progress. */
+    val goalBad: Boolean get() = racing && goalMeters != null && runGoal == null && finish == null
 
     /** On a stadium with a lap length that is not one (only while running is in the aim). */
     val lapBad: Boolean get() = runsShown && stadium && lapOrNull == null
@@ -186,7 +194,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
 
     /** The goal step: the race goal and the stadium as shown. */
     val goalProblem: String? get() = when {
-        goalBad && goalTime.isBlank() -> "Впиши, за какое время хочешь пробежать. Или сними выбор дистанции."
+        goalBad && goalTime.isBlank() -> "Для ${goalMeters} м впиши, за какое время хочешь пробежать. Или сними выбор дистанции."
         goalBad -> "Время цели не похоже на время. Пиши минуты и секунды через двоеточие, например 5:30."
         goalDateBad -> "Дата забега: число и месяц через точку, например 15.06. Прошедшая дата не подойдёт. Или оставь поле пустым."
         lapBad -> "Впиши длину круга от 100 до 1000 м или выбери «Улица, парк»."
@@ -237,7 +245,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
             heightCm = if (height.isBlank()) null else heightValue ?: base.heightCm,
             restingHr = restingHrValue,
             raceMeters = race?.first, raceSeconds = race?.second,
-            runGoal = if (racing) runGoal else null, lapMeters = if (runsShown) lapOrNull else null,
+            runGoal = if (racing) runGoal else null, finishMeters = finish, lapMeters = if (runsShown) lapOrNull else null,
             doubleDays = doubleDays && aim.lifts && aim.runs,
         ).let { p ->
             val gym = gymDays
@@ -455,7 +463,11 @@ private fun SummaryStep(d: ProfileDraft) {
     val profile = d.toProfile(Profile())
     val program = remember(profile) { runCatching { ProgramGenerator.generate(profile, LocalDate.now()) }.getOrNull() }
     var editWeek by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(d.gymDays != null) }
-    StepTitle("Твоя неделя", "Так выглядит твой план. Веса подберём на первых тренировках. Дальше приложение будет менять их само.")
+    StepTitle(
+        "Твоя неделя",
+        if (profile.aim.lifts) "Так выглядит твой план. Веса подберём на первых тренировках. Дальше приложение будет менять их само."
+        else "Так выглядит твой план. Темп и длину пробежек приложение будет менять само, по тому, как они идут.",
+    )
     if (program != null) {
         FCard(gap = 0.dp) {
             (1..7).forEach { day ->

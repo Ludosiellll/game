@@ -130,7 +130,8 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
         appendLine()
         appendLine("## Цели человека — каждое изменение сверяй с ними")
         val profile = repo.store.profileNow()
-        appendLine("- Бег: " + (profile?.runGoal?.let { g -> "${g.meters} м за ${Ru.clock(g.seconds)}" + (g.date?.let { ", забег ${Ru.date(LocalDate.ofEpochDay(it))}" } ?: "") } ?: "цели нет") + ".")
+        appendLine("- Бег: " + (profile?.runGoal?.let { g -> "${g.meters} м за ${Ru.clock(g.seconds)}" + (g.date?.let { ", забег ${Ru.date(LocalDate.ofEpochDay(it))}" } ?: "") }
+            ?: profile?.finish?.let { "пробежать $it м без остановки, время не задано" } ?: "цели нет") + ".")
         appendLine("- Зал: " + (forma.app.data.GymGoals.words(repo) ?: "цели нет (поставить — функция set_gym_goal)."))
         appendLine()
         if (settings.coachNotes.isNotEmpty()) {
@@ -283,6 +284,7 @@ private suspend fun running(repo: TrainingRepository, today: LocalDate): String 
     )
     st.vdot?.let { appendLine("- Форма бега (VDOT) ${Ru.one(it)}.") }
     profile?.runGoal?.let { g -> appendLine("- Цель: ${g.meters} м за ${Ru.clock(g.seconds)}" + (g.date?.let { ", забег ${Ru.date(LocalDate.ofEpochDay(it))}" } ?: "") + ".") }
+    profile?.finish?.let { appendLine("- Цель: пробежать $it м без остановки (время не задано).") }
     appendLine("- " + (profile?.lapMeters?.let { "Бегает на стадионе, круг $it м." } ?: "Бегает не на стадионе (по GPS)."))
     appendLine("- Ближайшие пробежки:")
     for (d in 0L..6L) {

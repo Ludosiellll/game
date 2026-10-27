@@ -510,7 +510,13 @@ private fun LiftCard(
             }
         }
         val calib = items.count { it.prescription.calibrate }
-        if (calib > 0) Text("Некоторые упражнения здесь у тебя впервые. Начни с подсказанного веса, а после первого подхода приложение подберёт рабочий.", style = T.secondary(13.sp))
+        val gentle = items.any { it.prescription.calibrate && it.prescription.rir >= 3 }
+        if (calib > 0) Text(
+            if (gentle && items.none { it.prescription.weight != null }) "Первая тренировка: по два подхода, с запасом в 3 повтора. Начни с подсказанного веса, после подхода " +
+                "приложение подберёт рабочий. Перед началом 5–10 минут разогрейся: дорожка, велосипед или ходьба быстрым шагом."
+            else "Некоторые упражнения здесь у тебя впервые. Начни с подсказанного веса, а после первого подхода приложение подберёт рабочий.",
+            style = T.secondary(13.sp),
+        )
         PrimaryButton(if (light) "Начать лёгкую тренировку" else "Начать тренировку", onStart, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
     }
 }

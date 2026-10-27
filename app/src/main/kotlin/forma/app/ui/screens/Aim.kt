@@ -158,7 +158,7 @@ fun RunGoalPicker(d: ProfileDraft) {
     if (d.run == RunFocus.NONE) return
     // Racing needs hard runs: a goal is for the speed and endurance focus (running for health has only easy runs).
     if (d.racing) {
-        SectionLabel("Забег, к которому готовишься (необязательно)", Modifier.padding(top = 6.dp))
+        SectionLabel("Дистанция, к которой идёшь (необязательно)", Modifier.padding(top = 6.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             GOAL_DISTANCES.forEach { (m, label) -> Chip(label, d.goalMeters == m, { d.goalMeters = if (d.goalMeters == m) null else m }) }
         }
@@ -170,6 +170,8 @@ fun RunGoalPicker(d: ProfileDraft) {
         val lap = d.lapOrNull
         Text(
             when {
+                d.goalTime.isBlank() && meters >= 3000 -> "Не знаешь время — оставь пустым: цель будет пробежать ${goalDistance(meters)} без остановки, план подведёт к этому. " +
+                    "Знаешь — впиши, например ${goalExample(meters)}: под время будут отрезки в его темпе и контрольные забеги."
                 d.goalTime.isBlank() -> "Например, ${goalExample(meters)}. Под цель будут отрезки в её темпе и контрольные забеги на время."
                 goal == null -> "Не похоже на время. Впиши минуты и секунды, например ${goalExample(meters)}."
                 else -> buildString {
@@ -186,16 +188,19 @@ fun RunGoalPicker(d: ProfileDraft) {
             },
             style = T.secondary(13.sp),
         )
-        NumberField(d.goalDate, { d.goalDate = it }, "Дата забега (если есть)", "дд.мм", keyboard = KeyboardType.Text, placeholder = "15.06")
-        val day = d.raceDay
-        Text(
-            when {
-                d.goalDate.isBlank() -> "Знаешь дату забега — впиши её. Последние две недели перед ним будут подводкой: тренировки легче, чтобы выйти на старт свежим. В сам день в плане будет забег."
-                day == null -> "Не похоже на дату или она уже прошла. Пиши число и месяц через точку, например 15.06."
-                else -> "Забег ${Ru.date(day)}. За две недели до него начнётся подводка: тренировки станут легче. За 3–5 дней будет короткая пробежка в темпе цели. Накануне — только разминка."
-            },
-            style = T.secondary(13.sp).let { if (d.goalDate.isNotBlank() && day == null) it.copy(color = F.c.warn) else it },
-        )
+        // The date is a race's: with a time (the taper before it, the race on the day).
+        if (d.goalTime.isNotBlank()) {
+            NumberField(d.goalDate, { d.goalDate = it }, "Дата забега (если есть)", "дд.мм", keyboard = KeyboardType.Text, placeholder = "15.06")
+            val day = d.raceDay
+            Text(
+                when {
+                    d.goalDate.isBlank() -> "Знаешь дату забега — впиши её. Последние две недели перед ним будут подводкой: тренировки легче, чтобы выйти на старт свежим. В сам день в плане будет забег."
+                    day == null -> "Не похоже на дату или она уже прошла. Пиши число и месяц через точку, например 15.06."
+                    else -> "Забег ${Ru.date(day)}. За две недели до него начнётся подводка: тренировки станут легче. За 3–5 дней будет короткая пробежка в темпе цели. Накануне — только разминка."
+                },
+                style = T.secondary(13.sp).let { if (d.goalDate.isNotBlank() && day == null) it.copy(color = F.c.warn) else it },
+            )
+        }
     }
     SectionLabel("Где бегаешь", Modifier.padding(top = 6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

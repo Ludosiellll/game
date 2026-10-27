@@ -211,7 +211,9 @@ class OnboardingFixesTest {
         val next = hasText("Дальше") and hasClickAction()
         compose.onNode(next).performScrollTo().performClick()
         settle()
-        // Step 2: a recent 1500 m with the dot instead of the colon.
+        // Step 2: a runner (the first launch starts from "not 20 minutes yet") with a recent 1500 m, the dot instead of the colon.
+        compose.onNodeWithText("Пробегу 20–30 минут").performScrollTo().performClick()
+        settle()
         compose.onNodeWithText("1,5 км").performScrollTo().performClick()
         settle()
         compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("12.10")

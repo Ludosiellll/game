@@ -2,11 +2,14 @@ package forma.core.plan
 
 import forma.core.body.Body
 import forma.core.model.Aim
+import forma.core.model.Catalog
 import forma.core.model.Emphasis
 import forma.core.model.Experience
+import forma.core.model.LiftFocus
 import forma.core.model.Profile
 import forma.core.model.RunFocus
 import forma.core.model.RunLevel
+import forma.core.model.Sex
 import forma.core.run.RunCaps
 import forma.core.run.RunState
 import forma.core.run.Vdot
@@ -33,9 +36,13 @@ object ProgramGenerator {
         val shared = if (own) (gym!! intersect run!!).isNotEmpty() else profile.doubleDays
         // Upper / lower / upper only when there are hard runs to put after the upper body; with easy runs alone the
         // full-body sessions (legs three times a week) stay.
-        val templates = Templates.forWeek(plan, profile.experience, mix.lifts, shared = shared && mix.quality + mix.long > 0)
-            .map { Templates.fit(it, profile.sessionMinutes) }
-        val week = if (own) Scheduler.scheduleFixed(gym!!, run!!, mix, templates, plan) else Scheduler.schedule(days, mix, templates, plan)
+        val (templates, lighter) = lightStart(
+            Templates.forWeek(plan, profile.experience, mix.lifts, shared = shared && mix.quality + mix.long > 0)
+                .map { Templates.fit(it, profile.sessionMinutes) },
+            profile,
+        )
+        val laid = if (own) Scheduler.scheduleFixed(gym!!, run!!, mix, templates, plan) else Scheduler.schedule(days, mix, templates, plan)
+        val week = laid.copy(notes = laid.notes + listOfNotNull(lighter, manyLifts(profile, mix.lifts, own)))
         val block = when (profile.experience) {
             Experience.NOVICE -> 0
             Experience.INTERMEDIATE -> 5
@@ -45,6 +52,51 @@ object ProgramGenerator {
         val program = Program(aim.nearestGoal(), profile.experience, templates, week, block, caps(plan), monday.toEpochDay(), aim, today.toEpochDay(), planner = PLANNER)
         return program.copy(runCaps = runCaps(program, middleGoal))
     }
+
+    /** The barbell lifts a beginner may start with dumbbells instead (the same movement, the same muscles). */
+    private val DUMBBELL_START = mapOf(
+        "ohp" to "db_shoulder", "bench" to "db_bench", "squat" to "goblet_squat", "rdl" to "db_rdl", "front_squat" to "goblet_squat",
+    )
+
+    /**
+     * A beginner for whom the empty bar is far too heavy (a light woman's overhead press: the bar is 20 kg, she is guessed
+     * to press about 9): the dumbbell version in its place, from a pair of a few kilos, and a line saying why. The bar
+     * cannot be lighter, and a start above her strength is a target missed every session. Not for a strength goal (that
+     * is the barbell lifts), not for someone who knows their weights, never for the lift of a gym goal.
+     */
+    fun lightStart(templates: List<Template>, profile: Profile): Pair<List<Template>, String?> {
+        val a = profile.aim.normalized()
+        if (profile.experience != Experience.NOVICE || a.lift == LiftFocus.STRENGTH || a.lift == LiftFocus.POWERBUILDING) return templates to null
+        val swapped = linkedMapOf<String, String>()
+        val out = templates.map { t ->
+            t.copy(slots = t.slots.map { slot ->
+                val to = DUMBBELL_START[slot.exerciseId]
+                val ex = Catalog.find(slot.exerciseId)
+                val bar = ex?.bar
+                val guess = ex?.let { it.startRatio * profile.bodyWeightKg * if (profile.sex == Sex.FEMALE) 0.6 else 1.0 }
+                val light = to != null && bar != null && guess != null && guess < 0.75 * bar
+                if (light && profile.liftGoal?.exerciseId != slot.exerciseId && t.slots.none { it.exerciseId == to }) {
+                    swapped[slot.exerciseId] = to!!
+                    slot.copy(exerciseId = to)
+                } else slot
+            })
+        }
+        if (swapped.isEmpty()) return templates to null
+        val bar = swapped.keys.mapNotNull { Catalog.find(it)?.bar }.max()
+        val pairs = swapped.entries.joinToString(", ") { (from, to) -> "вместо «${Catalog[from].name}» — «${Catalog[to].name}»" }
+        return out to (pairs.replaceFirstChar { it.uppercase() } + ": пустой гриф весит ${forma.core.text.Ru.kg(bar)} кг, для начала это тяжело, " +
+            "а гантели начинаются с пары килограммов. Окрепнешь — штангу можно вернуть заменой упражнения.")
+    }
+
+    /**
+     * A beginner's own week with more than three gym days: kept (the days are theirs), and said plainly that three are
+     * enough to start with ([Scheduler.mix] gives a beginner three).
+     */
+    private fun manyLifts(profile: Profile, lifts: Int, own: Boolean): String? =
+        if (own && profile.experience == Experience.NOVICE && lifts > 3) {
+            "Новичку для роста хватает 3 тренировок в зале в неделю: на $lifts устанешь сильнее, а расти будешь почти так же. " +
+                "Если тяжело — убери день-другой зала."
+        } else null
 
     /**
      * The aim the running is planned by. A race of up to 3 km decides it whatever the focus is called: for 1500 m

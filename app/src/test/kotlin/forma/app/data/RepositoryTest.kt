@@ -275,6 +275,8 @@ class RepositoryTest {
         val day = LocalDate.ofEpochDay(program.startEpochDay)
         val first = t.slots[0]
         val second = t.slots[1]
+        // As planned before any change (a novice's first time on an exercise is two sets).
+        val before = repo.liftPlan(t.id, day).items.first { it.position == 0 }.prescription.sets
         // Five sets of the first exercise from now on.
         repo.setPlanSets(first.exerciseId, 5, first.sets)
         assertEquals(5, repo.liftPlan(t.id, day).items.first { it.position == 0 }.prescription.sets)
@@ -288,7 +290,7 @@ class RepositoryTest {
         repo.setPlanSets(first.exerciseId, first.sets, first.sets)
         repo.setRemoved(second.exerciseId, false)
         val back = repo.liftPlan(t.id, day)
-        assertEquals(first.sets, back.items.first { it.position == 0 }.prescription.sets)
+        assertEquals(before, back.items.first { it.position == 0 }.prescription.sets)
         assertEquals(t.slots.size, back.items.size)
         assertTrue(repo.store.settingsNow().sets.isEmpty())
         // Every exercise out: the session still has them all, never an empty one.

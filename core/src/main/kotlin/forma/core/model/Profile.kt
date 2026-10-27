@@ -127,6 +127,11 @@ data class Profile(
     val aim: Aim = goal.aim(),
     /** The race to train for, if any. */
     val runGoal: RunGoal? = null,
+    /**
+     * A distance to run without stopping, no time set (a beginner's «пробежать 5 км»): the plan builds up to it as it
+     * would anyway, the progress shows how far it is. Counts only while there is no [runGoal].
+     */
+    val finishMeters: Int? = null,
     /** Stadium lap in metres when running on a track: sessions in laps, lap times, a lap button. Null — outside, GPS. */
     val lapMeters: Int? = null,
     /** The gym and a run may share a day (the run after the gym): three days then hold three of each. */
@@ -149,5 +154,9 @@ data class Profile(
     val ownWeek: Boolean get() = gymDays != null && runDays != null
 
     fun age(year: Int): Int = (year - birthYear).coerceIn(10, 100)
+
+    /** The distance to run without stopping, when that is the running goal (no race goal, running in the plan). */
+    val finish: Int? get() = finishMeters.takeIf { runGoal == null && aim.normalized().runs }
+
     val days: Set<DayOfWeek> get() = trainingDays.map { DayOfWeek.of(it) }.toSet()
 }

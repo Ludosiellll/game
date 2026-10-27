@@ -703,11 +703,19 @@ class TrainingRepository(
             val p = item.prescription
             val fresh = ex.primary.none { it in warm }
             val bar = if (ex.equipment == Equipment.BARBELL) ex.bar else null
-            val heavy = p.weight != null && ex.load == LoadKind.EXTERNAL && ex.compound && !deload
+            // The working weight, or the first time the weight the search starts from.
+            val work = p.weight ?: p.startHint?.takeIf { p.calibrate && it > 0 }
+            val heavy = work != null && ex.load == LoadKind.EXTERNAL && ex.compound && !deload
+            val single = if (heavy && fresh) WarmUp.single(work!!, ex.step, bar) else emptyList()
             val out = when {
                 item.slot.role == SlotRole.MAIN && item.warmups.isNotEmpty() -> item.copy(warmups = if (fresh) item.warmups else item.warmups.takeLast(2))
-                heavy && fresh -> item.copy(warmups = WarmUp.single(p.weight!!, ex.step, bar))
+                single.isNotEmpty() -> item.copy(warmups = single)
                 ex.load == LoadKind.TIMED || deload -> item
+                // Nothing lighter than the work itself: the empty bar or the lightest load.
+                heavy && fresh -> item.copy(
+                    warmups = emptyList(),
+                    noWarmUp = "Разминка — первый подход: вес и так самый лёгкий. Сделай его медленно, следи за техникой.",
+                )
                 !ex.compound -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: упражнение на одну мышцу, первый подход сам её разогреет.")
                 !fresh -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: ${ex.primary.joinToString(", ") { it.ru.lowercase() }} уже в работе после прошлых упражнений.")
                 else -> item
@@ -851,9 +859,13 @@ class TrainingRepository(
             daysSinceLast = lastDay?.let { date.toEpochDay() - it },
             // Legs a day or two before a hard run: the "+" set stops with 2 in reserve, the run gets fresher legs.
             topRir = if (ex.lowerBody && hardRunSoon(program, date)) 2 else 1,
+            // A novice's gentle first time, unless the person set this exercise's sets themselves.
+            novice = profile.experience == Experience.NOVICE && (restKey == null || restKey !in settings.sets),
         )
-        val warm = if (spec.role == SlotRole.MAIN && p.weight != null && ex.load == LoadKind.EXTERNAL && !deload) {
-            WarmUp.sets(p.weight!!, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
+        // The ramp leads to the working weight, or the first time to the weight to start the search from.
+        val work = p.weight ?: p.startHint?.takeIf { p.calibrate }
+        val warm = if (spec.role == SlotRole.MAIN && work != null && work > 0 && ex.load == LoadKind.EXTERNAL && !deload) {
+            WarmUp.sets(work, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
         } else emptyList()
         // How this person recovers on this exercise: reps lost from set to set after the rest they took.
         // Own rest belongs to the place in the plan: it stays after a swap, and one set for a day stays on that day.

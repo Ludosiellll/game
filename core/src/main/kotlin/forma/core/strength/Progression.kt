@@ -7,6 +7,7 @@ import forma.core.roundTo
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -199,6 +200,7 @@ object Progression {
         hint: Double? = null,
         daysSinceLast: Long? = null,
         topRir: Int = TOP_RIR,
+        novice: Boolean = false,
     ): Prescription {
         val rir = (spec.rir + rirOffset).coerceIn(0, 5)
         if (ex.load == LoadKind.TIMED) {
@@ -227,11 +229,14 @@ object Progression {
         if (deload && weight != null) {
             weight = down(ex, weight, toWeight(ex, effectiveLoad(ex, weight, bodyWeight) * 0.9, bodyWeight), bodyWeight)
         }
-        val sets = setsFor(spec, phase)
+        // A novice's first time on an exercise: two sets, three reps short of failure. A beginner cannot tell "two left"
+        // yet, and the first time is the one that makes the muscles sore; from the next session, the plan's sets.
+        val gentle = calibrate && novice && !deload
+        val sets = setsFor(spec, phase).let { if (gentle) min(it, 2) else it }
         val top = !deload && !calibrate && sets >= 2 && phase != Phase.TAPER
         val plannedRir = when {
             deload -> rir + 2
-            calibrate -> CALIBRATION_RIR
+            calibrate -> CALIBRATION_RIR + if (gentle) 1 else 0
             else -> rir
         }
         return Prescription(weight, state.reps, sets, plannedRir, calibrate, if (calibrate) hint else null, phase, top, intro = rirOffset > 0 && !calibrate, topRir = topRir)
@@ -274,12 +279,12 @@ object Progression {
         if (phase == Phase.DELOAD) max(1, ceil(spec.sets / 2.0).toInt()) else spec.sets
 
     /**
-     * Reps in reserve for a set the lifter did not rate. Calibration sets and "+" sets were told to stop with 2 and
-     * 1 in reserve; regular sets at the target count as planned, extra reps come out of the reserve; short sets are
-     * taken as done to failure.
+     * Reps in reserve for a set the lifter did not rate. Calibration sets and "+" sets were told to stop with 2 (3 the
+     * first time for a novice) and 1 in reserve; regular sets at the target count as planned, extra reps come out of the
+     * reserve; short sets are taken as done to failure.
      */
     fun assumedRir(set: DoneSet, index: Int, p: Prescription): Int = set.rir ?: when {
-        p.calibrate -> CALIBRATION_RIR
+        p.calibrate -> p.rir
         // Past the target it stopped where told; at the target only, it may have had less left: the closer one.
         p.top && index == p.sets - 1 && set.reps >= p.reps -> if (set.reps > p.reps) p.topRir else TOP_RIR
         set.reps >= p.reps -> max(0, p.rir - (set.reps - p.reps))
@@ -357,9 +362,14 @@ object Progression {
             val fresh = rated.filterIndexed { i, (s, _) -> rated.take(i).none { abs(it.first.weight - s.weight) < 1e-9 } }
             val best = fresh.minWith(compareBy<Pair<DoneSet, Int>> { (s, rir) -> s.reps + rir }.thenByDescending { it.first.weight })
             val estimate = OneRm.estimate(effectiveLoad(ex, best.first.weight, bodyWeight), best.first.reps, best.second)
-            val reps = spec.repMin
-            val raw = supported(estimate, reps, spec.rir)
-            val w = max(minWeight(ex, bodyWeight), floorTo(raw, ex.stepAt(raw)))
+            val raw = supported(estimate, spec.repMin, spec.rir)
+            val lightest = minWeight(ex, bodyWeight)
+            val w = max(lightest, floorTo(raw, ex.stepAt(raw)))
+            // The range's bottom asks for more than the lightest load allows (an empty bar too heavy for 8): the reps
+            // there with the planned reserve, built up from there — not a target missed session after session.
+            val reps = if (raw < lightest - 1e-9) {
+                floor(OneRm.rtfAt(estimate, effectiveLoad(ex, w, bodyWeight)) - spec.rir).toInt().coerceIn(1, spec.repMin)
+            } else spec.repMin
             return Evaluation(SlotState(w, reps, 0, 0, sessions, state.linear), Outcome.Calibrated(w, reps), estimate)
         }
 
@@ -604,7 +614,7 @@ object Progression {
         val rir = assumedRir(last, index, p)
         val e1rm = OneRm.estimate(effectiveLoad(ex, last.weight, bodyWeight), last.reps, rir)
         if (p.calibrate) {
-            val raw = toWeight(ex, OneRm.loadFor(e1rm, p.reps, CALIBRATION_RIR), bodyWeight)
+            val raw = toWeight(ex, OneRm.loadFor(e1rm, p.reps, p.rir), bodyWeight)
             val capped = min(raw, max(last.weight + step, last.weight + abs(effectiveLoad(ex, last.weight, bodyWeight)) * 0.3))
             val w = max(minWeight(ex, bodyWeight), floorTo(capped, ex.stepAt(capped)))
             return if (abs(w - last.weight) < step / 2) null else Adjustment(w, p.reps, w > last.weight)
