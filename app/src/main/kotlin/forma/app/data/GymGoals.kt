@@ -57,15 +57,19 @@ object GymGoals {
         val name = Catalog[exerciseId].name
         val heavy = mine.firstOrNull { it.tuned.role == SlotRole.MAIN } ?: mine.first()
         val hs = GymGoal.heavy(exp)
-        val second = mine.firstOrNull { it.templateId != heavy.templateId }
+        // Another day with its own numbers: the same plan exercise on two days keeps one set of numbers for both.
+        val second = mine.firstOrNull { it.templateId != heavy.templateId && it.key != heavy.key }
+        val sharing = mine.filter { it.templateId != heavy.templateId && it.key == heavy.key }.map { it.title }.distinct()
         val lower = Catalog[exerciseId].lowerBody
         // A day of the same half of the body without the lift (an upper day for a press, a lower one for a squat).
-        val other = if (second != null) null else program.templates.firstOrNull { t ->
+        val other = if (second != null || sharing.isNotEmpty()) null else program.templates.firstOrNull { t ->
             t.id != heavy.templateId && mine.none { it.templateId == t.id } && (t.focus == Focus.FULL || (t.focus == Focus.LOWER) == lower)
         }
         val v = GymGoal.VOLUME
         val lines = mutableListOf(schemeLine(heavy.title, name, hs, "тяжёлый день: сильнее всего максимум растёт от тяжёлых подходов."))
         when {
+            second == null && sharing.isNotEmpty() -> lines += "В «${sharing.joinToString("», «")}» тоже $name — у него в плане одни числа на все дни, поэтому и там будет тяжёлая схема. " +
+                "Если тяжело восстанавливаться — замени его там похожим упражнением."
             second != null -> lines += schemeLine(second.title, name, v, "второй день: больше качественных подходов и практики движения.")
             other != null -> lines += "«${other.title}»: + $name ${v.sets} × ${v.repMin}–${v.repMax}, отдых ${Ru.clock(v.restSec)} — второй день с ним в неделе: больше качественных подходов."
             else -> lines += "Второго дня с $name в неделе нет: одна тренировка с ним — расти будет медленнее."
@@ -117,6 +121,16 @@ object GymGoals {
         val rows = repo.setRows().first()
         val bw = repo.bodyWeightLookup().first()
         return GymGoal.path(g, Stats.e1rmSeries(rows, ex, bw), profile.experience, repo.today().toEpochDay())
+    }
+
+    /**
+     * The test of [goal]'s max on its day: from the max the way measures ([path]), on the lift's step in this gym. Null
+     * when the lift has not been done (nothing to test from).
+     */
+    suspend fun testDay(repo: TrainingRepository, goal: LiftGoal): GymGoal.TestDay? {
+        val max = path(repo, goal)?.current ?: repo.db.state().stat(goal.exerciseId)?.e1rm ?: return null
+        val step = repo.store.settingsNow().steps[goal.exerciseId] ?: Catalog[goal.exerciseId].stepAt(max)
+        return GymGoal.testDay(max, GymGoal.target(goal), step)
     }
 
     /** The way to [goal] in words, for the screens and the coach. */

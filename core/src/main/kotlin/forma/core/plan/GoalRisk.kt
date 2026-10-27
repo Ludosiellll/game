@@ -72,16 +72,47 @@ object GoalRisk {
         return "Вес «$name» ниже на $pct % — это откат от цели ${Ru.kg(g.kg)} кг на несколько недель. Если тяжело из-за усталости, лучше «Так себе» сегодня или лёгкая неделя: вес останется."
     }
 
-    /** A pause of [days] days with the goal's date [daysToDate] days on. */
-    fun pause(days: Int, runGoal: RunGoal?, runDaysToDate: Long?, liftGoal: LiftGoal?, liftDaysToDate: Long?): String? {
-        if (days < 7) return null
+    /**
+     * A pause of [days] days from today, with the goals' dates [runDaysToDate] and [liftDaysToDate] days on. A date
+     * inside the pause is said whatever its length (the race or the test day would quietly pass); a week or more is
+     * said when a date is near after it.
+     */
+    fun pause(days: Int, runGoal: RunGoal?, runDaysToDate: Long?, liftGoal: LiftGoal?, liftDaysToDate: Long?, liftName: String? = null): String? {
         val out = mutableListOf<String>()
-        if (runGoal != null && runDaysToDate != null && runDaysToDate in 0..(days + 28L)) {
-            out += "До забега (${runGoalWords(runGoal)}) ${runDaysToDate} ${Ru.plural(runDaysToDate, "день", "дня", "дней")}: после паузы на подготовку останется мало времени."
+        if (runGoal != null && runDaysToDate != null) {
+            if (runDaysToDate in 0 until days) {
+                out += "Пауза накроет день забега (${runGoalWords(runGoal)}, через ${runDaysToDate} ${Ru.plural(runDaysToDate, "день", "дня", "дней")}): " +
+                    "в плане его не будет. " + if (runDaysToDate > 0) "Если забег в силе — пауза на ${runDaysToDate} ${Ru.plural(runDaysToDate, "день", "дня", "дней")}, до дня перед ним, или перенеси дату забега."
+                    else "Забег сегодня — паузу лучше начать после него или перенести дату забега."
+            } else if (days >= 7 && runDaysToDate in 0..(days + 28L)) {
+                out += "До забега (${runGoalWords(runGoal)}) ${runDaysToDate} ${Ru.plural(runDaysToDate, "день", "дня", "дней")}: после паузы на подготовку останется мало времени."
+            }
         }
-        if (liftGoal != null && liftDaysToDate != null && liftDaysToDate in 0..(days + 28L)) {
-            out += "До даты цели в зале ${liftDaysToDate} ${Ru.plural(liftDaysToDate, "день", "дня", "дней")}: паузу лучше короче или дату позже."
+        if (liftGoal != null && liftDaysToDate != null) {
+            val what = liftName?.let { liftGoalWords(liftGoal, it) } ?: "${Ru.kg(liftGoal.kg)} кг"
+            if (liftDaysToDate in 0 until days) {
+                out += "Пауза накроет день проверки цели в зале ($what): его не будет, а сила за паузу не вырастет. Лучше пауза короче или дата цели позже."
+            } else if (days >= 7 && liftDaysToDate in 0..(days + 28L)) {
+                out += "До даты цели в зале ${liftDaysToDate} ${Ru.plural(liftDaysToDate, "день", "дня", "дней")}: паузу лучше короче или дату позже."
+            }
         }
         return out.joinToString(" ").ifEmpty { null }
+    }
+
+    /** A race goal set on a week with [runs] runs: none — nothing trains it; one for a middle distance — too little. */
+    fun runGoalWithoutRuns(g: RunGoal, runs: Int): String? = when {
+        runs == 0 -> "Сейчас в неделе нет бега: с этой целью план бега не появится, к ней не приблизиться. Верни бег в неделю — скажи «верни бег» или в «Ещё → Цель, дни и данные»."
+        g.middleDistance && runs == 1 -> week(g, null, null, runs, 1)
+        else -> null
+    }
+
+    /**
+     * The goal lift's heavy work gone while it stays in the plan in the rep ranges [left] (from, to) — its lighter day
+     * only: the max grows slower. Heavy is a range up to 6.
+     */
+    fun liftHeavyGone(g: LiftGoal, name: String, left: List<Pair<Int, Int>>): String? {
+        if (left.isEmpty() || left.any { it.second <= 6 }) return null
+        return "У «$name» останется только лёгкая работа (от ${left.minOf { it.first }} повторов): тяжёлых подходов не будет, к цели ${Ru.kg(g.kg)} кг медленнее. " +
+            "Если упражнение мешает в этот день — лучше перенести тяжёлые подходы в другой день, чем убрать."
     }
 }

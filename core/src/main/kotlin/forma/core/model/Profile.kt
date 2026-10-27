@@ -139,6 +139,11 @@ data class Profile(
     val runDays: Set<Int>? = null,
     /** A goal in the gym, if any: one lift to a weight (see [forma.core.strength.GymGoal]). */
     val liftGoal: LiftGoal? = null,
+    /**
+     * The aim with both sides as it was before one was dropped («Только зал» / «Только бег»): what the side was for and
+     * which came first, to come back with it. Null while both are in the week.
+     */
+    val keptAim: Aim? = null,
 ) {
     /** The person chose the gym and running days themselves. */
     val ownWeek: Boolean get() = gymDays != null && runDays != null

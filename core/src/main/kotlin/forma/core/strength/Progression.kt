@@ -57,7 +57,12 @@ data class SlotState(
 }
 
 @Serializable
-enum class Phase { NORMAL, DELOAD }
+/**
+ * The kind of a session for one exercise: as usual, a lighter week, the days before a goal's date (half the sets, the
+ * weight kept, no "+" set), or the goal's test itself (warm-ups and single attempts). The last two leave the progress as
+ * it was: they serve the test, not the next weight.
+ */
+enum class Phase { NORMAL, DELOAD, TAPER, TEST }
 
 /** What to do today for one exercise. */
 @Serializable
@@ -80,6 +85,8 @@ data class Prescription(
      * for it). Its spare reps count the same either way, so the weights grow as fast.
      */
     val topRir: Int = 1,
+    /** The test of the max ([Phase.TEST]): each attempt's weight at one rep, the first one is [weight]. */
+    val attempts: List<Double>? = null,
 )
 
 /** A working set as logged. [rir] is optional self-report. */
@@ -109,6 +116,10 @@ enum class HoldReason {
     STOPPED_EARLY,
     /** The first week of a block asks for a rep more in reserve: falling short of the target then is what was asked. */
     INTRO,
+    /** The days before the goal's date: fewer sets at the same weight, the progress kept for after the test. */
+    TAPER,
+    /** The goal's test of the max: single attempts, the progress of the plan as it was. */
+    TEST,
 }
 
 data class Evaluation(val state: SlotState, val outcome: Outcome, val e1rm: Double?)
@@ -217,7 +228,7 @@ object Progression {
             weight = down(ex, weight, toWeight(ex, effectiveLoad(ex, weight, bodyWeight) * 0.9, bodyWeight), bodyWeight)
         }
         val sets = setsFor(spec, phase)
-        val top = !deload && !calibrate && sets >= 2
+        val top = !deload && !calibrate && sets >= 2 && phase != Phase.TAPER
         val plannedRir = when {
             deload -> rir + 2
             calibrate -> CALIBRATION_RIR
@@ -330,6 +341,11 @@ object Progression {
 
         val e1rm = e1rmOf(ex, done, p, bodyWeight)!!
         if (p.phase == Phase.DELOAD) return Evaluation(state.copy(sessions = sessions), Outcome.Deload, e1rm)
+        // The taper and the test serve the goal's day: the weight and the reps to aim for stay as they were.
+        if (p.phase == Phase.TAPER || p.phase == Phase.TEST) {
+            val reason = if (p.phase == Phase.TAPER) HoldReason.TAPER else HoldReason.TEST
+            return Evaluation(state.copy(sessions = sessions), Outcome.Hold(state.weight ?: p.weight ?: 0.0, state.reps, reason), e1rm)
+        }
 
         fun supported(e: Double, reps: Int, rir: Int) = toWeight(ex, OneRm.loadFor(e, reps, rir), bodyWeight)
 
@@ -556,6 +572,14 @@ object Progression {
         }
         val plus = p.top && done.size == p.sets - 1
         if (ex.load == LoadKind.TIMED) return NextSet(last.weight, p.reps, 0, null, p.rir, plus, p.calibrate)
+        // The test: the next attempt after a made one; after a miss the test is over (a heavier one would miss too).
+        p.attempts?.let { at ->
+            val made = done.last().reps >= 1
+            val next = at.getOrNull(done.size)?.takeIf { made } ?: return null
+            return NextSet(next, 1, if (next > last.weight) 1 else 0, null, 0, false, false)
+        }
+        // The taper keeps the weight: a set with reps to spare is no reason to go heavier days before the test.
+        if (p.phase == Phase.TAPER) return NextSet(last.weight, p.reps, 0, reserve, p.rir, false, false)
         val adj = adjustAfterSet(ex, p, last, bodyWeight, done.size - 1)
         return if (adj != null) NextSet(adj.weight, adj.reps, if (adj.heavier) 1 else -1, reserve, p.rir, plus, p.calibrate)
         else NextSet(last.weight, p.reps, 0, reserve, p.rir, plus, p.calibrate)

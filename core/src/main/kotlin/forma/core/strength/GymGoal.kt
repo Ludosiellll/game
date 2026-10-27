@@ -117,7 +117,8 @@ object GymGoal {
         val needed = (target / current).pow(1 / left) - 1
         val verdict = when {
             needed <= weekly -> Verdict.ON_TRACK
-            needed <= fastRate(exp) -> Verdict.AMBITIOUS
+            // As fast as it goes for the level, or a little past the person's own growth when that is faster.
+            needed <= max(fastRate(exp), weekly * 1.2) -> Verdict.AMBITIOUS
             else -> Verdict.UNLIKELY
         }
         return Path(target, current, share, weekly, personal, stalled, weeks, needed, verdict, current * (1 + weekly).pow(left), nearer)
@@ -149,7 +150,9 @@ object GymGoal {
     fun testDay(e1rm: Double, target: Double, step: Double): TestDay {
         val opener = down(minOf(e1rm * 0.95, target), step)
         val warm = listOf(0.5 to 5, 0.7 to 3, 0.8 to 2, 0.9 to 1).map { (f, r) -> down(e1rm * f, step) to r }.filter { it.first < opener }
-        val last = down(minOf(target, e1rm * 1.02), step)
+        // The goal itself when it is within reach, up to the next step (a goal of 126 on a 2,5 kg bar is 127,5).
+        val goalOnStep = ceil(target / step - 1e-9) * step
+        val last = if (goalOnStep <= e1rm * 1.025 + 1e-9) goalOnStep else down(minOf(target, e1rm * 1.02), step)
         return TestDay(warm, listOf(opener) + if (last > opener) listOf(last) else emptyList())
     }
 

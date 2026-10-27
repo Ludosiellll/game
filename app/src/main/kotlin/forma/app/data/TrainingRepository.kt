@@ -25,6 +25,7 @@ import forma.core.strength.DoneSet
 import forma.core.strength.GymGoal
 import forma.core.strength.Outcome
 import forma.core.strength.Phase
+import forma.core.strength.WarmUpSet
 import forma.core.strength.Progression
 import forma.core.strength.SlotRole
 import forma.core.strength.SlotSpec
@@ -131,12 +132,22 @@ class TrainingRepository(
     }
 
     /** Saves the profile and rebuilds the plan. Lifting progress is kept per exercise and rep range. */
+    /**
+     * [next] with the aim of both sides kept when one is dropped («Только зал»): what that side was for and which side
+     * came first come back with it. Cleared once both are in the week again.
+     */
+    private fun keptAimOf(old: Profile?, next: Profile): Profile = when {
+        next.aim.lifts && next.aim.runs -> if (next.keptAim != null) next.copy(keptAim = null) else next
+        old != null && old.aim.lifts && old.aim.runs -> next.copy(keptAim = old.aim)
+        else -> next.copy(keptAim = next.keptAim ?: old?.keptAim)
+    }
+
     suspend fun updateProfile(input: Profile) {
         val old = store.profileNow()
         // Saved on a friend's program without a new aim or days (the screen showed the copy's): one's own program comes
         // back as it was, its days too; with new ones, a plan is built from them.
         val own = store.settingsNow().ownPlan?.takeIf { old != null && store.programNow()?.copiedFrom != null && sameShape(old, input) }
-        val profile = own?.let { withShapeOf(input, it.profile) } ?: input
+        val profile = keptAimOf(old, own?.let { withShapeOf(input, it.profile) } ?: input)
         store.setProfile(profile)
         store.setProgram(own?.let { ownProgram(profile, it) } ?: keepCycle(ProgramGenerator.generate(profile, today()), store.programNow()))
         val raceChanged = old == null || old.raceMeters != profile.raceMeters || old.raceSeconds != profile.raceSeconds
@@ -630,21 +641,47 @@ class TrainingRepository(
         // sets at the same weight (the taper).
         val goal = store.profileNow()?.liftGoal
         val taper = GymGoal.tapering(goal, date.toEpochDay())
-        fun forGoal(spec: SlotSpec) = if (taper && spec.exerciseId == goal?.exerciseId) spec.copy(sets = GymGoal.taperSets(spec.sets)) else spec
         // The legs three days before the goal race or nearer: a lighter session, the race wants fresh legs.
         val deload = deloadOn(date, forceDeload) || t.legs && daysToRace(date)?.let { it in 0..3 } == true
+        // The goal's lift in its taper: half the sets at the working weight, no "+" set — a lighter week of the block
+        // does not make it lighter still (the taper is its own lighter plan).
+        // Its heavy sets are the day's main lift even where the plan had it second: first, with a full warm-up ramp.
+        suspend fun item(position: Int, planned: SlotSpec, restKey: String): LiftItem {
+            val heavyGoal = planned.exerciseId == goal?.exerciseId && planned.repMax <= 6 && planned.role == SlotRole.SECONDARY
+            val spec = if (heavyGoal) planned.copy(role = SlotRole.MAIN) else planned
+            return if (taper && spec.exerciseId == goal?.exerciseId) buildItem(position, spec.copy(sets = GymGoal.taperSets(spec.sets)), date, false, restKey, Phase.TAPER)
+            else buildItem(position, spec, date, deload, restKey)
+        }
         // Exercises taken out for good stay out — never all of them. Positions stay the plan's (swaps look them up).
         val added = addedTo(t.id, settings)
         val kept = t.slots.withIndex().filter { it.value.exerciseId !in settings.removed }
             .ifEmpty { if (added.isEmpty()) t.slots.withIndex().toList() else emptyList() }
-        val own = kept.map { (i, spec) -> buildItem(i, forGoal(tuned(spec, settings)), date, deload, restKey = spec.exerciseId).copy(planId = spec.exerciseId) }
+        val own = kept.map { (i, spec) -> item(i, tuned(spec, settings), spec.exerciseId).copy(planId = spec.exerciseId) }
         // Added for good: after the plan's own, as chosen (no swap applies to them: they were picked by hand).
         val extra = added.mapIndexed { j, id ->
             val key = addedKey(t.id, id)
-            buildItem(t.slots.size + j, forGoal(overrides(addedSpec(id), settings, key)), date, deload, restKey = key).copy(planId = id, addedForGood = true)
+            item(t.slots.size + j, overrides(addedSpec(id), settings, key), key).copy(planId = id, addedForGood = true)
         }
         val why = if (deload && !forceDeload && liftAfterSick(date) && !ProgramGenerator.isDeloadWeek(program, date)) SICK_LIFT else null
-        return LiftPlan(t.id, t.title, warmUps(inOrder(own + extra, goal?.exerciseId), deload), deload, why)
+        val items = warmUps(inOrder(own + extra, goal?.exerciseId), deload)
+        return LiftPlan(t.id, t.title, if (goal?.date == date.toEpochDay()) testOn(items, goal) else items, deload, why)
+    }
+
+    /**
+     * The goal's day: its lift (the first place of it) is the test of the max — the warm-ups and the single attempts of
+     * [GymGoals.testDay] instead of its sets; the progress of the plan stays as it was ([Phase.TEST]).
+     */
+    private suspend fun testOn(items: List<LiftItem>, goal: LiftGoal): List<LiftItem> {
+        val at = items.indexOfFirst { it.exerciseId == goal.exerciseId }.takeIf { it >= 0 } ?: return items
+        val test = GymGoals.testDay(this, goal) ?: return items
+        val it0 = items[at]
+        val p = it0.prescription.copy(
+            weight = test.attempts.first(), reps = 1, sets = test.attempts.size, rir = 0, calibrate = false, startHint = null,
+            phase = Phase.TEST, top = false, intro = false, attempts = test.attempts,
+        )
+        val tested = it0.copy(prescription = p, warmups = test.warmups.map { (w, r) -> WarmUpSet(w, r) }, noWarmUp = null)
+        // First of the day, while fresh.
+        return listOf(tested) + items.filterIndexed { i, _ -> i != at }
     }
 
     /**
@@ -779,7 +816,7 @@ class TrainingRepository(
      * [restKey]: where the user's own rest for this place is kept — the plan's exercise id (before a swap), [addedKey]
      * for one added to a day for good, null for one added today only.
      */
-    private suspend fun buildItem(position: Int, spec: SlotSpec, date: LocalDate, deload: Boolean, restKey: String? = null): LiftItem {
+    private suspend fun buildItem(position: Int, spec: SlotSpec, date: LocalDate, deload: Boolean, restKey: String? = null, phase: Phase? = null): LiftItem {
         val program = store.programNow() ?: error("no program")
         val profile = store.profileNow() ?: error("no profile")
         val settings = store.settingsNow()
@@ -802,7 +839,7 @@ class TrainingRepository(
         val lastMs = listOfNotNull(slotRow?.updatedAt, stat?.updatedAt).maxOrNull()
         val lastDay = lastMs?.let { java.time.Instant.ofEpochMilli(it).atZone(zone()).toLocalDate().toEpochDay() }
         val p = Progression.prescribe(
-            ex, spec, st, if (deload) Phase.DELOAD else Phase.NORMAL, rirOffset,
+            ex, spec, st, phase ?: if (deload) Phase.DELOAD else Phase.NORMAL, rirOffset,
             stat?.e1rm, profile.bodyWeightKg, hint,
             daysSinceLast = lastDay?.let { date.toEpochDay() - it },
             // Legs a day or two before a hard run: the "+" set stops with 2 in reserve, the run gets fresher legs.
@@ -943,16 +980,19 @@ class TrainingRepository(
     /**
      * The goal in the gym set to [goal] (null — none). The plan changes made for the goal before go back first (where
      * still as it left them); with [adjust], the plan trains the new goal's lift for it ([GymGoals.propose]). The start
-     * of the way (the estimated max, the day) is kept while the lift stays the same.
+     * of the way (the estimated max, the day) is kept while the lift stays the same; it is the max the way itself
+     * measures ([GymGoals.path]), so a goal just set is at the start of its way. Without [adjust], the plan made for a
+     * goal on the same lift stays, unless [keepPlan] is off («Вернуть» to a goal that had none).
      */
-    suspend fun setLiftGoal(goal: LiftGoal?, adjust: Boolean) {
+    suspend fun setLiftGoal(goal: LiftGoal?, adjust: Boolean, keepPlan: Boolean = true) {
         val profile = store.profileNow() ?: return
         val old = profile.liftGoal
         val stamped = goal?.let { g ->
             val same = old?.exerciseId == g.exerciseId
             // A goal put back as it was («Вернуть») keeps its own start.
             g.copy(
-                fromE1rm = g.fromE1rm ?: if (same) old?.fromE1rm else db.state().stat(g.exerciseId)?.e1rm,
+                fromE1rm = g.fromE1rm ?: if (same && old?.fromE1rm != null) old.fromE1rm
+                    else GymGoals.path(this, g)?.current ?: db.state().stat(g.exerciseId)?.e1rm,
                 setDay = g.setDay ?: if (same) old?.setDay ?: today().toEpochDay() else today().toEpochDay(),
             )
         }
@@ -962,7 +1002,7 @@ class TrainingRepository(
             GymGoals.propose(CoachActions.places(this), program, profile.experience, stamped.exerciseId)
         } else null
         store.editSettings { s ->
-            val keep = s.goalPlan?.takeIf { stamped != null && !adjust && it.exerciseId == stamped.exerciseId }
+            val keep = s.goalPlan?.takeIf { stamped != null && !adjust && keepPlan && it.exerciseId == stamped.exerciseId }
             val back = if (keep != null) s else GymGoals.revert(s)
             proposal?.edit?.invoke(back) ?: back
         }
@@ -1027,7 +1067,27 @@ class TrainingRepository(
     /** The weight step of [exerciseId] in this gym from now on; its own step ([default]) clears the override. */
     suspend fun setStep(exerciseId: String, step: Double, default: Double) {
         store.editSettings { s -> s.copy(steps = if (step == default) s.steps - exerciseId else s.steps + (exerciseId to step)) }
+        restepActive(exerciseId)
         onChange()
+    }
+
+    /**
+     * The step of [exerciseId] changed during a session: its places there without sets yet start on the new step too
+     * (the weight down to it), as the next sessions will — not only from the next one.
+     */
+    private suspend fun restepActive(exerciseId: String) {
+        val w = db.workouts().active()?.takeIf { it.kind == Kind.LIFT } ?: return
+        val plan = planOf(w) ?: return
+        val started = db.sets().forWorkout(w.id).map { it.position }.toSet()
+        val ex = exercise(exerciseId, store.settingsNow())
+        val items = plan.items.map { i ->
+            if (i.exerciseId != exerciseId || i.position in started) i
+            else i.copy(step = ex.step, prescription = i.prescription.weight?.let { wt ->
+                val st = ex.stepAt(wt)
+                i.prescription.copy(weight = (kotlin.math.floor(wt / st + 1e-9) * st).coerceAtLeast(Progression.minWeight(ex, store.profileNow()?.bodyWeightKg ?: 75.0)))
+            } ?: i.prescription)
+        }
+        if (items != plan.items) replacePlan(w.id, plan.copy(items = items))
     }
 
     /** Takes [planId] out of every session from now on, or brings it back. */

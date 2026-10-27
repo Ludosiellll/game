@@ -3,6 +3,7 @@ package forma.app.data
 import forma.app.sync.CoachCall
 import forma.core.model.Aim
 import forma.core.model.Catalog
+import forma.core.model.Emphasis
 import forma.core.model.Exercise
 import forma.core.model.ExerciseSearch
 import forma.core.model.Experience
@@ -88,6 +89,10 @@ object CoachActions {
     const val LAP = "set_stadium_lap"
     const val WEEK = "set_week"
     const val GYM_GOAL = "set_gym_goal"
+    const val NOW_SWAP = "workout_swap"
+    const val NOW_REMOVE = "workout_remove"
+    const val NOW_ADD = "workout_add"
+    const val NOW_SETS = "workout_sets"
 
     private const val MAX_SICK_PAUSE = 14
     private const val MAX_PAUSE = 21
@@ -132,7 +137,7 @@ object CoachActions {
         fn(NOT_SICK, "Снять «Болею»: оказалось, не болел — дни болезни станут обычным пропуском. Человек подтверждает кнопкой.")
         fn(PAUSE, "Пауза в плане с сегодня (отпуск, поездка, не может тренироваться): тренировок не ждём, пропуски не копятся. Только с сегодня, о прошлом не отмечай. 7 дней и больше человек подтверждает.", Param("days", "integer", "дней, 1–$MAX_PAUSE"))
         fn(RESUME, "Закончить паузу и вернуться к плану сегодня.")
-        fn(RATE, "Исправить оценку тяжести последней пробежки или силовой (1–10, как в приложении). Оценка последней пробежки решает её заново: лёгкий бег длиннее или короче, шаг лестницы.",
+        fn(RATE, "Исправить оценку тяжести последней законченной пробежки или силовой (1–10, как в приложении) — только когда человек говорит об оценке той тренировки. Не для подходов идущей сейчас тренировки. Оценка последней пробежки решает её заново: лёгкий бег длиннее или короче, шаг лестницы.",
             Param("which", "string", "last_run — последняя пробежка, last_gym — последняя силовая", values = listOf("last_run", "last_gym")), Param("rpe", "integer", "1–10"))
         fn(EASY, "Длина лёгкого бега с этого дня (минуты); дальше она меняется по правилам приложения. Не больше потолка под цель, не больше 110 % самой длинной пробежки за 30 дней и не больше +15 % (минимум +5 мин) за неделю. Второе изменение за неделю и сокращение больше чем на 10 % за две недели человек подтверждает.",
             Param("minutes", "integer", "минуты"))
@@ -140,7 +145,7 @@ object CoachActions {
             Param("count", "integer", "0–8 (пока бег новый — до 6)"), Param("weeks", "integer", "1–$MAX_WEEKS"))
         fn(LONG, "Последний лёгкий бег недели — длинный лёгкий, на weeks недель (0 — отменить). Длина длинного растёт по правилам приложения: до часа, в день с залом — до 45 мин.",
             Param("weeks", "integer", "0–$MAX_WEEKS"))
-        fn(STEP, "Шаг веса упражнения в зале человека — только когда он говорит, как меняется вес у снаряда в его зале (гантели через 2,5 кг, тренажёр через 4 кг). По этому шагу приложение прибавляет вес. Не для того, чтобы поднять или снизить вес — для этого set_working_weight.",
+        fn(STEP, "Шаг веса упражнения в зале человека — только когда он говорит, как меняется вес у снаряда в его зале (гантели через 2,5 кг, тренажёр через 4 кг). По этому шагу приложение прибавляет вес — сразу, и в идущей тренировке. Не для того, чтобы поднять или снизить вес — для этого set_working_weight.",
             exercise, Param("step_kg", "number", "кг, 0,25–20"))
         fn(WEIGHT, "Рабочий вес упражнения на следующие тренировки, когда человек стабильно может больше или меньше, чем даёт приложение. Человек подтверждает кнопкой. Не больше 25 % за раз, тяжелее — только в пределах расчётного максимума с запасом плана, не ниже 85 % лучшего за 8 недель. Упражнение, которого ещё не было, первая тренировка подбирает сама. На вопрос «почему» сначала объясни.",
             exercise, Param("kg", "number", "кг (для упражнений с весом тела — добавочный вес)"), session)
@@ -166,6 +171,14 @@ object CoachActions {
             Param("exercise", "string", "id или название упражнения из плана (для снятия цели не нужно)", required = false), Param("kg", "number", "кг на один раз (или на reps раз); 0 — снять цель"),
             Param("reps", "integer", "на сколько повторов, 1–12; по умолчанию 1", required = false), Param("date", "string", "ГГГГ-ММ-ДД, если есть дата", required = false),
             Param("plan", "boolean", "подстроить план под цель; по умолчанию да", required = false))
+        val now = Param("exercise", "string", "id или название упражнения из раздела «Идёт сейчас»")
+        fn(NOW_SWAP, "Только силовая, которая идёт сейчас (раздел «Идёт сейчас»): заменить упражнение на сегодня, пока по нему нет подходов (тренажёр занят, неудобно, болит). План не меняется.",
+            now, Param("new_exercise", "string", "название упражнения на замену"))
+        fn(NOW_REMOVE, "Только силовая, которая идёт сейчас: убрать упражнение из сегодняшней тренировки, пока по нему нет подходов (нет времени, болит). План не меняется.", now)
+        fn(NOW_ADD, "Только силовая, которая идёт сейчас: добавить упражнение в конец сегодняшней тренировки. План не меняется.",
+            Param("exercise", "string", "название упражнения"))
+        fn(NOW_SETS, "Только силовая, которая идёт сейчас: сколько подходов упражнения сегодня — меньше (устал, мало времени) или больше (хочется добрать). Не меньше уже сделанных. План не меняется.",
+            now, Param("sets", "integer", "1–${TrainingRepository.MAX_SETS}"))
     }
 
     private class Param(val name: String, val type: String, val text: String, val required: Boolean = true, val values: List<String>? = null)
@@ -359,7 +372,7 @@ object CoachActions {
                 val prof = repo.store.profileNow()
                 val risk = GoalRisk.pause(
                     n, prof?.runGoal, prof?.runGoal?.date?.let { it - today.toEpochDay() },
-                    prof?.liftGoal, prof?.liftGoal?.date?.let { it - today.toEpochDay() },
+                    prof?.liftGoal, prof?.liftGoal?.date?.let { it - today.toEpochDay() }, prof?.liftGoal?.let { name(it.exerciseId) },
                 )
                 // A week or more moves the lifting block: the person says; and so when it costs a goal.
                 either(n < 7 && risk == null, withRisk("Пауза на ${days(n)}, до ${Ru.date(until)}: тренировок не ждём, пропуски не копятся." +
@@ -384,7 +397,15 @@ object CoachActions {
                 val w = repo.db.workouts().allDone().filter { run == null || (it.kind == Kind.RUN) == run }.maxByOrNull { it.finishedAt ?: it.startedAt }
                     ?: return no(when (run) { true -> "Пробежек ещё нет."; false -> "Силовых ещё нет."; null -> "Тренировок ещё нет." })
                 if (w.rpe == rpe) return no("Оценка уже $rpe.")
-                auto("Оценка «${w.title}» за ${Ru.date(LocalDate.ofEpochDay(w.epochDay))}: ${w.rpe ?: "—"} → $rpe.") {
+                // Said of a set now, read as a past workout: a session going on, or one days ago, waits for the person.
+                val going = repo.db.workouts().active()?.takeIf { !run }?.let { repo.planOf(it)?.title ?: it.title }
+                val old = today.toEpochDay() - w.epochDay > 1
+                val about = when {
+                    going != null -> " Это прошлая силовая, не идущая сейчас «$going» — её оценивают кнопкой «Закончить»."
+                    old -> " Это тренировка не сегодня и не вчера."
+                    else -> ""
+                }
+                either(going == null && !old, "Оценка «${w.title}» за ${Ru.date(LocalDate.ofEpochDay(w.epochDay))}: ${w.rpe ?: "—"} → $rpe.$about") {
                     repo.setRating(w.id, rpe)
                     w.rpe?.let { CoachCall("undo_rate", args("workout" to w.id, "rpe" to it, "expect" to rpe)) }
                 }
@@ -604,8 +625,10 @@ object CoachActions {
                         if (lo == cur.repMin && hi == cur.repMax) return no("Повторы и так $lo–$hi.")
                         field = "reps"
                         val goal = repo.store.profileNow()?.liftGoal?.takeIf { it.exerciseId == p.exerciseId }
+                        // Said when no heavy work of the goal's lift is left: its lighter day moving to more reps is not.
+                        val lowest = all.filter { it.exerciseId == p.exerciseId }.minOfOrNull { x -> if (found.any { it.key == x.key }) lo else x.tuned.repMin } ?: lo
                         text = withRisk("«${name(p.exerciseId)}»: повторы ${cur.repMin}–${cur.repMax} → $lo–$hi. Вес в новом диапазоне приложение посчитает по расчётному максимуму.",
-                            goal?.let { GoalRisk.liftReps(it, name(p.exerciseId), lo) })
+                            goal?.let { GoalRisk.liftReps(it, name(p.exerciseId), lowest) })
                         tune = { x -> Triple(x.tuned.sets, lo to hi, x.tuned.restSec) }
                     }
                     else -> {
@@ -634,34 +657,35 @@ object CoachActions {
             }
             SWAP -> {
                 val q = a.str("exercise") ?: return no("Не сказано, какое упражнение.")
-                val found = find(places(repo), q, null)
+                val all = places(repo)
+                val found = find(all, q, null)
                 if (found.isEmpty()) return no("«$q» нет в плане.")
                 val nq = a.str("new_exercise") ?: return no("Не сказано, на что заменить.")
                 val to = catalog(nq) ?: return no("Не нашёл упражнение «$nq».")
                 val p = found.first()
                 if (to.id == p.exerciseId) return no("Это то же упражнение.")
                 if (to.load == LoadKind.TIMED != (Catalog[p.exerciseId].load == LoadKind.TIMED)) return no("Упражнение на время меняется только на упражнение на время.")
+                // Every place of the exercise, as the card says: the plan's own (by the plan's exercise) and the ones added
+                // to a day — half a swap would leave the heavy day on one and the light day on the other.
+                val same = all.filter { it.exerciseId == p.exerciseId }
+                val plans = same.filter { !it.added }.map { it.planId }.distinct()
+                val days = same.filter { it.added }.map { it.templateId }.distinct()
                 val goal = repo.store.profileNow()?.liftGoal?.takeIf { it.exerciseId == p.exerciseId }
-                val left = goal?.let { g -> places(repo).count { it.exerciseId == g.exerciseId && (if (p.added) !it.added else it.added || it.planId != p.planId) } } ?: 0
-                confirm(withRisk("Заменить «${name(p.exerciseId)}» на «${to.name}» во всех тренировках.", goal?.let { GoalRisk.liftGone(it, name(p.exerciseId), left, to.name) })) {
-                    if (p.added) {
-                        val ts = found.filter { it.added }.map { it.templateId }
-                        for (t in ts) repo.replaceAdded(t, p.exerciseId, to.id)
-                        CoachCall("undo_swap_added", args("from" to to.id, "to" to p.exerciseId, "templates" to JsonArray(ts.map { JsonPrimitive(it) })))
-                    } else {
-                        val was = repo.store.settingsNow()
-                        val old = was.swaps[p.planId]
-                        repo.setSwap(p.planId, to.id)
-                        // A heavy lift swapped for a single-joint one drops the person's own sets, reps and rest: kept to
-                        // come back with it.
-                        CoachCall(
-                            "undo_swap",
-                            args(
-                                "plan" to p.planId, "to" to old, "expect" to to.id,
-                                "sets" to was.sets[p.planId], "reps" to ints(was.reps[p.planId]), "rest" to was.rest[p.planId],
-                            ),
-                        )
-                    }
+                confirm(withRisk("Заменить «${name(p.exerciseId)}» на «${to.name}» во всех тренировках.", goal?.let { GoalRisk.liftGone(it, name(p.exerciseId), 0, to.name) })) {
+                    val was = repo.store.settingsNow()
+                    for (pid in plans) repo.setSwap(pid, to.id)
+                    for (t in days) repo.replaceAdded(t, p.exerciseId, to.id)
+                    // A heavy lift swapped for a single-joint one drops the person's own sets, reps and rest: kept to come
+                    // back with it.
+                    CoachCall(
+                        "undo_swap_all",
+                        args(
+                            "plans" to JsonArray(plans.map { pid ->
+                                args("plan" to pid, "to" to was.swaps[pid], "sets" to was.sets[pid], "reps" to ints(was.reps[pid]), "rest" to was.rest[pid])
+                            }),
+                            "templates" to JsonArray(days.map { JsonPrimitive(it) }), "from" to to.id, "back" to p.exerciseId,
+                        ),
+                    )
                 }
             }
             REMOVE -> {
@@ -671,9 +695,16 @@ object CoachActions {
                 if (found.isEmpty()) return no("«$q» нет в плане.")
                 if (found.any { p -> all.count { it.templateId == p.templateId } <= 1 }) return no("Это последнее упражнение тренировки — его не убрать.")
                 val goal = repo.store.profileNow()?.liftGoal?.takeIf { it.exerciseId == found.first().exerciseId }
-                val left = goal?.let { g -> all.count { it.exerciseId == g.exerciseId } - found.size } ?: 0
-                confirm(withRisk("Убрать «${name(found.first().exerciseId)}» из плана" + if (found.size > 1) " (во всех тренировках, где оно есть)." else ".",
-                    goal?.let { GoalRisk.liftGone(it, name(it.exerciseId), left) })) {
+                val rest = goal?.let { g -> all.filter { x -> x.exerciseId == g.exerciseId && found.none { it.templateId == x.templateId && it.key == x.key } } }.orEmpty()
+                val risk = goal?.let { g ->
+                    GoalRisk.liftGone(g, name(g.exerciseId), rest.size) ?: GoalRisk.liftHeavyGone(g, name(g.exerciseId), rest.map { it.tuned.repMin to it.tuned.repMax })
+                }
+                val where = when {
+                    found.size > 1 -> "из плана (во всех тренировках, где оно есть)."
+                    a.str("session") != null && all.count { it.exerciseId == found.first().exerciseId } > 1 -> "из «${found.first().title}»."
+                    else -> "из плана."
+                }
+                confirm(withRisk("Убрать «${name(found.first().exerciseId)}» $where", risk)) {
                     val was = repo.store.settingsNow()
                     for (p in found) if (p.added) repo.removeAdded(p.templateId, p.exerciseId) else repo.setRemoved(p.planId, true)
                     // An added one's own sets, reps and rest go with it: kept to come back.
@@ -721,9 +752,12 @@ object CoachActions {
                     will.run == RunFocus.SPEED -> " Забег до 3 км: бег станет скоростным — вместо длинного бега второй интенсивный, лёгкий бег до ${ProgramGenerator.caps(will).easyMax} мин."
                     else -> " Забег длиннее 3 км: вернётся длинный бег (до ${ProgramGenerator.caps(will).longMax} мин), интенсивных станет меньше."
                 }
-                confirm("Цель: ${dist(m)} за ${Ru.clock(sec)}" + (date?.let { ", забег ${Ru.date(it)} ${it.year}" } ?: "") +
-                    (og?.let { " (была ${dist(it.meters)} за ${Ru.clock(it.seconds)})" } ?: "") + ". План бега пересчитается." + shift +
-                    (if (anew && og != null) " Отрезки в темпе цели начнутся с первой ступени." else "")) {
+                // A week without running (or one run for a middle distance) does not train the goal: said, not promised.
+                val runs = repo.store.programNow()?.week?.days?.count { d -> d.sessions.any { it.isRun } } ?: 0
+                val risk = GoalRisk.runGoalWithoutRuns(goal, runs)
+                confirm(withRisk("Цель: ${dist(m)} за ${Ru.clock(sec)}" + (date?.let { ", забег ${Ru.date(it)} ${it.year}" } ?: "") +
+                    (og?.let { " (была ${dist(it.meters)} за ${Ru.clock(it.seconds)})" } ?: "") + "." + (if (runs > 0) " План бега пересчитается." + shift else "") +
+                    (if (anew && og != null && runs > 0) " Отрезки в темпе цели начнутся с первой ступени." else ""), risk)) {
                     val st = repo.store.runStateNow()
                     repo.store.profileNow()?.let { repo.updateProfile(it.copy(runGoal = goal)) }
                     CoachCall(
@@ -755,16 +789,22 @@ object CoachActions {
                 if (program.copiedFrom != null) return no("Сейчас программа друга: дни меняются в «Ещё → Цель, дни и данные».")
                 val sides = a.str("sides")?.lowercase()
                 if (sides != null && sides !in setOf("both", "gym", "run")) return no("Что будет в неделе: both, gym или run.")
-                val gymAsked = (call.args["gym_days"] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.let { weekDays(it.content) ?: return no("Дни зала — как «вт, чт, сб».") }
-                val runAsked = (call.args["run_days"] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.let { weekDays(it.content) ?: return no("Дни бега — как «пн, чт, сб».") }
+                // An empty text is "not said" (a model fills optional strings with ""): a side goes only with sides.
+                val gymAsked = (call.args["gym_days"] as? JsonPrimitive)?.takeIf { it !is JsonNull && it.content.isNotBlank() }?.let { weekDays(it.content) ?: return no("Дни зала — как «вт, чт, сб».") }
+                val runAsked = (call.args["run_days"] as? JsonPrimitive)?.takeIf { it !is JsonNull && it.content.isNotBlank() }?.let { weekDays(it.content) ?: return no("Дни бега — как «пн, чт, сб».") }
                 val aim0 = profile.aim
                 // An empty list of days is that side gone; a side asked for without days keeps the days it has.
                 val lifts = when (sides) { "gym", "both" -> true; "run" -> false; else -> gymAsked?.isNotEmpty() ?: aim0.lifts }
                 val runs = when (sides) { "run", "both" -> true; "gym" -> false; else -> runAsked?.isNotEmpty() ?: aim0.runs }
                 if (!lifts && !runs) return no("В неделе должно остаться хоть что-то: зал или бег.")
-                val lift = if (!lifts) LiftFocus.NONE else aim0.lift.takeIf { it != LiftFocus.NONE } ?: LiftFocus.POWERBUILDING
-                val run = if (!runs) RunFocus.NONE else aim0.run.takeIf { it != RunFocus.NONE } ?: if (profile.runGoal != null) RunFocus.ENDURANCE else RunFocus.HEALTH
-                val aim = Aim(lift, run, aim0.emphasis).normalized()
+                // A side coming back comes with what it was for and the priority it had («поровну» stays «поровну»).
+                val kept = profile.keptAim
+                val lift = if (!lifts) LiftFocus.NONE else aim0.lift.takeIf { it != LiftFocus.NONE } ?: kept?.lift?.takeIf { it != LiftFocus.NONE } ?: LiftFocus.POWERBUILDING
+                val run = if (!runs) RunFocus.NONE else aim0.run.takeIf { it != RunFocus.NONE } ?: kept?.run?.takeIf { it != RunFocus.NONE }
+                    ?: if (profile.runGoal != null) RunFocus.ENDURANCE else RunFocus.HEALTH
+                val both = lifts && runs
+                val emphasis = if (both && !(aim0.lifts && aim0.runs)) kept?.emphasis ?: Emphasis.BALANCED else aim0.emphasis
+                val aim = Aim(lift, run, emphasis).normalized()
                 val planGym = program.week.days.filter { d -> d.sessions.any { it.kind == SessionKind.LIFT } }.map { it.day }.toSet()
                 val planRun = program.week.days.filter { d -> d.sessions.any { it.isRun } }.map { it.day }.toSet()
                 val own = gymAsked != null || runAsked != null || profile.ownWeek
@@ -818,6 +858,9 @@ object CoachActions {
                     }
                 }
                 val q = a.str("exercise") ?: old?.exerciseId ?: return no("Не сказано, какое упражнение.")
+                if (program.templates.isEmpty() || program.week.days.none { d -> d.sessions.any { it.kind == SessionKind.LIFT } }) {
+                    return no("Сейчас в неделе нет зала: цель в зале не на чем тренировать. Сначала вернуть зал в неделю (set_week), потом цель.")
+                }
                 val all = places(repo)
                 // The lift asked for itself, not one like it: a goal on the barbell bench is not one on the machine press.
                 val asked = catalog(q)
@@ -832,29 +875,125 @@ object CoachActions {
                 if (kg > 500) return no("Слишком большой вес.")
                 val reps = a.int("reps") ?: 1
                 if (reps !in 1..12) return no("Повторы — от 1 до 12.")
+                // On the lift's steps in this gym: a weight that cannot be put on the bar is no goal to test.
+                val kgOnStep = exercise(found.first().exerciseId, s).let { e -> kotlin.math.round(kg / e.stepAt(kg)) * e.stepAt(kg) }.takeIf { it > 0 } ?: kg
                 val date = a.str("date")?.let { runCatching { LocalDate.parse(it) }.getOrNull() ?: return no("Дата — как 2026-12-20.") }
                 if (date != null && (!date.isAfter(today) || date.isAfter(today.plusYears(2)))) return no("Дата — после сегодня и не дальше двух лет.")
                 val plan = a.str("plan") != "false"
-                val goal = LiftGoal(exId, kg, reps, date?.toEpochDay())
+                val goal = LiftGoal(exId, kgOnStep, reps, date?.toEpochDay())
                 if (sameGoal(old, goal) && (had || !plan)) return no("Цель и так такая.")
                 val path = GymGoals.path(repo, goal)
                 val ex = exercise(exId, s)
                 val done = path?.current?.takeIf { path.verdict == GymGoal.Verdict.DONE }
                 if (done != null) {
-                    val higher = floor(done * 1.05 / ex.step) * ex.step
-                    return no("По последним подходам максимум ≈ ${Ru.kg(floor(done / ex.step) * ex.step)} кг — эта цель уже по силам. Поставь выше, например ${Ru.kg(higher)} кг.")
+                    // In the goal's own reps: «100 на 5» done is followed by a weight for 5, not a one-rep max.
+                    val higher = floor(OneRm.loadFor(done * 1.05, reps) / ex.step) * ex.step
+                    val each = if (reps > 1) " на $reps ${Ru.plural(reps, "раз", "раза", "раз")}" else ""
+                    return no("По последним подходам максимум ≈ ${Ru.kg(floor(done / ex.step) * ex.step)} кг на один раз — эта цель уже по силам. Поставь выше, например ${Ru.kg(higher)} кг$each.")
                 }
                 val proposal = if (plan) GymGoals.propose(all, program, profile.experience, exId) else null
                 val words = GymGoals.words(repo, goal)
-                val head = "Цель в зале: ${name(exId)} ${Ru.kg(kg)} кг" + (if (reps > 1) " на $reps ${Ru.plural(reps, "раз", "раза", "раз")}" else "") +
+                val head = "Цель в зале: ${name(exId)} ${Ru.kg(kgOnStep)} кг" + (if (abs(kgOnStep - kg) > 1e-9) " (${Ru.kg(kg)} — на шаг веса в твоём зале)" else "") +
+                    (if (reps > 1) " на $reps ${Ru.plural(reps, "раз", "раза", "раз")}" else "") +
                     (date?.let { " к ${Ru.date(it)} ${it.year}" } ?: "") + (old?.let { " (была ${name(it.exerciseId)} ${Ru.kg(it.kg)} кг)" } ?: "") + "."
-                val planText = proposal?.let { " В плане: " + it.lines.joinToString(" ") } ?: " План не меняю."
+                // The plan made for the old goal on another lift goes back either way: said, not hidden behind «не меняю».
+                val oldPlan = s.goalPlan?.takeIf { it.exerciseId != exId }?.let { " Подстройка плана под «${name(it.exerciseId)}» вернётся как была." } ?: ""
+                val planText = (proposal?.let { " В плане: " + it.lines.joinToString(" ") } ?: " План под новую цель не меняю.") + oldPlan
                 confirm(head + planText + (words?.let { " $it" } ?: "")) {
                     repo.setLiftGoal(goal, plan)
                     CoachCall("undo_gym_goal", args("goal" to goalJson(old), "plan" to had, "expect" to goalJson(goal)))
                 }
             }
+            NOW_SWAP, NOW_REMOVE, NOW_ADD, NOW_SETS -> now(repo, call, ::no, ::auto, ::confirm)
             else -> no("Такого тренер не умеет.")
+        }
+    }
+
+    /**
+     * The session going on now, changed for today only: an exercise swapped, taken out or added, its sets more or fewer.
+     * The plan stays. Made at once (each with «Вернуть»), but what costs the goal in the gym waits for «Принять».
+     */
+    private suspend fun now(
+        repo: TrainingRepository, call: CoachCall, no: (String) -> Refused,
+        auto: (String, suspend () -> CoachCall?) -> Ready, confirm: (String, suspend () -> CoachCall?) -> Ready,
+    ): Checked {
+        val a = call.args
+        val w = repo.db.workouts().active()?.takeIf { it.kind == Kind.LIFT } ?: return no("Сейчас силовая не идёт: это меняется только в начатой тренировке.")
+        val plan = repo.planOf(w) ?: return no("Не получилось прочитать начатую тренировку.")
+        val done = repo.db.sets().forWorkout(w.id).groupBy { it.position }
+        val goal = repo.store.profileNow()?.liftGoal
+        fun item(q: String): LiftItem? {
+            plan.items.firstOrNull { it.exerciseId == q || norm(it.name) == norm(q) }?.let { return it }
+            catalog(q)?.let { c -> plan.items.firstOrNull { it.exerciseId == c.id } }?.let { return it }
+            val scored = plan.items.map { it to ExerciseSearch.score(Catalog[it.exerciseId], q) }.filter { it.second > 0 }
+            val best = scored.maxOfOrNull { it.second } ?: return null
+            return scored.filter { it.second == best }.singleOrNull()?.first
+        }
+        fun json(i: LiftItem) = AppJson.encodeToJsonElement(LiftItem.serializer(), i)
+        fun goalRisk(i: LiftItem) = goal?.takeIf { it.exerciseId == i.exerciseId }?.let {
+            "«${i.name}» — упражнение цели в зале (${Ru.kg(it.kg)} кг): без его подходов сегодня к ней на тренировку дальше. Если болит — правильно убрать; если просто нет времени — лучше убрать другое."
+        }
+        return when (call.name) {
+            NOW_ADD -> {
+                val q = a.str("exercise") ?: return no("Не сказано, какое упражнение.")
+                val ex = catalog(q) ?: return no("Не нашёл упражнение «$q».")
+                if (plan.items.any { it.exerciseId == ex.id }) return no("«${ex.name}» уже есть в этой тренировке.")
+                val spec = TrainingRepository.addedSpec(ex.id)
+                auto("Сегодня в «${plan.title}» добавлено «${ex.name}»: ${spec.sets} × ${spec.repMin}–${spec.repMax}, в конце. План не меняется.") {
+                    repo.addToWorkout(w.id, ex.id, forever = false)
+                    val at = repo.db.workouts().get(w.id)?.let { repo.planOf(it) }?.items?.lastOrNull { it.exerciseId == ex.id }?.position
+                    CoachCall("undo_now_add", args("workout" to w.id, "position" to at, "id" to ex.id))
+                }
+            }
+            NOW_SWAP -> {
+                val q = a.str("exercise") ?: return no("Не сказано, какое упражнение.")
+                val it0 = item(q) ?: return no("«$q» нет в начатой тренировке.")
+                if (done[it0.position] != null) return no("По «${it0.name}» уже есть подходы — заменить можно только до первого подхода.")
+                val nq = a.str("new_exercise") ?: return no("Не сказано, на что заменить.")
+                val to = catalog(nq) ?: return no("Не нашёл упражнение «$nq».")
+                if (to.id == it0.exerciseId) return no("Это то же упражнение.")
+                if (to.load == LoadKind.TIMED != (Catalog[it0.exerciseId].load == LoadKind.TIMED)) return no("Упражнение на время меняется только на упражнение на время.")
+                if (plan.items.any { it.exerciseId == to.id }) return no("«${to.name}» уже есть в этой тренировке.")
+                val risk = goalRisk(it0)
+                val text = withRisk("Сегодня вместо «${it0.name}» — «${to.name}». План не меняется.", risk)
+                val make: suspend () -> CoachCall? = {
+                    repo.swapExercise(w.id, it0.position, to.id, forever = false)
+                    CoachCall("undo_now_swap", args("workout" to w.id, "position" to it0.position, "item" to json(it0), "expect" to to.id))
+                }
+                if (risk == null) auto(text, make) else confirm(text, make)
+            }
+            NOW_REMOVE -> {
+                val q = a.str("exercise") ?: return no("Не сказано, какое упражнение.")
+                val it0 = item(q) ?: return no("«$q» нет в начатой тренировке.")
+                if (done[it0.position] != null) return no("По «${it0.name}» уже есть подходы — убрать нельзя, но можно не делать остальные: закончи тренировку без них.")
+                if (plan.items.size <= 1) return no("Это последнее упражнение тренировки.")
+                val risk = goalRisk(it0)
+                val text = withRisk("Сегодня без «${it0.name}». План не меняется.", risk)
+                val make: suspend () -> CoachCall? = {
+                    val index = plan.items.indexOfFirst { it.position == it0.position }
+                    repo.removeFromWorkout(w.id, it0.position, forever = false)
+                    CoachCall("undo_now_remove", args("workout" to w.id, "index" to index, "item" to json(it0)))
+                }
+                if (risk == null) auto(text, make) else confirm(text, make)
+            }
+            else -> {
+                val q = a.str("exercise") ?: return no("Не сказано, какое упражнение.")
+                val it0 = item(q) ?: return no("«$q» нет в начатой тренировке.")
+                if (it0.prescription.phase == forma.core.strength.Phase.TEST) return no("Это проверка максимума: попытки не меняю.")
+                val n = a.int("sets")?.takeIf { it in 1..TrainingRepository.MAX_SETS } ?: return no("Подходов — от 1 до ${TrainingRepository.MAX_SETS}.")
+                val had = done[it0.position]?.size ?: 0
+                if (n < had) return no("По «${it0.name}» уже сделано $had — меньше не поставить.")
+                val was = it0.prescription.sets
+                if (n == was) return no("Подходов и так $n.")
+                val risk = if (n < was) goal?.takeIf { it.exerciseId == it0.exerciseId }?.let { GoalRisk.liftCut(it, it0.name, was, n) } else null
+                val text = withRisk("Сегодня «${it0.name}»: подходов $was → $n. План не меняется.", risk)
+                val make: suspend () -> CoachCall? = {
+                    val cur = repo.db.workouts().get(w.id)?.let { repo.planOf(it) }
+                    if (cur != null) repo.replacePlan(w.id, cur.copy(items = cur.items.map { x -> if (x.position == it0.position) x.copy(prescription = x.prescription.copy(sets = n)) else x }))
+                    CoachCall("undo_now_sets", args("workout" to w.id, "position" to it0.position, "sets" to was, "expect" to n))
+                }
+                if (risk == null) auto(text, make) else confirm(text, make)
+            }
         }
     }
 
@@ -989,7 +1128,12 @@ object CoachActions {
                 val old = (a["goal"] as? JsonObject)?.let { AppJson.decodeFromJsonElement(LiftGoal.serializer(), it) }
                 val expect = (a["expect"] as? JsonObject)?.let { AppJson.decodeFromJsonElement(LiftGoal.serializer(), it) }
                 if (!sameGoal(repo.store.profileNow()?.liftGoal, expect)) false
-                else { repo.setLiftGoal(old, adjust = a.str("plan") == "true"); true }
+                else {
+                    // The plan as it was with the old goal: made for it again, or none (the new goal's taken back).
+                    val had = a.str("plan") == "true"
+                    repo.setLiftGoal(old, adjust = had, keepPlan = false)
+                    true
+                }
             }
             "undo_swap" -> {
                 val plan = a.str("plan")!!
@@ -1008,6 +1152,70 @@ object CoachActions {
                             )
                         }
                     }
+                    true
+                }
+            }
+            "undo_now_add", "undo_now_swap", "undo_now_remove", "undo_now_sets" -> {
+                // Only in the same session, still going, and only where no set was done since.
+                val w = repo.db.workouts().get(a.long("workout") ?: return false)?.takeIf { it.status == Status.ACTIVE } ?: return false
+                val plan = repo.planOf(w) ?: return false
+                val sets = repo.db.sets().forWorkout(w.id)
+                val pos = a.int("position")
+                when (call.name) {
+                    "undo_now_add" -> {
+                        val at = pos ?: return false
+                        if (plan.items.none { it.position == at && it.exerciseId == a.str("id") } || sets.any { it.position == at }) false
+                        else repo.removeFromWorkout(w.id, at, forever = false)
+                    }
+                    "undo_now_swap" -> {
+                        val old = AppJson.decodeFromJsonElement(LiftItem.serializer(), a["item"]!!)
+                        if (plan.items.none { it.position == old.position && it.exerciseId == a.str("expect") } || sets.any { it.position == old.position }) false
+                        else { repo.replacePlan(w.id, plan.copy(items = plan.items.map { if (it.position == old.position) old else it })); true }
+                    }
+                    "undo_now_remove" -> {
+                        val old = AppJson.decodeFromJsonElement(LiftItem.serializer(), a["item"]!!)
+                        if (plan.items.any { it.position == old.position }) false
+                        else {
+                            val items = plan.items.toMutableList().apply { add((a.int("index") ?: size).coerceIn(0, size), old) }
+                            repo.replacePlan(w.id, plan.copy(items = items))
+                            true
+                        }
+                    }
+                    else -> {
+                        val at = pos ?: return false
+                        val item = plan.items.firstOrNull { it.position == at } ?: return false
+                        val back = a.int("sets") ?: return false
+                        if (item.prescription.sets != a.int("expect") || sets.count { it.position == at } > back) false
+                        else { repo.replacePlan(w.id, plan.copy(items = plan.items.map { if (it.position == at) it.copy(prescription = it.prescription.copy(sets = back)) else it })); true }
+                    }
+                }
+            }
+            "undo_swap_all" -> {
+                val from = a.str("from")!!
+                val back = a.str("back")!!
+                val plans = (a["plans"] as JsonArray).map { it as JsonObject }
+                val ts = (a["templates"] as JsonArray).map { (it as JsonPrimitive).content }
+                val s = repo.store.settingsNow()
+                // Only while every place is as the coach left it.
+                if (plans.any { (s.swaps[it.str("plan")!!] ?: it.str("plan")) != from } || ts.any { from !in s.added[it].orEmpty() }) false
+                else {
+                    for (p in plans) {
+                        val plan = p.str("plan")!!
+                        repo.setSwap(plan, p.str("to"))
+                        val sets = p.int("sets")
+                        val reps = p.ints("reps")
+                        val rest = p.int("rest")
+                        if (sets != null || reps != null || rest != null) {
+                            repo.updateSettings { st ->
+                                st.copy(
+                                    sets = sets?.let { st.sets + (plan to it) } ?: st.sets,
+                                    reps = reps?.let { st.reps + (plan to it) } ?: st.reps,
+                                    rest = rest?.let { st.rest + (plan to it) } ?: st.rest,
+                                )
+                            }
+                        }
+                    }
+                    for (t in ts) repo.replaceAdded(t, from, back)
                     true
                 }
             }

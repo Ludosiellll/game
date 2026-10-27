@@ -108,6 +108,8 @@ object Texts {
             HoldReason.STOPPED_EARLY -> "Повторов меньше цели, но запас был. Значит, вес по силам. Оставляем ${target(ex, o.weight, o.reps)} — сделай все повторы."
             HoldReason.INTRO -> "Первая неделя цикла: запас больше, недобор не считается. Цель та же: ${target(ex, o.weight, o.reps)}."
             HoldReason.AT_TOP -> "Это максимум по плану — держим ${target(ex, o.weight, o.reps)}. Хочешь расти дальше — замени на вариант сложнее."
+            HoldReason.TAPER -> "Подводка к цели: подходов меньше, вес тот же. После дня цели продолжим с ${target(ex, o.weight, o.reps)}."
+            HoldReason.TEST -> "Проверка максимума засчитана. План упражнения не меняется: дальше ${target(ex, o.weight, o.reps)}."
         }
         is Outcome.Reduce -> "Вес оказался тяжёлым — ${target(ex, o.to, o.reps)} (−${Ru.kg(o.from - o.to)} кг). С этого веса снова растём."
         is Outcome.Reset -> "Три тренировки без роста — шаг назад: ${target(ex, o.to, o.reps)}, чтобы снова пойти вверх."

@@ -63,10 +63,14 @@ fun GymGoalScreen() {
     var kgText by rememberSaveable { mutableStateOf(old?.kg?.let { Ru.kg(it) } ?: "") }
     var reps by rememberSaveable { mutableStateOf(old?.reps ?: 1) }
     var dateText by rememberSaveable {
-        mutableStateOf(old?.date?.let { LocalDate.ofEpochDay(it).format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")) } ?: "")
+        // A date gone by is not offered again: it would only block saving until cleared.
+        mutableStateOf(old?.date?.takeIf { it > repo.today().toEpochDay() }?.let { LocalDate.ofEpochDay(it).format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")) } ?: "")
     }
     val chosen = id ?: candidates.firstOrNull()
-    val kg = kgText.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it in 1.0..500.0 }
+    val typed = kgText.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it in 1.0..500.0 }
+    // On the lift's step in this gym: a weight that cannot be put on is no goal to test.
+    val step = chosen?.let { c -> settings.steps[c] ?: Catalog[c].stepAt(typed ?: 0.0) }
+    val kg = typed?.let { t -> step?.let { st -> (kotlin.math.round(t / st) * st).takeIf { it > 0 } } ?: t }
     val today = repo.today()
     val date = if (dateText.isBlank()) null else parseRaceDay(dateText, today)?.takeIf { it.isAfter(today) }
     val dateBad = dateText.isNotBlank() && date == null
@@ -112,6 +116,9 @@ fun GymGoalScreen() {
             },
             style = T.secondary(13.sp).let { if (dateBad) it.copy(color = F.c.warn) else it },
         )
+        if (typed != null && kg != null && kotlin.math.abs(kg - typed) > 1e-9) {
+            Text("Шаг веса в твоём зале — ${Ru.kg(step!!)} кг, поэтому цель — ${Ru.kg(kg)} кг.", style = T.secondary(13.sp))
+        }
         if (draft != null) {
             FCard(gap = 8.dp) {
                 Text("Путь к цели", style = T.secondary(13.sp))
@@ -129,7 +136,7 @@ fun GymGoalScreen() {
         }
         val done = path?.verdict == GymGoal.Verdict.DONE
         PrimaryButton("Поставить цель и подстроить план", { save(adjust = true) }, Modifier.fillMaxWidth(), enabled = draft != null && !done && pr != null)
-        GhostButton("Только цель, план не трогать", { if (draft != null && !done) save(adjust = false) }, Modifier.fillMaxWidth())
+        if (draft != null && !done) GhostButton("Только цель, план не трогать", { save(adjust = false) }, Modifier.fillMaxWidth())
         if (old != null) {
             GhostButton("Снять цель", {
                 scope.launch {
@@ -185,25 +192,37 @@ fun GymGoalCard() {
 fun GoalTestDayCard(today: LocalDate) {
     val repo = LocalRepo.current
     val profile by repo.store.profile.collectAsState(initial = null)
+    val program by repo.store.program.collectAsState(initial = null)
     val goal = profile?.liftGoal?.takeIf { it.date == today.toEpochDay() } ?: return
-    val e1rm by produceState<Double?>(null, goal) { value = repo.db.state().stat(goal.exerciseId)?.e1rm }
+    // The test as the day's session has it (from the max the way measures), and whether a session today has the lift.
+    val day by produceState<GymGoal.TestDay?>(null, goal) { value = GymGoals.testDay(repo, goal) }
+    val inPlan by produceState<Boolean?>(null, goal, program) {
+        value = program?.week?.on(today.dayOfWeek.value).orEmpty().filter { it.kind == forma.core.plan.SessionKind.LIFT }.any { s ->
+            runCatching { repo.liftPlan(s.templateId!!, today).items.any { it.exerciseId == goal.exerciseId } }.getOrDefault(false)
+        }
+    }
     val ex = Catalog.find(goal.exerciseId) ?: return
     FCard(gap = 6.dp, outline = F.c.strength.copy(alpha = 0.6f)) {
         Text("Сегодня день цели", style = T.title(20.sp))
         Text("${ex.name} ${Ru.kg(goal.kg)} кг" + if (goal.reps > 1) " × ${goal.reps}" else "", style = T.body(16.sp, FontWeight.Bold))
-        val max = e1rm
-        if (max == null) {
-            Text("Подходов с этим упражнением ещё не было — проверять нечего. Цель можно перенести.", style = T.body(14.sp))
-            return@FCard
+        val test = day
+        when {
+            inPlan == null -> {}
+            test == null -> Text("Подходов с этим упражнением ещё не было — проверять нечего. Цель можно перенести.", style = T.body(14.sp))
+            inPlan == false -> Text(
+                "Сегодня по плану нет силовой с этим упражнением. Перенеси дату цели на день с ним: «Прогресс → Сила → Изменить цель».",
+                style = T.body(14.sp),
+            )
+            else -> {
+                Text("В силовой оно первым — это проверка максимума, на свежую голову, со страховкой:", style = T.body(14.sp))
+                Text("Разминка: " + test.warmups.joinToString(", ") { "${Ru.kg(it.first)} × ${it.second}" } + ".", style = T.body(14.sp))
+                Text(
+                    "Попытки на 1 раз: " + test.attempts.joinToString(", потом ") { "${Ru.kg(it)} кг" } +
+                        ". Между ними 3–5 минут. Первая пошла тяжело — вторую не ставь больше. План упражнения от проверки не меняется." +
+                        if (goal.reps > 1) " Цель на ${goal.reps} ${Ru.plural(goal.reps, "раз", "раза", "раз")} — здесь её максимум на один раз." else "",
+                    style = T.body(14.sp),
+                )
+            }
         }
-        val day = GymGoal.testDay(max, GymGoal.target(goal), ex.step)
-        Text("Проверка максимума — первым упражнением, на свежую голову, со страховкой:", style = T.body(14.sp))
-        Text("Разминка: " + day.warmups.joinToString(", ") { "${Ru.kg(it.first)} × ${it.second}" } + ".", style = T.body(14.sp))
-        Text(
-            "Попытки на 1 раз: " + day.attempts.joinToString(", потом ") { "${Ru.kg(it)} кг" } +
-                ". Между ними 3–5 минут. Первая пошла тяжело — вторую не ставь больше." +
-                if (goal.reps > 1) " Цель на ${goal.reps} раза — здесь её максимум на один раз." else "",
-            style = T.body(14.sp),
-        )
     }
 }

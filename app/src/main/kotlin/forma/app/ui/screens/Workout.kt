@@ -115,9 +115,19 @@ private const val UNDO_MS = 8_000L
 /** The session to open with "Завершить" asked at once: "Закончить «…»" when another one is started over it. */
 internal var finishOnOpen: Long? = null
 
-/** Weight step around [w]: the user's own step if set in settings, else the exercise's (finer for light dumbbells). */
-private fun stepOf(ex: forma.core.model.Exercise, item: forma.app.data.LiftItem, w: Double): Double =
-    if (item.step != ex.step) item.step else ex.stepAt(w)
+/** Weight step around [w] of [ex] as [exerciseOf] gives it: the person's own step, else the exercise's (finer for light dumbbells). */
+private fun stepOf(ex: forma.core.model.Exercise, w: Double): Double = ex.stepAt(w)
+
+/**
+ * The exercise [id] on this gym's weight steps: the person's own step from [steps] (set on the plan, or by the coach
+ * mid-session), or — before the settings are read — the one the session started with ([item]). The hints after a set
+ * and the "−/+" buttons go by it: a 4 kg machine stack never gets a 5 kg jump.
+ */
+internal fun exerciseOf(id: String, steps: Map<String, Double>?, item: LiftItem? = null): forma.core.model.Exercise {
+    val e = Catalog[id]
+    val own = if (steps != null) steps[id] else item?.step?.takeIf { it != e.step }
+    return own?.let { e.copy(step = it, fineStep = null) } ?: e
+}
 
 /** Values being edited for the next set of one exercise. [exerciseId]: the exercise they were typed for (a swap puts another one at the same position). */
 private class SetInput(val exerciseId: String, weight: Double, reps: Int) {
@@ -215,7 +225,7 @@ fun WorkoutScreen(workoutId: Long) {
     /** Where the fields of [item] start before its first set: the plan's weight, the start guess, or the empty bar. */
     fun planStart(item: LiftItem): Double {
         val p = item.prescription
-        val e = Catalog[item.exerciseId]
+        val e = exerciseOf(item.exerciseId, stored?.steps, item)
         return p.weight ?: p.startHint ?: if (e.load == LoadKind.EXTERNAL) (e.bar ?: item.step * 4) else 0.0
     }
 
@@ -224,7 +234,7 @@ fun WorkoutScreen(workoutId: Long) {
      * out from them, or the last set again once the planned ones are done; the plan's start with none.
      */
     fun resume(inp: SetInput, item: LiftItem, logged: List<SetEntity>) {
-        val e = Catalog[item.exerciseId]
+        val e = exerciseOf(item.exerciseId, stored?.steps, item)
         val last = logged.lastOrNull()
         inp.rir = null
         if (last == null) {
@@ -260,7 +270,7 @@ fun WorkoutScreen(workoutId: Long) {
         current = plan.items.firstOrNull { count(it.position) < it.prescription.sets }?.position ?: plan.items.first().position
     }
     val item = plan.items.firstOrNull { it.position == current } ?: plan.items.first()
-    val ex = Catalog[item.exerciseId]
+    val ex = exerciseOf(item.exerciseId, stored?.steps, item)
     val inp = input(item)
     val note = stored?.notes?.get(item.exerciseId)
 
@@ -413,6 +423,16 @@ fun WorkoutScreen(workoutId: Long) {
                     if (ex.equipment == Equipment.BARBELL && ex.bar != null && inp.weight > ex.bar!!) PlatesLine(inp.weight, ex.bar!!)
                     val last = lastReport
                     when {
+                        p.phase == forma.core.strength.Phase.TEST -> Hint(
+                            "Проверка максимума — день цели. После разминки попытки по 1 разу: " +
+                                p.attempts.orEmpty().joinToString(", потом ") { Texts.weight(ex, it) } +
+                                ". Между ними 3–5 минут, со страховкой. Первая пошла тяжело или не вышла — на этом всё. План упражнения от проверки не меняется.",
+                            F.c.accent, Ic.info,
+                        )
+                        p.phase == forma.core.strength.Phase.TAPER -> Hint(
+                            "Подводка к цели: подходов вдвое меньше, вес тот же, без «+». Сила не уходит, а свежесть к дню цели копится.",
+                            F.c.accent, Ic.info,
+                        )
                         p.calibrate -> Hint(
                             "Подбираем рабочий вес. Начни с ${Texts.weight(ex, inp.weight)}. Делай повторы чисто и остановись, " +
                                 "когда сможешь ещё 2 (максимум 15). После подхода подскажу вес.",
@@ -584,7 +604,7 @@ fun WorkoutScreen(workoutId: Long) {
                         val weightSlot = StepperSlot(maxOf(weightText, "000,0", compareBy { it.length }), if (ex.assisted) "помощь, кг" else weightUnit) { m ->
                             Stepper(
                                 weightText, weightUnit,
-                                { inp.weight = max(lowest, inp.weight - stepOf(ex, item, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, item, inp.weight) }, m,
+                                { inp.weight = max(lowest, inp.weight - stepOf(ex, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, inp.weight) }, m,
                                 "Меньше вес", "Больше вес", onLongValue = { typing = true },
                             )
                         }
@@ -626,7 +646,7 @@ fun WorkoutScreen(workoutId: Long) {
                         } else {
                             advice.remove(key)
                             if (nx != null) {
-                                val nxEx = Catalog[nx.exerciseId]
+                                val nxEx = exerciseOf(nx.exerciseId, stored?.steps, nx)
                                 nextKey = keyOf(nx)
                                 nextBefore = advice[nextKey]
                                 advice[nextKey] = recordText + "«${logged.name}» сделано. Дальше — ${nx.name}: ${Texts.prescription(nxEx, nx.prescription)}. " +

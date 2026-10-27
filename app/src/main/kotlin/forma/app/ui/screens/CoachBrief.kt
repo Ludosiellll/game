@@ -6,12 +6,15 @@ import forma.app.data.BackupManager
 import forma.app.data.CoachActions
 import forma.app.data.Feel
 import forma.app.data.Kind
+import forma.app.data.LiftItem
 import forma.app.data.LiftPlan
 import forma.app.data.RunSummary
 import forma.app.data.TrainingReport
 import forma.app.data.TrainingRepository
 import forma.core.plan.ProgramGenerator
 import forma.core.plan.SessionKind
+import forma.core.strength.DoneSet
+import forma.core.strength.Progression
 import forma.core.text.Ru
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,6 +33,9 @@ internal const val COACH_RULES = """## Как решает приложение
 - Не получилось: если в подходах остановился сам с запасом — вес и цель держатся. Иначе, пока есть куда, сначала снижается цель повторов до сделанного (вес тот же); потом почти — тот же вес; явно — вес на полпути к показанному (не больше −10 % за раз); три тренировки подряд без прогресса — −10 % и с низа диапазона. Если вес уже снижали, а повторы не выросли, — дело не в весе: вес держится, цель — сделанные повторы. Никогда ниже 85 % лучшего расчётного максимума последних недель.
 - После 2+ недель без упражнения — на 5–15 % легче. Первый раз — подбор веса: подходы с 1–2 в запасе.
 - Поэтому вес «меньше, чем могу» бывает: цель — не отказ, а запас; рост идёт через повторы и «+». Если человек стабильно делает больше — можно предложить рабочий вес (set_working_weight, он подтверждает) или поправить шаг под его зал (set_weight_step).
+- Во время тренировки (раздел «Идёт сейчас»): в обычном подходе — цель повторов и честный запас. По запасу приложение само поправит вес следующего подхода: запас на 2+ больше плана — тяжелее, меньше — легче (до ±10 % от плана). Лишние повторы — только в последнем подходе «+»: в обычных они утомляют следующие подходы, а запас и так покажет силу. Вес следующего подхода человек вписывает сам в поле на экране.
+- Шаг веса меняется сразу, и в идущей тренировке: кнопки «−/+» и подсказки идут по новому шагу.
+- Цель в зале с датой: за 9 дней до даты у упражнения цели вдвое меньше подходов, вес тот же, без «+» (подводка). В день цели оно первое — проверка максимума: разминка и 2 попытки по 1 разу. Подводка и проверка рабочий вес не меняют.
 Бег:
 - Темпы — от формы бега (VDOT) по контрольному забегу или результату.
 - Лёгкий: пробежал целиком и тяжесть до 5 — следующий на 3 мин длиннее; пробежал дольше плана — на половину лишнего (3–8 мин); тяжесть 7+ — на 5 мин короче. Потолок под цель; неделя бега не больше +10 % к прошлой; одна пробежка не длиннее 110 % самой длинной за 30 дней.
@@ -49,7 +55,8 @@ internal const val COACH_RESEARCH = """## Исследования, на кот�
 - Без тренировок VO2max падает ≈7 % за 2–3 недели и ≈15 % к 8–12 неделям (Coyle и др., 1984).
 - 1500 м — около 84 % аэробной работы (Spencer и Gastin, 2001): база и порог важнее быстрых кругов.
 - Ровная раскладка выгоднее рывка в начале на дистанциях длиннее ~2 минут (Abbiss и Laursen, 2008).
-- Бег мешает силовой тем больше, чем чаще и дольше (Wilson и др., 2012)."""
+- Бег мешает силовой тем больше, чем чаще и дольше (Wilson и др., 2012).
+- Икры (камбаловидная и икроножная) — главные мышцы толчка в беге на обычных скоростях (Dorn и др., 2012); слабые икры — риск перегрузки ахилла (Mahieu и др., 2006). Присед и жим ногами их почти не нагружают. Практический минимум для бегуна без них в плане — 2–3 подхода подъёмов на носки 1–2 раза в неделю (это совет, не число из исследования)."""
 
 /** The summary sent with a question: today, the training as the readable report has it, and how the app works. */
 suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today(), reportChars: Int = 28_000): String {
@@ -59,13 +66,21 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
     val feel = settings.feelOn(today)
     val paused = repo.paused(settings, today)
     val light = feel == Feel.LOW
+    // What of today is done or going on: the person asks «я начал?», and the plan alone does not say.
+    val active = repo.db.workouts().active()
+    val doneToday = repo.db.workouts().allDone().filter { it.epochDay == today.toEpochDay() }
     val todayLines = if (paused) emptyList() else program?.week?.on(today.dayOfWeek.value).orEmpty().map { s ->
         if (s.kind == SessionKind.LIFT) {
+            val state = when {
+                active?.kind == Kind.LIFT && active.templateId == s.templateId -> " — НАЧАТА, идёт сейчас (раздел «Идёт сейчас»)"
+                doneToday.any { it.kind == Kind.LIFT && it.templateId == s.templateId } -> " — сделана сегодня"
+                else -> " — ещё не начата"
+            }
             val plan = runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
-            "- Силовая «${plan?.title ?: s.templateId}»" + (plan?.let { p -> ": " + p.items.joinToString("; ") { "${it.name} ${it.prescription.sets}×${it.prescription.reps}" + (it.prescription.weight?.let { w -> " ${Ru.kg(w)} кг" } ?: "") } } ?: "")
+            "- Силовая «${plan?.title ?: s.templateId}»$state" + (plan?.let { p -> ": " + p.items.joinToString("; ") { "${it.name} ${it.prescription.sets}×${it.prescription.reps}" + (it.prescription.weight?.let { w -> " ${Ru.kg(w)} кг" } ?: "") } } ?: "")
         } else {
             val w = runCatching { repo.runFor(s.kind, today, light) }.getOrNull()
-            "- Бег «${w?.title}»: ${w?.note.orEmpty()}"
+            "- Бег «${w?.title}»" + (if (doneToday.any { it.kind == Kind.RUN }) " — пробежка сегодня уже есть" else "") + ": ${w?.note.orEmpty()}"
         }
     }
     val easyLeft = repo.easyAfterSick(today)
@@ -93,6 +108,13 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
         if (!paused) {
             val head = if (feel == Feel.SICK) "По плану было (человек болеет, не делает):" else "По плану сегодня:"
             appendLine(if (todayLines.isEmpty()) "По плану сегодня отдых." else head + "\n" + todayLines.joinToString("\n"))
+        }
+        val now = inProgress(repo)
+        if (now.isNotEmpty()) {
+            appendLine()
+            append(now)
+        } else {
+            appendLine("Сейчас тренировка не идёт (ничего не начато).")
         }
         program?.week?.let { wk ->
             val names = listOf("пн", "вт", "ср", "чт", "пт", "сб", "вс")
@@ -132,6 +154,65 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
         appendLine("## Словарь приложения")
         GLOSSARY.forEach { (word, text) -> appendLine("- $word: $text") }
     }
+}
+
+/**
+ * The gym session going on now, as its screen has it: each exercise's sets done, the one now, the next set the app
+ * gives. Empty when none is. The coach answers «какой сейчас подход» from it and changes it with the workout_* levers.
+ */
+internal suspend fun inProgress(repo: TrainingRepository): String = buildString {
+    val w = repo.db.workouts().active()?.takeIf { it.kind == Kind.LIFT } ?: return@buildString
+    val plan = repo.planOf(w) ?: return@buildString
+    val sets = repo.db.sets().forWorkout(w.id).sortedBy { it.doneAt }
+    val settings = repo.store.settingsNow()
+    val bw = repo.store.profileNow()?.bodyWeightKg ?: 75.0
+    val bias = repo.rirBias(before = w.id)
+    val zone = java.time.ZoneId.systemDefault()
+    val start = java.time.Instant.ofEpochMilli(w.startedAt).atZone(zone)
+    val minutes = ((repo.nowMs() - w.startedAt) / 60_000).coerceAtLeast(0)
+    val started = if (start.toLocalDate() == repo.today()) "%02d:%02d".format(start.hour, start.minute) else "${Ru.date(start.toLocalDate())}, %02d:%02d".format(start.hour, start.minute)
+    appendLine("## Идёт сейчас: силовая «${plan.title}»")
+    appendLine(
+        "Начата в $started ($minutes мин назад)" + (if (plan.deload) ", облегчённая" else "") + ". Подходы человек отмечает на экране тренировки, " +
+            "вес следующего подхода вписывает там же; оценку всей тренировки ставит кнопкой «Закончить». Менять её: функции workout_*.",
+    )
+    val by = sets.groupBy { it.position }
+    fun count(i: LiftItem) = by[i.position]?.size ?: 0
+    // Now: the exercise of the last set while it has sets left, else the first one with sets left in the day's order.
+    val last = sets.lastOrNull()
+    val current = plan.items.firstOrNull { it.position == last?.position && count(it) < it.prescription.sets }
+        ?: plan.items.firstOrNull { count(it) < it.prescription.sets }
+    for (i in plan.items) {
+        val ex = forma.core.model.Catalog[i.exerciseId].let { e -> settings.steps[e.id]?.let { e.copy(step = it, fineStep = null) } ?: e }
+        val plate = ex.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS
+        fun kg(x: Double) = when {
+            plate && x < 0 -> "помощь ${Ru.kg(-x)} кг"
+            plate -> "+${Ru.kg(x)} кг"
+            else -> "${Ru.kg(x)} кг" + if (ex.perHand) " (каждая гантель)" else ""
+        }
+        val p = i.prescription
+        val planned = when (p.phase) {
+            forma.core.strength.Phase.TEST -> "проверка максимума цели: попытки по 1 разу — " + p.attempts.orEmpty().joinToString(", потом ") { kg(it) }
+            else -> "${p.sets} × ${p.reps}" + (p.weight?.let { " по ${kg(it)}" } ?: if (p.calibrate) " (вес подбирается)" else "") +
+                ", запас ${p.rir}" + (if (p.top) ", последний подход «${p.reps}+»" else "") +
+                (if (p.phase == forma.core.strength.Phase.TAPER) " (подводка к цели)" else "") + ", отдых ${Ru.clock(i.slot.restSec)}"
+        }
+        val done = by[i.position].orEmpty()
+        val doneText = if (done.isEmpty()) "ещё не начато" else
+            "сделано ${done.size} из ${p.sets}: " + done.joinToString(", ") { "${kg(it.weight)} × ${it.reps}" + (it.rir?.let { r -> " (запас $r)" } ?: "") }
+        val mark = when {
+            i === current -> " ← СЕЙЧАС"
+            done.size >= p.sets -> " — готово"
+            else -> ""
+        }
+        appendLine("- ${i.name} [${i.exerciseId}]: план $planned; $doneText$mark")
+        if (i === current && done.isNotEmpty()) {
+            val ns = Progression.nextSet(ex, p, done.map { DoneSet(it.weight, it.reps, forma.core.strength.RirScale.correct(it.rir, bias)) }, bw)
+            ns?.let { appendLine("  Подход ${done.size + 1}: приложение даёт ${kg(it.weight)} × ${it.reps}" + (if (it.plus) "+" else "") + ".") }
+        }
+    }
+    val left = plan.items.count { count(it) < it.prescription.sets }
+    appendLine(if (left == 0) "Все подходы сделаны — осталось нажать «Закончить» и оценить тренировку." else "Упражнений с подходами впереди: $left.")
 }
 
 /** The gym plan's exercises with what the functions need: ids, numbers now, the next weight, the step, the estimate. */
