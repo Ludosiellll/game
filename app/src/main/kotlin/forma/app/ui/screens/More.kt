@@ -17,6 +17,7 @@ import forma.app.ui.components.ListRow
 import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
+import kotlinx.coroutines.launch
 
 @Composable
 fun MoreScreen() {
@@ -57,6 +58,16 @@ fun MoreScreen() {
             ListRow("Цель, дни и данные", "Поменяешь — план пересчитается", icon = Ic.user, iconTint = F.c.text2) { nav.push(Screen.Profile) }
             Hairline()
             ListRow("Оформление и звук", "Стиль, голос, вибрация, выгрузка для разбора", icon = Ic.gear, iconTint = F.c.text2) { nav.push(Screen.Settings) }
+            Hairline()
+            // The version and «Проверить обновления»: a newer one opens the update window (also after «Позже»).
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            val update by forma.app.update.Updater.state.collectAsState()
+            ListRow(
+                "Обновления",
+                if (update is forma.app.update.Updater.State.Available) "Есть новая версия — нажми, чтобы обновить"
+                else "Сборка ${forma.app.BuildConfig.VERSION_CODE} · нажми, чтобы проверить",
+                icon = Ic.up, iconTint = F.c.text2,
+            ) { scope.launch { forma.app.update.Updater.check(force = true) } }
         }
         Text(
             if (cloud?.email != null) "Данные хранятся на телефоне, копия — в облаке."

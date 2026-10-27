@@ -61,6 +61,9 @@ import forma.app.ui.screens.MoreScreen
 import forma.app.ui.screens.OnboardingScreen
 import forma.app.ui.screens.RELEASES
 import forma.app.ui.screens.WhatsNewDialog
+import forma.app.ui.screens.UpdateDialog
+import forma.app.ui.screens.offerUpdate
+import forma.app.update.Updater
 import forma.app.ui.screens.unseenReleases
 import kotlinx.coroutines.launch
 import forma.app.ui.screens.PlanScreen
@@ -140,6 +143,17 @@ fun AppRoot() {
             val busy = nav.current is Screen.RunActive || nav.current is Screen.Onboarding || nav.current is Screen.Tour
             if (ready && news.isNotEmpty() && !busy) {
                 WhatsNewDialog(news) { scope.launch { repo.updateSettings { it.copy(newsSeen = RELEASES.last().id) } } }
+            }
+            // A newer version published: offered on opening the app — never over a run or a session going on (installing
+            // closes the app), nor before what is new in this one was said.
+            LaunchedEffect(Unit) { Updater.check() }
+            val update by Updater.state.collectAsState()
+            val later by Updater.later.collectAsState()
+            val asked by Updater.asked.collectAsState()
+            val running by forma.app.run.RunSession.ui.collectAsState()
+            val session by remember { repo.db.workouts().observeActive() }.collectAsState(initial = null)
+            if (offerUpdate(ready, news.isEmpty(), busy, later, running != null, session != null || nav.current is Screen.Workout, asked, update)) {
+                UpdateDialog(update) { Updater.later.value = true }
             }
         }
     }

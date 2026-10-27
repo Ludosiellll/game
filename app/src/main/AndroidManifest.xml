@@ -19,6 +19,10 @@
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <!-- Asks once to be left out of battery optimization: a run's timer must not be put to sleep with the screen off. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- The app updates itself from its published builds: «Обновить» installs the new version (asked once in settings). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Android 12+: updating itself needs no confirmation after the first time. -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
@@ -52,6 +56,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/shared_files" />
         </provider>
+
+        <!-- An update's install: the system's confirmation to show, how it ended, and «обновлена — открыть». -->
+        <receiver
+            android:name=".update.UpdateReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- The rest between sets: its alarm and the notification's "+15" and "Пропустить". -->
         <receiver

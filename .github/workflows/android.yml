@@ -3,6 +3,15 @@ name: Tests and Android APK
 on:
   push:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Publish this build as the app's update («Обновить» in the app takes it)
+        type: boolean
+        default: false
+
+# Creating the release (the update everybody's app offers) needs to write the repository's releases.
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -41,6 +50,30 @@ jobs:
 
       - name: Build APK
         run: ./gradlew :app:assembleRelease
+
+      # A checked build for everybody: the app offers the latest release on start and installs it on «Обновить». Only
+      # when asked — «[release]» in the commit message, or the manual run with «release» on — after every test above,
+      # and only signed with the stable key: a build with another key would not install over the app.
+      - name: Publish the update
+        if: ${{ env.FORMA_KEYSTORE != '' && (contains(github.event.head_commit.message, '[release]') || inputs.release) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          CODE=$(jq -r '.elements[0].versionCode' app/build/outputs/apk/release/output-metadata.json)
+          TOOLS="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          SHA=$("$TOOLS/apksigner" verify --print-certs "$APK" | grep -m1 'SHA-256 digest' | awk '{print $NF}')
+          if [ "$SHA" != "226c1da98209978b0cb5d1617389f75d158481e30edf0bb6a1373066fd8408bc" ]; then
+            echo "::error::The APK is not signed with the stable key ($SHA): not published."
+            exit 1
+          fi
+          if gh release view "v$CODE" > /dev/null 2>&1; then
+            echo "Build $CODE is published already." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          cp "$APK" forma.apk
+          gh release create "v$CODE" forma.apk --title "Форма — сборка $CODE" --notes-file .github/release-notes.md --target "$GITHUB_SHA" --latest
+          echo "Published build $CODE as the app's update." >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v6
         with:
