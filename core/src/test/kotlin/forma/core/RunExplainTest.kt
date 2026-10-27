@@ -72,12 +72,12 @@ class RunExplainTest {
     /** Race-pace reps on the stadium: the laps on target and how even, the effort against the plan, the rest needed. */
     @Test fun aSessionOfRepsIsReviewedByItsLaps() {
         val w = RunPlan.goalPace(state, goal, 230)
-        // 8 reps of a lap at 51–52 s: the first three fast (49 s), the last slowing (53.5 s).
+        // 8 reps of a lap at 50–51 s: the first three fast (49 s), the last slowing (53.5 s).
         val laps = (1..8).map { rep ->
             val sec = when {
                 rep <= 3 -> 49.0
                 rep >= 7 -> 53.5
-                else -> 51.5
+                else -> 51.0
             }
             Lap(sec, w.segments.first { it.lapSec != null }.lapSec!! - 0.5, w.segments.first { it.lapSec != null }.lapSec!! + 0.5, 1, 1, rep)
         }

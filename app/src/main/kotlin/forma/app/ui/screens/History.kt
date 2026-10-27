@@ -273,7 +273,7 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
     SectionLabel("Поправить круги")
     Text(
         "Забыл нажать «Круг», и круг вышел вдвое длиннее? Нажми на него и раздели. Нажал дважды — соедини. " +
-            "Нажал не вовремя — впиши время круга сам.",
+            "Нажал не вовремя — впиши время круга сам. Круга не было (случайное нажатие) — убери его.",
         style = T.secondary(13.sp),
     )
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -315,6 +315,8 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
         if (i > 0 && forma.core.run.LapEdit.editable(laps, i - 1)) {
             TextButton({ save(forma.core.run.LapEdit.merge(laps, i - 1)) }) { Text("Соединить с предыдущим", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
         }
+        // A touch or a key in a jog between reps: no neighbour to join it to, and it is no lap at all.
+        TextButton({ save(forma.core.run.LapEdit.remove(laps, i)) }) { Text("Это был не круг — убрать", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.warn)) }
         TextButton({ open = null }) { Text("Отмена", style = T.body(15.sp)) }
     }
 }

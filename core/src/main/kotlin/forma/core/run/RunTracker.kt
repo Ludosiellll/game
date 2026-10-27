@@ -68,6 +68,9 @@ sealed interface Press {
     /** A press far from the line on a loop GPS follows (a thumb on the screen mid-lap): no lap, said so. */
     data object OffLine : Press
 
+    /** A press seconds after a lap GPS had already timed on the loop (and said): that lap, nothing new to say. */
+    data class Timed(val lap: Lap) : Press
+
     data class Done(val lap: Lap) : Press
 }
 
@@ -101,11 +104,18 @@ data class Lap(
      * lap GPS timed is off by up to two or three seconds: it is called fast or slow only when it clearly is.
      */
     val verdict: Int? get() {
-        val m = if (rough) 2.5 else 0.5
+        if (fast == null && slow == null) return null
+        // Roughly timed: a couple of seconds either way.
+        if (rough) return when {
+            fast != null && seconds < fast - 2.5 -> -1
+            slow != null && seconds > slow + 2.5 -> 1
+            else -> 0
+        }
+        // To the whole second, as the lap is said and the target shown («52» is not on pace for «50–51 с»).
+        val s = seconds.roundToInt()
         return when {
-            fast == null && slow == null -> null
-            fast != null && seconds < fast - m -> -1
-            slow != null && seconds > slow + m -> 1
+            fast != null && s < fast.roundToInt() -> -1
+            slow != null && s > slow.roundToInt() -> 1
             else -> 0
         }
     }
@@ -789,9 +799,15 @@ class RunTracker(
         val last = lastPressMs
         if (last != null && active - last < MIN_LAP_MS) return Press.Ignored
         val t = timelineMs(nowMs)
-        // The last seconds of a recovery (the countdown): the start, a little early — the rest of the recovery is skipped.
+        // The last seconds of a recovery (the countdown), or the last minute of the warm-up (the voice said to come to the
+        // start) with no lap pressed in it: on the line, his start, a little early — the rest of it is skipped.
         val next = nextWait()
-        if (next != null && waitEvery && next != waits.first() && bounds[next].first - t in 1..EARLY_START_MS) {
+        val early = when {
+            next == null -> false
+            next != waits.first() -> waitEvery && bounds[next].first - t in 1..EARLY_START_MS
+            else -> bounds[next].first - t in 1..WARM_START_MS && taps.none { it >= bounds[next - 1].first }
+        }
+        if (next != null && early) {
             skipMs += bounds[next].first - t
             starts[next] = bounds[next].first
             lastPressMs = active
@@ -814,7 +830,7 @@ class RunTracker(
         // presses at one spot still say the line is there (a line kept from another day in the wrong place).
         if (retimed is Press.Done && retimed.lap.exact) {
             lateLine(active, retimed.lap)
-            return p
+            return Press.Timed(retimed.lap)
         }
         lineDistM = distanceM
         lineT = t
@@ -904,7 +920,14 @@ class RunTracker(
             val free = workout.testMeters != null && of != null && (before + 1) * 2 > of
             Lap((t - from) / 1000.0, if (free) null else range?.first ?: target, range?.second ?: target, before + 1, of, number, part, auto, exact)
         } else {
-            freeLap(t - from, before + 1, seg, lapM, auto, exact)
+            val l = freeLap(t - from, before + 1, seg, lapM, auto, exact)
+            // The first press of a warm-up, a jog or a cool-down long after it began (on the line to mark a start, a lap
+            // pressed only now): the laps count from here — no "lap" of eleven minutes.
+            if (!auto && before == 0 && i !in starts && (l.fast ?: l.slow)?.let { l.seconds > LONG_LAP * it } == true) {
+                starts[i] = t
+                return Press.Start
+            }
+            l
         }
         if (!auto && tooShort(result)) return Press.Ignored
         if (!auto && far && !strayAgrees()) return Press.OffLine
@@ -953,8 +976,11 @@ class RunTracker(
         // Once started, a press is a lap: without GPS the way since the start stays 0 and would make every press a start.
         if (prev == null && -1 !in starts) {
             val sinceVisit = visit?.let { distanceM - lineDistM }
+            // A lap target: a first press far quicker than a lap is the walk to the line after «Старт», not a lap.
+            val ref = freeLap(t, 1, seg, lapM, auto = false).let { it.fast ?: it.slow }
             val start = when {
                 visit == null && t < MIN_LAP_MS -> true
+                visit == null && ref != null && t < WALK_TO_LINE * ref * 1000 -> true
                 sinceVisit != null && lapM != null && sinceVisit < 0.5 * lapM -> true
                 visit == null && startedOff -> true
                 else -> false
@@ -1261,6 +1287,15 @@ class RunTracker(
 
         /** A press this close before a rep that waits on the line is its start, a little early. */
         const val EARLY_START_MS = 5_000L
+
+        /** The same for the first rep in the last minute of the warm-up, when no lap of it was pressed. */
+        const val WARM_START_MS = 60_000L
+
+        /** A first press this many laps' time into a warm-up, a jog or a cool-down marks a start, not a lap. */
+        const val LONG_LAP = 3.0
+
+        /** A free run's first press under this share of its target lap is the walk to the line: the start. */
+        const val WALK_TO_LINE = 0.6
 
         /** A crossing GPS saw becomes a lap when no press came this close to it. */
         const val AUTO_WAIT_MS = 8_000L

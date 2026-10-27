@@ -32,6 +32,7 @@ import forma.core.run.Press
 import forma.core.run.RunEvent
 import forma.core.run.RunTracker
 import forma.core.run.RunWorkout
+import forma.core.run.SegmentKind
 import forma.core.text.Ru
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -180,7 +181,12 @@ class RunService : Service() {
                 coach?.speak("Круг не засчитан: ты не на линии.", now = true)
                 return
             }
-            Press.Start -> coach?.speak("Старт.", now = true)
+            // A rep's start (or a free run's); in a warm-up or a jog only the laps count from here.
+            Press.Start -> coach?.speak(
+                if (t.workout.isOpenEnded || t.timeline(now()).segment?.kind == SegmentKind.WORK) "Старт." else "Круги — отсюда.", now = true,
+            )
+            // The lap GPS had timed and said seconds ago: nothing new to say.
+            is Press.Timed -> {}
             is Press.Done -> {
                 val l = p.lap
                 coach?.speak(CoachText.lap(t.workout, l, l.rep?.let { t.repTimes().getOrNull(it - 1) }), now = true)

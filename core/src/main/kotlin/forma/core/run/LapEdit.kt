@@ -34,6 +34,15 @@ object LapEdit {
         return laps.toMutableList().also { it[index] = l.copy(seconds = seconds, auto = false, exact = false) }
     }
 
+    /**
+     * Lap [index] was no lap (a touch, a key pressed by mistake in a jog): gone, the others as they were. Outside the reps
+     * only.
+     */
+    fun remove(laps: List<Lap>, index: Int): List<Lap> {
+        laps.getOrNull(index)?.takeIf { it.rep == null } ?: return laps
+        return renumber(laps.take(index) + laps.drop(index + 1))
+    }
+
     /** Laps outside the reps numbered again in order (each run of them from 1). */
     private fun renumber(laps: List<Lap>): List<Lap> {
         var n = 0

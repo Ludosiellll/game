@@ -238,6 +238,9 @@ class RunFieldUiTest {
         // keys stay the volume (turned down twice, they made a lap of 6 s).
         assertTrue(texts("Круг можно отметить и кнопкой на наушниках.").isNotEmpty())
         assertTrue(texts("громкост").isEmpty())
+        // Outside a rep too the skip is held, not tapped: the phone is in the hand, and a tap in the cool-down ended the run.
+        assertTrue(texts("удерживай").isNotEmpty())
+        assertTrue(texts("Дальше ›").isEmpty())
     }
 
     @Test fun aStartThatFailedIsSaidNotSkipped() {

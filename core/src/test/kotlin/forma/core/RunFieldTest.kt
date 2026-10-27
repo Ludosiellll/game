@@ -287,7 +287,8 @@ class RunFieldTest {
             t.onFix(Fix(sec * 1000L, la, lo, 5f, v.toFloat()), sec * 1000L)
             t.autoLap(sec * 1000L)
             if (sec == (lap + 9).toInt() || sec == (2 * lap + 9).toInt()) {
-                assertIs<Press.Done>(t.press(sec * 1000L))
+                // Each times a lap GPS has timed and said already: nothing new to say, yet it says where the line is.
+                assertIs<Press.Timed>(t.press(sec * 1000L))
                 presses += la to lo
                 if (presses.size == 1) assertEquals(53.9 to 27.56, t.line, "one late press moves nothing")
             }

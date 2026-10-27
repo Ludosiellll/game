@@ -815,23 +815,23 @@ fun RunActiveScreen() {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                     if (!w.isOpenEnded && seg != null) {
-                        // Inside a rep (or waiting for one) a stray tap must not throw it away: hold to skip.
-                        val hold = waiting || seg.kind == SegmentKind.WORK
+                        // Held, everywhere: the phone is in the hand, and a stray tap threw away the warm-up, or in the cool-down
+                        // ended the run with no way back.
                         val skip = { RunService.send(context, RunService.ACTION_SKIP) }
                         Box(
                             Modifier.size(width = 104.dp, height = 52.dp).clip(RoundedCornerShape(if (F.shape.pill) 26.dp else F.shape.radiusSmall))
                                 .border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, RoundedCornerShape(if (F.shape.pill) 26.dp else F.shape.radiusSmall))
                                 .combinedClickable(
                                     enabled = !locked, role = Role.Button,
-                                    onClickLabel = if (hold) "Удерживай, чтобы пропустить отрезок" else "Следующий отрезок", onClick = { if (!hold) skip() },
+                                    onClickLabel = "Удерживай, чтобы пропустить отрезок", onClick = {},
                                     onLongClickLabel = "Пропустить отрезок", onLongClick = skip,
                                 ),
                             contentAlignment = Alignment.Center,
                         ) {
                             BasicText(
-                                if (hold) "Пропустить\nудерживай" else "Дальше ›", Modifier.padding(horizontal = 8.dp),
-                                style = T.body(if (hold) 12.sp else 13.sp, FontWeight.Bold).copy(color = if (locked) F.c.text3 else F.c.text2, lineHeight = 1.15.em, textAlign = TextAlign.Center),
-                                maxLines = 2, autoSize = TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = if (hold) 12.sp else 13.sp, stepSize = 0.5.sp),
+                                "Пропустить\nудерживай", Modifier.padding(horizontal = 8.dp),
+                                style = T.body(12.sp, FontWeight.Bold).copy(color = if (locked) F.c.text3 else F.c.text2, lineHeight = 1.15.em, textAlign = TextAlign.Center),
+                                maxLines = 2, autoSize = TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = 12.sp, stepSize = 0.5.sp),
                             )
                         }
                     }
