@@ -93,6 +93,7 @@ private fun StrengthTab() {
     val stats by remember { repo.db.state().observeStats() }.collectAsState(initial = emptyList())
     val index = remember(rows, bw) { Stats.strengthIndex(rows, bw) }
     val aimLifts = repo.store.profile.collectAsState(initial = null).value?.aim?.lifts
+    if (aimLifts == true) GymGoalCard()
     if (rows.isEmpty() && aimLifts == false) {
         Empty("В твоей цели нет зала, поэтому здесь пусто. Захочешь добавить силовые — поменяй цель в «Ещё» → «Цель, дни и данные».")
         return

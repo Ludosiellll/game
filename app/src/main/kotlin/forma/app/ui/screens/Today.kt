@@ -168,6 +168,8 @@ fun TodayScreen() {
         val restLine = story?.personal?.restBelow ?: forma.core.load.LoadStory.COMMON_REST
         val todays = todayItem?.planned.orEmpty()
         val extra = todayItem?.offPlan.orEmpty()
+        // The goal in the gym's day: the test of the max, whatever else the day holds.
+        GoalTestDayCard(today)
         when {
             repo.paused(settings, today) -> {
                 PauseCard(

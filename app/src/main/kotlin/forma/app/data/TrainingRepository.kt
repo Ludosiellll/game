@@ -6,6 +6,7 @@ import forma.core.model.Catalog
 import forma.core.model.Equipment
 import forma.core.model.Exercise
 import forma.core.model.Experience
+import forma.core.model.LiftGoal
 import forma.core.model.LoadKind
 import forma.core.model.Profile
 import forma.core.model.Sex
@@ -21,6 +22,7 @@ import forma.core.run.RunState
 import forma.core.run.RunType
 import forma.core.run.RunWorkout
 import forma.core.strength.DoneSet
+import forma.core.strength.GymGoal
 import forma.core.strength.Outcome
 import forma.core.strength.Phase
 import forma.core.strength.Progression
@@ -624,20 +626,25 @@ class TrainingRepository(
         val program = store.programNow() ?: error("no program")
         val settings = store.settingsNow()
         val t = program.template(templateId)
+        // The goal in the gym: its lift first among the main ones while fresh, and in the days before its date half the
+        // sets at the same weight (the taper).
+        val goal = store.profileNow()?.liftGoal
+        val taper = GymGoal.tapering(goal, date.toEpochDay())
+        fun forGoal(spec: SlotSpec) = if (taper && spec.exerciseId == goal?.exerciseId) spec.copy(sets = GymGoal.taperSets(spec.sets)) else spec
         // The legs three days before the goal race or nearer: a lighter session, the race wants fresh legs.
         val deload = deloadOn(date, forceDeload) || t.legs && daysToRace(date)?.let { it in 0..3 } == true
         // Exercises taken out for good stay out — never all of them. Positions stay the plan's (swaps look them up).
         val added = addedTo(t.id, settings)
         val kept = t.slots.withIndex().filter { it.value.exerciseId !in settings.removed }
             .ifEmpty { if (added.isEmpty()) t.slots.withIndex().toList() else emptyList() }
-        val own = kept.map { (i, spec) -> buildItem(i, tuned(spec, settings), date, deload, restKey = spec.exerciseId).copy(planId = spec.exerciseId) }
+        val own = kept.map { (i, spec) -> buildItem(i, forGoal(tuned(spec, settings)), date, deload, restKey = spec.exerciseId).copy(planId = spec.exerciseId) }
         // Added for good: after the plan's own, as chosen (no swap applies to them: they were picked by hand).
         val extra = added.mapIndexed { j, id ->
             val key = addedKey(t.id, id)
-            buildItem(t.slots.size + j, overrides(addedSpec(id), settings, key), date, deload, restKey = key).copy(planId = id, addedForGood = true)
+            buildItem(t.slots.size + j, forGoal(overrides(addedSpec(id), settings, key)), date, deload, restKey = key).copy(planId = id, addedForGood = true)
         }
         val why = if (deload && !forceDeload && liftAfterSick(date) && !ProgramGenerator.isDeloadWeek(program, date)) SICK_LIFT else null
-        return LiftPlan(t.id, t.title, warmUps(inOrder(own + extra), deload), deload, why)
+        return LiftPlan(t.id, t.title, warmUps(inOrder(own + extra, goal?.exerciseId), deload), deload, why)
     }
 
     /**
@@ -671,8 +678,9 @@ class TrainingRepository(
      * multi-joint before isolation; otherwise the plan's own order. An exercise added by hand takes its place by what it
      * is, not the end of the list. Positions stay as they are (they key swaps and sets).
      */
-    private fun inOrder(items: List<LiftItem>): List<LiftItem> = items.withIndex().sortedWith(
+    private fun inOrder(items: List<LiftItem>, goalLift: String? = null): List<LiftItem> = items.withIndex().sortedWith(
         compareBy<IndexedValue<LiftItem>> { it.value.slot.role.ordinal }
+            .thenBy { if (it.value.exerciseId == goalLift) 0 else 1 }
             .thenBy { if (Catalog[it.value.exerciseId].compound) 0 else 1 }
             .thenBy { it.index },
     ).map { it.value }
@@ -930,6 +938,35 @@ class TrainingRepository(
         if (!added) return false
         onChange()
         return true
+    }
+
+    /**
+     * The goal in the gym set to [goal] (null — none). The plan changes made for the goal before go back first (where
+     * still as it left them); with [adjust], the plan trains the new goal's lift for it ([GymGoals.propose]). The start
+     * of the way (the estimated max, the day) is kept while the lift stays the same.
+     */
+    suspend fun setLiftGoal(goal: LiftGoal?, adjust: Boolean) {
+        val profile = store.profileNow() ?: return
+        val old = profile.liftGoal
+        val stamped = goal?.let { g ->
+            val same = old?.exerciseId == g.exerciseId
+            // A goal put back as it was («Вернуть») keeps its own start.
+            g.copy(
+                fromE1rm = g.fromE1rm ?: if (same) old?.fromE1rm else db.state().stat(g.exerciseId)?.e1rm,
+                setDay = g.setDay ?: if (same) old?.setDay ?: today().toEpochDay() else today().toEpochDay(),
+            )
+        }
+        store.setProfile(profile.copy(liftGoal = stamped))
+        val program = store.programNow()
+        val proposal = if (stamped != null && adjust && program != null) {
+            GymGoals.propose(CoachActions.places(this), program, profile.experience, stamped.exerciseId)
+        } else null
+        store.editSettings { s ->
+            val keep = s.goalPlan?.takeIf { stamped != null && !adjust && it.exerciseId == stamped.exerciseId }
+            val back = if (keep != null) s else GymGoals.revert(s)
+            proposal?.edit?.invoke(back) ?: back
+        }
+        onChange()
     }
 
     /** Takes an exercise added for good out of template [templateId], with the numbers set for it there. */

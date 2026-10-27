@@ -86,6 +86,21 @@ data class RunGoal(
     val pace: Double get() = seconds / (meters / 1000.0)
 }
 
+/**
+ * A goal in the gym: [exerciseId] lifted [kg] for [reps] ("пожать 150" is `LiftGoal("bench", 150.0)`), by [date] when
+ * there is one. [fromE1rm] and [setDay]: the estimated max and the day when it was set, to say how far it has come.
+ */
+@Serializable
+data class LiftGoal(
+    val exerciseId: String,
+    val kg: Double,
+    val reps: Int = 1,
+    /** The day to have it by (epoch day): the days before are lighter, the day itself is the test. */
+    val date: Long? = null,
+    val fromE1rm: Double? = null,
+    val setDay: Long? = null,
+)
+
 /** Running background: NONE — can't run 20 minutes in a row yet; BASE — can; TRAINED — runs regularly. */
 @Serializable
 enum class RunLevel { NONE, BASE, TRAINED }
@@ -122,6 +137,8 @@ data class Profile(
      */
     val gymDays: Set<Int>? = null,
     val runDays: Set<Int>? = null,
+    /** A goal in the gym, if any: one lift to a weight (see [forma.core.strength.GymGoal]). */
+    val liftGoal: LiftGoal? = null,
 ) {
     /** The person chose the gym and running days themselves. */
     val ownWeek: Boolean get() = gymDays != null && runDays != null

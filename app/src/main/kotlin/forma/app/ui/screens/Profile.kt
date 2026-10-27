@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import forma.app.ui.LocalNav
+import forma.app.ui.Screen
 import forma.app.ui.LocalRepo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
@@ -90,7 +91,7 @@ fun ProfileScreen() {
                 GhostButton("Вернуть мою программу", { confirmRestore = true }, Modifier.fillMaxWidth())
             }
         }
-        AimPicker(d)
+        AimPicker(d, base.liftGoal)
         WeekGrid(d, planGym, planRun)
         if (d.gymDays == null) DoubleDaysToggle(d)
         SessionMinutes(d)
@@ -100,6 +101,14 @@ fun ProfileScreen() {
                 Chip("Новичок", d.experience == Experience.NOVICE, { d.experience = Experience.NOVICE }, Modifier.weight(1f))
                 Chip("Средний", d.experience == Experience.INTERMEDIATE, { d.experience = Experience.INTERMEDIATE }, Modifier.weight(1f))
                 Chip("Опытный", d.experience == Experience.ADVANCED, { d.experience = Experience.ADVANCED }, Modifier.weight(1f))
+            }
+            // The goal in the gym has its own screen: the way to it and the plan's changes are worked out as it is typed.
+            FCard(gap = 0.dp) {
+                forma.app.ui.components.ListRow(
+                    "Цель в зале",
+                    base.liftGoal?.let { g -> "${forma.core.model.Catalog.find(g.exerciseId)?.name ?: g.exerciseId} ${forma.core.text.Ru.kg(g.kg)} кг" + if (g.reps > 1) " × ${g.reps}" else "" }
+                        ?: "Не задана: например, пожать 100 кг",
+                ) { nav.push(Screen.GymGoal) }
             }
         }
         if (d.runsShown) {

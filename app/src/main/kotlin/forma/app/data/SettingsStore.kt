@@ -85,6 +85,8 @@ data class Settings(
     val tourSeen: Boolean = false,
     /** The last release whose news was shown after an update ([forma.app.ui.screens.RELEASES] ids); 0 before any. */
     val newsSeen: Int = 0,
+    /** The plan changes made for the goal in the gym, to take back with it ([GymGoals.revert]). */
+    val goalPlan: GoalPlan? = null,
     /** Screens whose first-visit hint was closed with «Понятно» ([forma.app.ui.screens.Hints]). */
     val hintsSeen: Set<String> = emptySet(),
     /** What the coach (the AI) keeps in mind about the person: likes, dislikes, the gym's kit, old injuries. */

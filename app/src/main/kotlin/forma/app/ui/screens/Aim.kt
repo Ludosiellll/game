@@ -88,7 +88,7 @@ fun sidesOf(aim: Aim): Sides = when {
  * comes first. A side dropped and taken back gets its focus of before.
  */
 @Composable
-fun AimPicker(d: ProfileDraft) {
+fun AimPicker(d: ProfileDraft, liftGoal: forma.core.model.LiftGoal? = null) {
     var keptLift by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(if (d.lift == LiftFocus.NONE) LiftFocus.POWERBUILDING else d.lift) }
     var keptRun by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(if (d.run == RunFocus.NONE) RunFocus.HEALTH else d.run) }
     val sides = sidesOf(Aim(d.lift, d.run, d.emphasis).normalized())
@@ -104,6 +104,12 @@ fun AimPicker(d: ProfileDraft) {
         }
     }
     Text(sides.text, style = T.secondary(13.sp))
+    // A side dropped while it has a goal: what that costs, said before saving.
+    val risk = forma.core.plan.GoalRisk.week(
+        d.runGoal.takeIf { sides == Sides.GYM }, liftGoal.takeIf { sides == Sides.RUN },
+        liftGoal?.let { forma.core.model.Catalog.find(it.exerciseId)?.name }, runs = if (sides == Sides.GYM) 0 else 2, lifts = if (sides == Sides.RUN) 0 else 2,
+    )
+    risk?.let { Text(it, style = T.body(14.sp).copy(color = F.c.warn)) }
     if (sides != Sides.RUN) {
         SectionLabel("Зал — зачем", Modifier.padding(top = 6.dp))
         ChoiceChips(LIFT_FOCUS.filter { it.value != LiftFocus.NONE }, d.lift) { v -> d.lift = v }

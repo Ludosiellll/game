@@ -94,6 +94,18 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             val head = if (feel == Feel.SICK) "По плану было (человек болеет, не делает):" else "По плану сегодня:"
             appendLine(if (todayLines.isEmpty()) "По плану сегодня отдых." else head + "\n" + todayLines.joinToString("\n"))
         }
+        program?.week?.let { wk ->
+            val names = listOf("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+            fun days(f: (forma.core.plan.PlannedSession) -> Boolean) = wk.days.filter { d -> d.sessions.any(f) }.map { names[it.day - 1] }
+            val gym = days { it.kind == SessionKind.LIFT }
+            val run = days { it.isRun }
+            appendLine("Неделя: " + (if (gym.isEmpty()) "без зала" else "зал — ${gym.joinToString(", ")}") + "; " + (if (run.isEmpty()) "без бега" else "бег — ${run.joinToString(", ")}") + ".")
+        }
+        appendLine()
+        appendLine("## Цели человека — каждое изменение сверяй с ними")
+        val profile = repo.store.profileNow()
+        appendLine("- Бег: " + (profile?.runGoal?.let { g -> "${g.meters} м за ${Ru.clock(g.seconds)}" + (g.date?.let { ", забег ${Ru.date(LocalDate.ofEpochDay(it))}" } ?: "") } ?: "цели нет") + ".")
+        appendLine("- Зал: " + (forma.app.data.GymGoals.words(repo) ?: "цели нет (поставить — функция set_gym_goal)."))
         appendLine()
         if (settings.coachNotes.isNotEmpty()) {
             appendLine("## Что ты знаешь о человеке (запомнено)")
