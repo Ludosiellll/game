@@ -102,7 +102,7 @@ fun ProfileScreen() {
                 Chip("Средний", d.experience == Experience.INTERMEDIATE, { d.experience = Experience.INTERMEDIATE }, Modifier.weight(1f))
                 Chip("Опытный", d.experience == Experience.ADVANCED, { d.experience = Experience.ADVANCED }, Modifier.weight(1f))
             }
-            GearPicker(d)
+            GearPicker(d, base.liftGoal)
             // The goal in the gym has its own screen: the way to it and the plan's changes are worked out as it is typed.
             FCard(gap = 0.dp) {
                 forma.app.ui.components.ListRow(

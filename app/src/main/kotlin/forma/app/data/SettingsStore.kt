@@ -203,15 +203,17 @@ data class OwnPlan(
     val reps: Map<String, List<Int>> = emptyMap(),
     val rest: Map<String, Int> = emptyMap(),
     val demoted: Set<String> = emptySet(),
+    /** Which of [swaps] «Мои упражнения» made. */
+    val pickSwaps: Set<String> = emptySet(),
 ) {
     /** [s] with these edits back in and nothing put aside any more. */
     fun editsInto(s: Settings): Settings =
-        s.copy(swaps = swaps, sets = sets, removed = removed, added = added, reps = reps, rest = rest, demoted = demoted, ownPlan = null)
+        s.copy(swaps = swaps, sets = sets, removed = removed, added = added, reps = reps, rest = rest, demoted = demoted, pickSwaps = pickSwaps, ownPlan = null)
 
     companion object {
         /** The own plan of [profile] and [program] with the edits in [s]. */
         fun of(profile: Profile, program: Program, s: Settings) =
-            OwnPlan(profile, program, s.swaps, s.sets, s.removed, s.added, s.reps, s.rest, s.demoted)
+            OwnPlan(profile, program, s.swaps, s.sets, s.removed, s.added, s.reps, s.rest, s.demoted, s.pickSwaps)
     }
 }
 

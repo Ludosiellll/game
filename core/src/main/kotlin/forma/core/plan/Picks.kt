@@ -17,41 +17,92 @@ import forma.core.strength.SlotRole
  * nothing to stand in, the place goes, and the week says so.
  */
 object GearFit {
-    /** A home's hinge: the dumbbell Romanian deadlift, or with the body alone the glute bridge (the back raise is weak). */
-    private val HOME = mapOf(Pattern.HINGE to listOf("db_rdl", "glute_bridge"))
+    /**
+     * What a home prefers over the closest catalog match: the dumbbell Romanian deadlift for a hinge; with the body alone
+     * the glute bridge (the back raise is weak), chin-ups for the biceps (with a bar), dips off a bench or close push-ups
+     * for the triceps — rather than no arm work at all.
+     */
+    private fun prefer(gear: Gear, pattern: Pattern): List<String> = when (gear) {
+        Gear.GYM -> emptyList()
+        Gear.DUMBBELLS -> if (pattern == Pattern.HINGE) listOf("db_rdl") else emptyList()
+        Gear.BODY -> when (pattern) {
+            Pattern.HINGE -> listOf("glute_bridge")
+            Pattern.CURL -> listOf("chinup")
+            Pattern.TRICEPS_EXT -> listOf("bench_dip", "diamond_pushup")
+            else -> emptyList()
+        }
+    }
 
-    fun fit(templates: List<Template>, profile: Profile): Pair<List<Template>, String?> {
+    /** [templates] made of what is there, each (gym exercise → stand-in) pair, the gym exercises dropped, and the week's line. */
+    data class Fit(val templates: List<Template>, val pairs: Set<Pair<String, String>>, val dropped: Set<String>, val note: String?)
+
+    fun fit(templates: List<Template>, profile: Profile): Pair<List<Template>, String?> = of(templates, profile).let { it.templates to it.note }
+
+    fun of(templates: List<Template>, profile: Profile): Fit {
         val gear = profile.gear
-        if (gear == Gear.GYM) return templates to null
-        val novice = profile.experience == Experience.NOVICE
-        val swapped = linkedMapOf<String, String>()
+        if (gear == Gear.GYM) return Fit(templates, emptySet(), emptySet(), null)
+        val pairs = linkedSetOf<Pair<String, String>>()
         val dropped = linkedSetOf<String>()
+        // The same gym exercise gets the same stand-in in every session where it is free there.
+        val chosen = mutableMapOf<String, String>()
         val out = templates.map { t ->
             val taken = t.slots.map { it.exerciseId }.toMutableSet()
             t.copy(slots = t.slots.mapNotNull { slot ->
                 val ex = Catalog[slot.exerciseId]
                 if (gear.fits(ex, profile.pullupBar)) return@mapNotNull slot
-                val to = Picks.standIn(ex, slot.role, novice, taken, HOME[ex.pattern].orEmpty()) { gear.fits(it, profile.pullupBar) }
+                // Never a hard, unusual one in a gym exercise's place at home (Nordic curls need the heels held, sissy
+                // squats knees that know them): the movement that is there instead, or the place goes.
+                val to = Picks.standIn(ex, slot.role, novice = true, taken, listOfNotNull(chosen[ex.id]) + prefer(gear, ex.pattern)) { gear.fits(it, profile.pullupBar) }
+                    ?.also { chosen.putIfAbsent(ex.id, it.id) }
                 if (to == null) {
                     dropped += slot.exerciseId
                     null
                 } else {
                     taken += to.id
-                    swapped[slot.exerciseId] = to.id
+                    pairs += slot.exerciseId to to.id
                     slot.copy(exerciseId = to.id, increment = null)
                 }
             })
         }.filter { it.slots.isNotEmpty() }
-        if (swapped.isEmpty() && dropped.isEmpty()) return templates to null
-        val said = swapped.entries.take(6).joinToString(", ") { (a, b) -> "«${Catalog[a].name}» → «${Catalog[b].name}»" } +
-            if (swapped.size > 6) " и ещё ${swapped.size - 6}" else ""
+        if (pairs.isEmpty() && dropped.isEmpty()) return Fit(templates, pairs, dropped, null)
+        val said = pairs.take(6).joinToString(", ") { (a, b) -> "«${Catalog[a].name}» → «${Catalog[b].name}»" } +
+            if (pairs.size > 6) " и ещё ${pairs.size - 6}" else ""
         val text = buildString {
             append("${gear.ru}: план собран из того, что там есть")
-            if (swapped.isNotEmpty()) append(" — $said")
+            if (pairs.isNotEmpty()) append(" — $said")
             append(".")
             if (dropped.isNotEmpty()) append(" Нечем заменить, поэтому убрано: ${dropped.joinToString(", ") { "«${Catalog[it].name}»" }}.")
+            // The gym goal's lift cannot be done here: said, with what to do about it.
+            profile.liftGoal?.exerciseId?.takeIf { g -> pairs.any { it.first == g } || g in dropped }?.let { g ->
+                val instead = pairs.filter { it.first == g }.map { Catalog[it.second].name }.distinct()
+                append(" Твоя цель в зале — «${Catalog[g].name}», а здесь его не сделать")
+                append(if (instead.isNotEmpty()) ": в плане «${instead.joinToString("», «")}»." else ".")
+                append(" Цель можно оставить и делать это упражнение в зале или поменять цель на то, что есть дома.")
+            }
         }
-        return out to text
+        return Fit(out, pairs, dropped, text)
+    }
+
+    /**
+     * For the person's own numbers and choices kept under plan ids (taken out, sets, reps, rest, replacements): the ids of
+     * a plan made with [from]'s kit → the ids the same places get with [to]'s ([gym] ids: the templates before any kit).
+     * A place with nothing to stand in has none.
+     */
+    fun moved(gym: List<Template>, from: Profile, to: Profile): Map<String, Set<String>> {
+        fun ids(p: Profile): Map<String, Set<String>> {
+            val f = of(gym, p)
+            return gym.flatMap { t -> t.slots.map { it.exerciseId } }.distinct().associateWith { g ->
+                when {
+                    p.gear.fits(Catalog[g], p.pullupBar) -> setOf(g)
+                    else -> f.pairs.filter { it.first == g }.map { it.second }.toSet()
+                }
+            }
+        }
+        val before = ids(from)
+        val after = ids(to)
+        val out = mutableMapOf<String, MutableSet<String>>()
+        for ((g, olds) in before) for (o in olds) out.getOrPut(o) { mutableSetOf() } += after[g].orEmpty()
+        return out
     }
 }
 
@@ -134,7 +185,10 @@ object Picks {
      * with an exercise not wanted, and no like for it, gets the closest one that is fine. [made]: plan ids whose current
      * replacement came from earlier picks — with no pick for them any more, the plan's own comes back.
      */
-    fun resolve(places: List<Place>, likes: Map<Pattern, List<String>>, dislikes: Set<String>, rules: Rules, made: Set<String> = emptySet()): Result {
+    fun resolve(
+        places: List<Place>, likes: Map<Pattern, List<String>>, dislikes: Set<String>, rules: Rules, made: Set<String> = emptySet(),
+        fresh: Set<Pattern> = emptySet(),
+    ): Result {
         val swaps = linkedMapOf<String, String>()
         val notes = mutableListOf<String>()
         // A plan id may stand in several sessions: one replacement for all of them, the strictest place decides.
@@ -143,7 +197,6 @@ object Picks {
         val holds = places.groupBy { it.templateId }.mapValues { (_, l) -> l.map { it.current }.toMutableSet() }
         val turn = mutableMapOf<Pattern, Int>()
         for ((planId, at) in byPlan) {
-            if (planId in rules.removed) continue
             val plan = Catalog.find(planId) ?: continue
             val current = at.first().current
             val role = at.minBy { it.role.ordinal }.role
@@ -155,30 +208,51 @@ object Picks {
                 swaps[planId] = id
                 at.forEach { p -> holds[p.templateId]?.apply { remove(p.current); add(id) } }
             }
+            // A replacement earlier picks made, with no like of its movement behind it any more.
+            val stale = planId in made && current != planId && planId !in dislikes && liked.isEmpty()
+            // A place taken out of the plan stays out; a pick left in it goes, so it comes back as the plan's own.
+            if (planId in rules.removed) {
+                if (stale) put(planId)
+                continue
+            }
             when {
                 planId == rules.goalLift || current == rules.goalLift -> {
                     if (liked.isNotEmpty() || current in dislikes) notes += "«${plan.name}» — упражнение твоей цели в зале, остаётся."
                     continue
                 }
                 rules.strength && role == SlotRole.MAIN && pattern in BARBELL_MAINS && plan.equipment == Equipment.BARBELL -> {
-                    if (liked.any { it.id != planId } || current in dislikes) {
-                        notes += "Цель — сила: главным на «${pattern.ru.lowercase()}» остаётся «${plan.name}». Остальные места этого движения — по твоему выбору."
+                    when {
+                        // Not wanted there: the barbell lift itself, the point of the aim.
+                        current in dislikes && planId !in dislikes -> put(planId)
+                        // A replacement earlier picks made goes; one the person made by hand stays theirs.
+                        current != planId && planId in made && planId !in dislikes -> put(planId)
                     }
-                    // A replacement earlier picks made goes; one the person made by hand stays theirs.
-                    if (current != planId && planId in made && planId !in dislikes) put(planId)
+                    if (liked.any { it.id != planId } || current in dislikes) {
+                        val now = swaps[planId] ?: current
+                        notes += if (now == planId) {
+                            "Цель — сила: главным на «${pattern.ru.lowercase()}» остаётся «${plan.name}». Остальные места этого движения — по твоему выбору."
+                        } else {
+                            "Цель — сила: главное место на «${pattern.ru.lowercase()}» по выбору не меняю — там «${Catalog[now].name}», ты поставил сам."
+                        }
+                    }
+                    continue
+                }
+                // Put in by hand, not «не хочу», and the likes of its movement not changed now: the person's own stays.
+                current != planId && planId !in made && current !in dislikes && pattern !in fresh -> {
+                    if (liked.any { it.id != current }) notes += "«${Catalog[current].name}» ты поставил сам — оставил."
                     continue
                 }
             }
             val fit = liked.filter { unfit(it, role, rules) == null }
             if (fit.isNotEmpty()) {
                 val k = turn.getOrDefault(pattern, 0)
-                val pick = (0 until fit.size).map { fit[(k + it) % fit.size] }.firstOrNull { others(it.id) } ?: fit[k % fit.size]
-                turn[pattern] = k + 1
-                put(pick.id)
-                continue
-            }
-            liked.firstOrNull()?.let { l ->
-                unfit(l, role, rules)?.let { why -> notes += "«${l.name}» — $why: на месте «${Catalog[current].name}» оставил его." }
+                // Never twice in one session: with every liked one there already, the place keeps what it has.
+                val pick = fit.indices.map { fit[(k + it) % fit.size] }.firstOrNull { others(it.id) }
+                if (pick != null) {
+                    turn[pattern] = k + 1
+                    put(pick.id)
+                    continue
+                }
             }
             when {
                 current in dislikes -> {
@@ -188,8 +262,11 @@ object Picks {
                         .firstOrNull()
                     if (to != null) put(to.id) else notes += "Для «${Catalog[current].name}» не нашлось замены, которая подходит: оставил."
                 }
-                // A replacement made by earlier picks with no pick behind it any more: the plan's own comes back.
-                planId in made && current != planId && planId !in dislikes -> put(planId)
+                stale -> put(planId)
+            }
+            // A like that cannot stand here, said only where the place kept what it had.
+            if (planId !in swaps) liked.firstOrNull { unfit(it, role, rules) != null }?.let { l ->
+                notes += "«${l.name}» — ${unfit(l, role, rules)}: на месте «${Catalog[current].name}» оставил его."
             }
         }
         return Result(swaps, notes.distinct())

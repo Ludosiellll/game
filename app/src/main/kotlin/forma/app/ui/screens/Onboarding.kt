@@ -522,7 +522,7 @@ internal fun parseRaceDay(text: String, today: LocalDate): LocalDate? {
  * home). The plan is made of what is there.
  */
 @Composable
-fun GearPicker(d: ProfileDraft) {
+fun GearPicker(d: ProfileDraft, goal: forma.core.model.LiftGoal? = null) {
     SectionLabel("Где занимаешься", Modifier.padding(top = 6.dp))
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         forma.core.model.Gear.entries.forEach { g -> Chip(g.ru, d.gear == g, { d.gear = g }) }
@@ -534,5 +534,13 @@ fun GearPicker(d: ProfileDraft) {
                 ". Что нечем заменить, уберу и скажу об этом.",
             style = T.secondary(13.sp),
         )
+        // The gym goal's lift that cannot be done at home: said before saving, with what to do about it.
+        goal?.let { forma.core.model.Catalog.find(it.exerciseId) }?.takeIf { !d.gear.fits(it, d.pullupBar) }?.let { ex ->
+            Text(
+                "Твоя цель в зале — «${ex.name}», а дома его не сделать. Цель можно оставить и делать это упражнение в зале " +
+                    "или поменять цель на то, что есть дома.",
+                style = T.body(14.sp).copy(color = forma.app.ui.theme.F.c.warn),
+            )
+        }
     }
 }

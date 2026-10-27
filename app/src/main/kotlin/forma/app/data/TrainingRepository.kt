@@ -149,6 +149,7 @@ class TrainingRepository(
         // back as it was, its days too; with new ones, a plan is built from them.
         val own = store.settingsNow().ownPlan?.takeIf { old != null && store.programNow()?.copiedFrom != null && sameShape(old, input) }
         val profile = keptAimOf(old, own?.let { withShapeOf(input, it.profile) } ?: input)
+        if (old != null && (old.gear != profile.gear || old.pullupBar != profile.pullupBar)) moveKit(old, profile)
         store.setProfile(profile)
         store.setProgram(own?.let { ownProgram(profile, it) } ?: keepCycle(ProgramGenerator.generate(profile, today()), store.programNow()))
         reapplyPicks()
@@ -533,7 +534,8 @@ class TrainingRepository(
                     forma.core.plan.PlanAdvisor.Kind.SWAP -> when {
                         planId == null -> s
                         c.added -> withReplacedAdded(s, c.templateId, planId, to)
-                        else -> withSwap(s, specs.firstOrNull { it.exerciseId == planId }, planId, to)
+                        // Accepted by the person: theirs from now on, not undone when a pick is cleared.
+                        else -> withSwap(s, specs.firstOrNull { it.exerciseId == planId }, planId, to).let { it.copy(pickSwaps = it.pickSwaps - planId) }
                     }
                     forma.core.plan.PlanAdvisor.Kind.ADD -> {
                         val added = withAdded(s, c.templateId, to)
@@ -1078,8 +1080,12 @@ class TrainingRepository(
     }
 
     suspend fun setSwap(planId: String, newId: String?) {
-        // The same exercise picked again changes nothing (a swap made before the rule below keeps its numbers).
-        if ((store.settingsNow().swaps[planId] ?: planId) == (newId ?: planId)) return
+        // The same exercise picked again changes nothing (a swap made before the rule below keeps its numbers), but picked
+        // by hand it is the person's own now, not the picks'.
+        if ((store.settingsNow().swaps[planId] ?: planId) == (newId ?: planId)) {
+            if (planId in store.settingsNow().pickSwaps) store.editSettings { it.copy(pickSwaps = it.pickSwaps - planId) }
+            return
+        }
         val slot = store.programNow()?.templates?.flatMap { it.slots }?.firstOrNull { it.exerciseId == planId }
         // Made by hand: the person's own from now on, not undone when a pick is cleared.
         store.editSettings { s -> withSwap(s, slot, planId, newId).let { it.copy(pickSwaps = it.pickSwaps - planId) } }
@@ -1094,15 +1100,23 @@ class TrainingRepository(
     }
 
     /** The picks of [s] put into the plan: replacements for good where they say, the earlier ones of picks undone. */
-    private fun withPicks(s: Settings, program: Program, profile: Profile): Pair<Settings, Picks.Result> {
-        val likes = s.likes.mapNotNull { (k, v) -> runCatching { forma.core.model.Pattern.valueOf(k) }.getOrNull()?.let { it to v } }.toMap()
-        val r = Picks.resolve(pickPlaces(program, s), likes, s.dislikes, Picks.Rules.of(profile, s.removed), s.pickSwaps)
+    private fun withPicks(s: Settings, program: Program, profile: Profile, fresh: Set<forma.core.model.Pattern> = emptySet()): Pair<Settings, Picks.Result> {
+        val likes = likesOf(s)
+        val r = Picks.resolve(pickPlaces(program, s), likes, s.dislikes, Picks.Rules.of(profile, s.removed), s.pickSwaps, fresh)
         val slots = program.templates.flatMap { it.slots }
         val out = r.swaps.entries.fold(s) { acc, (planId, to) ->
             withSwap(acc, slots.firstOrNull { it.exerciseId == planId }, planId, to)
                 .let { it.copy(pickSwaps = if (to == planId) it.pickSwaps - planId else it.pickSwaps + planId) }
         }
         return out to r
+    }
+
+    private fun likesOf(s: Settings) = s.likes.mapNotNull { (k, v) -> runCatching { forma.core.model.Pattern.valueOf(k) }.getOrNull()?.let { it to v } }.toMap()
+
+    /** The movements whose likes differ between [was] and [now]: there the new likes win over a replacement made by hand. */
+    private fun changed(was: Settings, now: Map<forma.core.model.Pattern, List<String>>): Set<forma.core.model.Pattern> {
+        val old = likesOf(was)
+        return (old.keys + now.keys).filter { old[it].orEmpty() != now[it].orEmpty() }.toSet()
     }
 
     /**
@@ -1115,7 +1129,7 @@ class TrainingRepository(
         var result = Picks.Result(emptyMap(), emptyList())
         store.editSettings { s ->
             val kept = s.copy(likes = likes.filterValues { it.isNotEmpty() }.mapKeys { it.key.name }, dislikes = dislikes)
-            withPicks(kept, program, profile).also { result = it.second }.first
+            withPicks(kept, program, profile, changed(s, likes)).also { result = it.second }.first
         }
         onChange()
         return result
@@ -1125,8 +1139,9 @@ class TrainingRepository(
     suspend fun previewPicks(likes: Map<forma.core.model.Pattern, List<String>>, dislikes: Set<String>): Picks.Result {
         val program = store.programNow() ?: return Picks.Result(emptyMap(), emptyList())
         val profile = store.profileNow() ?: return Picks.Result(emptyMap(), emptyList())
-        val s = store.settingsNow().copy(likes = likes.filterValues { it.isNotEmpty() }.mapKeys { it.key.name }, dislikes = dislikes)
-        return withPicks(s, program, profile).second
+        val was = store.settingsNow()
+        val s = was.copy(likes = likes.filterValues { it.isNotEmpty() }.mapKeys { it.key.name }, dislikes = dislikes)
+        return withPicks(s, program, profile, changed(was, likes)).second
     }
 
     /** A movement of the plan for «Мои упражнения»: its places now as (session title, exercise done there). */
@@ -1144,6 +1159,26 @@ class TrainingRepository(
             groups.getOrPut(pattern) { mutableListOf() } += t.title to (swapOf(slot, s) ?: slot.exerciseId)
         }
         return groups.map { (k, v) -> PickGroup(k, v) } to Picks.Rules.of(profile, s.removed)
+    }
+
+    /**
+     * The kit changed (gym → home and back): the person's own choices kept under plan ids follow the place to the exercise
+     * that stands in it now — taken out stays out (Denis's calves), own sets, reps and rest stay; a replacement whose
+     * exercise cannot be done there goes.
+     */
+    private suspend fun moveKit(old: Profile, now: Profile) {
+        val moves = runCatching { ProgramGenerator.kitMoves(old, now) }.getOrNull() ?: return
+        fun to(k: String): Set<String> = moves[k] ?: setOf(k)
+        fun <V> map(m: Map<String, V>): Map<String, V> = m.flatMap { (k, v) -> to(k).map { it to v } }.toMap()
+        store.editSettings { s ->
+            s.copy(
+                removed = s.removed.flatMap(::to).toSet(),
+                sets = map(s.sets), reps = map(s.reps), rest = map(s.rest),
+                swaps = map(s.swaps).filterValues { Catalog.find(it)?.let { ex -> now.gear.fits(ex, now.pullupBar) } == true },
+                pickSwaps = s.pickSwaps.flatMap(::to).toSet(),
+                demoted = s.demoted.flatMap(::to).toSet(),
+            )
+        }
     }
 
     /** The plan laid out again (new places, other ids): the picks put in again, without saying anything. */
@@ -1190,6 +1225,8 @@ class TrainingRepository(
     /** Takes [planId] out of every session from now on, or brings it back. */
     suspend fun setRemoved(planId: String, removed: Boolean) {
         store.editSettings { s -> s.copy(removed = if (removed) s.removed + planId else s.removed - planId) }
+        // A place out or back: the picks of now, not those of when it went (a cleared pick left in it goes).
+        reapplyPicks()
         onChange()
     }
 
@@ -1500,7 +1537,7 @@ class TrainingRepository(
             ),
         )
         // The own edits of the plan before belong to that plan (kept with it): the friend's exercises are taken as they are.
-        updateSettings { it.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap(), demoted = emptySet(), ownPlan = keep) }
+        updateSettings { it.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap(), demoted = emptySet(), pickSwaps = emptySet(), ownPlan = keep) }
         onChange()
         return true
     }

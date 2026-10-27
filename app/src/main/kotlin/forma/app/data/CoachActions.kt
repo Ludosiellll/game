@@ -726,6 +726,9 @@ object CoachActions {
                         else "В плане: " + changes.entries.joinToString("; ") { (pid, to) -> "«${name(s.swaps[pid] ?: pid)}» → «${name(to)}»" } + ".",
                     )
                     r.notes.forEach { append(" ").append(it) }
+                    // A liked movement the plan has no place for: kept, said so.
+                    val moves = repo.pickGroups()?.first.orEmpty().map { it.pattern }.toSet()
+                    like.filter { it.pattern !in moves }.forEach { append(" «${it.name}»: такого движения в плане сейчас нет — отметка останется, встанет, если появится.") }
                 }
                 confirm(text) {
                     val was = repo.store.settingsNow()

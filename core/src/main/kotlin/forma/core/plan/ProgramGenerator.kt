@@ -22,7 +22,13 @@ object ProgramGenerator {
     /** The planner's version: a program laid out by an older one is laid out again (progress kept). */
     const val PLANNER = 2
 
-    fun generate(profile: Profile, today: LocalDate): Program {
+    /** What the week holds for [profile] before the kit: the aim planned by, the days, the mix and the gym templates. */
+    private class Layout(
+        val plan: Aim, val days: Set<Int>, val gym: Set<Int>?, val run: Set<Int>?, val own: Boolean, val mix: Mix,
+        val middleGoal: Boolean, val templates: List<Template>,
+    )
+
+    private fun layout(profile: Profile): Layout {
         val aim = profile.aim.normalized()
         val days = profile.trainingDays.filter { it in 1..7 }.toSet().ifEmpty { setOf(1, 3, 5) }
         val middleGoal = profile.runGoal?.middleDistance == true && aim.run != RunFocus.NONE
@@ -36,12 +42,29 @@ object ProgramGenerator {
         val shared = if (own) (gym!! intersect run!!).isNotEmpty() else profile.doubleDays
         // Upper / lower / upper only when there are hard runs to put after the upper body; with easy runs alone the
         // full-body sessions (legs three times a week) stay.
+        val templates = Templates.forWeek(plan, profile.experience, mix.lifts, shared = shared && mix.quality + mix.long > 0)
+            .map { Templates.fit(it, profile.sessionMinutes) }
+        return Layout(plan, days, gym, run, own, mix, middleGoal, templates)
+    }
+
+    /**
+     * Where the person's own plan ids go when the kit changes from [from]'s to [to]'s (gym → home and back): taken out,
+     * sets, reps, rest and replacements follow the place, not the exercise that stood in it.
+     */
+    fun kitMoves(from: Profile, to: Profile): Map<String, Set<String>> = GearFit.moved(layout(to).templates, from, to)
+
+    fun generate(profile: Profile, today: LocalDate): Program {
+        val l = layout(profile)
+        val aim = profile.aim.normalized()
+        val plan = l.plan
+        val days = l.days
+        val gym = l.gym
+        val run = l.run
+        val own = l.own
+        val mix = l.mix
+        val middleGoal = l.middleGoal
         // Made of what is there (a home without a barbell), then the bar's weight for a light beginner.
-        val (kit, home) = GearFit.fit(
-            Templates.forWeek(plan, profile.experience, mix.lifts, shared = shared && mix.quality + mix.long > 0)
-                .map { Templates.fit(it, profile.sessionMinutes) },
-            profile,
-        )
+        val (kit, home) = GearFit.fit(l.templates, profile)
         val (templates, lighter) = lightStart(kit, profile)
         val laid = if (own) Scheduler.scheduleFixed(gym!!, run!!, mix, templates, plan) else Scheduler.schedule(days, mix, templates, plan)
         val week = laid.copy(notes = laid.notes + listOfNotNull(home, lighter, manyLifts(profile, mix.lifts, own)))
