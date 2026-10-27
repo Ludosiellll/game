@@ -201,6 +201,10 @@ fun GoalTestDayCard(today: LocalDate) {
             runCatching { repo.liftPlan(s.templateId!!, today).items.any { it.exerciseId == goal.exerciseId } }.getOrDefault(false)
         }
     }
+    // «Так себе» or the first session after being sick: the session is lighter and holds no test.
+    val unwell by produceState(false, goal) {
+        value = repo.store.settingsNow().feelOn(today) == forma.app.data.Feel.LOW || repo.liftAfterSick(today)
+    }
     val ex = Catalog.find(goal.exerciseId) ?: return
     FCard(gap = 6.dp, outline = F.c.strength.copy(alpha = 0.6f)) {
         Text("Сегодня день цели", style = T.title(20.sp))
@@ -208,6 +212,11 @@ fun GoalTestDayCard(today: LocalDate) {
         val test = day
         when {
             inPlan == null -> {}
+            unwell -> Text(
+                "Сегодня тренировка облегчённая («Так себе» или первая после болезни) — проверять максимум не стоит. " +
+                    "Перенеси дату цели на ближайшую силовую с этим упражнением: «Прогресс → Сила → Изменить цель».",
+                style = T.body(14.sp),
+            )
             test == null -> Text("Подходов с этим упражнением ещё не было — проверять нечего. Цель можно перенести.", style = T.body(14.sp))
             inPlan == false -> Text(
                 "Сегодня по плану нет силовой с этим упражнением. Перенеси дату цели на день с ним: «Прогресс → Сила → Изменить цель».",

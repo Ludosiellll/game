@@ -342,7 +342,7 @@ object Progression {
         val e1rm = e1rmOf(ex, done, p, bodyWeight)!!
         if (p.phase == Phase.DELOAD) return Evaluation(state.copy(sessions = sessions), Outcome.Deload, e1rm)
         // The taper and the test serve the goal's day: the weight and the reps to aim for stay as they were.
-        if (p.phase == Phase.TAPER || p.phase == Phase.TEST) {
+        if (p.phase == Phase.TEST || p.phase == Phase.TAPER && !p.calibrate) {
             val reason = if (p.phase == Phase.TAPER) HoldReason.TAPER else HoldReason.TEST
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(state.weight ?: p.weight ?: 0.0, state.reps, reason), e1rm)
         }
@@ -579,7 +579,7 @@ object Progression {
             return NextSet(next, 1, if (next > last.weight) 1 else 0, null, 0, false, false)
         }
         // The taper keeps the weight: a set with reps to spare is no reason to go heavier days before the test.
-        if (p.phase == Phase.TAPER) return NextSet(last.weight, p.reps, 0, reserve, p.rir, false, false)
+        if (p.phase == Phase.TAPER && !p.calibrate) return NextSet(last.weight, p.reps, 0, reserve, p.rir, false, false)
         val adj = adjustAfterSet(ex, p, last, bodyWeight, done.size - 1)
         return if (adj != null) NextSet(adj.weight, adj.reps, if (adj.heavier) 1 else -1, reserve, p.rir, plus, p.calibrate)
         else NextSet(last.weight, p.reps, 0, reserve, p.rir, plus, p.calibrate)

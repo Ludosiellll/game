@@ -643,14 +643,20 @@ class TrainingRepository(
         val taper = GymGoal.tapering(goal, date.toEpochDay())
         // The legs three days before the goal race or nearer: a lighter session, the race wants fresh legs.
         val deload = deloadOn(date, forceDeload) || t.legs && daysToRace(date)?.let { it in 0..3 } == true
+        // Not feeling well («Так себе») or back after being sick: lighter for the goal's lift too, and no max test.
+        val unwell = forceDeload || liftAfterSick(date)
         // The goal's lift in its taper: half the sets at the working weight, no "+" set — a lighter week of the block
         // does not make it lighter still (the taper is its own lighter plan).
         // Its heavy sets are the day's main lift even where the plan had it second: first, with a full warm-up ramp.
         suspend fun item(position: Int, planned: SlotSpec, restKey: String): LiftItem {
             val heavyGoal = planned.exerciseId == goal?.exerciseId && planned.repMax <= 6 && planned.role == SlotRole.SECONDARY
             val spec = if (heavyGoal) planned.copy(role = SlotRole.MAIN) else planned
-            return if (taper && spec.exerciseId == goal?.exerciseId) buildItem(position, spec.copy(sets = GymGoal.taperSets(spec.sets)), date, false, restKey, Phase.TAPER)
-            else buildItem(position, spec, date, deload, restKey)
+            val tapered = taper && spec.exerciseId == goal?.exerciseId
+            return when {
+                tapered && unwell -> buildItem(position, spec.copy(sets = GymGoal.taperSets(spec.sets)), date, true, restKey)
+                tapered -> buildItem(position, spec.copy(sets = GymGoal.taperSets(spec.sets)), date, false, restKey, Phase.TAPER)
+                else -> buildItem(position, spec, date, deload, restKey)
+            }
         }
         // Exercises taken out for good stay out — never all of them. Positions stay the plan's (swaps look them up).
         val added = addedTo(t.id, settings)
@@ -664,7 +670,8 @@ class TrainingRepository(
         }
         val why = if (deload && !forceDeload && liftAfterSick(date) && !ProgramGenerator.isDeloadWeek(program, date)) SICK_LIFT else null
         val items = warmUps(inOrder(own + extra, goal?.exerciseId), deload)
-        return LiftPlan(t.id, t.title, if (goal?.date == date.toEpochDay()) testOn(items, goal) else items, deload, why)
+        val test = goal?.date == date.toEpochDay() && !unwell
+        return LiftPlan(t.id, t.title, if (test) testOn(items, goal!!) else items, deload, why)
     }
 
     /**
@@ -1081,7 +1088,7 @@ class TrainingRepository(
         val started = db.sets().forWorkout(w.id).map { it.position }.toSet()
         val ex = exercise(exerciseId, store.settingsNow())
         val items = plan.items.map { i ->
-            if (i.exerciseId != exerciseId || i.position in started) i
+            if (i.exerciseId != exerciseId || i.position in started || i.prescription.phase == Phase.TEST) i
             else i.copy(step = ex.step, prescription = i.prescription.weight?.let { wt ->
                 val st = ex.stepAt(wt)
                 i.prescription.copy(weight = (kotlin.math.floor(wt / st + 1e-9) * st).coerceAtLeast(Progression.minWeight(ex, store.profileNow()?.bodyWeightKg ?: 75.0)))

@@ -28,7 +28,11 @@ data class Point(val epochDay: Long, val value: Double)
 data class Records(val bestE1rm: Double, val heaviest: Double, val mostReps: Int, val sessions: Int)
 
 object Stats {
-    private fun rirOf(r: SetRow, plannedRir: Int = 2) = r.rir ?: if (r.targetReps != null && r.reps >= r.targetReps) plannedRir else 0
+    /**
+     * Reps left in a set: as marked, else the plan's reserve for a set at its target — but not for a single (the test of
+     * a max is an attempt to the limit: one rep made is the max, not three).
+     */
+    private fun rirOf(r: SetRow, plannedRir: Int = 2) = r.rir ?: if (r.targetReps != null && r.targetReps > 1 && r.reps >= r.targetReps) plannedRir else 0
 
     /** Best e1RM of each session for one exercise. Sessions with no load (a weighted exercise done at 0 kg) have none. */
     fun e1rmSeries(rows: List<SetRow>, ex: Exercise, bodyWeight: (Long) -> Double): List<Point> =

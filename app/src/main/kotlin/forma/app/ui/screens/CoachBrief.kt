@@ -77,7 +77,8 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
                 else -> " — ещё не начата"
             }
             val plan = runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
-            "- Силовая «${plan?.title ?: s.templateId}»$state" + (plan?.let { p -> ": " + p.items.joinToString("; ") { "${it.name} ${it.prescription.sets}×${it.prescription.reps}" + (it.prescription.weight?.let { w -> " ${Ru.kg(w)} кг" } ?: "") } } ?: "")
+            val going = active?.kind == Kind.LIFT && active.templateId == s.templateId
+            "- Силовая «${plan?.title ?: s.templateId}»$state" + if (going) "" else (plan?.let { p -> ": " + p.items.joinToString("; ") { "${it.name} ${it.prescription.sets}×${it.prescription.reps}" + (it.prescription.weight?.let { w -> " ${Ru.kg(w)} кг" } ?: "") } } ?: "")
         } else {
             val w = runCatching { repo.runFor(s.kind, today, light) }.getOrNull()
             "- Бег «${w?.title}»" + (if (doneToday.any { it.kind == Kind.RUN }) " — пробежка сегодня уже есть" else "") + ": ${w?.note.orEmpty()}"
@@ -174,14 +175,20 @@ internal suspend fun inProgress(repo: TrainingRepository): String = buildString 
     appendLine("## Идёт сейчас: силовая «${plan.title}»")
     appendLine(
         "Начата в $started ($minutes мин назад)" + (if (plan.deload) ", облегчённая" else "") + ". Подходы человек отмечает на экране тренировки, " +
-            "вес следующего подхода вписывает там же; оценку всей тренировки ставит кнопкой «Закончить». Менять её: функции workout_*.",
+            "вес следующего подхода вписывает там же; оценку всей тренировки ставит кнопкой «Закончить». Отметка «сейчас» у упражнения — куда экран переходит сам; " +
+            "человек мог открыть другое упражнение — если он называет его, говори о нём. Менять её: функции workout_*.",
     )
     val by = sets.groupBy { it.position }
     fun count(i: LiftItem) = by[i.position]?.size ?: 0
-    // Now: the exercise of the last set while it has sets left, else the first one with sets left in the day's order.
+    // Now, as the screen goes by itself: the exercise of the last set while it has sets left, else the next one with
+    // sets left after it in the day's order (then from the start). The person may have opened another one.
     val last = sets.lastOrNull()
-    val current = plan.items.firstOrNull { it.position == last?.position && count(it) < it.prescription.sets }
-        ?: plan.items.firstOrNull { count(it) < it.prescription.sets }
+    val lastItem = plan.items.firstOrNull { it.position == last?.position }
+    val current = when {
+        lastItem == null -> plan.items.firstOrNull { count(it) < it.prescription.sets }
+        count(lastItem) < lastItem.prescription.sets -> lastItem
+        else -> plan.items.indexOf(lastItem).let { i -> plan.items.drop(i + 1) + plan.items.take(i) }.firstOrNull { count(it) < it.prescription.sets }
+    }
     for (i in plan.items) {
         val ex = forma.core.model.Catalog[i.exerciseId].let { e -> settings.steps[e.id]?.let { e.copy(step = it, fineStep = null) } ?: e }
         val plate = ex.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS
@@ -243,7 +250,11 @@ private suspend fun exercises(repo: TrainingRepository, today: LocalDate): Strin
                     else -> null
                 },
                 work?.takeIf { w -> p.weight != null && kotlin.math.abs(w - p.weight!!) > 1e-6 }?.let { w ->
-                    "рабочий вес ${if (plate && w > 0) "+" else ""}${Ru.kg(w)} кг$each (на этой тренировке легче)"
+                    "рабочий вес ${if (plate && w > 0) "+" else ""}${Ru.kg(w)} кг$each (" + when {
+                        p.phase == forma.core.strength.Phase.TEST -> "сегодня вместо подходов проверка максимума"
+                        p.weight!! < w -> "на этой тренировке легче"
+                        else -> "на этой тренировке тяжелее"
+                    } + ")"
                 },
                 if (p.weight != null || p.calibrate) "шаг ${Ru.kg(i.step)} кг$each" else null,
                 "отдых ${Ru.clock(i.slot.restSec)}",

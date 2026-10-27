@@ -115,8 +115,17 @@ private const val UNDO_MS = 8_000L
 /** The session to open with "Завершить" asked at once: "Закончить «…»" when another one is started over it. */
 internal var finishOnOpen: Long? = null
 
-/** Weight step around [w] of [ex] as [exerciseOf] gives it: the person's own step, else the exercise's (finer for light dumbbells). */
-private fun stepOf(ex: forma.core.model.Exercise, w: Double): Double = ex.stepAt(w)
+/** The next weight up from [w] on [ex]'s steps ([exerciseOf]): a weight off the steps lands on the next one there is. */
+private fun gridUp(ex: forma.core.model.Exercise, w: Double): Double {
+    val st = ex.stepAt(w)
+    return kotlin.math.floor(w / st + 1e-9) * st + st
+}
+
+/** The next weight down from [w] on [ex]'s steps (finer below the light dumbbells' bound). */
+private fun gridDown(ex: forma.core.model.Exercise, w: Double): Double {
+    val st = ex.stepAt(w - 1e-6)
+    return kotlin.math.ceil(w / st - 1e-9) * st - st
+}
 
 /**
  * The exercise [id] on this gym's weight steps: the person's own step from [steps] (set on the plan, or by the coach
@@ -269,7 +278,7 @@ fun WorkoutScreen(workoutId: Long) {
     if (current < 0 && plan.items.isNotEmpty()) {
         current = plan.items.firstOrNull { count(it.position) < it.prescription.sets }?.position ?: plan.items.first().position
     }
-    val item = plan.items.firstOrNull { it.position == current } ?: plan.items.first()
+    val item = plan.items.firstOrNull { it.position == current } ?: plan.items.firstOrNull { count(it.position) < it.prescription.sets } ?: plan.items.first()
     val ex = exerciseOf(item.exerciseId, stored?.steps, item)
     val inp = input(item)
     val note = stored?.notes?.get(item.exerciseId)
@@ -426,7 +435,7 @@ fun WorkoutScreen(workoutId: Long) {
                         p.phase == forma.core.strength.Phase.TEST -> Hint(
                             "Проверка максимума — день цели. После разминки попытки по 1 разу: " +
                                 p.attempts.orEmpty().joinToString(", потом ") { Texts.weight(ex, it) } +
-                                ". Между ними 3–5 минут, со страховкой. Первая пошла тяжело или не вышла — на этом всё. План упражнения от проверки не меняется.",
+                                ". Между ними 3–5 минут, со страховкой. Отмечай только взятую попытку; первая пошла тяжело или не вышла — на этом всё, жми «Закончить». План упражнения от проверки не меняется.",
                             F.c.accent, Ic.info,
                         )
                         p.phase == forma.core.strength.Phase.TAPER -> Hint(
@@ -604,7 +613,7 @@ fun WorkoutScreen(workoutId: Long) {
                         val weightSlot = StepperSlot(maxOf(weightText, "000,0", compareBy { it.length }), if (ex.assisted) "помощь, кг" else weightUnit) { m ->
                             Stepper(
                                 weightText, weightUnit,
-                                { inp.weight = max(lowest, inp.weight - stepOf(ex, inp.weight - 1e-6)) }, { inp.weight += stepOf(ex, inp.weight) }, m,
+                                { inp.weight = max(lowest, gridDown(ex, inp.weight)) }, { inp.weight = gridUp(ex, inp.weight) }, m,
                                 "Меньше вес", "Больше вес", onLongValue = { typing = true },
                             )
                         }

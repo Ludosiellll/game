@@ -940,7 +940,7 @@ object CoachActions {
                 if (plan.items.any { it.exerciseId == ex.id }) return no("«${ex.name}» уже есть в этой тренировке.")
                 val spec = TrainingRepository.addedSpec(ex.id)
                 auto("Сегодня в «${plan.title}» добавлено «${ex.name}»: ${spec.sets} × ${spec.repMin}–${spec.repMax}, в конце. План не меняется.") {
-                    repo.addToWorkout(w.id, ex.id, forever = false)
+                    check(repo.addToWorkout(w.id, ex.id, forever = false)) { "not added" }
                     val at = repo.db.workouts().get(w.id)?.let { repo.planOf(it) }?.items?.lastOrNull { it.exerciseId == ex.id }?.position
                     CoachCall("undo_now_add", args("workout" to w.id, "position" to at, "id" to ex.id))
                 }
@@ -957,7 +957,7 @@ object CoachActions {
                 val risk = goalRisk(it0)
                 val text = withRisk("Сегодня вместо «${it0.name}» — «${to.name}». План не меняется.", risk)
                 val make: suspend () -> CoachCall? = {
-                    repo.swapExercise(w.id, it0.position, to.id, forever = false)
+                    check(repo.swapExercise(w.id, it0.position, to.id, forever = false)) { "not swapped" }
                     CoachCall("undo_now_swap", args("workout" to w.id, "position" to it0.position, "item" to json(it0), "expect" to to.id))
                 }
                 if (risk == null) auto(text, make) else confirm(text, make)
@@ -971,7 +971,7 @@ object CoachActions {
                 val text = withRisk("Сегодня без «${it0.name}». План не меняется.", risk)
                 val make: suspend () -> CoachCall? = {
                     val index = plan.items.indexOfFirst { it.position == it0.position }
-                    repo.removeFromWorkout(w.id, it0.position, forever = false)
+                    check(repo.removeFromWorkout(w.id, it0.position, forever = false)) { "not removed" }
                     CoachCall("undo_now_remove", args("workout" to w.id, "index" to index, "item" to json(it0)))
                 }
                 if (risk == null) auto(text, make) else confirm(text, make)
