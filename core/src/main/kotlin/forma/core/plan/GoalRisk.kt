@@ -99,6 +99,16 @@ object GoalRisk {
         return out.joinToString(" ").ifEmpty { null }
     }
 
+    /**
+     * The last calf work taken out of the plan with a race goal: the calves push off every stride and guard the Achilles
+     * (Dorn et al. 2012; Mahieu et al. 2006), and squats and presses hardly load them.
+     */
+    fun calvesGone(runGoal: RunGoal?): String? {
+        runGoal ?: return null
+        return "Икры — главный толчок в беге и защита ахилла, а присед и жим ногами их почти не нагружают. Без них к ${runGoalWords(runGoal)} " +
+            "медленнее и выше риск травмы. Если некогда — оставь 2–3 подхода подъёмов на носки раз в неделю."
+    }
+
     /** A race goal set on a week with [runs] runs: none — nothing trains it; one for a middle distance — too little. */
     fun runGoalWithoutRuns(g: RunGoal, runs: Int): String? = when {
         runs == 0 -> "Сейчас в неделе нет бега: с этой целью план бега не появится, к ней не приблизиться. Верни бег в неделю — скажи «верни бег» или в «Ещё → Цель, дни и данные»."

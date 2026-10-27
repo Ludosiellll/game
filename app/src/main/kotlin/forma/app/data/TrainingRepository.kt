@@ -861,7 +861,9 @@ class TrainingRepository(
         val shift = if (ex.load == LoadKind.TIMED || ownRest) 0 else forma.core.strength.RestAdvice.personal(
             db.sets().history(ex.id).groupBy { it.workoutId }.values.flatMap { l ->
                 val target = l.firstOrNull()?.targetReps ?: spec.repMin
-                forma.core.strength.RestAdvice.pairsOf(l.sortedBy { it.doneAt }.map { DoneSet(it.weight, it.reps, it.rir) to it.doneAt }, target)
+                forma.core.strength.RestAdvice.pairsOf(l.sortedBy { it.doneAt }.map { DoneSet(it.weight, it.reps, it.rir) to it.doneAt }, target) {
+                    Progression.effectiveLoad(ex, it, profile.bodyWeightKg)
+                }
             },
             spec.restSec,
         )

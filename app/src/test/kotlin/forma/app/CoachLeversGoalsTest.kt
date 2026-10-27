@@ -182,6 +182,18 @@ class CoachLeversGoalsTest {
 
     // ---------- 8. A gym goal asked on a week without the gym: refused with a hint that points the wrong way ----------
 
+    /** «Не хочу тренировать икры» with a 1500 m goal: the last calf work out of the plan is said to cost the race. */
+    @Test fun theRunnersLastCalfWorkTakenOutIsSaid() = runBlocking<Unit> {
+        val calves = CoachActions.places(repo).filter { forma.core.model.Catalog[it.exerciseId].pattern == forma.core.model.Pattern.CALF }
+        assertTrue(calves.size >= 2, "a runner's plan holds standing and seated calf raises: ${calves.map { it.exerciseId }}")
+        // One of two out: nothing to say; the last one: «Важно» with what keeps the goal.
+        val first = ready(call(CoachActions.REMOVE, "exercise" to calves[0].exerciseId))
+        assertTrue("Важно" !in first.text, first.text)
+        CoachActions.make(repo, first)
+        val last = ready(call(CoachActions.REMOVE, "exercise" to calves[1].exerciseId))
+        assertTrue("Важно:" in last.text && "ахилл" in last.text && "1500 м" in last.text, last.text)
+    }
+
     @Test fun aGymGoalOnAWeekWithoutTheGymPointsToTheWeek() = runBlocking<Unit> {
         CoachActions.make(repo, ready(call(CoachActions.WEEK, "sides" to "run")))
         val no = refused(call(CoachActions.GYM_GOAL, "exercise" to "bench", "kg" to 100))

@@ -696,9 +696,12 @@ object CoachActions {
                 if (found.any { p -> all.count { it.templateId == p.templateId } <= 1 }) return no("Это последнее упражнение тренировки — его не убрать.")
                 val goal = repo.store.profileNow()?.liftGoal?.takeIf { it.exerciseId == found.first().exerciseId }
                 val rest = goal?.let { g -> all.filter { x -> x.exerciseId == g.exerciseId && found.none { it.templateId == x.templateId && it.key == x.key } } }.orEmpty()
+                // The last calf work out of a runner's plan is said too (the calves are the push-off of every stride).
+                val calf = { id: String -> Catalog[id].pattern == forma.core.model.Pattern.CALF }
+                val calvesLeft = all.count { x -> calf(x.exerciseId) && found.none { it.templateId == x.templateId && it.key == x.key } }
                 val risk = goal?.let { g ->
                     GoalRisk.liftGone(g, name(g.exerciseId), rest.size) ?: GoalRisk.liftHeavyGone(g, name(g.exerciseId), rest.map { it.tuned.repMin to it.tuned.repMax })
-                }
+                } ?: if (calf(found.first().exerciseId) && calvesLeft == 0) GoalRisk.calvesGone(repo.store.profileNow()?.runGoal) else null
                 val where = when {
                     found.size > 1 -> "из плана (во всех тренировках, где оно есть)."
                     a.str("session") != null && all.count { it.exerciseId == found.first().exerciseId } > 1 -> "из «${found.first().title}»."

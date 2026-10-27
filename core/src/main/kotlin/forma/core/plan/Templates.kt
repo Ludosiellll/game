@@ -94,8 +94,13 @@ object Templates {
         val upperA = build(aim, exp, "upper_a", "Верх · А", Focus.UPPER,
             "bench" to M, (if (novice) "cable_row" else "row") to M, "db_shoulder" to S, "lat_pulldown" to S,
             "db_curl" to A, "pushdown" to A)
+        // A runner's calves (the push-off of every stride, the Achilles' guard — Dorn et al. 2012, Mahieu et al. 2006):
+        // standing and seated (the soleus), so the week keeps the advisor's own floor of 4 sets after the runner's cut.
         val lowerA = build(aim, exp, "lower_a", "Низ · А", Focus.LOWER,
-            "squat" to M, "rdl" to S, (if (runner) "bulgarian" else "leg_press") to S, "leg_curl" to A, "calf_raise" to A, "plank" to A)
+            *listOfNotNull(
+                "squat" to M, "rdl" to S, (if (runner) "bulgarian" else "leg_press") to S, "leg_curl" to A, "calf_raise" to A,
+                if (runner) "seated_calf" to A else null, "plank" to A,
+            ).toTypedArray())
         val upperB = build(aim, exp, "upper_b", "Верх · Б", Focus.UPPER,
             "ohp" to M, (if (novice) "lat_pulldown" else "pullup") to M, "db_incline" to S, "cable_row" to S,
             "lateral_raise" to A, "hammer_curl" to A)
