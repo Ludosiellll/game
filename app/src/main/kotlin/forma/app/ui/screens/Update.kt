@@ -58,6 +58,10 @@ fun UpdateDialog(state: Updater.State, onLater: () -> Unit) {
     val context = LocalContext.current
     val busy = state is Updater.State.Downloading || state is Updater.State.Installing
     fun go(u: forma.app.update.Update) = Updater.start(context, u)
+    // Downloaded for the phone's own installer (Xiaomi): it opens by itself once, again on «Открыть установщик».
+    if (state is Updater.State.Ready) {
+        androidx.compose.runtime.LaunchedEffect(state) { Updater.openInstaller(context) }
+    }
     // Back from the system's settings with installs allowed: the update goes on without another tap.
     if (state is Updater.State.NeedsPermission) {
         androidx.lifecycle.compose.LifecycleResumeEffect(state) {
@@ -100,7 +104,15 @@ fun UpdateDialog(state: Updater.State, onLater: () -> Unit) {
                             "Если телефон спросит «Установить?», нажми «Установить».",
                         style = T.body(15.sp),
                     )
-                    is Updater.State.Failed -> Text(state.why, style = T.body(15.sp).copy(color = F.c.warn))
+                    is Updater.State.Ready -> Text(
+                        "Обновление скачано и проверено. Сейчас откроется установщик телефона — нажми в нём «Обновить» " +
+                            "(или «Установить»). Не появился или закрыл — нажми «Открыть установщик».",
+                        style = T.body(15.sp),
+                    )
+                    is Updater.State.Failed -> {
+                        Text(state.why, style = T.body(15.sp).copy(color = F.c.warn))
+                        state.detail?.let { Text(it, style = T.secondary(12.sp)) }
+                    }
                     Updater.State.Idle -> {}
                 }
             }
@@ -121,8 +133,17 @@ fun UpdateDialog(state: Updater.State, onLater: () -> Unit) {
                         }, Modifier.fillMaxWidth())
                         GhostButton("Позже", onLater, Modifier.fillMaxWidth())
                     }
+                    is Updater.State.Ready -> {
+                        PrimaryButton("Открыть установщик", { if (!Updater.openInstaller(context)) go(state.update) }, Modifier.fillMaxWidth())
+                        GhostButton("Позже", onLater, Modifier.fillMaxWidth())
+                    }
                     is Updater.State.Failed -> {
-                        PrimaryButton("Попробовать ещё раз", { go(state.update) }, Modifier.fillMaxWidth())
+                        if (state.system) {
+                            PrimaryButton("Открыть установщик", { if (!Updater.openInstaller(context)) go(state.update) }, Modifier.fillMaxWidth())
+                            GhostButton("Попробовать ещё раз", { go(state.update) }, Modifier.fillMaxWidth())
+                        } else {
+                            PrimaryButton("Попробовать ещё раз", { go(state.update) }, Modifier.fillMaxWidth())
+                        }
                         GhostButton("Позже", onLater, Modifier.fillMaxWidth())
                     }
                     else -> {}

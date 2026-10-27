@@ -36,7 +36,9 @@ data class Update(val versionCode: Long, val notes: List<String>, val apkUrl: St
  *
  * Android asks the person once to allow installs from the app, and on the first update to confirm. From Android 12 on, an
  * app updating itself may skip the confirmation ([PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED], with the
- * `UPDATE_PACKAGES_WITHOUT_USER_ACTION` permission): later updates go on one tap.
+ * `UPDATE_PACKAGES_WITHOUT_USER_ACTION` permission): later updates go on one tap. Xiaomi's HyperOS refuses that (Denis:
+ * «скачалось, а потом пишет установка отменена»): there the file opens in the phone's own installer, and a refused
+ * silent session anywhere is asked again with the confirmation, then handed to that installer.
  */
 object Updater {
     /** The latest release of the repository the builds are published to (no key: the repository is public). */
@@ -50,7 +52,13 @@ object Updater {
         data class NeedsPermission(val update: Update) : State
         data class Downloading(val update: Update, val done: Float) : State
         data class Installing(val update: Update) : State
-        data class Failed(val update: Update, val why: String) : State
+        /**
+         * Downloaded and checked, for the phone's own installer to put in (Xiaomi: HyperOS refuses an app installing
+         * itself, the installer that opens an APK file is let through); the screen opens it, again on a tap.
+         */
+        data class Ready(val update: Update) : State
+        /** [system]: the downloaded file can still go through the phone's own installer ([openInstaller]). */
+        data class Failed(val update: Update, val why: String, val system: Boolean = false, val detail: String? = null) : State
     }
 
     val state = MutableStateFlow<State>(State.Idle)
@@ -65,6 +73,23 @@ object Updater {
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
 
     private var checked = false
+
+    /** The checked APK of the last attempt (for the phone's own installer), and how its session was asked for. */
+    @Volatile internal var file: File? = null
+    @Volatile internal var asking = false
+    /** The system's «Установить?» was shown for the session going on: an abort after it is the person's «Отмена». */
+    @Volatile internal var confirmShown = false
+
+    /**
+     * Xiaomi, Redmi, POCO (MIUI, HyperOS): an app installing itself through a session is refused ("INSTALL_FAILED_ABORTED:
+     * Permission denied") even with the person's confirmation; the phone's installer opening the file works, as for
+     * any APK opened from a chat or the files.
+     */
+    fun systemInstallerOnly(manufacturer: String = Build.MANUFACTURER, brand: String = Build.BRAND): Boolean =
+        listOf(manufacturer, brand).any { it.lowercase() in setOf("xiaomi", "redmi", "poco") }
+
+    /** Installs [file] (or opens it for the phone's installer); swapped in tests. */
+    internal var installer: (Context, File, Boolean) -> Unit = { c, f, ask -> install(c, f, ask) }
 
     /** The installed build. */
     val installed: Long get() = BuildConfig.VERSION_CODE.toLong()
@@ -159,10 +184,56 @@ object Updater {
             state.value = State.Failed(u, it)
             return
         }
-        state.value = State.Installing(u)
-        runCatching { install(context, file) }.onFailure {
-            state.value = State.Failed(u, "Не получилось начать установку. Попробуй ещё раз.")
+        installChecked(context, u, file)
+    }
+
+    /** The checked [file] of [u] into the phone: its own installer on Xiaomi, a silent session elsewhere. */
+    internal fun installChecked(context: Context, u: Update, file: File) {
+        this.file = file
+        if (systemInstallerOnly()) {
+            state.value = State.Ready(u)
+            return
         }
+        state.value = State.Installing(u)
+        session(context, u, ask = false)
+    }
+
+    /** A session for [file]: silent where Android allows it, or with the system's «Установить?» when [ask]. */
+    private fun session(context: Context, u: Update, ask: Boolean) {
+        val f = file ?: return
+        asking = ask
+        confirmShown = false
+        runCatching { installer(context, f, ask) }.onFailure {
+            state.value = State.Failed(u, "Не получилось начать установку. Открой установщик телефона.", system = true)
+        }
+    }
+
+    /**
+     * The install ended in an abort the person did not choose (no «Установить?» was shown): a phone that refuses an app
+     * updating itself silently is asked again with the confirmation; refused again, the phone's own installer.
+     * [detail]: the system's own words, kept for the screen.
+     */
+    fun aborted(context: Context, u: Update, detail: String?) {
+        when {
+            confirmShown -> state.value = State.Failed(u, "Установка отменена. Нажми «Попробовать ещё раз» или открой установщик телефона.", system = file != null, detail = detail)
+            !asking -> {
+                state.value = State.Installing(u)
+                session(context.applicationContext, u, ask = true)
+            }
+            else -> state.value = State.Ready(u)
+        }
+    }
+
+    /**
+     * The checked APK opened in the phone's own installer (as an APK file from a chat or the files is): «Обновить» there
+     * puts it in. False when there is no file to open (the app was restarted: download again).
+     */
+    fun openInstaller(context: Context): Boolean {
+        val f = file?.takeIf { it.exists() } ?: return false
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", f)
+        val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        return runCatching { context.startActivity(i) }.isSuccess
     }
 
     /** The APK into the app's cache (older ones taken away), reporting the share done. */
@@ -226,12 +297,14 @@ object Updater {
      * Into the system installer as a session: the result comes to [UpdateReceiver] (the confirmation to show, or how it
      * ended). Android 12+: no confirmation needed when the app updates itself.
      */
-    fun install(context: Context, file: File) {
+    fun install(context: Context, file: File, ask: Boolean = false) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)
             setSize(file.length())
-            if (Build.VERSION.SDK_INT >= 31) setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            if (Build.VERSION.SDK_INT >= 31) {
+                setRequireUserAction(if (ask) PackageInstaller.SessionParams.USER_ACTION_REQUIRED else PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            }
         }
         val id = installer.createSession(params)
         installer.openSession(id).use { session ->
@@ -249,6 +322,10 @@ object Updater {
     /** Back to before a check (tests). */
     internal fun reset() {
         checked = false
+        file = null
+        asking = false
+        confirmShown = false
+        installer = { c, f, ask -> install(c, f, ask) }
         later.value = false
         asked.value = false
         state.value = State.Idle

@@ -133,6 +133,73 @@ class UpdaterTest {
         assertTrue("отменена" in f.why, f.why)
     }
 
+    private fun apkInCache(): File = File(ctx.cacheDir, "updates").apply { mkdirs() }.let { File(it, "forma-test.apk").apply { writeText("apk") } }
+
+    /**
+     * Denis's Redmi (HyperOS): «скачалось, а потом пишет установка отменена» — HyperOS refuses an app's own session
+     * ("INSTALL_FAILED_ABORTED: Permission denied"). On Xiaomi, Redmi, POCO the checked file goes to the phone's own
+     * installer (as an APK opened from a chat): no session at all.
+     */
+    @Test fun onXiaomiTheUpdateOpensInThePhonesInstaller() {
+        assertTrue(Updater.systemInstallerOnly("Xiaomi", "Redmi"))
+        assertTrue(Updater.systemInstallerOnly("Xiaomi", "POCO"))
+        assertFalse(Updater.systemInstallerOnly("Google", "google"))
+        val u = Update(Updater.installed + 1, emptyList(), "https://x/a.apk", 1)
+        val sessions = mutableListOf<Boolean>()
+        Updater.installer = { _, _, ask -> sessions += ask }
+        org.robolectric.shadows.ShadowBuild.setManufacturer("Xiaomi")
+        Updater.installChecked(ctx, u, apkInCache())
+        assertEquals(Updater.State.Ready(u), Updater.state.value)
+        assertTrue(sessions.isEmpty(), "no session on Xiaomi: $sessions")
+        assertTrue(Updater.openInstaller(ctx))
+        val open = assertNotNull(shadowOf(ApplicationProvider.getApplicationContext<android.app.Application>()).nextStartedActivity)
+        assertEquals(Intent.ACTION_VIEW, open.action)
+        assertEquals("application/vnd.android.package-archive", open.type)
+        assertEquals("content", open.data?.scheme)
+        assertTrue(open.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+    }
+
+    /**
+     * Elsewhere a silent session first; refused without the confirmation shown (the person chose nothing) — asked again
+     * with «Установить?»; refused again — the phone's installer. The system's words stay on the screen.
+     */
+    @Test fun aRefusedSilentInstallIsAskedAgainThenGoesToThePhonesInstaller() {
+        val u = Update(Updater.installed + 1, emptyList(), "https://x/a.apk", 1)
+        val sessions = mutableListOf<Boolean>()
+        Updater.installer = { _, _, ask -> sessions += ask }
+        org.robolectric.shadows.ShadowBuild.setManufacturer("Google")
+        org.robolectric.shadows.ShadowBuild.setBrand("google")
+        Updater.installChecked(ctx, u, apkInCache())
+        assertEquals(listOf(false), sessions)
+        fun aborted() = UpdateReceiver().onReceive(
+            ctx,
+            Intent(UpdateReceiver.ACTION_RESULT).putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE_ABORTED)
+                .putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, "INSTALL_FAILED_ABORTED: Permission denied"),
+        )
+        aborted()
+        assertEquals(listOf(false, true), sessions, "asked again with the confirmation")
+        assertIs<Updater.State.Installing>(Updater.state.value)
+        aborted()
+        assertEquals(Updater.State.Ready(u), Updater.state.value)
+        // A failure of another kind: said, with the system's words and the phone's installer offered.
+        UpdateReceiver().onReceive(
+            ctx,
+            Intent(UpdateReceiver.ACTION_RESULT).putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+                .putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, "INSTALL_FAILED_INTERNAL_ERROR"),
+        )
+        val f = assertIs<Updater.State.Failed>(Updater.state.value)
+        assertTrue(f.system)
+        assertEquals("INSTALL_FAILED_INTERNAL_ERROR", f.detail)
+    }
+
+    /** The phone's installer on the screen: said what to press there, with «Открыть установщик» if it did not show. */
+    @Test fun theReadyWindowSaysToPressUpdateInThePhonesInstaller() {
+        val u = Update(Updater.installed + 1, emptyList(), "https://x/a.apk", 1)
+        compose.setContent { FormaTheme(Looks.byId("carbon")) { UpdateDialog(Updater.State.Ready(u)) {} } }
+        compose.onNodeWithText("откроется установщик телефона", substring = true).assertExists()
+        compose.onNodeWithText("Открыть установщик", ignoreCase = true).assertExists()
+    }
+
     @Test fun theWindowSaysWhatIsNewAndLaterClosesIt() {
         val u = Update(Updater.installed + 1, listOf("Обновления прямо в приложении."), "https://x/a.apk", 1)
         var later = false

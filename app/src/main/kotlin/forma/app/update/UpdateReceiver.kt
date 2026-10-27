@@ -32,17 +32,23 @@ class UpdateReceiver : BroadcastReceiver() {
             is Updater.State.Installing -> s.update
             is Updater.State.Downloading -> s.update
             is Updater.State.Failed -> s.update
+            is Updater.State.Ready -> s.update
             else -> null
         }
+        // The system's own words ("INSTALL_FAILED_ABORTED: Permission denied"), kept small on the screen.
+        val detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)?.takeIf { it.isNotBlank() }
         when (val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 // The first update (or Android before 12): the system's own «Установить?», shown over the app.
                 IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)?.let {
+                    Updater.confirmShown = true
                     context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
             }
             PackageInstaller.STATUS_SUCCESS -> {}
-            else -> if (u != null) Updater.state.value = Updater.State.Failed(u, why(status))
+            // Not the person's «Отмена» unless the confirmation was shown: asked again, then the phone's installer.
+            PackageInstaller.STATUS_FAILURE_ABORTED -> if (u != null) Updater.aborted(context, u, detail)
+            else -> if (u != null) Updater.state.value = Updater.State.Failed(u, why(status), system = Updater.file != null, detail = detail)
         }
     }
 
