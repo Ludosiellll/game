@@ -342,6 +342,14 @@ class SettingsStore(context: Context, name: String = "forma") {
         }
     }
 
+    /** The review of a workout dropped: its rating, laps or the workout itself changed, so its words may no longer hold. */
+    suspend fun clearCoachReview(workoutId: Long) {
+        store.edit { p ->
+            val now = p[Keys.coachReviews]?.let { runCatching { AppJson.decodeFromString(reviews, it) }.getOrNull() } ?: return@edit
+            if (workoutId in now) p[Keys.coachReviews] = AppJson.encodeToString(reviews, now - workoutId)
+        }
+    }
+
     private val reviews: KSerializer<Map<Long, String>> =
         kotlinx.serialization.builtins.MapSerializer(Long.serializer(), String.serializer())
 

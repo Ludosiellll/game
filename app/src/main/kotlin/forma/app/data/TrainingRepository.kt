@@ -1090,6 +1090,7 @@ class TrainingRepository(
     /** Deletes a finished workout; the cloud copy (and friends' feeds) lose it on the next sync. */
     suspend fun deleteWorkout(id: Long) {
         db.workouts().delete(id)
+        store.clearCoachReview(id)
         onChange()
     }
 
@@ -1898,6 +1899,8 @@ class TrainingRepository(
         val w = db.workouts().get(workoutId)?.takeIf { it.status == Status.DONE } ?: return@withLock false
         val r = rpe.coerceIn(1, 10)
         if (w.rpe == r) return@withLock false
+        // The coach's review spoke of the rating and what it decided: asked again when shown next.
+        store.clearCoachReview(workoutId)
         val load = TrainingLoad.sessionLoad(r, (w.durationSec ?: 0) / 60.0)
         if (w.kind == Kind.LIFT) {
             val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
@@ -1931,6 +1934,8 @@ class TrainingRepository(
         val w = db.workouts().get(workoutId) ?: return
         val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() } ?: return
         db.workouts().update(w.copy(summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary.copy(laps = laps))))
+        // A review of the laps before they were put right (a double press read as a fast lap): asked again when shown next.
+        store.clearCoachReview(workoutId)
         val r = db.runs().get(workoutId)
         val lapM = r?.let { runCatching { AppJson.decodeFromString(RunWorkout.serializer(), it.planJson).lapMeters }.getOrNull() }
         if (r != null && lapM != null && summary.laps.isNotEmpty()) {

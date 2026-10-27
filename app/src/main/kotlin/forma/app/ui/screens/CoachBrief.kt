@@ -4,6 +4,7 @@ import forma.app.BuildConfig
 import forma.app.data.AppJson
 import forma.app.data.BackupManager
 import forma.app.data.CoachActions
+import forma.app.data.Feel
 import forma.app.data.Kind
 import forma.app.data.LiftPlan
 import forma.app.data.RunSummary
@@ -54,21 +55,45 @@ internal const val COACH_RESEARCH = """## Исследования, на кот�
 suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today(), reportChars: Int = 28_000): String {
     val program = repo.store.programNow()
     val settings = repo.store.settingsNow()
-    val todayLines = program?.week?.on(today.dayOfWeek.value).orEmpty().map { s ->
+    // The day as the Today screen has it: a pause has no sessions, «Так себе» makes them lighter, «Болею» none.
+    val feel = settings.feelOn(today)
+    val paused = repo.paused(settings, today)
+    val light = feel == Feel.LOW
+    val todayLines = if (paused) emptyList() else program?.week?.on(today.dayOfWeek.value).orEmpty().map { s ->
         if (s.kind == SessionKind.LIFT) {
-            val plan = runCatching { repo.liftPlan(s.templateId!!, today) }.getOrNull()
+            val plan = runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
             "- Силовая «${plan?.title ?: s.templateId}»" + (plan?.let { p -> ": " + p.items.joinToString("; ") { "${it.name} ${it.prescription.sets}×${it.prescription.reps}" + (it.prescription.weight?.let { w -> " ${Ru.kg(w)} кг" } ?: "") } } ?: "")
         } else {
-            val w = runCatching { repo.runFor(s.kind, today) }.getOrNull()
+            val w = runCatching { repo.runFor(s.kind, today, light) }.getOrNull()
             "- Бег «${w?.title}»: ${w?.note.orEmpty()}"
         }
     }
+    val easyLeft = repo.easyAfterSick(today)
+    val liftAfterSick = repo.liftAfterSick(today)
     val b = BackupManager(repo).snapshot(points = false)
-    val feel = TrainingReport.feelWords(settings.feels)
-    val report = withContext(Dispatchers.Default) { TrainingReport.build(b, today, BuildConfig.VERSION_NAME, feel) }
+    val feels = TrainingReport.feelWords(settings.feels)
+    val report = withContext(Dispatchers.Default) { TrainingReport.build(b, today, BuildConfig.VERSION_NAME, feels) }
     return buildString {
         appendLine("Сегодня ${Ru.date(today)} ${today.year}.")
-        appendLine(if (todayLines.isEmpty()) "По плану сегодня отдых." else "По плану сегодня:\n" + todayLines.joinToString("\n"))
+        when {
+            paused -> appendLine("Сегодня пауза в плане до ${Ru.date(LocalDate.ofEpochDay(settings.pauseUntil!!))}: тренировок по плану нет.")
+            feel == Feel.SICK -> appendLine("Сегодня человек отметил «Болею»: тренироваться не нужно, приложение предлагает отдых или паузу.")
+            feel == Feel.LOW -> appendLine("Сегодня самочувствие «Так себе»: тренировки дня облегчены — в силовой вдвое меньше подходов и вес на 10 % легче, бег только лёгкий (ниже уже облегчённые).")
+            feel == Feel.GOOD -> appendLine("Сегодня самочувствие «Хорошо».")
+            else -> {}
+        }
+        if (easyLeft > 0 || liftAfterSick) {
+            appendLine(
+                "После болезни: " + listOfNotNull(
+                    if (easyLeft > 0) "ещё $easyLeft ${Ru.plural(easyLeft, "пробежка", "пробежки", "пробежек")} только лёгкие" else null,
+                    if (liftAfterSick) "первая силовая облегчённая" else null,
+                ).joinToString(", ") + ".",
+            )
+        }
+        if (!paused) {
+            val head = if (feel == Feel.SICK) "По плану было (человек болеет, не делает):" else "По плану сегодня:"
+            appendLine(if (todayLines.isEmpty()) "По плану сегодня отдых." else head + "\n" + todayLines.joinToString("\n"))
+        }
         appendLine()
         if (settings.coachNotes.isNotEmpty()) {
             appendLine("## Что ты знаешь о человеке (запомнено)")
@@ -108,6 +133,9 @@ private suspend fun exercises(repo: TrainingRepository, today: LocalDate): Strin
         for (i in plan.items) {
             val p = i.prescription
             val stat = repo.db.state().stat(i.exerciseId)
+            // The working weight the levers reason from (set_working_weight compares with it): in a lighter week, after
+            // being sick or on a «Так себе» day the session's weight is less, and that is not the weight to raise or cut.
+            val work = repo.db.state().slot(i.slot.key)?.weight
             val ex = forma.core.model.Catalog.find(i.exerciseId)
             // A plate on pull-ups is on top of the body; the estimate is of the whole load: said so, or 0 vs 85 kg reads as room.
             val plate = ex?.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS
@@ -120,6 +148,9 @@ private suspend fun exercises(repo: TrainingRepository, today: LocalDate): Strin
                     p.weight != null && plate -> if (p.weight!! < 0) "помощь ${Ru.kg(-p.weight!!)} кг" else "следующий вес +${Ru.kg(p.weight!!)} кг к весу тела"
                     p.weight != null -> "следующий вес ${Ru.kg(p.weight!!)} кг$each"
                     else -> null
+                },
+                work?.takeIf { w -> p.weight != null && kotlin.math.abs(w - p.weight!!) > 1e-6 }?.let { w ->
+                    "рабочий вес ${if (plate && w > 0) "+" else ""}${Ru.kg(w)} кг$each (на этой тренировке легче)"
                 },
                 if (p.weight != null || p.calibrate) "шаг ${Ru.kg(i.step)} кг$each" else null,
                 "отдых ${Ru.clock(i.slot.restSec)}",

@@ -351,7 +351,8 @@ object CoachActions {
                 if (!st.canRunContinuously) return no("Пока бег чередуется с ходьбой: длину ведёт лестница приложения.")
                 val middle = repo.store.profileNow()?.runGoal?.middleDistance == true
                 val cap = ProgramGenerator.runCaps(program, middle).easyMax
-                val longest = st.longestRecent(today.toEpochDay())
+                // Today's run counts (the next easy run is after it), as the plan counts it and as the summary says.
+                val longest = st.longestRecent(today.toEpochDay() + 1)
                 // The week's growth counts from before the coach's first change this week: calls in a row do not add up.
                 val earlier = recent("undo_easy")
                 val base = earlier.minByOrNull { it.at }?.undo?.args?.int("minutes") ?: st.easyMinutes
@@ -595,9 +596,18 @@ object CoachActions {
                         for (t in ts) repo.replaceAdded(t, p.exerciseId, to.id)
                         CoachCall("undo_swap_added", args("from" to to.id, "to" to p.exerciseId, "templates" to JsonArray(ts.map { JsonPrimitive(it) })))
                     } else {
-                        val old = repo.store.settingsNow().swaps[p.planId]
+                        val was = repo.store.settingsNow()
+                        val old = was.swaps[p.planId]
                         repo.setSwap(p.planId, to.id)
-                        CoachCall("undo_swap", args("plan" to p.planId, "to" to old, "expect" to to.id))
+                        // A heavy lift swapped for a single-joint one drops the person's own sets, reps and rest: kept to
+                        // come back with it.
+                        CoachCall(
+                            "undo_swap",
+                            args(
+                                "plan" to p.planId, "to" to old, "expect" to to.id,
+                                "sets" to was.sets[p.planId], "reps" to ints(was.reps[p.planId]), "rest" to was.rest[p.planId],
+                            ),
+                        )
                     }
                 }
             }
@@ -804,7 +814,23 @@ object CoachActions {
             }
             "undo_swap" -> {
                 val plan = a.str("plan")!!
-                if (repo.store.settingsNow().swaps[plan] != a.str("expect")) false else { repo.setSwap(plan, a.str("to")); true }
+                if (repo.store.settingsNow().swaps[plan] != a.str("expect")) false
+                else {
+                    repo.setSwap(plan, a.str("to"))
+                    val sets = a.int("sets")
+                    val reps = a.ints("reps")
+                    val rest = a.int("rest")
+                    if (sets != null || reps != null || rest != null) {
+                        repo.updateSettings { st ->
+                            st.copy(
+                                sets = sets?.let { st.sets + (plan to it) } ?: st.sets,
+                                reps = reps?.let { st.reps + (plan to it) } ?: st.reps,
+                                rest = rest?.let { st.rest + (plan to it) } ?: st.rest,
+                            )
+                        }
+                    }
+                    true
+                }
             }
             "undo_swap_added" -> {
                 val ts = (a["templates"] as JsonArray).map { (it as JsonPrimitive).content }

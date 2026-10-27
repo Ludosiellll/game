@@ -71,12 +71,29 @@ object CoachTalk {
      */
     fun history(chat: List<CoachChatMsg>): List<CoachTurn> {
         val turns = chat.takeLast(TURNS).mapNotNull { m ->
-            val text = if (m.mine) m.text else m.said ?: m.text
+            // What the app did with the coach's changes as it stands now, not as it was when it answered: a declined or
+            // accepted card is not "waiting" any more.
+            val text = when {
+                m.mine -> m.text
+                m.acts.isNotEmpty() -> (note(m.acts) + m.text).trim()
+                else -> m.said ?: m.text
+            }
             text.takeIf { it.isNotBlank() }?.let { CoachTurn(if (m.mine) CoachTurn.USER else CoachTurn.MODEL, it) }
         }.dropWhile { it.role != CoachTurn.USER }
         return turns.fold(emptyList()) { acc, t ->
             val last = acc.lastOrNull()
             if (last != null && last.role == t.role) acc.dropLast(1) + last.copy(text = last.text + "\n\n" + t.text) else acc + t
+        }
+    }
+
+    /** "[Приложение — …]": what became of each of the coach's changes, as the model is told before its own words. */
+    private fun note(acts: List<CoachChatAct>): String = if (acts.isEmpty()) "" else acts.joinToString("; ", "[Приложение — ", "]\n") { a ->
+        when (a.state) {
+            CoachActState.DONE -> "сделано: ${a.text}"
+            CoachActState.PENDING -> "ждёт «Принять»: ${a.text}"
+            CoachActState.DECLINED -> "человек отказался: ${a.text}"
+            CoachActState.UNDONE -> "было сделано, человек вернул как было: ${a.text}"
+            CoachActState.REFUSED -> "не сделано: ${a.text}"
         }
     }
 
@@ -97,17 +114,10 @@ object CoachTalk {
             // «Новый разговор» while the answer was on its way: the talk it answers is gone, and so are its changes.
             if (repo.store.coachChatNow().none { it.id == mine.id }) return CoachChatMsg(nextId(repo), false, reply.text)
             val acts = change { reply.calls.map { act(repo, it) } }
-            val notes = acts.map { a ->
-                when (a.state) {
-                    CoachActState.DONE -> "сделано: ${a.text}"
-                    CoachActState.PENDING -> "ждёт «Принять»: ${a.text}"
-                    else -> "не сделано: ${a.text}"
-                }
-            }
             // What the app did goes first (a long answer is cut at its end on the way to the model), and words of the model
             // dressed as the app's are dropped: only the app says what was done.
             val text = reply.text.lines().filterNot { it.trimStart().startsWith("[Приложение") }.joinToString("\n").trim()
-            val said = ((if (notes.isEmpty()) "" else "[Приложение — ${notes.joinToString("; ")}]\n") + text).trim()
+            val said = (note(acts) + text).trim()
             val msg = CoachChatMsg(nextId(repo), false, text, acts, said)
             repo.store.editCoachChat { it + msg }
             return msg
