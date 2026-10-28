@@ -1,0 +1,81 @@
+name: Rules on random people
+
+# The rules every plan must keep for anybody (core/src/test/kotlin/forma/core/fuzz, app/.../sim/LivesRulesTest), run
+# on new random cases each time: the engine's rules for 90 s each, then people living weeks of the app for 20 minutes.
+# Free on GitHub's runners for a public repository; nobody needs to watch it. A broken rule opens an issue with the
+# smallest case and how to run it again (once per rule while the issue is open).
+#
+# «schedule» runs only from the repository's default branch: with this branch as the default, it runs every night too.
+on:
+  push:
+    branches: [claude/nifty-lamport-9i1c9o]
+  schedule:
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+# One run at a time; a newer push waits for it rather than cutting it short.
+concurrency:
+  group: rules-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: The engine's rules (gym, running), new cases
+        env:
+          FORMA_FUZZ_SEED: ${{ github.run_id }}
+          FORMA_FUZZ_SECONDS: '90'
+        run: ./gradlew :core:test --tests 'forma.core.fuzz.*' --rerun-tasks --continue
+
+      - name: People living weeks of the app
+        if: ${{ !cancelled() }}
+        env:
+          FORMA_FUZZ_SEED: ${{ github.run_id }}
+          FORMA_LIVES_SECONDS: '1200'
+        run: ./gradlew :app:testDebugUnitTest --tests 'forma.app.sim.LivesRulesTest' -Proborazzi.test.record=true
+
+      - name: How many cases
+        if: ${{ !cancelled() }}
+        run: |
+          echo "### Проверено случаев (набор ${{ github.run_id }})" >> "$GITHUB_STEP_SUMMARY"
+          cat core/build/fuzz/counts.txt app/build/fuzz/counts.txt 2>/dev/null | awk -F'\t' '{print "- " $1 ": " $2}' >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: An issue for each rule broken
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for f in core/build/fuzz/*.txt app/build/fuzz/*.txt; do
+            [ -f "$f" ] || continue
+            case "$(basename "$f")" in counts.txt) continue ;; esac
+            title="Правило нарушено: $(basename "$f" .txt)"
+            open=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq 'length')
+            if [ "$open" = "0" ]; then
+              { cat "$f"; echo; echo "Прогон: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"; } > body.md
+              gh issue create --title "$title" --body-file body.md
+            fi
+          done
+
+      - uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: rules-cases
+          path: |
+            core/build/fuzz/
+            app/build/fuzz/
+          if-no-files-found: ignore

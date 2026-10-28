@@ -373,7 +373,9 @@ object RunPlan {
     fun held(w: RunWorkout, r: RunResult): Held? {
         val tm = w.testMeters ?: return null
         val lapM = w.lapMeters
-        fun counted(m: Double, sec: Double) = m >= tm / 2.0 - 1e-6 && sec >= HELD_MIN_SEC && sec / (m / 1000) in PLAUSIBLE_PACE
+        // By distance, not by time: a floor in seconds let a stretch run 2 % faster fall under it, and the longer one with
+        // the fade in it counted instead — faster, a lower fitness.
+        fun counted(m: Double, sec: Double) = m >= max(tm / 2.0, HELD_MIN_M) - 1e-6 && sec / (m / 1000) in PLAUSIBLE_PACE
         if (lapM == null) {
             val d = r.workDistanceM ?: return null
             val sec = (r.workSec ?: return null).toDouble()
@@ -411,8 +413,8 @@ object RunPlan {
         return reps.sumOf { it.seconds }.roundToInt().takeIf { it > 0 }
     }
 
-    /** The shortest stretch of a time trial that counts as a measure of it (see [held]). */
-    const val HELD_MIN_SEC = 180.0
+    /** The shortest stretch of a time trial that counts as a measure of it, besides half of it (see [held]). */
+    const val HELD_MIN_M = 600.0
 
     /** Tempo ladder: (repeats, work seconds, recovery seconds) at threshold pace. */
     private val TEMPO = listOf(
@@ -1038,8 +1040,10 @@ object RunPlan {
         // A run made lighter for a bad day counts as running, but moves no ladder.
         if (w.light) return RunAfter(s, out)
         when (w.type) {
-            RunType.RUN_WALK -> {
-                val stage = state.walkStage.coerceAtLeast(0)
+            // Running without a break already (a run/walk session saved late, for a day before the graduation): it moves
+            // nothing — the ladder is done, and a session done in full must not put the runner back on it.
+            RunType.RUN_WALK -> if (state.walkStage >= 0) {
+                val stage = state.walkStage
                 s = when {
                     // Done in full: the runner's own scale counts (a whole session done is the proof).
                     done && rpe <= 6 -> {
@@ -1180,15 +1184,29 @@ object RunPlan {
                     val sec = r.workSec ?: w.workSeconds
                     val raw = when {
                         t != null -> Vdot.fromRace(tm.toDouble(), t.toDouble())
-                        w.lapMeters == null && done && d != null && d >= tm * 0.8 && sec > 0 && sec / (d / 1000) in PLAUSIBLE_PACE -> Vdot.fromRace(d, sec.toDouble())
+                        // Run to the end of its time: the distance in it is the result, however short of the trial's (a
+                        // runner slower than the plan) — 79 % kept the form, 81 % lowered it. Half of it at least: less
+                        // is GPS lost more likely than a runner that slow.
+                        w.lapMeters == null && done && d != null && d >= tm * 0.5 && sec > 0 && sec / (d / 1000) in PLAUSIBLE_PACE -> Vdot.fromRace(d, sec.toDouble())
                         else -> null
                     }
                     // What was held from the start: faded after it, the whole time underrates the runner; stopped or
                     // walked, it is all there is. On the road the GPS distance in the trial's time is the same run as
-                    // the time typed, not a stretch of it: only without a time does it stand in.
-                    val part = if (w.lapMeters == null && raw != null) null else held(w, r)
+                    // the time typed, not a stretch of it: only without a time does it stand in. Laps that run the whole
+                    // trial in another time than the one typed are no measure either: the time typed is the runner's
+                    // correction of them (a press late or missed) — they gave «the first 1500 m» of a 1500 m trial in
+                    // 3:45 over the 4:04 typed.
+                    // Brought to it in proportion (the error spread over the laps) rather than trusted or dropped on a few
+                    // seconds: a stretch that counted at 2 s apart and vanished at 3 moved the fitness by 6.
+                    val lapsTime = trialLapsTime(w, r.laps)
+                    val read = if (r.testSeconds != null && lapsTime != null && lapsTime != r.testSeconds) {
+                        r.copy(laps = r.laps?.map { if (it.rep == 1) it.copy(seconds = it.seconds * r.testSeconds / lapsTime) else it })
+                    } else r
+                    val part = if (w.lapMeters == null && raw != null) null else held(w, read)
                     // Beyond belief next to the fitness known (away far too fast, then a jog): the whole time still counts.
-                    val better = part != null && raw != null && believable(part.vdot, state.vdot) && (part.vdot * 2).roundToInt() > (raw * 2).roundToInt()
+                    // A stretch is a part of the trial: the whole of it is the whole time.
+                    val better = part != null && raw != null && part.meters < tm - 1 && believable(part.vdot, state.vdot) &&
+                        (part.vdot * 2).roundToInt() > (raw * 2).roundToInt()
                     when {
                         raw != null -> {
                             val used = if (better) part!!.vdot else raw

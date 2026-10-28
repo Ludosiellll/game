@@ -330,13 +330,14 @@ object Progression {
     }
 
     /**
-     * Best e1RM of the session. Only sets of 1–12 reps count (estimates from longer ones are unreliable); a reserve of
-     * 5 and more counts as 4 — what it surely was at least: left out, «ещё 5+» gave a lower estimate than «ещё 4» and so
-     * a lighter next target for the same set rated easier. If there are none, every set counts.
+     * Best e1RM of the session. Estimates from sets past 12 reps or 4 in reserve are unreliable (they run high): such a
+     * set counts as 12 reps and 4 in reserve — what it surely was at least. Left out instead, one rep more (13 on the
+     * "+" set) or «ещё 5+» for «ещё 4» gave a lower estimate and a lighter next plan for the set done better. When every
+     * set is past 12 (a range of 15–20), they count as they are.
      */
     fun e1rmOf(ex: Exercise, sets: List<DoneSet>, p: Prescription, bodyWeight: Double): Double? {
         val rated = sets.mapIndexedNotNull { i, s -> if (s.reps > 0) s to assumedRir(s, i, p) else null }
-        val good = rated.filter { (s, _) -> s.reps <= 12 }.map { (s, rir) -> s to min(rir, 4) }.ifEmpty { rated }
+        val good = if (rated.none { (s, _) -> s.reps <= 12 }) rated else rated.map { (s, rir) -> s.copy(reps = min(s.reps, 12)) to min(rir, 4) }
         return good.maxOfOrNull { (s, rir) -> OneRm.estimate(effectiveLoad(ex, s.weight, bodyWeight), s.reps, rir) }
     }
 
@@ -431,7 +432,9 @@ object Progression {
         // The weight of this session is where progress goes on from: heavier sets credited, and a weight the plan made
         // lighter (back after a break) kept — a session held there (fewer sets, stopped early) did not jump back to the
         // weight before the break next time (+15–22 % after a shaky first session back).
-        @Suppress("NAME_SHADOWING") val state = if (abs(w - (state.weight ?: w)) > 1e-9) state.copy(weight = w) else state
+        // The same for the reps: the session's target, where the plan set its own (with the body alone instead of help,
+        // after a break) — a session held at «свой вес × 7» kept the 11 stored with the help, and asked 11 next time.
+        @Suppress("NAME_SHADOWING") val state = if (abs(w - (state.weight ?: w)) > 1e-9 || state.reps != p.reps) state.copy(weight = w, reps = p.reps) else state
         val step = ex.stepAt(w)
         val inc = spec.increment ?: step
         // 85 % of the total load (for assisted exercises that means more help, not 85 % of it).
@@ -439,12 +442,34 @@ object Progression {
         fun floored(x: Double) = if (floor != null) max(x, min(floor, w)) else x
 
         if (lighter == planned.size) {
-            return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.LIGHTER), e1rm)
+            // Every set lighter than the plan: once, the plan stays (another day, plates missing). Again, with the sets
+            // saying the plan is out of reach, it comes to what they support, −10 % at most: the plan stood at 70 for
+            // whoever did 65 × 9 to failure every time, and never met him.
+            val shown = floorTo(supported(e1rm, target, p.rir), step)
+            if (shown < w - 1e-9 && state.misses >= 1) {
+                val to = floored(max(lowest, max(shown, floorTo(lighter(ex, w, bodyWeight), step))))
+                if (to < w - 1e-9) {
+                    // And the reps they support there (with the plan's reserve), no more than the target.
+                    val r = max(1, min(target, kotlin.math.floor(OneRm.rtfAt(e1rm, effectiveLoad(ex, to, bodyWeight)) - p.rir + 1e-9).toInt()))
+                    return Evaluation(SlotState(to, r, 0, 0, sessions, false, cutFrom = w, cutReps = planned.first().reps), Outcome.Reduce(w, to, r), e1rm)
+                }
+            }
+            return Evaluation(state.copy(sessions = sessions, misses = if (shown < w - 1e-9) state.misses + 1 else state.misses), Outcome.Hold(w, target, HoldReason.LIGHTER), e1rm)
         }
         val regularCount = if (p.top) p.sets - 1 else p.sets
         val regular = planned.take(regularCount)
         val top = if (p.top) planned.getOrNull(regularCount) else null
-        val allAtTarget = lighter == 0 && planned.all { it.reps >= target }
+        // The reps of each set as they would be at [w] with the same reserve: a set done heavier (after a hint) and short
+        // of the target is no miss of [w] — 35 × 7 to failure is about 30 × 11. Counted as a miss, the hints' own climb
+        // (30 × 8 with four to spare → 32.5 → 35 × 7) held and reset a lifter at 30 again and again: he never moved on.
+        val equiv = planned.mapIndexed { i, s ->
+            if (s.weight <= w + tol) s.reps else {
+                val rir = assumedRir(s, i, p)
+                val atW = OneRm.rtfAt(OneRm.estimate(effectiveLoad(ex, s.weight, bodyWeight), s.reps, rir), effectiveLoad(ex, w, bodyWeight)) - rir
+                max(s.reps, kotlin.math.floor(atW + 1e-9).toInt())
+            }
+        }
+        val allAtTarget = lighter == 0 && equiv.all { it >= target }
         if (allAtTarget && planned.size < p.sets) {
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.FEWER_SETS), e1rm)
         }
@@ -453,7 +478,7 @@ object Progression {
         // the weight and the target stay (before, this lowered the reps or the weight of whoever did as told). Further
         // short than that is a miss as in any week.
         val introNear = max(target - 2, kotlin.math.ceil(target * 0.75).toInt())
-        if (p.intro && !hitAll && lighter == 0 && planned.size >= p.sets && planned.all { it.reps >= introNear }) {
+        if (p.intro && !hitAll && lighter == 0 && planned.size >= p.sets && equiv.all { it >= introNear }) {
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.INTRO), e1rm)
         }
 
@@ -490,6 +515,11 @@ object Progression {
                     }
                     val r = min(spec.repMax + OVERFLOW, target + min(3, max(2, (spare ?: 3) - 1)))
                     if (r > target) return Evaluation(SlotState(w, r, 0, 0, sessions, state.linear), Outcome.AddReps(w, target, r), e1rm)
+                    // The reps are at their most here and the next weight is out of the range's reach: the next weight at
+                    // the reps the estimate gives there, built up from below the range — not these reps at it (5 × 23 went
+                    // to 7.5 × 23, a set of 26 to failure where the estimate saw 16).
+                    val below = max(1, expectedNext.toInt())
+                    return Evaluation(SlotState(w + inc, below, 0, 0, sessions, state.linear), Outcome.AddWeight(w, w + inc, below), e1rm)
                 }
                 val cap = floorTo(w * (if (novice) 1.15 else 1.10), step)
                 val to = max(w + step, min(floorTo(supported(e1rm, target, p.rir), step), cap))
@@ -543,8 +573,8 @@ object Progression {
         if (atW.isNotEmpty() && atW.count { s -> s.rir != null && s.reps + s.rir >= target + p.rir } * 2 > atW.size) {
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.STOPPED_EARLY), e1rm)
         }
-        val first = planned.firstOrNull { it.weight >= w - tol }?.reps ?: 0
-        val deficit = planned.sumOf { if (it.weight < w - tol) 1 else max(0, target - it.reps) }
+        val first = planned.indexOfFirst { it.weight >= w - tol }.let { if (it < 0) 0 else equiv[it] }
+        val deficit = planned.indices.sumOf { i -> if (planned[i].weight < w - tol) 1 else max(0, target - equiv[i]) }
         val stalls = state.stalls + 1
         val near = first >= target - 1 && deficit <= max(1, p.sets - 1)
         val cutFrom = state.cutFrom
@@ -558,30 +588,32 @@ object Progression {
         if (target > spec.repMin && !(near && stalls < 2)) {
             // Room in the rep range: bring the rep target down to what was done before touching the weight
             // (double progression: the weight goes down only when even the bottom of the range is out of reach).
-            val doneAtW = planned.filter { it.weight >= w - tol }.map { it.reps }
+            val doneAtW = planned.indices.filter { planned[it].weight >= w - tol }.map { equiv[it] }
             val r = max(spec.repMin, min(target - 1, doneAtW.minOrNull() ?: spec.repMin))
             return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
         }
         if (w <= lowest + 1e-9 && !(near && stalls < 2)) {
             // Already at the lightest load (own body weight, the most help, the empty bar): the weight cannot come
             // down, so the rep target goes below the range to what was done and climbs from there.
-            val doneAtW = planned.filter { it.weight >= w - tol }.map { it.reps }
+            val doneAtW = planned.indices.filter { planned[it].weight >= w - tol }.map { equiv[it] }
             val r = max(1, min(target - 1, doneAtW.minOrNull() ?: 1))
             if (r < target) {
                 return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps),
                     Outcome.LowerReps(w, target, r), e1rm)
             }
         }
-        if (near) {
-            if (stalls >= 3) {
-                val to = floored(max(lowest, floorTo(lighter(ex, w, bodyWeight), step)))
-                // Already the lightest load: it cannot step back, the target stays.
-                if (to >= w - 1e-9) {
-                    return Evaluation(SlotState(w, target, stalls, 0, sessions, state.linear, cutFrom = state.cutFrom, cutReps = state.cutReps),
-                        Outcome.Hold(w, target, HoldReason.NEAR_MISS), e1rm)
-                }
+        // The third session in a row without progress: −10 % and the range's bottom (Starting Strength's reset) — after a
+        // clear miss as after a near one: a clear miss had cut less than a near one (−2.5 kg for 72.5 × 3, −7.5 for × 4).
+        if (stalls >= 3) {
+            val to = floored(max(lowest, floorTo(lighter(ex, w, bodyWeight), step)))
+            if (to < w - 1e-9) {
                 return Evaluation(SlotState(to, spec.repMin, 0, 0, sessions, false, cutFrom = w, cutReps = first), Outcome.Reset(w, to, spec.repMin), e1rm)
             }
+            // Already the lightest load: it cannot step back, the target stays.
+            if (near) return Evaluation(SlotState(w, target, stalls, 0, sessions, state.linear, cutFrom = state.cutFrom, cutReps = state.cutReps),
+                Outcome.Hold(w, target, HoldReason.NEAR_MISS), e1rm)
+        }
+        if (near) {
             return Evaluation(SlotState(w, target, stalls, 0, sessions, state.linear, cutFrom = state.cutFrom, cutReps = state.cutReps),
                 Outcome.Hold(w, target, HoldReason.NEAR_MISS), e1rm)
         }
