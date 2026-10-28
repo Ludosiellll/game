@@ -188,7 +188,7 @@ object TrainingReport {
                 if (st.dips.isEmpty()) appendLine(LoadExplain.noDips(8))
                 else {
                     appendLine("Провалы свежести (сначала новые):")
-                    st.dips.sortedByDescending { it.from }.forEach { appendLine("- ${LoadExplain.dip(it)}") }
+                    st.dips.sortedByDescending { it.from }.forEach { appendLine("- ${LoadExplain.dip(it, st.today.formPct)}") }
                 }
                 appendLine()
             }

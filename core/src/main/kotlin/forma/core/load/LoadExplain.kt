@@ -104,7 +104,7 @@ object LoadExplain {
         w.ratio?.takeIf { w.level != Level.NONE && w.level != Level.ONGOING }?.let {
             append(" · ${r(it * 100)} % от обычной" + if (w.soFar) " к этому дню" else "")
         }
-        w.lowestPct?.let { append(" · свежесть до ${Ru.pct(it)}") }
+        w.lowestPct?.let { append(" · самая низкая свежесть ${Ru.pct(it)}") }
     }
 
     /** What the week level means; null when there is nothing to say. */
@@ -120,11 +120,17 @@ object LoadExplain {
         "Твоя обычная неделя — около ${n(it)}. Это середина последних четырёх недель с тренировками. «Выше обычной» — до +30 %, больше — уже скачок."
     }
 
-    fun dip(d: LoadStory.Dip): String {
-        val low = if (d.from == d.to) "до ${Ru.pct(d.lowestPct)}" else "до ${Ru.pct(d.lowestPct)} (${Ru.date(d.lowestDay)})"
+    /**
+     * A dip in words. Its lowest is a morning's (the day before's numbers), dated so: not to be read as the freshness now,
+     * which [now] says (today's, as «Сегодня» shows it) while the dip goes on.
+     */
+    fun dip(d: LoadStory.Dip, now: Double? = null): String {
+        val low = "самая низкая — ${Ru.pct(d.lowestPct)} (утром ${Ru.date(d.lowestDay)})"
         val rest = if (d.restDays > 0) "дней без тренировок: ${d.restDays}" else "без дня отдыха"
-        return if (d.recovered == null) "С ${Ru.date(d.from)} ты ниже линии отдыха, $low. Сейчас нужен отдых: день-два или лёгкая тренировка ($rest)."
-        else "${Ru.dates(d.from, d.to)} свежесть падала $low — нужен был отдых. Пришёл в норму к ${Ru.date(d.recovered)}, $rest."
+        return if (d.recovered == null) {
+            "С ${Ru.date(d.from)} ты ниже линии отдыха: $low" + (now?.let { ", сейчас ${Ru.pct(it)}" } ?: "") +
+                ". Нужен отдых: день-два или лёгкая тренировка ($rest)."
+        } else "${Ru.dates(d.from, d.to)} свежесть падала ниже линии отдыха, $low — нужен был отдых. Пришёл в норму к ${Ru.date(d.recovered)}, $rest."
     }
 
     fun noDips(weeks: Int) = "За ${Ru.weeks(weeks)} ни разу не опускался ниже линии отдыха — нагрузка была по силам."

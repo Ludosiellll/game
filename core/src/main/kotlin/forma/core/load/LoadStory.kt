@@ -214,7 +214,9 @@ object LoadStory {
             if (below && start == null) start = i
             if (!below && start != null) close(i - 1, d.date)
         }
-        if (start != null) close(window.lastIndex, null)
+        // Still under the line this morning, but today's freshness (the one «Сегодня» shows: the day as it ends, rest
+        // included) is above it again: over, recovered today — never "below the line now" next to a value above it.
+        if (start != null) close(window.lastIndex, if (pctOn(now)?.let { it >= personal.restBelow } == true) today else null)
 
         val lastTraining = loads.filter { it.value > 0 && !it.key.isAfter(today) }.keys.maxOrNull()
         return Story(

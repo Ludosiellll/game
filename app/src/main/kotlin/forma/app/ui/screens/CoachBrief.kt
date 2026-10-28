@@ -113,6 +113,13 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             val head = if (feel == Feel.SICK) "По плану было (человек болеет, не делает):" else "По плану сегодня:"
             appendLine(if (todayLines.isEmpty()) "По плану сегодня отдых." else head + "\n" + todayLines.joinToString("\n"))
         }
+        // Freshness now, the number «Сегодня» shows: said first, so a dip's lowest or a week's below is not taken for it.
+        repo.loadStoryNow(today)?.takeIf { it.history }?.let { st ->
+            appendLine(
+                "Свежесть сейчас: ${Ru.pct(st.today.formPct)} (как на экране «Сегодня»; это число на сегодня, а не вчерашнее). " +
+                    "В разделе «Нагрузка и восстановление» ниже минимумы — прошлых дней.",
+            )
+        }
         val now = inProgress(repo)
         if (now.isNotEmpty()) {
             appendLine()

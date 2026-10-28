@@ -501,7 +501,7 @@ private fun LoadTab() {
             if (st.dips.isEmpty()) Text(LoadExplain.noDips(8), style = T.body(14.sp))
             else st.dips.reversed().forEachIndexed { i, d ->
                 if (i > 0) Hairline()
-                Text(LoadExplain.dip(d), style = T.body(14.sp).copy(color = if (d.recovered == null) F.c.warn else F.c.text))
+                Text(LoadExplain.dip(d, st.today.formPct), style = T.body(14.sp).copy(color = if (d.recovered == null) F.c.warn else F.c.text))
             }
         }
     }
