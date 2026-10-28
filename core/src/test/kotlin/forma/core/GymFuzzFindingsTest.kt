@@ -232,6 +232,63 @@ class GymFuzzFindingsTest {
         assertTrue(atLeast(at.state, heavier.state), "${at.outcome} / ${heavier.outcome}")
     }
 
+    @Test fun oneHeavySetDoesNotJumpTheRepsByMoreThanThree() {
+        // Reverse flies 5 × 4 planned, one set of 8 × 4 after a hint among them: not 6 × 10 next.
+        val ex = Catalog["reverse_fly"]
+        val spec = SlotSpec(ex.id, 5, 6, 11, 3, 60, SlotRole.SECONDARY)
+        val st = SlotState(5.0, 4, stalls = 1, misses = 2, sessions = 31, linear = true)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 86.4, topRir = 1)
+        val e = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(5.0, 4), DoneSet(5.0, 4), DoneSet(8.0, 4), DoneSet(5.0, 4), DoneSet(6.0, 4, 0)), 86.4)
+        assertTrue(e.state.reps <= 4 + 3, "${e.outcome}")
+    }
+
+    @Test fun afterACutTheRepsAreMetAtTheWeakestSet() {
+        // Hip thrusts cut from 45 (4 reps there), 35 × 9: 9 then 4 kept × 9, 9 then 5 lowered it to × 5.
+        val ex = Catalog["machine_hip_thrust"]
+        val spec = SlotSpec(ex.id, 2, 5, 10, 3, 90, SlotRole.ACCESSORY)
+        val st = SlotState(35.0, 9, stalls = 2, sessions = 34, linear = true, steady = 3, cutFrom = 45.0, cutReps = 4)
+        val p = Progression.prescribe(ex, spec, st, rirOffset = 1, bodyWeight = 90.4, topRir = 1)
+        fun next(second: Int) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(35.0, 9), DoneSet(35.0, second)), 90.4)
+        val four = next(4)
+        val five = next(5)
+        assertTrue(five.state.reps >= four.state.reps - 1, "${four.outcome} / ${five.outcome}")
+    }
+
+    @Test fun setsDoneHeavierThanThePlanAreNoStall() {
+        // Diamond push-ups +10 × 8 planned on the third stall: 10, 10, 12.5 × 8, 8, 7 added a rep; the same a step heavier
+        // (12.5, 12.5, 15) reset to +2.5.
+        val ex = Catalog["diamond_pushup"]
+        val spec = SlotSpec(ex.id, 3, 10, 10, 3, 60, SlotRole.ACCESSORY)
+        val st = SlotState(10.0, 8, stalls = 3, misses = 2, sessions = 28, steady = 1)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 104.4, topRir = 1)
+        fun next(a: Double, b: Double) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(a, 8), DoneSet(a, 8), DoneSet(b, 7)), 104.4)
+        val at = next(10.0, 12.5)
+        val heavier = next(12.5, 15.0)
+        assertTrue(atLeast(at.state, heavier.state), "${at.outcome} / ${heavier.outcome}")
+    }
+
+    @Test fun aBeginnersDoubleStepOnlyWhereTheRepsAreThere() {
+        // Smith squats 50 × 8 with 2 left: not 55 × 8, 6.9 there to failure.
+        val ex = Catalog["smith_squat"]
+        val spec = SlotSpec(ex.id, 1, 6, 7, 0, 120, SlotRole.SECONDARY)
+        val st = SlotState(50.0, 8, stalls = 1, misses = 2, sessions = 2, linear = true, steady = 1)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 54.3, novice = true)
+        val e = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(50.0, 8, 2)), 54.3, novice = true)
+        val there = OneRm.rtfAt(e.e1rm!!, Progression.effectiveLoad(ex, e.state.weight!!, 54.3))
+        assertTrue(e.state.reps <= there + 1, "${e.outcome}, ${"%.1f".format(there)} there")
+    }
+
+    @Test fun moreHelpAgainAndAgainLowersTheRepsWhereHelpCannotGrow() {
+        // Dips with 7.5 kg of help × 17 planned, done with 15 — again: not 7.5 × 17 held, 14.7 there to failure.
+        val ex = Catalog["dip"]
+        val spec = SlotSpec(ex.id, 1, 15, 16, 0, 120, SlotRole.SECONDARY)
+        val st = SlotState(-7.5, 17, stalls = 3, misses = 2, sessions = 17, steady = 1, cutFrom = 5.0, cutReps = 3)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 109.7, topRir = 1)
+        val e = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(-15.0, 17)), 109.7)
+        val there = OneRm.rtfAt(e.e1rm!!, Progression.effectiveLoad(ex, e.state.weight!!, 109.7))
+        assertTrue(e.state.reps <= there + 1, "${e.outcome}, ${"%.1f".format(there)} there")
+    }
+
     @Test fun aTestDayFirstTimeFindsTheWeight() {
         val ex = Catalog["incline_pushup"]
         val spec = SlotSpec(ex.id, 1, 4, 8, 2, 90, SlotRole.ACCESSORY)

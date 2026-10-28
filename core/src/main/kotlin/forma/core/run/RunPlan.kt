@@ -1236,9 +1236,13 @@ object RunPlan {
                     // A lap walked or a press missed is no reason to read the laps apart from the time typed: they are
                     // brought to it all the same (dropped there, a trial run 2 % faster had its stretch 5 % slower).
                     val lapsTime = lapsToTheEnd(w, r.laps)
-                    val read = if (r.testSeconds != null && lapsTime != null && lapsTime != r.testSeconds) {
-                        r.copy(laps = r.laps?.map { if (it.rep == 1) it.copy(seconds = it.seconds * r.testSeconds / lapsTime) else it })
-                    } else r
+                    val read = when {
+                        r.testSeconds == null || lapsTime == null || lapsTime == r.testSeconds -> r
+                        // Laps far from the time typed (by more than a sixth: 13 min of laps, 7 typed) are no record of
+                        // that trial at all — brought to it, a lap turned into a "doubled press" for a trial 2 % faster.
+                        abs(lapsTime.toDouble() / r.testSeconds - 1) > 0.15 -> r.copy(laps = null)
+                        else -> r.copy(laps = r.laps?.map { if (it.rep == 1) it.copy(seconds = it.seconds * r.testSeconds / lapsTime) else it })
+                    }
                     val part = if (w.lapMeters == null && raw != null) null else held(w, read)
                     // A stretch is a part of the trial: the whole of it is the whole time.
                     val better = part != null && raw != null && part.meters < tm - 1 && (part.vdot * 2).roundToInt() > (raw * 2).roundToInt()

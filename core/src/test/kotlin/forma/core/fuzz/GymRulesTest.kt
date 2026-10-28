@@ -233,7 +233,11 @@ class GymRulesTest {
         val e = eval(c)
         if (e.outcome == Outcome.NotDone) return@check null
         val s = e.state
-        val est = listOfNotNull(e.e1rm, c.recentBest).maxOrNull() ?: return@check null
+        // The engine's own estimate counts a set past 12 reps as 12 (it runs high there): low on purpose for its weights,
+        // too low to say what is doable — 112.5 × 14 to failure read as 11.4 at 115. The sets themselves, unrated ones
+        // read as to failure, say it too.
+        val shownEst = c.done.filter { it.reps > 0 }.maxOfOrNull { OneRm.estimate(Progression.effectiveLoad(c.ex, it.weight, c.bw), it.reps, it.rir ?: 0) }
+        val est = listOfNotNull(e.e1rm, c.recentBest, shownEst).maxOrNull() ?: return@check null
         // Every set lighter than the plan, the first time: the plan stays (the next such time it comes down). The block's
         // first week asked more in reserve: a rep or two short of it keeps the plan by design (unrated sets short of the
         // target read as to failure there, which they were not).

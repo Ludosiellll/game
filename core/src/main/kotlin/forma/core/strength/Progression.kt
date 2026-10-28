@@ -453,6 +453,13 @@ object Progression {
                     val r = max(1, min(target, kotlin.math.floor(OneRm.rtfAt(e1rm, effectiveLoad(ex, to, bodyWeight)) - p.rir + 1e-9).toInt()))
                     return Evaluation(SlotState(to, r, 0, 0, sessions, false, cutFrom = w, cutReps = planned.first().reps), Outcome.Reduce(w, to, r), e1rm)
                 }
+                // The weight cannot come down (no help for whoever does five alone, the floor of the weeks' best): the reps
+                // do, to what the sets support at it — dips with 15 kg of help instead of 7.5, again and again, kept 7.5 × 17
+                // where 14.7 were there to failure.
+                val r = max(1, min(target, kotlin.math.floor(OneRm.rtfAt(e1rm, effectiveLoad(ex, w, bodyWeight)) - p.rir + 1e-9).toInt()))
+                if (r < target) {
+                    return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
+                }
             }
             return Evaluation(state.copy(sessions = sessions, misses = if (shown < w - 1e-9) state.misses + 1 else state.misses), Outcome.Hold(w, target, HoldReason.LIGHTER), e1rm)
         }
@@ -512,7 +519,9 @@ object Progression {
                     // otherwise a few more reps with this weight.
                     val expectedNext = OneRm.rtfAt(e1rm, effectiveLoad(ex, w + inc, bodyWeight)) - p.rir
                     if (expectedNext >= spec.repMin - 1) {
-                        val r = expectedNext.toInt().coerceIn(max(1, spec.repMin - 1), max(spec.repMin, spec.repMax - 1))
+                        // Three reps over the target at most, as more reps go: one heavy set after a hint (8 × 4 among
+                        // 5 × 4) took 5 × 4 to 6 × 10, where the same sets a step heavier went to 6 × 6.
+                        val r = min(target + 3, expectedNext.toInt().coerceIn(max(1, spec.repMin - 1), max(spec.repMin, spec.repMax - 1)))
                         return Evaluation(SlotState(w + inc, r, 0, 0, sessions, state.linear), Outcome.AddWeight(w, w + inc, r), e1rm)
                     }
                     val r = min(spec.repMax + OVERFLOW, target + min(3, max(2, (spare ?: 3) - 1)))
@@ -551,7 +560,9 @@ object Progression {
                 return Evaluation(SlotState(w, r, 0, 0, sessions, state.linear), Outcome.AddReps(w, target, r), e1rm)
             }
             if (linear && !(stuck && rated)) {
-                val to = min(w + inc * (if (plenty) 2 else 1), max(w + inc, floorTo(w * 1.10, step)))
+                // Two steps only where the estimate has the reps there (50 × 8 with 2 left went to 55 × 8, 6.9 to failure).
+                val two = plenty && OneRm.rtfAt(e1rm, effectiveLoad(ex, w + 2 * inc, bodyWeight)) >= target
+                val to = min(w + inc * (if (two) 2 else 1), max(w + inc, floorTo(w * 1.10, step)))
                 return Evaluation(SlotState(to, target, 0, 0, sessions, true), Outcome.AddWeight(w, to, target), e1rm)
             }
             if (target < spec.repMax) {
@@ -582,15 +593,19 @@ object Progression {
         }
         val first = planned.indexOfFirst { it.weight >= w - tol }.let { if (it < 0) 0 else equiv[it] }
         val deficit = planned.indices.sumOf { i -> if (planned[i].weight < w - tol) 1 else max(0, target - equiv[i]) }
-        val stalls = state.stalls + 1
+        // Done heavier than the plan is progress, whatever the reps: no stall to count toward a reset (12.5, 12.5, 15 × 8,
+        // 8, 7 with 10 × 8 planned reset to 2.5 on the fourth "stall", where the same sets at 10, 10, 12.5 added a rep).
+        val stalls = if (w > p.weight + 1e-9) 1 else state.stalls + 1
         val near = first >= target - 1 && deficit <= max(1, p.sets - 1)
         val cutFrom = state.cutFrom
         val doneMin = planned.indices.filter { planned[it].weight >= w - tol }.minOfOrNull { equiv[it] } ?: spec.repMin
         if (cutFrom != null && w < cutFrom - 1e-9 && doneMin <= (state.cutReps ?: 0)) {
             // The weight already came down and the reps did not come up — in any set: the weight is not what limits.
-            // Keep it and meet the lifter at the reps they do; progress starts again from there. Judged on the first set
-            // alone, a rep more in it (7 then 2, cut at 6) lowered the target to 2 where 6 then 2 kept it at 6.
-            val r = max(1, min(target, first))
+            // Keep it and meet the lifter at the reps they do — the weakest set's, as a rep target lowered anywhere —
+            // progress starts again from there. Judged on the first set alone, a rep more in it (7 then 2, cut at 6)
+            // lowered the target to 2 where 6 then 2 kept it at 6; met at the first set's reps, a rep more in the second
+            // (9 then 5, cut at 4) lowered it to 5 where 9 then 4 kept 9.
+            val r = max(1, min(target, doneMin))
             return Evaluation(state.copy(reps = r, stalls = 0, misses = 0, sessions = sessions, linear = false, steady = 0),
                 Outcome.Hold(w, r, HoldReason.NOT_THE_WEIGHT), e1rm)
         }

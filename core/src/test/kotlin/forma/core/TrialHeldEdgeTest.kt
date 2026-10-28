@@ -101,6 +101,25 @@ class TrialHeldEdgeTest {
     }
 
     /**
+     * Laps far from the time typed (13 min of laps on 400 m for a 1500 m typed as 7:07) are no record of that trial: the
+     * whole time counts alone. Brought to it, the second lap fell under half its time for the trial 2 % faster — "a press
+     * doubled" — and the fitness came out 2 lower.
+     */
+    @Test fun lapsFarFromTheTimeTypedAreNoRecordOfIt() {
+        val known = RunState(walkStage = -1, vdot = 32.5)
+        val g = RunGoal(1500, 415)
+        val w = RunPlan.goalTest(known, g, 400)
+        val laps = listOf(89.1, 117.7, 239.2, 331.6)
+        fun after(scale: Double): Double {
+            val ls = laps.mapIndexed { i, s -> Lap(s * scale, number = i + 1, of = 4, rep = 1, part = if (i == 0) 0.75 else 1.0) }
+            return RunPlan.after(known, w, RunResult(1.0, 10, 1222, laps = ls, testSeconds = (427 * scale).roundToInt()), caps, day = 20, goal = g).state.vdot!!
+        }
+        val slower = after(1.0)
+        val faster = after(0.98)
+        assertTrue(faster >= slower, "slower $slower, faster $faster")
+    }
+
+    /**
      * A trial 2 % faster never gives a lower fitness: a stretch just past belief next to the fitness known (36: 922 m in
      * 3:34 a 43.8, 2 % faster a 44.8) once dropped and the whole time alone counted — 38.5 for the faster trial, 44 for
      * the slower one (found on random runners: run_trial_faster).

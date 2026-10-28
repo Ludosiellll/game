@@ -152,8 +152,9 @@ class ProgressionTest {
     }
 
     @Test fun aCutThatBringsNoRepsMeansItIsNotTheWeight() {
+        // The weight kept, the target met at the weakest set, as any rep target lowered after a miss.
         val st = SlotState(55.0, 5, cutFrom = 60.0, cutReps = 3)
-        assertEquals(Outcome.Hold(55.0, 3, HoldReason.NOT_THE_WEIGHT), eval(st, sets(55.0, 3, 3, 2)).outcome)
+        assertEquals(Outcome.Hold(55.0, 2, HoldReason.NOT_THE_WEIGHT), eval(st, sets(55.0, 3, 3, 2)).outcome)
     }
 
     @Test fun setsDoneLighterAfterAHintCountAsANearMiss() {
