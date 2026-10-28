@@ -106,7 +106,19 @@ data class RunState(
 }
 
 @Serializable
-data class RunLog(val day: Long, val minutes: Int)
+data class RunLog(
+    val day: Long,
+    /** The whole session: warm-up, rests and cool-down included. */
+    val minutes: Int,
+    /**
+     * The running in it, minutes: the runs and the reps (RUN and WORK), not a hard session's warm-up, rests and cool-down
+     * ([RunPlan.runningMinutes]). Null in logs kept before it was counted: the whole session stands for it then.
+     */
+    val running: Int? = null,
+) {
+    /** What the week's running counts of this run ([RunPlan.weekCap]). */
+    val runMinutes: Int get() = running ?: minutes
+}
 
 @Serializable
 data class RunResult(
@@ -574,15 +586,46 @@ object RunPlan {
     }
 
     /**
-     * The longest an easy or long run on [day] may be so that the last 7 days stay within 10 % of the busiest of the three
-     * weeks before (one missed week does not shrink the plan). Null without running in those weeks. Seen in simulations:
-     * a beginner graduating mid-week got a runner's runs on top of the week's run/walk — +60 % in one week.
+     * The longest an easy or long run on [day] may be so that the running of the last 7 days stays within 10 % of the
+     * busiest of the three weeks before (one missed week does not shrink the plan). Null without running in those weeks.
+     * Seen in simulations: a beginner graduating mid-week got a runner's runs on top of the week's run/walk — +60 % in one
+     * week.
+     *
+     * Only running counts ([RunLog.runMinutes]): the cap shortens easy and long runs alone, so a hard session's warm-up,
+     * rests and cool-down counted in full were paid for by the week's easy run (seen: a runner with two hard sessions and
+     * one easy run a week had the easy run cut to 15 minutes, where it could not grow either). And while the log does not
+     * reach back over the three weeks (the first run logged within them), they are not taken as less than the plan's own
+     * week ([ownWeek]): the first weeks with the app are partial — a free run or two — and a runner who logged them must not
+     * be held below one who logged nothing (no cap at all). Once the three weeks are known, they alone are the base: a
+     * runner who missed sessions comes back by 10 % a week, not to the plan's whole week at once (seen in simulations: +78 %
+     * in one week with the plan's week as the base all along).
      */
     fun weekCap(state: RunState, day: Long): Int? {
-        val before = (1..3).map { k -> state.recent.filter { it.day in (day - 7 * k - 6)..(day - 7 * k) }.sumOf { it.minutes } }.maxOrNull() ?: 0
+        val before = (1..3).map { k -> state.recent.filter { it.day in (day - 7 * k - 6)..(day - 7 * k) }.sumOf { it.runMinutes } }.maxOrNull() ?: 0
         if (before == 0) return null
-        val soFar = state.recent.filter { it.day in (day - 6) until day }.sumOf { it.minutes }
-        return maxOf(15, (before * 1.1).toInt() - soFar)
+        val soFar = state.recent.filter { it.day in (day - 6) until day }.sumOf { it.runMinutes }
+        val young = state.recent.minOf { it.day } > day - 21
+        val base = if (young) maxOf(before, ownWeek(state)) else before
+        return maxOf(15, (base * 1.1).toInt() - soFar)
+    }
+
+    /**
+     * The running of a week the plan itself holds at its present lengths, minutes: two easy runs and a long one (a new
+     * runner of base level starts with 25 + 25 + 40). The week cap's base while the runner's log is younger than its
+     * three weeks ([weekCap]).
+     */
+    fun ownWeek(state: RunState): Int = 2 * state.easyMinutes + state.longMinutes
+
+    /**
+     * Minutes of running in a session, for the week's count ([RunLog.running]): an easy, long or free run is running all
+     * through, its time past the plan too; in the others only the runs and reps — as timed, or their share of the session
+     * when it was typed in by hand.
+     */
+    fun runningMinutes(w: RunWorkout, r: RunResult): Int {
+        val minutes = (r.durationSec / 60.0).roundToInt()
+        if (w.workSeconds >= w.totalSeconds) return minutes
+        val sec = r.workSec ?: (r.durationSec.toDouble() * w.workSeconds / w.totalSeconds).roundToInt()
+        return min(minutes, (sec / 60.0).roundToInt())
     }
 
     /** How far ahead of the current race pace the race-pace step is. */
@@ -835,7 +878,7 @@ object RunPlan {
             runs = state.runs + 1,
             // A run saved late (an older day) does not move the last run back: it would look like a break.
             lastRunDay = maxOf(day, state.lastRunDay ?: day),
-            recent = (state.recent + RunLog(day, minutes)).filter { it.day > day - 31 }.takeLast(40),
+            recent = (state.recent + RunLog(day, minutes, runningMinutes(w, r))).filter { it.day > day - 31 }.takeLast(40),
             returnEasy = max(0, state.returnEasy - 1),
         )
         val done = r.completed >= 0.95
