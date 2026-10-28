@@ -97,7 +97,11 @@ class GymRulesTest {
             cutFrom = if (cut || w != null && r.chance(0.1)) w!! + ex.step * r.nextInt(1, 6) else null,
             cutReps = if (cut || r.chance(0.1)) max(1, reps + r.nextInt(-4, 4)) else null,
         )
-        val e1rm = if (w != null && r.chance(0.7)) OneRm.estimate(Progression.effectiveLoad(ex, w, bw), reps, spec.rir) * r.range(0.8, 1.3) else null
+        // Fresh with an estimate: a new rep range of a known exercise (the plan from the estimate, not a search for the
+        // weight) — a path only whole lives had reached.
+        val e1rm = if (w != null && r.chance(0.7)) OneRm.estimate(Progression.effectiveLoad(ex, w, bw), reps, spec.rir) * r.range(0.8, 1.3)
+        else if (w == null && ex.load != LoadKind.TIMED && r.chance(0.6)) OneRm.estimate(Progression.effectiveLoad(ex, weight(r, ex, bw), bw), reps, spec.rir) * r.range(0.8, 1.3)
+        else null
         val ph = phase ?: r.pick(Phase.NORMAL, Phase.NORMAL, Phase.NORMAL, Phase.NORMAL, Phase.NORMAL, Phase.DELOAD, Phase.TAPER, Phase.TEST)
         val p = Progression.prescribe(
             ex, spec, state, ph, rirOffset = if (r.chance(0.15)) 1 else 0, e1rm = e1rm, bodyWeight = bw,
@@ -217,7 +221,7 @@ class GymRulesTest {
         }
     }
 
-    @Test fun gymWhatWasDoneIsNeverLost() = check("gym_done_never_lost", { gen(it, Phase.NORMAL, false) }) { c ->
+    @Test fun gymWhatWasDoneIsNeverLost() = check("gym_done_never_lost", { gen(it, Phase.NORMAL) }) { c ->
         if (!normal(c)) return@check null
         val planned = c.done.filter { it.reps > 0 }.take(c.p.sets)
         val pw = c.p.weight!!

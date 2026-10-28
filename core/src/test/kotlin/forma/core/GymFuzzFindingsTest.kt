@@ -464,6 +464,29 @@ class GymFuzzFindingsTest {
         assertTrue(atLeast(eleven.state, twelve.state), "${eleven.outcome} / ${twelve.outcome}")
     }
 
+    @Test fun aNewRepRangeMadeInFullKeepsItsWeight() {
+        // Rows 6–8, the first time in that range (planned 50 × 6 from the estimate of the 4–6 rows): 50 × 6 with three left
+        // and 52.5 × 6 to failure — not 47.5 × 6 next (found by a whole life, person 587431).
+        val ex = Catalog["row"]
+        val spec = SlotSpec(ex.id, 2, 6, 8, 2, 120, SlotRole.SECONDARY)
+        val fresh = SlotState.fresh(spec)
+        val p = Progression.prescribe(ex, spec, fresh, e1rm = 63.0, bodyWeight = 80.0, rirOffset = -1)
+        assertEquals(50.0, p.weight)
+        val e = Progression.evaluate(ex, spec, fresh, p, listOf(DoneSet(50.0, 6, 3), DoneSet(52.5, 6, 0)), 80.0)
+        assertTrue(e.state.weight!! >= 50.0 && e.state.reps >= 6, "${e.outcome}")
+    }
+
+    @Test fun aFirstTimeInTheTaperKeepsAWeight() {
+        // Leg curls first done in the goal's taper (30 × 5 from the estimate): held, the sets left no weight behind.
+        val ex = Catalog["leg_curl"]
+        val spec = SlotSpec(ex.id, 1, 1, 3, 1, 90, SlotRole.ACCESSORY)
+        val fresh = SlotState(null, 5)
+        val p = Progression.prescribe(ex, spec, fresh, Phase.TAPER, e1rm = 40.0, bodyWeight = 74.1)
+        assertNotNull(p.weight)
+        val e = Progression.evaluate(ex, spec, fresh, p, listOf(DoneSet(p.weight!!, 5)), 74.1)
+        assertNotNull(e.state.weight, "${e.outcome}")
+    }
+
     @Test fun aTestDayFirstTimeFindsTheWeight() {
         val ex = Catalog["incline_pushup"]
         val spec = SlotSpec(ex.id, 1, 4, 8, 2, 90, SlotRole.ACCESSORY)

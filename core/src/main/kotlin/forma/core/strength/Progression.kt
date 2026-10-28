@@ -394,7 +394,9 @@ object Progression {
         // The lightest load to go to: for pull-ups and dips the body alone once this or recent sets show five and more.
         val lowest = lightest(ex, bodyWeight, listOfNotNull(e1rm, recentBest).maxOrNull())
         // The taper and the test serve the goal's day: the weight and the reps to aim for stay as they were.
-        if (p.phase == Phase.TEST && !firstTime || p.phase == Phase.TAPER && !p.calibrate) {
+        // A first time on the goal's days (no weight kept yet, the plan from the estimate) is read like any first time:
+        // held instead, the sets done left no weight behind.
+        if (p.phase == Phase.TEST && !firstTime || p.phase == Phase.TAPER && !firstTime) {
             val reason = if (p.phase == Phase.TAPER) HoldReason.TAPER else HoldReason.TEST
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(state.weight ?: p.weight ?: 0.0, state.reps, reason), e1rm)
         }
@@ -417,6 +419,19 @@ object Progression {
             // pull-ups with the body alone): the reps there with the planned reserve, built up from there — not a
             // target missed session after session.
             val reps = if (raw < low - 1e-9) repsAt(ex, estimate, w, spec.rir, bodyWeight, spec.repMin) else spec.repMin
+            // A plan given (a new rep range of a known exercise, from the estimate) and made in every set at its weight or
+            // heavier: what was done is kept — that weight, those reps at least (more where the estimate has them there).
+            // Read afresh, rows 50 × 6 with three left and 52.5 × 6 to failure went to 47.5 × 6 (the most careful set,
+            // rounded down), kickbacks 3 × 10 twice to 2 × 12, dips with the body × 2 to × 1.
+            // Done heavier, the lowest weight every set reached is what was done, as after any session.
+            val given = p.weight
+            val sets = done.filter { it.reps > 0 }.take(p.sets)
+            val made = given != null && !p.calibrate && sets.size >= p.sets && sets.all { it.weight >= given - ex.stepAt(given) / 2 && it.reps >= p.reps }
+            val reached = if (made) max(given!!, floorTo(sets.minOf { it.weight }, ex.stepAt(given))) else 0.0
+            if (made && (w < reached - 1e-9 || abs(w - reached) < 1e-9 && reps < p.reps)) {
+                val r = max(p.reps, repsAt(ex, estimate, reached, spec.rir, bodyWeight, max(spec.repMax, p.reps)))
+                return Evaluation(SlotState(reached, r, 0, 0, sessions, state.linear), Outcome.Calibrated(reached, r), estimate)
+            }
             return Evaluation(SlotState(w, reps, 0, 0, sessions, state.linear), Outcome.Calibrated(w, reps), estimate)
         }
 
