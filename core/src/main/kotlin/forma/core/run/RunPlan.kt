@@ -146,6 +146,8 @@ data class RunResult(
     val kmSplits: List<Int>? = null,
     /** On a stadium: the loop's length as GPS fitted it in this run (or an earlier one), metres; null when not measured. */
     val loopM: Double? = null,
+    /** On a stadium: the distance GPS measured (the bends cut), when the laps' distance was shown instead; null if none. */
+    val gpsM: Double? = null,
 )
 
 /** A run timed without the phone (a watch, a stopwatch) and entered by hand. */
@@ -886,14 +888,17 @@ object RunPlan {
         val set = w.lapMeters ?: return w to r
         if (meters <= 0 || meters == set) return w to r
         val k = meters.toDouble() / set
-        val fromLaps = r.laps?.takeIf { it.isNotEmpty() }?.let { l -> r.distanceM?.let { d -> abs(d - l.sumOf { it.part } * set) < 1.0 } } == true
+        // The distance from laps — pressed, and those GPS counted around them — is whole half laps of the setting; GPS
+        // metres are not, and stay as measured.
+        val fromLaps = r.distanceM?.let { d -> abs(d / (set / 2.0) - (d / (set / 2.0)).roundToInt()) * (set / 2.0) < 1.0 } == true
         return w.copy(
             lapMeters = meters,
             testMeters = w.testMeters?.let { (it * k).roundToInt() },
             segments = w.segments.map { it.copy(lapSec = it.lapSec?.let { s -> s * k }) },
         ) to r.copy(
             workPace = r.workPace?.let { it / k },
-            distanceM = if (fromLaps) r.distanceM?.let { it * k } else r.distanceM,
+            // The laps on the loop, or GPS where it saw more (a warm-up partly off the loop).
+            distanceM = if (fromLaps) r.distanceM?.let { maxOf(it * k, r.gpsM ?: 0.0) } else r.distanceM,
             // The lap times aimed at, as on the loop: each lap's verdict in the debrief follows.
             laps = r.laps?.map { it.copy(fast = it.fast?.let { f -> f * k }, slow = it.slow?.let { sl -> sl * k }) },
         )

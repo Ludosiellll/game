@@ -157,10 +157,14 @@ object RunReview {
         val (m, sec) = r.trial ?: return null
         val parts = mutableListOf("Контрольный: $m м за ${Ru.clock(sec)}.")
         var tone = 0
-        if (goal != null && abs(m - goal.meters) <= goal.meters * 0.03) {
-            // Over the goal distance at the same pace: a few metres short of 1500 are a second or so. Reached is what the
-            // plan counted (fitness against the goal's, unrounded); the seconds are only to say how far.
-            val est = sec * goal.meters.toDouble() / m
+        // The goal's distance in whole laps — up to 15 % off on a loop shorter than the lap length set (read on the loop GPS
+        // measured, 6,5 laps of 205 m are 1332 m).
+        if (goal != null && abs(m - goal.meters) <= goal.meters * 0.15) {
+            // Over the goal distance at the same pace: a few metres short of 1500 are a second or so; further off, the time
+            // the fitness gives over it. Reached is what the plan counted (fitness against the goal's, unrounded); the
+            // seconds are only to say how far.
+            val est = if (abs(m - goal.meters) <= goal.meters * 0.03) sec * goal.meters.toDouble() / m
+            else Vdot.predictSeconds(Vdot.fromRace(m.toDouble(), sec.toDouble()), goal.meters.toDouble())
             val reached = r.goalReached ?: (est <= goal.seconds)
             val gap = kotlin.math.ceil(est - goal.seconds).toInt().coerceAtLeast(1)
             parts += if (reached) "Это цель: ${goal.meters} м за ${Ru.clock(goal.seconds)} или быстрее!".also { tone = 1 }

@@ -110,12 +110,27 @@ class TrainingRepository(
     suspend fun runsOnOtherLap(): Pair<Int, Int>? {
         val lap = store.profileNow()?.lapMeters ?: return null
         val laps = db.runs().observeAll().first().mapNotNull { run ->
-            runCatching { AppJson.decodeFromString(RunWorkout.serializer(), run.planJson).lapMeters }.getOrNull()
+            runCatching { AppJson.decodeFromString(RunWorkout.serializer(), run.planJson).lapMeters }.getOrNull()?.takeIf { !readOnLoop(run.workoutId) }
         }.filter { it != lap }
         if (laps.isEmpty()) return null
         val old = laps.groupingBy { it }.eachCount().maxBy { it.value }.key
         return laps.count { it == old } to old
     }
+
+    /**
+     * «Оставить»: the lap length set is right, the loop GPS measured is not asked about again for this setting (the runs
+     * are still read on a loop GPS measures clearly shorter: the shorter of the two never makes a runner fitter).
+     */
+    suspend fun keepLapLength() {
+        val set = store.profileNow()?.lapMeters ?: return
+        store.editSettings { it.copy(loopSeen = null, hintsSeen = it.hintsSeen + "$LOOP_KEPT$set") }
+        onChange()
+    }
+
+    /** A saved run read on the loop GPS measured ([RunOutcome.LoopShorter]): stored as run, whatever the setting. */
+    private suspend fun readOnLoop(workoutId: Long): Boolean =
+        db.workouts().get(workoutId)?.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
+            ?.outcomes?.any { it is RunOutcome.LoopShorter } == true
 
     /**
      * The saved runs counted on laps of [old] m counted again on the lap length set now: the history's distance, pace and
@@ -130,6 +145,8 @@ class TrainingRepository(
             if (plan.lapMeters != old) continue
             val w = db.workouts().get(run.workoutId) ?: continue
             val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() } ?: continue
+            // Read on the loop GPS measured already: on the loop as run, not to be counted back onto the setting.
+            if (summary.outcomes.any { it is RunOutcome.LoopShorter }) continue
             val before = forma.core.run.RunResult(run.completed, w.rpe ?: 5, run.movingSec, run.distanceM, run.workPace, run.workDistanceM, laps = summary.laps)
             val (plan2, r) = forma.core.run.RunPlan.onLoop(plan, before, lap)
             db.runs().insert(
@@ -153,14 +170,16 @@ class TrainingRepository(
      * The last run decided again from [workout] and [result] put right (the lap length, the laps): the progress, the stored
      * plan, distance and pace, the outcomes. Only while nothing has been built on it ([LastRun.after] is the state now).
      */
-    private suspend fun redecideLast(last: LastRun, workout: RunWorkout, result: forma.core.run.RunResult) {
+    private suspend fun redecideLast(last: LastRun, workout: RunWorkout, result: forma.core.run.RunResult, keepDistance: Boolean = false) {
         val (next, decided) = decideRun(last.before, workout, result, LocalDate.ofEpochDay(last.day))
         store.setRunState(next)
         store.setLastRun(last.copy(after = next, workout = workout, result = result))
         val (ws, rs) = forma.core.run.RunPlan.onMeasuredLoop(workout, result) ?: (workout to result)
         db.runs().get(last.workoutId)?.let { run ->
             db.runs().insert(
-                run.copy(
+                // A lap edit has just put the distance right on the laps as they are now: it stays.
+                if (keepDistance) run.copy(planJson = AppJson.encodeToString(RunWorkout.serializer(), ws), workPace = rs.workPace, vdotAfter = next.vdot)
+                else run.copy(
                     planJson = AppJson.encodeToString(RunWorkout.serializer(), ws), distanceM = rs.distanceM,
                     avgPace = rs.distanceM?.takeIf { it > 50 }?.let { rs.durationSec / (it / 1000.0) }, workPace = rs.workPace, vdotAfter = next.vdot,
                 ),
@@ -464,6 +483,9 @@ class TrainingRepository(
     // ---------- lifting ----------
 
     companion object {
+        /** [Settings.hintsSeen] key + the lap length: the runner kept it against the loop GPS measured. */
+        const val LOOP_KEPT = "loop_kept_"
+
         /** The review of weights older versions left ([reviewWeights]); a new one when the rules change how sets count. */
         const val WEIGHTS_REVIEW = 1
 
@@ -2284,7 +2306,7 @@ class TrainingRepository(
         val loop = result.loopM
         if (set != null && loop != null && result.loopM != seen?.meters?.toDouble()) {
             val off = outcomes.any { it is RunOutcome.LoopShorter }
-            store.editSettings { it.copy(loopSeen = if (off) LoopSeen(loop.roundToInt(), set) else null) }
+            store.editSettings { s -> s.copy(loopSeen = if (off && "$LOOP_KEPT$set" !in s.hintsSeen) LoopSeen(loop.roundToInt(), set) else null) }
         }
         // 30 minutes of running reached: the week of a beginner (run/walk only) becomes a runner's week — hard sessions,
         // a trial — with the progress kept. Seen in half-year simulations: without it a graduate had easy runs only, and
@@ -2397,10 +2419,12 @@ class TrainingRepository(
         // again on them — the reps' pace, a trial's time.
         val last = store.lastRunNow()?.takeIf { it.workoutId == workoutId && it.after == store.runStateNow() }
         val lapM = last?.workout?.lapMeters
-        if (last != null && lapM != null && last.result.laps?.filter { it.rep != null } != laps.filter { it.rep != null }) {
+        // The reps' times, not their targets (stored on the loop when the run was read on it).
+        fun times(l: List<forma.core.run.Lap>?) = l.orEmpty().filter { it.rep != null }.map { it.rep to it.seconds to it.part }
+        if (last != null && lapM != null && times(last.result.laps) != times(laps)) {
             val pace = forma.core.run.ManualLaps.repPace(laps, lapM)
             val trial = last.workout.testMeters?.let { laps.filter { it.rep == 1 }.sumOf { l -> l.seconds }.takeIf { s -> s > 0 }?.roundToInt() }
-            redecideLast(last, last.workout, last.result.copy(laps = laps, workPace = pace ?: last.result.workPace, testSeconds = trial ?: last.result.testSeconds))
+            redecideLast(last, last.workout, last.result.copy(laps = laps, workPace = pace ?: last.result.workPace, testSeconds = trial ?: last.result.testSeconds), keepDistance = true)
             onChange()
         }
     }

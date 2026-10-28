@@ -21,7 +21,11 @@ object GoalProgress {
 
     data class Result(val trials: List<Trial>, val sessions: List<Session>)
 
-    /** From the finished [workouts] and their [runs], oldest first; trials only over [meters] (within 3 %: whole laps). */
+    /**
+     * From the finished [workouts] and their [runs], oldest first; trials only over [meters] — within 15 %: run in whole
+     * laps, on a loop that may be shorter than the lap length set (read on the loop GPS measured, 6,5 laps of 205 m are
+     * 1332 m for 1500), the time then put on the goal's distance by the fitness.
+     */
     fun of(workouts: List<WorkoutEntity>, runs: List<RunEntity>, meters: Int): Result {
         val lapOf = runs.associate { r ->
             r.workoutId to runCatching { AppJson.decodeFromString(RunWorkout.serializer(), r.planJson).lapMeters }.getOrNull()
@@ -31,7 +35,7 @@ object GoalProgress {
         val sessions = mutableListOf<Session>()
         workouts.filter { it.kind == Kind.RUN && it.status == Status.DONE }.sortedBy { it.startedAt }.forEach { w ->
             val s = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() } ?: return@forEach
-            s.outcomes.filterIsInstance<RunOutcome.TestTime>().firstOrNull { kotlin.math.abs(it.meters - meters) <= meters * 0.03 }?.let {
+            s.outcomes.filterIsInstance<RunOutcome.TestTime>().firstOrNull { kotlin.math.abs(it.meters - meters) <= meters * 0.15 }?.let {
                 val same = if (it.meters == meters) it.seconds.toDouble()
                 else Vdot.predictSeconds(Vdot.fromRace(it.meters.toDouble(), it.seconds.toDouble()), meters.toDouble())
                 trials += Trial(w.epochDay, it.meters, it.seconds, same)

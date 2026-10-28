@@ -1270,6 +1270,7 @@ class RunTracker(
             cadence = if (runSteps >= 100 && runStepMs > 60_000) (runSteps * 60_000.0 / runStepMs).toInt() else null,
             // The loop as GPS fitted it: the laps are read on it when the lap length set is clearly off.
             loopM = if (lapM != null) lapLength() else null,
+            gpsM = if (lapM != null) distanceM.takeIf { it > 0 } else null,
         )
     }
 

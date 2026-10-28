@@ -774,6 +774,8 @@ private fun RecountCard() {
     val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
     val me by repo.store.profile.collectAsState(initial = null)
     val lap = me?.lapMeters ?: return
+    // The loop GPS measured is asked first: counting runs again onto a setting about to change would be undone at once.
+    if (settings.loopSeen?.set == lap) return
     var tick by remember { mutableStateOf(0) }
     val other by produceState<Pair<Int, Int>?>(null, lap, tick) { value = repo.runsOnOtherLap() }
     val (n, old) = other ?: return
@@ -816,7 +818,7 @@ private fun LoopCard() {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton("Поставить ${seen.meters}\u00A0м", { scope.launch { repo.setLapMeters(seen.meters) } }, Modifier.weight(1f))
-            GhostButton("Оставить ${seen.set}\u00A0м", { scope.launch { repo.updateSettings { it.copy(loopSeen = null) } } }, Modifier.weight(1f))
+            GhostButton("Оставить ${seen.set}\u00A0м", { scope.launch { repo.keepLapLength() } }, Modifier.weight(1f))
         }
     }
 }
