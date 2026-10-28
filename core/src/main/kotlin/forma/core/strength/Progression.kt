@@ -330,12 +330,13 @@ object Progression {
     }
 
     /**
-     * Best e1RM of the session. Only sets of 1–12 reps with at most 4 in reserve count (estimates from longer
-     * or easier sets are unreliable); if there are none, every set counts.
+     * Best e1RM of the session. Only sets of 1–12 reps count (estimates from longer ones are unreliable); a reserve of
+     * 5 and more counts as 4 — what it surely was at least: left out, «ещё 5+» gave a lower estimate than «ещё 4» and so
+     * a lighter next target for the same set rated easier. If there are none, every set counts.
      */
     fun e1rmOf(ex: Exercise, sets: List<DoneSet>, p: Prescription, bodyWeight: Double): Double? {
         val rated = sets.mapIndexedNotNull { i, s -> if (s.reps > 0) s to assumedRir(s, i, p) else null }
-        val good = rated.filter { (s, rir) -> s.reps <= 12 && rir <= 4 }.ifEmpty { rated }
+        val good = rated.filter { (s, _) -> s.reps <= 12 }.map { (s, rir) -> s to min(rir, 4) }.ifEmpty { rated }
         return good.maxOfOrNull { (s, rir) -> OneRm.estimate(effectiveLoad(ex, s.weight, bodyWeight), s.reps, rir) }
     }
 
@@ -383,18 +384,21 @@ object Progression {
         }
 
         val e1rm = e1rmOf(ex, done, p, bodyWeight)!!
-        if (p.phase == Phase.DELOAD) return Evaluation(state.copy(sessions = sessions), Outcome.Deload, e1rm)
+        // The lighter week keeps the progress — but a first time that falls in it (a new exercise) still found the
+        // weight: its sets were the search, not thrown away to search again next time.
+        val firstTime = p.calibrate || state.weight == null || p.weight == null
+        if (p.phase == Phase.DELOAD && !firstTime) return Evaluation(state.copy(sessions = sessions), Outcome.Deload, e1rm)
         // The lightest load to go to: for pull-ups and dips the body alone once this or recent sets show five and more.
         val lowest = lightest(ex, bodyWeight, listOfNotNull(e1rm, recentBest).maxOrNull())
         // The taper and the test serve the goal's day: the weight and the reps to aim for stay as they were.
-        if (p.phase == Phase.TEST || p.phase == Phase.TAPER && !p.calibrate) {
+        if (p.phase == Phase.TEST && !firstTime || p.phase == Phase.TAPER && !p.calibrate) {
             val reason = if (p.phase == Phase.TAPER) HoldReason.TAPER else HoldReason.TEST
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(state.weight ?: p.weight ?: 0.0, state.reps, reason), e1rm)
         }
 
         fun supported(e: Double, reps: Int, rir: Int) = toWeight(ex, OneRm.loadFor(e, reps, rir), bodyWeight)
 
-        if (p.calibrate || state.weight == null || p.weight == null) {
+        if (firstTime) {
             // Sets of very different reps were mixed while searching: trust the heaviest one (fewest reps to
             // failure, least extrapolation), not the most optimistic estimate.
             val rated = done.mapIndexedNotNull { i, s -> if (s.reps > 0) s to assumedRir(s, i, p) else null }
@@ -424,7 +428,10 @@ object Progression {
         // Not the weight most of the sets reached: tried on Denis's 85, 90, 90 and dropped — in the simulated lifters,
         // whoever over-rates the reserve then missed 15–20 % of the sets (the in-session hint takes him to 90 anyway).
         val w = if (lighter == 0 && planned.isNotEmpty()) max(p.weight, floorTo(planned.minOf { it.weight }, ex.stepAt(p.weight))) else p.weight
-        @Suppress("NAME_SHADOWING") val state = if (w > (state.weight ?: 0.0)) state.copy(weight = w) else state
+        // The weight of this session is where progress goes on from: heavier sets credited, and a weight the plan made
+        // lighter (back after a break) kept — a session held there (fewer sets, stopped early) did not jump back to the
+        // weight before the break next time (+15–22 % after a shaky first session back).
+        @Suppress("NAME_SHADOWING") val state = if (abs(w - (state.weight ?: w)) > 1e-9) state.copy(weight = w) else state
         val step = ex.stepAt(w)
         val inc = spec.increment ?: step
         // 85 % of the total load (for assisted exercises that means more help, not 85 % of it).
@@ -675,16 +682,21 @@ object Progression {
         val raw = toWeight(ex, OneRm.loadFor(e1rm, p.reps, p.rir), bodyWeight)
         // ±10 % of the total load the plan asked for (body weight included for body-weight exercises).
         // Once a set at a heavier weight (the earlier hint) still shows reserve, the next step is measured from that
-        // set: each step is backed by a set at that weight. Never beyond +20 % of the plan in one session.
+        // set: each step is backed by a set at that weight. Never beyond +20 % of the plan in one session — nor below a
+        // set done far heavier than the plan (a third and more): the bounds were then empty and the hint crashed.
         val plannedLoad = effectiveLoad(ex, planned, bodyWeight)
         val anchor = max(plannedLoad, effectiveLoad(ex, last.weight, bodyWeight))
         val lo = toWeight(ex, anchor * 0.9, bodyWeight) - 1e-9
-        val hi = toWeight(ex, min(anchor * 1.1, plannedLoad * 1.2), bodyWeight) + 1e-9
+        val hi = max(lo, toWeight(ex, min(anchor * 1.1, plannedLoad * 1.2), bodyWeight) + 1e-9)
         val bounded = raw.coerceIn(lo, hi)
         // Nearest weight on the step grid that stays within ±10 % of the plan; none — no hint.
         val down = floorTo(bounded, ex.stepAt(bounded))
         val up = down + ex.stepAt(down)
         val w = listOf(down, up).filter { it in lo..hi && it >= min(lowest, last.weight) }.minByOrNull { abs(it - raw) } ?: return null
+        // The way the set says: never heavier after a set harder than planned (12 × 11 to failure with 16 × 11 planned
+        // said «16»: the bounds from the plan were above the set), never lighter after an easier one.
+        val harder = actual < p.rir
+        if (harder && w > last.weight + 1e-9 || !harder && w < last.weight - 1e-9) return null
         return when {
             w <= last.weight - step + 1e-9 -> Adjustment(w, p.reps, false)
             w >= last.weight + step - 1e-9 -> Adjustment(w, p.reps, true)
