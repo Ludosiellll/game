@@ -421,6 +421,8 @@ object Progression {
         val planned = done.filter { it.reps > 0 }.take(p.sets)
         val tol = ex.stepAt(p.weight) / 2
         val lighter = planned.count { it.weight < p.weight - tol }
+        // Not the weight most of the sets reached: tried on Denis's 85, 90, 90 and dropped — in the simulated lifters,
+        // whoever over-rates the reserve then missed 15–20 % of the sets (the in-session hint takes him to 90 anyway).
         val w = if (lighter == 0 && planned.isNotEmpty()) max(p.weight, floorTo(planned.minOf { it.weight }, ex.stepAt(p.weight))) else p.weight
         @Suppress("NAME_SHADOWING") val state = if (w > (state.weight ?: 0.0)) state.copy(weight = w) else state
         val step = ex.stepAt(w)

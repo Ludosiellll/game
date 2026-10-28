@@ -22,7 +22,7 @@ class FormaApp : Application() {
             // Own exercises must be in the catalog before any screen shows a workout with them (a small local read).
             // A plan laid out by an older version of the app is laid out again by this one. Not notified from here: the
             // cloud link is built on this repository (the app syncs at start anyway).
-            .also { runBlocking { it.refreshCustom(); it.refreshPlan(notify = false) } }
+            .also { runBlocking { it.refreshCustom(); it.refreshPlan(notify = false); it.reviewWeights(notify = false) } }
     }
 
     val cloud: Cloud by lazy { Cloud(this, repository) }

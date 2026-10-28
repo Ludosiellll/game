@@ -208,6 +208,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
             // Own exercises may have come from another phone, and a plan laid out by an older version of the app.
             repo.refreshCustom()
             repo.refreshPlan()
+            repo.reviewWeights()
             val now = System.currentTimeMillis()
             prefs.edit().putString(KEY_LAST_EMAIL, user.email).putBoolean(KEY_SIGNED_IN, true)
                 .putLong(KEY_LAST_SYNC, now).remove(KEY_LAST_ERROR).apply()

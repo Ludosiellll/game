@@ -275,6 +275,73 @@ class TrainingRepository(
         if (notify) onChange()
     }
 
+    /**
+     * Weights older versions left, reviewed once ([WEIGHTS_REVIEW]): the latest session of every rep range evaluated
+     * again by the current rules. Only upward — sets done heavier than planned, which versions before 27.10 did not
+     * count (Denis: pull-ups 22.5 × 7 planned after 25 × 8 with 3 left, 30 × 7, 30 × 6), help on pull-ups not needed.
+     * A weight changed since that session (by the coach, by a later session) is not that session's and stays.
+     */
+    suspend fun reviewWeights(notify: Boolean = true) {
+        if (store.settingsNow().weightsReviewed >= WEIGHTS_REVIEW) return
+        val profile = store.profileNow()
+        if (profile != null) {
+            val settings = store.settingsNow()
+            // The latest session of each rep range that has sets of it.
+            val latest = mutableMapOf<String, Pair<WorkoutEntity, LiftItem>>()
+            for (w in db.workouts().allDone().filter { it.kind == Kind.LIFT }.sortedBy { it.startedAt }) {
+                val plan = planOf(w) ?: continue
+                val done = db.sets().forWorkout(w.id).map { it.position }.toSet()
+                for (item in plan.items) if (item.position in done) latest[item.slot.key] = w to item
+            }
+            var changed = false
+            for ((key, pair) in latest) {
+                val (w, item) = pair
+                val row = db.state().slot(key) ?: continue
+                val p = item.prescription
+                if (p.phase != Phase.NORMAL) continue
+                // What that session left; anything else means the weight was changed since.
+                val reports = liftSummaryOf(w)?.reports.orEmpty().filter { it.exerciseId == item.exerciseId }
+                val left = when (val o = reports.singleOrNull()?.outcome) {
+                    is Outcome.Calibrated -> o.weight
+                    is Outcome.AddReps -> o.weight
+                    is Outcome.LowerReps -> o.weight
+                    is Outcome.Hold -> o.weight
+                    is Outcome.AddWeight -> o.to
+                    is Outcome.Jump -> o.to
+                    is Outcome.Reduce -> o.to
+                    is Outcome.Reset -> o.to
+                    else -> null
+                } ?: continue
+                val now = row.weight ?: continue
+                if (kotlin.math.abs(now - left) > 1e-9) continue
+                val ex = exercise(item.exerciseId, settings)
+                val bias = rirBias(before = w.id)
+                val sets = db.sets().forWorkout(w.id).filter { it.position == item.position }
+                    .map { DoneSet(it.weight, it.reps, forma.core.strength.RirScale.correct(it.rir, bias)) }
+                // The state before that session, as far as it is known: its plan.
+                val before = if (p.calibrate || p.weight == null) SlotState.fresh(item.slot).copy(linear = row.linear)
+                else SlotState(p.weight, p.reps, sessions = max(0, row.sessions - 1), linear = row.linear, cutFrom = row.cutFrom, cutReps = row.cutReps)
+                val ev = Progression.evaluate(
+                    ex, item.slot, before, p, sets, profile.bodyWeightKg,
+                    novice = profile.experience == Experience.NOVICE, recentBest = recentBest(ex.id, w.epochDay, w.id),
+                )
+                val to = ev.state.weight ?: continue
+                if (to <= now + 1e-9) continue
+                db.state().upsertSlot(
+                    row.copy(
+                        weight = to, reps = ev.state.reps, stalls = ev.state.stalls, misses = ev.state.misses, steady = ev.state.steady,
+                        linear = ev.state.linear, cutFrom = ev.state.cutFrom, cutReps = ev.state.cutReps,
+                        // A moment later than before: the newer change wins on the other phone, the days since it stay.
+                        updatedAt = row.updatedAt + 1,
+                    ),
+                )
+                changed = true
+            }
+            if (changed && notify) onChange()
+        }
+        store.editSettings { it.copy(weightsReviewed = WEIGHTS_REVIEW) }
+    }
+
     suspend fun logBodyWeight(kg: Double) {
         db.state().upsertBodyWeight(BodyWeightEntity(today().toEpochDay(), kg))
         store.profileNow()?.let { if (it.bodyWeightKg != kg) store.setProfile(it.copy(bodyWeightKg = kg)) }
@@ -317,6 +384,9 @@ class TrainingRepository(
     // ---------- lifting ----------
 
     companion object {
+        /** The review of weights older versions left ([reviewWeights]); a new one when the rules change how sets count. */
+        const val WEIGHTS_REVIEW = 1
+
         /** The plan's estimate for a session as planned, minutes. */
         fun estimateOf(plan: LiftPlan): Double = forma.core.plan.SessionTime.estimate(plan.items.map { it.slot to it.prescription.sets })
 

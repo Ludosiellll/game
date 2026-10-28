@@ -93,6 +93,8 @@ data class Settings(
      * kept, not taken away by sets done without it. Cleared when the progress reaches the body alone.
      */
     val chosenHelp: Set<String> = emptySet(),
+    /** The version of the review of weights older versions left ([TrainingRepository.reviewWeights]) done on this data. */
+    val weightsReviewed: Int = 0,
     /** «Идеальный план» changes the person said not to propose (change ids, [forma.core.plan.PlanAdvisor.Change.id]). */
     val adviceHidden: Set<String> = emptySet(),
     /** The first look round the app was seen (after the questionnaire, or skipped). */
