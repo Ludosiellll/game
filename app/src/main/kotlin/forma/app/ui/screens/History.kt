@@ -188,7 +188,7 @@ fun HistoryItemScreen(workoutId: Long) {
             summary?.cadence?.let { Text("Шагов в минуту: $it", style = T.secondary(14.sp)) }
             if (r != null) RunDebrief(workout, r, summary)
             if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
-            if (summary != null && summary.laps.any { it.rep == null }) LapsEditor(workout.id, summary.laps)
+            if (summary != null && summary.laps.isNotEmpty()) LapsEditor(workout.id, summary.laps)
             // On the road: the time of each kilometre, as the voice said it (active time, the tracker's distance).
             val splits = summary?.kmSplits.orEmpty()
             if (summary?.laps.isNullOrEmpty() && splits.size >= 2) KmSplitsCard(splits.map { it.toDouble() })
@@ -262,8 +262,8 @@ private fun RatingDialog(now: Int?, run: Boolean, onDismiss: () -> Unit, onSave:
 
 /**
  * The laps of a saved run put right: tap a lap — a press forgotten on the line (one lap of two laps' time) splits into
- * two, a press too many merges two into one, a press late or early gets the lap's time typed by hand. Laps of reps stay:
- * the plan's next step was judged on them.
+ * two, a press too many merges two into one, a press late or early gets the lap's time typed by hand. A rep's lap gets
+ * its time only (the reps stay as many); the last run is then decided again on it.
  */
 @Composable
 private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
@@ -273,17 +273,18 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
     SectionLabel("Поправить круги")
     Text(
         "Забыл нажать «Круг», и круг вышел вдвое длиннее? Нажми на него и раздели. Нажал дважды — соедини. " +
-            "Нажал не вовремя — впиши время круга сам. Круга не было (случайное нажатие) — убери его.",
+            "Нажал не вовремя — впиши время круга сам. Круга не было (случайное нажатие) — убери его. " +
+            "У кругов отрезков («О») можно поправить только время.",
         style = T.secondary(13.sp),
     )
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         laps.forEachIndexed { i, l ->
-            if (l.rep == null) {
-                forma.app.ui.components.Chip(
-                    "${l.number} · ${if (l.rough) "≈" else ""}${Ru.lap(l.seconds)}", false, { open = i },
-                    minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.ACTION,
-                )
-            }
+            // A rep's lap: its time only (a touch ended it early) — the last run is then decided again on it.
+            val label = if (l.rep != null) "О${l.rep}" else "${l.number}"
+            forma.app.ui.components.Chip(
+                "$label · ${if (l.rough) "≈" else ""}${Ru.lap(l.seconds)}", false, { open = i },
+                minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.ACTION,
+            )
         }
     }
     val i = open ?: return
@@ -297,7 +298,7 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
     }
     // On the screen under the laps, not in a dialog: the keyboard for the time has room, and the laps stay in sight.
     FCard(gap = 8.dp) {
-        Text("Круг ${l.number} — ${Ru.lapTenth(l.seconds)}", style = T.title(20.sp))
+        Text(if (l.rep != null) "Отрезок ${l.rep} — ${Ru.lapTenth(l.seconds)}" else "Круг ${l.number} — ${Ru.lapTenth(l.seconds)}", style = T.title(20.sp))
         Text("Что было на самом деле?", style = T.secondary(14.sp))
         NumberField(typed, { typed = it }, "Время круга", "с", placeholder = Ru.one(l.seconds))
         Text(
@@ -307,6 +308,10 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
         )
         if (time != null) {
             TextButton({ save(forma.core.run.LapEdit.setTime(laps, i, time)) }) { Text("Поставить ${Ru.lapTenth(time)}", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+        }
+        if (l.rep != null) {
+            TextButton({ open = null }) { Text("Отмена", style = T.body(15.sp)) }
+            return@FCard
         }
         TextButton({ save(forma.core.run.LapEdit.split(laps, i)) }) { Text("Это 2 круга — разделить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
         if (forma.core.run.LapEdit.editable(laps, i + 1)) {

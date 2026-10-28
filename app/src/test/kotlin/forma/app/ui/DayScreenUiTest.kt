@@ -186,6 +186,18 @@ class DayScreenUiTest {
         settle()
     }
 
+    /** The loop GPS measured clearly shorter than set: «Сегодня» asks to set it, and setting it closes the question. */
+    @Test fun theMeasuredLoopIsAskedOnTheMainScreen() {
+        val repo = repo()
+        runBlocking { repo.updateSettings { it.copy(loopSeen = forma.app.data.LoopSeen(205, 230)) } }
+        show(repo) { TodayScreen() }
+        compose.onNodeWithText("Круг стадиона по GPS — около 205 м").performScrollTo().assertExists()
+        compose.onNodeWithText("Поставить 205\u00A0м").performScrollTo().performClick()
+        settle()
+        assertEquals(205, runBlocking { repo.store.profileNow()!!.lapMeters })
+        compose.onAllNodesWithText("Круг стадиона по GPS", substring = true).assertCountEquals(0)
+    }
+
     @Test fun aDoneRunShowsOnTheMainScreenAsItWasRun() {
         show(doneMonday()) { TodayScreen() }
         compose.onAllNodesWithText("Темповый", substring = true)[0].assertExists()

@@ -3,8 +3,8 @@ package forma.core.run
 /**
  * Laps put right after the run, outside the reps (a free, easy or long run, a warm-up): a press forgotten on the line
  * left one lap of two laps' time ("2:21") — [split] makes it two; a double press left two halves — [merge] makes them
- * one; a lap timed wrong gets its time by hand — [setTime]. Laps of reps stay as they were: the plan's next step was
- * judged on them.
+ * one; a lap timed wrong gets its time by hand — [setTime]. A lap of a rep only gets its time put right (a stray touch
+ * with the phone in the hand ended it early): the reps stay as many, and the last run is decided again on them.
  */
 object LapEdit {
     /** Can lap [index] be put right (it is outside the reps)? */
@@ -29,7 +29,7 @@ object LapEdit {
      * stay as they were. A time out of reason (under 5 s or over an hour) changes nothing.
      */
     fun setTime(laps: List<Lap>, index: Int, seconds: Double): List<Lap> {
-        val l = laps.getOrNull(index)?.takeIf { it.rep == null } ?: return laps
+        val l = laps.getOrNull(index) ?: return laps
         if (seconds.isNaN() || seconds < 5 || seconds > 3600) return laps
         return laps.toMutableList().also { it[index] = l.copy(seconds = seconds, auto = false, exact = false) }
     }

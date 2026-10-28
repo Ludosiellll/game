@@ -42,11 +42,13 @@ class LapEditTest {
         assertEquals(free, LapEdit.setTime(free, 9, 80.0))
     }
 
-    @Test fun lapsOfRepsStayAsTheyWere() {
+    /** Reps stay as many (no split, merge or removal); a rep's lap gets its time put right (a stray touch ended it early). */
+    @Test fun lapsOfRepsOnlyGetTheirTime() {
         val laps = listOf(Lap(52.0, rep = 1, number = 1, of = 1), Lap(150.0, number = 1))
         assertEquals(laps, LapEdit.split(laps, 0))
         assertEquals(laps, LapEdit.merge(laps, 0))
-        assertEquals(laps, LapEdit.setTime(laps, 0, 50.0))
+        assertEquals(laps, LapEdit.remove(laps, 0))
+        assertEquals(listOf(laps[0].copy(seconds = 50.0), laps[1]), LapEdit.setTime(laps, 0, 50.0))
         assertTrue(!LapEdit.editable(laps, 0) && LapEdit.editable(laps, 1))
     }
 }

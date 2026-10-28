@@ -86,11 +86,44 @@ class TrainingRepository(
      * The stadium's lap length (metres) as measured by GPS on a run: the plan reads it when a run is planned, so the
      * program stays as it is.
      */
-    suspend fun setLapMeters(meters: Int) {
-        val p = store.profileNow() ?: return
-        if (p.lapMeters == meters) return
+    suspend fun setLapMeters(meters: Int) = sessionLock.withLock {
+        val p = store.profileNow() ?: return@withLock
+        if (p.lapMeters == meters) return@withLock
         store.setProfile(p.copy(lapMeters = meters))
+        // The loop GPS measured is set (or another length chosen): nothing more to ask.
+        store.editSettings { it.copy(loopSeen = null) }
+        // The last run on a stadium, while nothing has been built on it: decided again on the loop as it is — its trial's
+        // distance, its reps' pace — as a rating put right decides it again.
+        val last = store.lastRunNow()?.takeIf { it.after == store.runStateNow() && it.workout.lapMeters != null && it.workout.lapMeters != meters }
+        if (last != null) {
+            val (w, r) = forma.core.run.RunPlan.onLoop(last.workout, last.result, meters)
+            redecideLast(last, w, r)
+        }
         onChange()
+    }
+
+    /**
+     * The last run decided again from [workout] and [result] put right (the lap length, the laps): the progress, the stored
+     * plan, distance and pace, the outcomes. Only while nothing has been built on it ([LastRun.after] is the state now).
+     */
+    private suspend fun redecideLast(last: LastRun, workout: RunWorkout, result: forma.core.run.RunResult) {
+        val (next, decided) = decideRun(last.before, workout, result, LocalDate.ofEpochDay(last.day))
+        store.setRunState(next)
+        store.setLastRun(last.copy(after = next, workout = workout, result = result))
+        val (ws, rs) = forma.core.run.RunPlan.onMeasuredLoop(workout, result) ?: (workout to result)
+        db.runs().get(last.workoutId)?.let { run ->
+            db.runs().insert(
+                run.copy(
+                    planJson = AppJson.encodeToString(RunWorkout.serializer(), ws), distanceM = rs.distanceM,
+                    avgPace = rs.distanceM?.takeIf { it > 50 }?.let { rs.durationSec / (it / 1000.0) }, workPace = rs.workPace, vdotAfter = next.vdot,
+                ),
+            )
+        }
+        val w = db.workouts().get(last.workoutId) ?: return
+        val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() } ?: return
+        if (decided.any { it is RunOutcome.Graduated } && summary.outcomes.none { it is RunOutcome.Graduated }) graduate()
+        db.workouts().update(w.copy(summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary.copy(outcomes = decided, laps = result.laps ?: summary.laps))))
+        store.clearCoachReview(last.workoutId)
     }
 
     /** Midday of [date] in this phone's time zone (when a run entered for an earlier day is filed). */
@@ -2167,11 +2200,16 @@ class TrainingRepository(
             return@withLock w.id to (s ?: RunSummary(emptyList(), max(1, (w.durationSec ?: 60) / 60), w.load ?: 0.0))
         }
         val st = store.runStateNow()
+        val seen = store.settingsNow().loopSeen
+        // No loop of its own (no GPS, a run entered by hand): the one GPS measured before, on the same lap length set.
+        @Suppress("NAME_SHADOWING") val result = if (result.loopM == null && seen != null && seen.set == workout.lapMeters) result.copy(loopM = seen.meters.toDouble()) else result
         val (next, outcomes) = decideRun(st, workout, result, date)
+        // Stored as run: on the loop GPS measured when the setting is clearly off (the history's distance and pace).
+        val (stored, measured) = forma.core.run.RunPlan.onMeasuredLoop(workout, result) ?: (workout to result)
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
         val summary = RunSummary(outcomes, minutes, load, result.laps.orEmpty(), result.cadence, manual, result.kmSplits.orEmpty())
-        val avgPace = result.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
+        val avgPace = measured.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
         val id = db.withTransaction {
             val id = db.workouts().insert(
                 WorkoutEntity(
@@ -2183,8 +2221,8 @@ class TrainingRepository(
             )
             db.runs().insert(
                 RunEntity(
-                    id, workout.type.name, AppJson.encodeToString(RunWorkout.serializer(), workout), result.completed,
-                    result.durationSec, result.distanceM, avgPace, result.workDistanceM, result.workPace, next.vdot,
+                    id, workout.type.name, AppJson.encodeToString(RunWorkout.serializer(), stored), result.completed,
+                    result.durationSec, measured.distanceM, avgPace, result.workDistanceM, measured.workPace, next.vdot,
                 ),
             )
             // One point per moment: a doubled GPS callback must not fail the save.
@@ -2194,6 +2232,13 @@ class TrainingRepository(
         // The progress moves only once the run is safely stored.
         store.setRunState(next)
         store.setLastRun(LastRun(id, date.toEpochDay(), st, next, workout, result))
+        // A loop measured clearly shorter than set: remembered, and «Сегодня» asks to set it; one that agrees clears it.
+        val set = workout.lapMeters
+        val loop = result.loopM
+        if (set != null && loop != null && result.loopM != seen?.meters?.toDouble()) {
+            val off = outcomes.any { it is RunOutcome.LoopShorter }
+            store.editSettings { it.copy(loopSeen = if (off) LoopSeen(loop.roundToInt(), set) else null) }
+        }
         // 30 minutes of running reached: the week of a beginner (run/walk only) becomes a runner's week — hard sessions,
         // a trial — with the progress kept. Seen in half-year simulations: without it a graduate had easy runs only, and
         // no trial, for months.
@@ -2254,7 +2299,21 @@ class TrainingRepository(
      * The laps of a saved run put right ([forma.core.run.LapEdit]): a press forgotten or doubled. On a stadium where the
      * distance was the laps, it follows them; the plan's decisions on the run stay as they were.
      */
-    suspend fun editRunLaps(workoutId: Long, laps: List<forma.core.run.Lap>) {
+    suspend fun editRunLaps(workoutId: Long, laps: List<forma.core.run.Lap>) = sessionLock.withLock {
+        editRunLapsLocked(workoutId, laps)
+        // The laps of reps put right (a stray touch ended one early) on the last run, nothing built on it yet: decided
+        // again on them — the reps' pace, a trial's time.
+        val last = store.lastRunNow()?.takeIf { it.workoutId == workoutId && it.after == store.runStateNow() }
+        val lapM = last?.workout?.lapMeters
+        if (last != null && lapM != null && last.result.laps?.filter { it.rep != null } != laps.filter { it.rep != null }) {
+            val pace = forma.core.run.ManualLaps.repPace(laps, lapM)
+            val trial = last.workout.testMeters?.let { laps.filter { it.rep == 1 }.sumOf { l -> l.seconds }.takeIf { s -> s > 0 }?.roundToInt() }
+            redecideLast(last, last.workout, last.result.copy(laps = laps, workPace = pace ?: last.result.workPace, testSeconds = trial ?: last.result.testSeconds))
+            onChange()
+        }
+    }
+
+    private suspend fun editRunLapsLocked(workoutId: Long, laps: List<forma.core.run.Lap>) {
         val w = db.workouts().get(workoutId) ?: return
         val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() } ?: return
         db.workouts().update(w.copy(summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary.copy(laps = laps))))

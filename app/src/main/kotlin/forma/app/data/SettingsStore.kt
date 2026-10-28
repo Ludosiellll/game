@@ -93,6 +93,11 @@ data class Settings(
      * kept, not taken away by sets done without it. Cleared when the progress reaches the body alone.
      */
     val chosenHelp: Set<String> = emptySet(),
+    /**
+     * The stadium loop as GPS measured it on a run, against the lap length set then — clearly shorter: laps of runs
+     * without their own measurement are read on it, and «Сегодня» asks to set it. Gone once set or put aside.
+     */
+    val loopSeen: LoopSeen? = null,
     /** The version of the review of weights older versions left ([TrainingRepository.reviewWeights]) done on this data. */
     val weightsReviewed: Int = 0,
     /** «Идеальный план» changes the person said not to propose (change ids, [forma.core.plan.PlanAdvisor.Change.id]). */
@@ -199,6 +204,10 @@ data class CoachChatMsg(
  * One's own program as it was before a friend's was copied: the days and aim of the profile, the program, and the
  * edits of the plan made on it (swaps, removed and added exercises, sets, reps, rest).
  */
+/** A stadium loop GPS measured at [meters] while the lap length set was [set]. */
+@Serializable
+data class LoopSeen(val meters: Int, val set: Int)
+
 @Serializable
 data class OwnPlan(
     val profile: Profile,

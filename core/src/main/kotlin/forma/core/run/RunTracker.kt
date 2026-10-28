@@ -1268,6 +1268,8 @@ class RunTracker(
             kmSplits = kmSplitList.toList().takeIf { it.isNotEmpty() },
             // Steps a minute while running (the counter misses nothing with the screen off; rests and walking left out).
             cadence = if (runSteps >= 100 && runStepMs > 60_000) (runSteps * 60_000.0 / runStepMs).toInt() else null,
+            // The loop as GPS fitted it: the laps are read on it when the lap length set is clearly off.
+            loopM = if (lapM != null) lapLength() else null,
         )
     }
 

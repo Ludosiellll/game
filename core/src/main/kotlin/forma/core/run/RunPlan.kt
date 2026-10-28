@@ -132,6 +132,8 @@ data class RunResult(
     val cadence: Int? = null,
     /** Seconds of each whole kilometre (active time), as the voice said them. */
     val kmSplits: List<Int>? = null,
+    /** On a stadium: the loop's length as GPS fitted it in this run (or an earlier one), metres; null when not measured. */
+    val loopM: Double? = null,
 )
 
 /** A run timed without the phone (a watch, a stopwatch) and entered by hand. */
@@ -188,6 +190,11 @@ sealed interface RunOutcome {
     @Serializable data class LighterWeek(val ladder: String) : RunOutcome
     /** The top of a ladder went well again: it stays there. */
     @Serializable data class LadderTop(val ladder: String) : RunOutcome
+    /**
+     * The loop GPS measured ([loop] m) is clearly shorter than the lap length set ([set] m): the laps were read on the loop
+     * as run — the trial's distance, the reps' pace. Setting the lap length makes the plans right too.
+     */
+    @Serializable data class LoopShorter(val loop: Int, val set: Int) : RunOutcome
     /** A test result far from the current form ([vdot] it would give): more likely a typo, not counted. */
     @Serializable data class TestDoubtful(val vdot: Double) : RunOutcome
     /** A test that gave no time (laps missed, nothing typed): not counted. */
@@ -824,7 +831,49 @@ object RunPlan {
         return s.copy(vdot = to, lastVdotUpDay = day, easySigns = emptyList())
     }
 
+    /** The loop GPS fitted shorter than the lap length set by more than this share (and 5 m): the setting is off. */
+    private const val LOOP_OFF = 0.04
+
+    /**
+     * The run as it was on a loop of [meters] instead of the lap length it was planned on: the lap length, the trial's
+     * distance, the lap times aimed at, the reps' pace and the distance from laps — the time of every lap as pressed.
+     */
+    fun onLoop(w: RunWorkout, r: RunResult, meters: Int): Pair<RunWorkout, RunResult> {
+        val set = w.lapMeters ?: return w to r
+        if (meters <= 0 || meters == set) return w to r
+        val k = meters.toDouble() / set
+        val fromLaps = r.laps?.takeIf { it.isNotEmpty() }?.let { l -> r.distanceM?.let { d -> abs(d - l.sumOf { it.part } * set) < 1.0 } } == true
+        return w.copy(
+            lapMeters = meters,
+            testMeters = w.testMeters?.let { (it * k).roundToInt() },
+            segments = w.segments.map { it.copy(lapSec = it.lapSec?.let { s -> s * k }) },
+        ) to r.copy(
+            workPace = r.workPace?.let { it / k },
+            distanceM = if (fromLaps) r.distanceM?.let { it * k } else r.distanceM,
+        )
+    }
+
+    /**
+     * [onLoop] on the loop GPS fitted ([RunResult.loopM]) when it is clearly shorter than the lap length set — Denis: set
+     * 230 m, his loop ≈205 m. On the setting his trial's 6,5 laps would score as 1495 m while he ran 1332 (a fitness seven
+     * points too high, the 5:30 goal "reached"), and race-pace reps 6 % slower than the goal read as too fast. Only
+     * shorter: a loop GPS sees longer than set is more likely GPS than the setting, and the shorter of the two never makes
+     * a runner fitter than they are. Null when there is nothing to change.
+     */
+    fun onMeasuredLoop(w: RunWorkout, r: RunResult): Pair<RunWorkout, RunResult>? {
+        val set = w.lapMeters ?: return null
+        val loop = r.loopM ?: return null
+        if (loop >= set * (1 - LOOP_OFF) || set - loop < 5) return null
+        return onLoop(w, r, loop.roundToInt())
+    }
+
     fun after(state: RunState, w: RunWorkout, r: RunResult, caps: RunCaps, day: Long = 0, goal: RunGoal? = null): RunAfter {
+        val fixed = onMeasuredLoop(w, r) ?: return decide(state, w, r, caps, day, goal)
+        val a = decide(state, fixed.first, fixed.second, caps, day, goal)
+        return a.copy(outcomes = listOf(RunOutcome.LoopShorter(fixed.first.lapMeters!!, w.lapMeters!!)) + a.outcomes)
+    }
+
+    private fun decide(state: RunState, w: RunWorkout, r: RunResult, caps: RunCaps, day: Long, goal: RunGoal?): RunAfter {
         val out = mutableListOf<RunOutcome>()
         val minutes = (r.durationSec / 60.0).roundToInt()
         val original = state

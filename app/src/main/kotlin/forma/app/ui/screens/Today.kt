@@ -223,6 +223,7 @@ fun TodayScreen() {
                 if (feel != Feel.SICK && todays.all { todayItem?.isDone(it) == true }) NextPlannedCard(today)
             }
         }
+        LoopCard()
         PicksInvite()
         val strength = remember(rows, bw) { Stats.changePct(Stats.strengthIndex(rows, bw)) }
         fun toProgress(tab: Int) {
@@ -760,3 +761,30 @@ private fun PicksInvite() {
 }
 
 private const val PICKS_SEEN = "my_exercises_card"
+
+/**
+ * The stadium loop GPS measured clearly shorter than the lap length set (Denis: ≈205 m against 230): every lap time of
+ * the plan is off by as much. Asked here until it is set or put aside; runs are read on the loop measured meanwhile.
+ */
+@Composable
+private fun LoopCard() {
+    val repo = LocalRepo.current
+    val scope = rememberCoroutineScope()
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    val me by repo.store.profile.collectAsState(initial = null)
+    val seen = settings.loopSeen ?: return
+    if (me?.lapMeters != seen.set) return
+    FCard(gap = 8.dp) {
+        SectionLabel("Длина круга")
+        Text("Круг стадиона по GPS — около ${seen.meters} м", style = T.body(16.sp, FontWeight.SemiBold))
+        Text(
+            "В настройках ${seen.set} м. Из-за этого время круга в плане и темп на стадионе не совпадают с тем, как ты бежишь. " +
+                "Если круг правда около ${seen.meters} м, поставь эту длину: план пересчитается, и последняя пробежка тоже.",
+            style = T.secondary(14.sp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryButton("Поставить ${seen.meters}\u00A0м", { scope.launch { repo.setLapMeters(seen.meters) } }, Modifier.weight(1f))
+            GhostButton("Оставить ${seen.set}\u00A0м", { scope.launch { repo.updateSettings { it.copy(loopSeen = null) } } }, Modifier.weight(1f))
+        }
+    }
+}
