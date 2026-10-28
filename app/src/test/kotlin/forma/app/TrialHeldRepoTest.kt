@@ -132,6 +132,22 @@ class TrialHeldRepoTest {
         assertTrue("Первые 923 м" in review && "темпы посчитаны по ним" in review, review)
     }
 
+    @Test fun theWarmUpStridesAreKeptWithTheRun() = runBlocking<Unit> {
+        val w = trial()
+        val secs = listOf(26.0) + List(7) { 52.0 }
+        val (_, summary) = repo.saveRun(
+            w, RunResult(1.0, 9, 1700, distanceM = 3500.0, laps = laps(w, secs), testSeconds = secs.sum().toInt(), strideSpeeds = listOf(5.4, 5.6, null, 5.5), jogSpeed = 2.9),
+            clock - 1700_000L, emptyList(), day,
+        )
+        assertEquals(listOf(5.4, 5.6, null, 5.5), summary.strides)
+        assertEquals(2.9, summary.jog)
+        val review = RunReview.of(
+            RunReview.Run(w, summary.laps, 9, 1700, null, null, 1538 to 390, 1.0, false, null, summary.strides, summary.jog), denis.runGoal,
+        ).first()
+        assertEquals("Ускорения", review.title)
+        assertTrue("4 из 4" in review.text, review.text)
+    }
+
     @Test fun stoppedEarlyItSaysWhyNotThatLapsWereMissed() = runBlocking<Unit> {
         val w = trial()
         val (_, summary) = repo.saveRun(

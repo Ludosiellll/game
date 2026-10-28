@@ -62,6 +62,10 @@ data class RunSummary(
     val manual: Boolean = false,
     /** Seconds of each whole kilometre (active time), as the voice said them. */
     val kmSplits: List<Int> = emptyList(),
+    /** The warm-up's strides: each one's speed by GPS, m/s (null where not measured); null when there were none. */
+    val strides: List<Double?>? = null,
+    /** The warm-up's jog before the strides, m/s. */
+    val jog: Double? = null,
 )
 
 /** How the person feels today: decides between the planned session, a lighter one and rest. */

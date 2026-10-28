@@ -189,10 +189,10 @@ class ReviewFixesTest {
         val st = RunState(walkStage = -1, vdot = 46.0)
         for (w in listOf(RunPlan.goalPace(st, goal, 230), RunPlan.intervals(st), RunPlan.goalTest(st, goal, 230))) {
             val cues = forma.core.run.RunTimeline.allCues(w)
-            assertEquals(1, cues.count { it is forma.core.run.Cue.Strides }, w.title)
+            assertEquals(4, cues.count { it is forma.core.run.Cue.Stride && it.on }, w.title)
         }
         for (w in listOf(RunPlan.easy(st), RunPlan.tempo(st))) {
-            assertTrue(forma.core.run.RunTimeline.allCues(w).none { it is forma.core.run.Cue.Strides }, w.title)
+            assertTrue(forma.core.run.RunTimeline.allCues(w).none { it is forma.core.run.Cue.Stride }, w.title)
         }
     }
 

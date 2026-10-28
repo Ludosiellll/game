@@ -148,6 +148,10 @@ data class RunResult(
     val loopM: Double? = null,
     /** On a stadium: the distance GPS measured (the bends cut), when the laps' distance was shown instead; null if none. */
     val gpsM: Double? = null,
+    /** The warm-up's strides started (see [RunTimeline.stride]): each one's speed by GPS, m/s (null where not measured). */
+    val strideSpeeds: List<Double?>? = null,
+    /** The warm-up's jog before the strides, m/s: what they are measured against. */
+    val jogSpeed: Double? = null,
 )
 
 /** A run timed without the phone (a watch, a stopwatch) and entered by hand. */

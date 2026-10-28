@@ -55,6 +55,9 @@ data class TrackerSnapshot(
     val loop: List<Double>? = null,
     /** Every rep of laps waits on the line (see [RunTimeline.waitsOnLine]); false in a run saved before they did. */
     val waitEvery: Boolean = false,
+    /** The warm-up's strides: the satellites' speeds in each, by its number; and the jog before them (sum, count). */
+    val strideSpeeds: Map<Int, List<Double>> = emptyMap(),
+    val jog: List<Double> = emptyList(),
 )
 
 /** What a press of the lap button was. */
@@ -570,6 +573,7 @@ class RunTracker(
                 }
             }
             lastSpeed = active to sp
+            noteStride(sp.toDouble(), active)
             speeds.addLast(active to sp)
             while (speeds.size > 1 && active - speeds.first().first > 10_000) speeds.removeFirst()
         } else {
@@ -615,6 +619,42 @@ class RunTracker(
         stepsLead = false
         calibrate(bySpeed != null && fix.accuracy <= 10f, active, add)
         return addDistance(add, active)
+    }
+
+    /** The warm-up's strides (see [RunTimeline.stride]): the satellites' speeds in each, by its number. */
+    private val strideSpeeds = mutableMapOf<Int, MutableList<Double>>()
+
+    /** The warm-up's jog before its strides: the sum and count of the speeds while running. */
+    private var jogSum = 0.0
+    private var jogN = 0
+
+    /**
+     * A speed [v] (m/s) at [active]: in a stride from its 4th second (the pick-up left out) it is the stride's; in the
+     * warm-up before the strides, running (1 m/s and more), the jog's — what the strides are measured against.
+     */
+    private fun noteStride(v: Double, active: Long) {
+        val from = RunTimeline.stridesFrom(workout) ?: return
+        val t = planAt(active)
+        val sec = (t / 1000).toInt()
+        val st = RunTimeline.stride(workout, sec)
+        if (st != null && st.on) {
+            if (st.into >= 4) strideSpeeds.getOrPut(st.n) { mutableListOf() } += v
+        } else if (sec < from && v >= 1.0 && workout.segments.getOrNull(segmentAt(t))?.kind == SegmentKind.WARMUP) {
+            jogSum += v
+            jogN++
+        }
+    }
+
+    /**
+     * The speed of each stride started by timeline [t] (m/s, null where GPS had too little of it), or null when the strides
+     * had not begun; the jog's speed before them.
+     */
+    private fun strideResult(t: Long): Pair<List<Double?>?, Double?> {
+        val from = RunTimeline.stridesFrom(workout) ?: return null to null
+        val sec = (t / 1000).toInt()
+        val started = if (sec < from) 0 else ((sec - from) / (RunTimeline.STRIDE_SEC + RunTimeline.STRIDE_JOG) + 1).coerceAtMost(RunTimeline.STRIDES)
+        val speeds = if (started == 0) null else (1..started).map { n -> strideSpeeds[n]?.takeIf { it.size >= 3 }?.average() }
+        return speeds to (if (jogN >= 10) jogSum / jogN else null)
     }
 
     /** Every 30 s of good GPS (the satellites' speed, ≤ 10 m) and running cadence: one (cadence, stride) pair. */
@@ -743,6 +783,7 @@ class RunTracker(
         line?.let { listOf(it.first, it.second) }, freeLaps, steps, runSteps, runStepMs,
         stride?.let { listOf(it.first, it.second) }, strides.map { listOf(it.first, it.second) },
         lineT, lineDistM, startedOff, away, kmSplitList.toList(), loop?.ground(), waitEvery,
+        strideSpeeds.mapValues { it.value.toList() }, listOf(jogSum, jogN.toDouble()),
     )
 
     /** Start and end of every segment on the timeline, ms. */
@@ -1259,6 +1300,7 @@ class RunTracker(
             timed.sumOf { it.second!! } / (timed.sumOf { it.first.laps!! * lapM } / 1000.0)
         } else null
         val testSeconds = if (workout.testMeters != null && trialLapsSane()) reps.firstOrNull()?.roundToInt() else null
+        val (strideV, jogV) = strideResult(timelineMs(nowMs))
         return RunResult(
             completed = completed, rpe = rpe, durationSec = sec,
             // On a small loop GPS cuts the bends: without laps pressed the pace is unknown, not a guess.
@@ -1271,6 +1313,7 @@ class RunTracker(
             // The loop as GPS fitted it: the laps are read on it when the lap length set is clearly off.
             loopM = if (lapM != null) lapLength() else null,
             gpsM = if (lapM != null) distanceM.takeIf { it > 0 } else null,
+            strideSpeeds = strideV, jogSpeed = jogV,
         )
     }
 
@@ -1360,6 +1403,11 @@ class RunTracker(
             runStepMs = s.runStepMs
             stride = s.stride?.takeIf { it.size == 2 }?.let { it[0] to it[1] }
             strides += s.strideSamples.filter { it.size == 2 }.map { it[0] to it[1] }
+            s.strideSpeeds.forEach { (n, v) -> strideSpeeds[n] = v.toMutableList() }
+            if (s.jog.size == 2) {
+                jogSum = s.jog[0]
+                jogN = s.jog[1].toInt()
+            }
             when (s.state) {
                 State.READY -> Unit
                 State.FINISHED -> {

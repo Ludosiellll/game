@@ -389,6 +389,7 @@ class RunService : Service() {
                     is Cue.LapMark -> c.lapMark()
                     is Cue.SegmentStart -> if (cue.index > 0) c.segmentChange()
                     is Cue.ToLine, is Cue.Finished -> c.segmentChange()
+                    is Cue.Stride -> if (cue.on) c.segmentChange() else c.lapMark()
                     else -> Unit
                 }
             }

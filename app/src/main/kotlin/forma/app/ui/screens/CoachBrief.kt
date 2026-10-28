@@ -373,7 +373,7 @@ suspend fun coachWorkoutFacts(repo: TrainingRepository, workoutId: Long): String
                 val held = summary?.outcomes?.filterIsInstance<forma.core.run.RunOutcome.TestFromPart>()?.firstOrNull()?.let { it.meters to it.seconds }
                 val profile = repo.store.profileNow()
                 val items = forma.core.run.RunReview.of(
-                    forma.core.run.RunReview.Run(plan, summary?.laps.orEmpty(), w.rpe, run.movingSec, run.avgPace, run.workPace, trial, run.completed, reached, held),
+                    forma.core.run.RunReview.Run(plan, summary?.laps.orEmpty(), w.rpe, run.movingSec, run.avgPace, run.workPace, trial, run.completed, reached, held, summary?.strides, summary?.jog),
                     profile?.runGoal, gym = profile?.aim?.lifts != false,
                 )
                 appendLine("Разбор приложения:")

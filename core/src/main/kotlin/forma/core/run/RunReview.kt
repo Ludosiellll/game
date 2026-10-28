@@ -32,12 +32,16 @@ object RunReview {
         val goalReached: Boolean? = null,
         /** A trial counted on the stretch held from its start (`RunOutcome.TestFromPart`): metres and seconds. */
         val held: Pair<Int, Int>? = null,
+        /** The warm-up's strides: each one's speed by GPS, m/s (null where not measured); the jog before them. */
+        val strides: List<Double?>? = null,
+        val jog: Double? = null,
     )
 
     /** [gym]: the person also lifts (the advice between hard runs names the gym only then). */
     fun of(r: Run, goal: RunGoal? = null, gym: Boolean = true): List<Item> {
         val w = r.workout
         val out = mutableListOf<Item>()
+        strides(r)?.let { out += it }
         how(r, goal)?.let { out += it }
         effort(r)?.let { out += it }
         val why = RunExplain.of(w, goal)
@@ -196,6 +200,31 @@ object RunReview {
             }
         }
         return Item("Как пробежал", parts.joinToString(" "), tone)
+    }
+
+    /**
+     * The warm-up's strides: how many were run faster than the jog (a fifth and more — else it was a jog), their pace
+     * and how much faster than the jog. They wake the legs for fast running; they do not measure the form (15 seconds
+     * are speed, not endurance), so nothing in the plan moves by them.
+     */
+    private fun strides(r: Run): Item? {
+        val s = r.strides ?: return null
+        val got = s.filterNotNull()
+        if (got.isEmpty()) return Item("Ускорения", "Сделано ${s.size} из ${RunTimeline.STRIDES}. Темп не измерен: GPS их не поймал.", 0)
+        val jog = r.jog
+        val slow = if (jog != null) s.withIndex().filter { (_, v) -> v != null && v < jog * 1.2 }.map { it.index + 1 } else emptyList()
+        val parts = mutableListOf(
+            "${s.size} из ${RunTimeline.STRIDES}: " +
+                if (got.size == 1) "${Ru.pace(1000 / got[0])}/км." else "от ${Ru.pace(1000 / got.min())} до ${Ru.pace(1000 / got.max())}/км.",
+        )
+        if (jog != null) parts += "Трусца была ${Ru.pace(1000 / jog)}/км — ускорения быстрее в ${Ru.one(got.average() / jog)} раза."
+        parts += when {
+            slow.isNotEmpty() -> (if (slow.size == 1) "Ускорение ${slow[0]}" else "Ускорения ${slow.joinToString(", ")}") +
+                " почти не быстрее трусцы: в следующий раз смелее, но не в полную силу."
+            s.size < RunTimeline.STRIDES -> "Не все сделаны — ноги к быстрому бегу готовы хуже. Их 4 по 15 секунд в конце разминки."
+            else -> "Ноги готовы к быстрому бегу. На форму и темпы ускорения не влияют: 15 секунд — это скорость, а не выносливость."
+        }
+        return Item("Ускорения", parts.joinToString(" "), if (slow.isEmpty() && s.size == RunTimeline.STRIDES) 1 else 0)
     }
 
     /** A free run: its pace, its laps, its own target. */

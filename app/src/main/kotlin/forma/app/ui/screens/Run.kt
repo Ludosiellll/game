@@ -698,6 +698,17 @@ fun RunActiveScreen() {
                     style = T.secondary(13.sp), textAlign = TextAlign.Center,
                 )
             }
+            // The warm-up's strides: which one and how long to go, or how long until the next.
+            if (!waiting) forma.core.run.RunTimeline.stride(w, tl.totalElapsed)?.let { st ->
+                Banner(
+                    when {
+                        st.on -> "Ускорение ${st.n} из ${st.of} · ещё ${st.left} с — быстро и легко, не в полную силу"
+                        st.n == 1 -> "Через ${st.left} с — ускорения: ${st.of} по ${forma.core.run.RunTimeline.STRIDE_SEC} с, между ними трусца"
+                        else -> "Трусца · ускорение ${st.n} из ${st.of} через ${st.left} с"
+                    },
+                    if (st.on) F.c.accent else F.c.endurance, icon = Ic.run,
+                )
+            }
             if (u.autoPaused) {
                 Banner("Автопауза: стоишь — время встало. Побежишь — продолжится само.", F.c.endurance)
             }

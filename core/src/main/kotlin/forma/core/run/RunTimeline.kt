@@ -25,8 +25,11 @@ sealed interface Cue {
     data class LapMark(override val at: Int, val index: Int, val lap: Int, val of: Int) : Cue
     /** The warm-up is over: the rep [index] waits for the runner's start press on the line (see [RunTimeline.startOnLine]). */
     data class ToLine(override val at: Int, val index: Int) : Cue
-    /** Near the end of a warm-up before fast running: a few short accelerations (strides). */
-    data class Strides(override val at: Int, val index: Int) : Cue
+    /**
+     * Near the end of a warm-up before fast running: the stride [n] of [of] starts ([on]) or ends (see
+     * [RunTimeline.stride]).
+     */
+    data class Stride(override val at: Int, val index: Int, val n: Int, val of: Int, val on: Boolean) : Cue
     data class Finished(override val at: Int) : Cue
 }
 
@@ -63,6 +66,53 @@ object RunTimeline {
 
     private fun fast(w: RunWorkout) = w.type == RunType.GOAL_PACE || w.type == RunType.INTERVALS || w.type == RunType.TEST
 
+    /** Strides at the end of a warm-up before fast running: [STRIDES] of [STRIDE_SEC] s, [STRIDE_JOG] s of jogging between. */
+    const val STRIDES = 4
+    const val STRIDE_SEC = 15
+    const val STRIDE_JOG = 30
+
+    /** The strides start this long before the warm-up ends: the last is over a minute before it (time to get to the line). */
+    private const val STRIDES_BEFORE_END = 225
+
+    /** Said this long before the first stride. */
+    private const val STRIDES_AHEAD = 30
+
+    /**
+     * Where the strides of a warm-up stand: in the stride [n] of [of] ([on]: [left] seconds of it to go, [into] seconds
+     * run), or jogging before it ([left] seconds until it starts).
+     */
+    data class StrideNow(val n: Int, val of: Int, val on: Boolean, val left: Int, val into: Int = 0)
+
+    /**
+     * The second of the plan the strides start, before race pace, intervals or a time trial (common coaching practice:
+     * the legs and breathing meet the fast pace before it counts); null when the workout has none.
+     */
+    fun stridesFrom(w: RunWorkout): Int? {
+        if (!fast(w)) return null
+        var start = 0
+        w.segments.forEachIndexed { i, s ->
+            val end = start + s.seconds
+            if (s.kind == SegmentKind.WARMUP && s.seconds >= 8 * 60 && w.segments.getOrNull(i + 1)?.kind == SegmentKind.WORK) return end - STRIDES_BEFORE_END
+            start = end
+        }
+        return null
+    }
+
+    /** The strides at second [elapsed] of the plan: from [STRIDES_AHEAD] s before the first to the end of the last; else null. */
+    fun stride(w: RunWorkout, elapsed: Int): StrideNow? {
+        val t = elapsed - (stridesFrom(w) ?: return null)
+        if (t < -STRIDES_AHEAD) return null
+        if (t < 0) return StrideNow(1, STRIDES, false, -t)
+        val k = t / (STRIDE_SEC + STRIDE_JOG)
+        val into = t % (STRIDE_SEC + STRIDE_JOG)
+        return when {
+            k >= STRIDES -> null
+            into < STRIDE_SEC -> StrideNow(k + 1, STRIDES, true, STRIDE_SEC - into, into)
+            k + 1 < STRIDES -> StrideNow(k + 2, STRIDES, false, STRIDE_SEC + STRIDE_JOG - into)
+            else -> null
+        }
+    }
+
     /** Every cue for the whole workout, in time order. */
     fun allCues(workout: RunWorkout): List<Cue> {
         val out = ArrayList<Cue>()
@@ -91,10 +141,12 @@ object RunTimeline {
             } else {
                 if (s.seconds >= 6 * 60) out += Cue.Halfway(start + s.seconds / 2, i)
                 if (s.seconds >= 3 * 60) out += Cue.MinuteLeft(end - 60, i)
-                // Before race pace, intervals or a time trial: strides in the last minutes of the warm-up (common coaching
-                // practice: the legs and breathing meet the fast pace before it counts).
-                if (s.kind == SegmentKind.WARMUP && s.seconds >= 8 * 60 && fast(workout) && segs.getOrNull(i + 1)?.kind == SegmentKind.WORK) {
-                    out += Cue.Strides(end - 180, i)
+                // Before race pace, intervals or a time trial: strides in the last minutes of the warm-up.
+                val from = stridesFrom(workout)
+                if (from != null && from in start until end) for (k in 0 until STRIDES) {
+                    val on = from + k * (STRIDE_SEC + STRIDE_JOG)
+                    out += Cue.Stride(on, i, k + 1, STRIDES, true)
+                    out += Cue.Stride(on + STRIDE_SEC, i, k + 1, STRIDES, false)
                 }
             }
             // Before a rep that waits on the line no countdown: the runner starts it, the app asks to go to the line.
