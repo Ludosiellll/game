@@ -241,8 +241,13 @@ class GymRulesTest {
         // Every set lighter than the plan, the first time: the plan stays (the next such time it comes down). The block's
         // first week asked more in reserve: a rep or two short of it keeps the plan by design (unrated sets short of the
         // target read as to failure there, which they were not).
+        // A near miss gets one more try at the plan as it was (the second lowers the reps): asked again, not asked new.
         val reason = (e.outcome as? Outcome.Hold)?.reason
-        if (reason == forma.core.strength.HoldReason.LIGHTER && c.state.misses == 0 || reason == forma.core.strength.HoldReason.INTRO) return@check null
+        if (reason == forma.core.strength.HoldReason.LIGHTER && c.state.misses == 0 || reason == forma.core.strength.HoldReason.INTRO ||
+            reason == forma.core.strength.HoldReason.NEAR_MISS) return@check null
+        // A rep short of the range's bottom keeps the weight with the bottom as the target — a rep over the weakest set
+        // by design (two short and the weight comes down).
+        if (e.outcome is Outcome.LowerReps && s.reps == c.spec.repMin) return@check null
         val w = s.weight ?: return@check null
         val l = load(c, s)
         if (l <= Progression.effectiveLoad(c.ex, Progression.minWeight(c.ex, c.bw), c.bw) + 1e-6) return@check null
@@ -313,6 +318,9 @@ class GymRulesTest {
         // Both moved on: how far is the engine's call — a jump at one, a step at the other (the spare read against a
         // weight a step apart) — not the heavier session asked less of.
         if (up(e0.outcome) && up(eb.outcome)) return@check null
+        // Held at a weight as heavy as the other one moves on to: a second try at the heavier weight, not less of it (a
+        // rep under the target there against the other's reps from the estimate a step up).
+        if (eb.outcome is Outcome.Hold && load(c, b) >= load(c, a) - 1e-6) return@check null
         if (atLeast(c, b, a)) null else "те же подходы на шаг тяжелее — а план легче: было бы ${a.weight}×${a.reps}, стало ${b.weight}×${b.reps} (${e0.outcome} / ${eb.outcome})"
     }
 
