@@ -1129,10 +1129,10 @@ class RunTracker(
         val ref = l.fast ?: l.slow ?: return false
         if (l.rep != null) {
             val before = lapList.filter { it.rep == l.rep && !it.auto }.map { it.seconds / it.part }
-            // Against the median of the rep's laps, not the last one: after one slow lap (not yet a walk) the lap run
-            // at the usual pace again is no touch. The rep's first lap has none before it: the planned lap (the beeps)
-            // stands for them.
-            val usual = if (before.isEmpty()) (plannedLap(l) ?: ref) else before.sorted()[(before.size - 1) / 2] * l.part
+            // Against the lap he is on ([usual]: a fade followed, one slow lap not — after a stumble the lap run at the
+            // usual pace again is no touch). The rep's first lap has none before it: the planned lap (the beeps) stands
+            // for them.
+            val usual = if (before.isEmpty()) (plannedLap(l) ?: ref) else usual(before) * l.part
             if (l.seconds < STRAY_LAP * usual) return true
         }
         return l.seconds < SHORT_LAP * ref
@@ -1349,18 +1349,22 @@ class RunTracker(
     }
 
     /**
-     * The lap a runner is on, from the whole laps [before] it in the rep (seconds each): their median, or the last one
-     * when the runner is slowing down — while it is within [USUAL_DRIFT] of the median and a step of at most
-     * [USUAL_STEP] from the lap before it (a fade comes a little at a time). A lap walked (over the median), or one lap
-     * far slower than the one before it (a stumble: 64 s after 41, then the usual pace again), is no measure of the next,
-     * which would then pass for a touch — and the line after it for its line, the two made one lap past belief.
+     * The lap a runner is on, from the whole laps [before] it in the rep (seconds each): the median of the last three
+     * (a fade followed, one lap walked not), or the last one when it is a step of at most [USUAL_STEP] from the lap
+     * before it (a fade comes a little at a time; one lap far slower than the one before it — a stumble, 64 s after 41,
+     * then the usual pace again — is no measure of the next, which would then pass for a touch, and the line after it
+     * for its line, the two made one lap past belief). Never under the median of the whole rep, never over
+     * [USUAL_DRIFT] of it. Against the median of the whole rep alone a heavy fade (37 s a lap to 60) ran away from the
+     * reference, a touch at 25 s passed for a lap, and the trial closed a lap early.
      */
     private fun usual(before: List<Double>): Double {
         // The lower middle of an even count: of two laps, one of them walked, the lap is the other.
-        val median = before.sorted()[(before.size - 1) / 2]
+        fun median(xs: List<Double>) = xs.sorted()[(xs.size - 1) / 2]
+        val whole = median(before)
         val last = before.last()
         val step = if (before.size >= 2) last / before[before.size - 2] else 1.0
-        return if (last <= USUAL_DRIFT * median && step <= USUAL_STEP) maxOf(median, last) else median
+        val lead = maxOf(median(before.takeLast(3)), if (step <= USUAL_STEP) last else 0.0)
+        return maxOf(whole, minOf(lead, USUAL_DRIFT * whole))
     }
 
     /** Seconds into the lap being run: since the last press, or since the current segment began if it came later. */
@@ -1433,10 +1437,10 @@ class RunTracker(
         /** The same for a rep's first lap, against the planned lap: only a lap nobody runs (see [retimeStray]). */
         const val STRAY_FIRST = 0.75
 
-        /** The last lap of a rep counts for the lap a runner is on while within this much of the rep's median (see [usual]). */
+        /** The last laps of a rep count for the lap a runner is on up to this much over the rep's median (see [usual]). */
         const val USUAL_DRIFT = 1.6
 
-        /** … and while it is at most this much over the lap before it: a fade, not one slow lap (see [usual]). */
+        /** The last lap alone counts while it is at most this much over the lap before it: a fade, not one slow lap (see [usual]). */
         const val USUAL_STEP = 1.25
 
         /** No lap is run faster than this (m/s; the 200 m record is 10.4): a lap pressed faster is a touch (see [tooShort]). */

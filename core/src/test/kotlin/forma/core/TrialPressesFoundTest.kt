@@ -47,4 +47,21 @@ class TrialPressesFoundTest {
         val time = assertNotNull(t.result(0, 9).testSeconds, "${reps.map { "%.1f".format(it.seconds) }}")
         assertTrue(abs(time - real) <= 1, "time $time, run in $real")
     }
+
+    /**
+     * Seed 40702582145, case 6047256 (the background run, issue #13): 3000 m on a 200 m loop, a steady heavy fade from
+     * 37 to 60 s a lap, a touch at 0,42 of lap 11 (24,7 s). The lap before it, 59,9 s, was a hair over 1,6 of the median
+     * of all laps (37,4) and so did not stand for the next; against 37,4 the touch passed for a lap, the line after it
+     * for another, and the trial closed a lap early: 10:48 for 11:47, the dangerous side. A fade is followed by the
+     * last laps, not by the median of the whole trial.
+     */
+    @Test fun aHeavyFadeIsFollowedByTheLastLaps() {
+        val w = RunPlan.goalTest(RunState(walkStage = -1), RunGoal(3000, 563), 200)
+        val laps = listOf(37.7, 38.1, 37.2, 37.2, 37.3, 37.2, 37.4, 42.9, 49.8, 59.9, 58.7, 57.9, 59.2, 57.9, 59.0)
+        val (t, real) = run(w, laps, strays = mapOf(11 to 0.42))
+        val reps = t.laps.filter { it.rep == 1 }
+        assertEquals(15, reps.size, "${reps.map { "%.1f".format(it.seconds) }}")
+        val time = assertNotNull(t.result(0, 9).testSeconds, "${reps.map { "%.1f".format(it.seconds) }}")
+        assertTrue(abs(time - real) <= 1, "time $time, run in $real")
+    }
 }
