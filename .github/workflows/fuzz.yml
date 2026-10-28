@@ -60,16 +60,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # One issue per title while it is open: the exact title, not a search (a search reads run_trial_faster and
+          # run_trial_further alike). A listing that fails counts as none open — a duplicate beats a report lost.
+          report() {
+            open=$(gh issue list --state open --limit 200 --json title --jq "[.[] | select(.title == \"$1\")] | length" 2>/dev/null || echo 0)
+            if [ "${open:-0}" = "0" ]; then gh issue create --title "$1" --body-file "$2"; fi
+          }
+          run="Прогон: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          found=0
           for f in core/build/fuzz/*.txt app/build/fuzz/*.txt; do
             [ -f "$f" ] || continue
             case "$(basename "$f")" in counts.txt) continue ;; esac
-            title="Правило нарушено: $(basename "$f" .txt)"
-            open=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq 'length')
-            if [ "$open" = "0" ]; then
-              { cat "$f"; echo; echo "Прогон: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"; } > body.md
-              gh issue create --title "$title" --body-file body.md
-            fi
+            found=1
+            { cat "$f"; echo; echo "$run"; } > body.md
+            report "Правило нарушено: $(basename "$f" .txt)" body.md
           done
+          # Failed with no rule's report (a build broken, a crash outside the rules): said too, not left a red run.
+          if [ "$found" = "0" ]; then
+            { echo "Прогон правил упал, но ни одно правило не записало нарушения (сборка, падение вне правил)."; echo; echo "$run"; } > body.md
+            report "Прогон правил сломался" body.md
+          fi
 
       - uses: actions/upload-artifact@v6
         if: ${{ !cancelled() }}
