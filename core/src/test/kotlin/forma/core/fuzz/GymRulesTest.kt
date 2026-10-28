@@ -88,11 +88,14 @@ class GymRulesTest {
         val w = if (fresh || ex.load == LoadKind.TIMED) null else weight(r, ex, bw)
         val reps = if (ex.load == LoadKind.TIMED) spec.repMin + 5 * r.nextInt(0, (spec.repMax - spec.repMin) / 5 + 1)
         else r.nextInt(max(1, spec.repMin - 3), spec.repMax + 5)
+        // A cut remembered: the weight it came from and the reps then — as a pair mostly (the engine reads them together),
+        // one of them alone now and then (older rows).
+        val cut = w != null && r.chance(0.3)
         val state = SlotState(
             w, reps, stalls = r.nextInt(0, 4), misses = r.nextInt(0, 3), sessions = if (fresh) 0 else r.nextInt(1, 40),
             linear = r.nextBoolean(), steady = r.nextInt(0, 4),
-            cutFrom = if (w != null && r.chance(0.2)) w + ex.step * r.nextInt(1, 6) else null,
-            cutReps = if (r.chance(0.2)) r.nextInt(1, 10) else null,
+            cutFrom = if (cut || w != null && r.chance(0.1)) w!! + ex.step * r.nextInt(1, 6) else null,
+            cutReps = if (cut || r.chance(0.1)) max(1, reps + r.nextInt(-4, 4)) else null,
         )
         val e1rm = if (w != null && r.chance(0.7)) OneRm.estimate(Progression.effectiveLoad(ex, w, bw), reps, spec.rir) * r.range(0.8, 1.3) else null
         val ph = phase ?: r.pick(Phase.NORMAL, Phase.NORMAL, Phase.NORMAL, Phase.NORMAL, Phase.NORMAL, Phase.DELOAD, Phase.TAPER, Phase.TEST)
@@ -103,7 +106,9 @@ class GymRulesTest {
             ownBest = if (ex.assisted && r.chance(0.3)) OneRm.estimate(Progression.effectiveLoad(ex, 0.0, bw), r.nextInt(1, 15), 0) else null,
         )
         val done = sets(r, ex, p, bw)
-        val best = if (r.chance(0.5)) e1rm?.let { it * r.range(0.9, 1.2) } else null
+        // The weeks' best: near the estimate mostly; well above it now and then (a strong day weeks ago, a set logged
+        // wrong) — then it is the floor that holds the weight up.
+        val best = if (r.chance(0.6)) e1rm?.let { it * (if (r.chance(0.5)) r.range(1.2, 1.6) else r.range(0.9, 1.2)) } else null
         return Case(ex, spec, state, p, done, bw, novice, best)
     }
 
@@ -142,6 +147,9 @@ class GymRulesTest {
         }
         if (c.recentBest != null) yield(c.copy(recentBest = null))
         if (c.novice) yield(c.copy(novice = false))
+        // The plan does not depend on these: a case without the cut, or without the stalls and misses, is the same session.
+        if (c.state.cutFrom != null || c.state.cutReps != null) yield(c.copy(state = c.state.copy(cutFrom = null, cutReps = null)))
+        if (c.state.stalls > 0 || c.state.misses > 0) yield(c.copy(state = c.state.copy(stalls = 0, misses = 0)))
     }
 
     private fun eval(c: Case, done: List<DoneSet> = c.done): Evaluation =
@@ -398,13 +406,32 @@ class GymRulesTest {
         if ((p.weight ?: 0.0) < -1e-9) "делает 6 сам — а в плане помощь ${p.weight}" else null
     }
 
+    /** Holds (the plank): every planned set held for the target and longer is never asked less next time. */
+    @Test fun gymHeldIsNeverLost() = check("gym_held_never_lost", { r -> gen(r, Phase.NORMAL, false, pool.filter { it.load == LoadKind.TIMED }) }) { c ->
+        val planned = c.done.filter { it.reps > 0 }.take(c.p.sets)
+        if (planned.isEmpty() || planned.any { it.reps < c.p.reps }) return@check null
+        val e = eval(c)
+        if (e.state.reps < c.p.reps) "все подходы ${planned.joinToString { "${it.reps} с" }} при плане ${c.p.reps} с, а дальше ${e.state.reps} с (${e.outcome})" else null
+    }
+
     // ---------- a training life ----------
 
     /** A lifter whose true strength the engine does not know: [oneRm] (kg moved), growing [gain] a session. */
-    data class Life(val ex: Exercise, val spec: SlotSpec, val bw: Double, val oneRm: Double, val gain: Double, val honest: Boolean, val novice: Boolean, val seed: Int) {
+    data class Life(
+        val ex: Exercise, val spec: SlotSpec, val bw: Double, val oneRm: Double, val gain: Double, val honest: Boolean, val novice: Boolean, val seed: Int,
+        /** What is left of the strength from the tenth session on (1.0: nothing lost at once). */
+        val drop: Double = 1.0,
+        /** Reps to failure lost with every set done before (the rest between sets is never complete). */
+        val fatigue: Double = 0.0,
+    ) {
         override fun toString() =
             "${ex.id} (${ex.load}, шаг ${ex.step}), вес тела ${"%.1f".format(bw)}, диапазон ${spec.repMin}–${spec.repMax} × ${spec.sets}, запас ${spec.rir}, " +
-                "роль ${spec.role}, истинный максимум ${"%.1f".format(oneRm)} кг (+${"%.1f".format(gain * 100)} % за тренировку), честно оценивает: $honest, новичок $novice"
+                "роль ${spec.role}, истинный максимум ${"%.1f".format(oneRm)} кг (${"%+.1f".format(gain * 100)} % за тренировку" +
+                (if (drop < 1.0) ", с 10-й тренировки ${"%.0f".format(drop * 100)} % от него" else "") + "), теряет $fatigue повтора за подход, " +
+                "честно оценивает: $honest, новичок $novice"
+
+        /** Reps to failure at [weight] on set [i] of a session, with the strength [oneRm] today. */
+        fun rtf(oneRm: Double, weight: Double, i: Int): Int = (OneRm.rtfAt(oneRm, Progression.effectiveLoad(ex, weight, bw)) - fatigue * i).toInt().coerceAtLeast(1)
     }
 
     private fun life(r: Random): Life {
@@ -414,7 +441,7 @@ class GymRulesTest {
         val body = Progression.effectiveLoad(ex, 0.0, bw)
         val start = Progression.startHint(ex, bw, false, 1.0) ?: 20.0
         val oneRm = if (ex.load == LoadKind.BODYWEIGHT_PLUS) body * r.range(1.05, 1.8) else max(start / 0.6, (ex.bar ?: 0.0) * 1.5) * r.range(0.7, 2.5)
-        return Life(ex, spec, bw, oneRm, r.pick(0.0, 0.003, 0.01), r.chance(0.7), r.chance(0.3), r.nextInt())
+        return Life(ex, spec, bw, oneRm, r.pick(0.0, 0.003, 0.01), r.chance(0.7), r.chance(0.3), r.nextInt(), fatigue = r.pick(0.0, 0.5, 1.0))
     }
 
     /**
@@ -429,13 +456,14 @@ class GymRulesTest {
         var true1 = l.oneRm
         var easyRun = 0
         var most = 0.0
+        val trail = mutableListOf<String>()
         for (k in 0 until 40) {
             val p = Progression.prescribe(l.ex, l.spec, state, e1rm = e1rm, bodyWeight = l.bw, hint = Progression.startHint(l.ex, l.bw, false, 1.0), novice = l.novice)
             var weight = p.weight ?: p.startHint ?: if (l.ex.load == LoadKind.EXTERNAL) (l.ex.bar ?: l.ex.step * 4) else 0.0
             val done = mutableListOf<DoneSet>()
             var spare = Int.MAX_VALUE
             for (i in 0 until p.sets) {
-                val rtf = OneRm.rtfAt(true1, Progression.effectiveLoad(l.ex, weight, l.bw)).toInt()
+                val rtf = l.rtf(true1, weight, i)
                 // The "+" set: the target first, then more while it goes well, stopping with topRir in reserve.
                 val goal = when {
                     p.calibrate -> rtf - p.rir
@@ -445,7 +473,8 @@ class GymRulesTest {
                 val reps = min(rtf, max(1, goal))
                 val rir = if (l.honest) (rtf - reps).coerceIn(0, 5) else if (rng.chance(0.5)) null else (rtf - reps + rng.nextInt(-1, 3)).coerceIn(0, 5)
                 done += DoneSet(weight, reps, rir)
-                if (!p.calibrate && abs(weight - (p.weight ?: weight)) < 1e-9) spare = min(spare, rtf - p.reps - p.rir)
+                // To spare on every set, at the weight it was done (the hint may have taken the later sets heavier).
+                if (!p.calibrate) spare = min(spare, rtf - p.reps - p.rir)
                 Progression.adjustAfterSet(l.ex, p, done.last(), l.bw, i)?.let { weight = it.weight }
             }
             val ev = Progression.evaluate(l.ex, l.spec, state, p, done, l.bw, l.novice, e1rm)
@@ -453,9 +482,13 @@ class GymRulesTest {
             if (System.getenv("FORMA_FUZZ_TRACE") != null) println("TRACE ${k + 1}: план ${p.weight}×${p.reps}×${p.sets} (запас ${p.rir}, «+» ${p.top}) сделано ${done.joinToString { "${it.weight}×${it.reps}/${it.rir}" }} → ${ev.outcome}, максимум ${"%.1f".format(true1)}")
             ev.e1rm?.let { e1rm = Progression.smoothE1rm(e1rm, it, l.novice) }
             val next = ev.state
-            // Moved: a plan asking more of the muscles than any before it; clearly able and none such: counted — while the
-            // next weight is in reach at all (a 2.5 kg step on a 6 kg maximum is not: the reps at their most, it waits).
-            val demand = l.load(next) / OneRm.fractionForRtf((next.reps + l.spec.rir).toDouble())
+            trail += "${k + 1}: план ${p.weight}×${p.reps}, сделано ${done.joinToString(" ") { "${it.weight}×${it.reps}${it.rir?.let { r -> "@$r" } ?: ""}" }} → ${ev.outcome}" +
+                " (застои ${next.stalls}, промахи ${next.misses}, steady ${next.steady}, оценка ${e1rm?.let { "%.1f".format(it) }})"
+            // Moved: a plan asking more of the muscles than any before it since the last cut (the climb back after a
+            // cut is moving too); clearly able and none such: counted — while the next weight is in reach at all (a
+            // 2.5 kg step on a 6 kg maximum is not: the reps at their most, it waits).
+            val demand = l.demand(next)
+            if (ev.outcome is Outcome.Reduce || ev.outcome is Outcome.Reset) most = 0.0
             val moved = demand > most * (1 + 1e-9)
             most = max(most, demand)
             val nextW = (next.weight ?: 0.0) + l.ex.stepAt(next.weight ?: 0.0)
@@ -464,9 +497,10 @@ class GymRulesTest {
             // target and no rating, eight times running, is all the engine is shown (it still adds a rep each time).
             val shown = done.any { (it.rir ?: 0) >= 2 || it.reps > p.reps }
             easyRun = if (!p.calibrate && spare >= 3 && !moved && reachable && shown) easyRun + 1 else 0
-            if (easyRun >= 8) return@check "8 тренировок подряд с запасом 3+ повтора — а план стоит на ${next.weight}×${next.reps} (тренировка ${k + 1})"
+            if (easyRun >= 8) return@check "8 тренировок подряд с запасом 3+ повтора — а план стоит на ${next.weight}×${next.reps} (тренировка ${k + 1})\n" + trail.takeLast(9).joinToString("\n")
             if (k >= 6 && next.weight != null) {
-                val ideal = OneRm.loadFor(true1, next.reps, l.spec.rir)
+                // What the last set can do: the reps lost from set to set come off the plan's reserve.
+                val ideal = true1 * OneRm.fractionForRtf(next.reps + l.spec.rir + l.fatigue * (l.spec.sets - 1))
                 val step = l.ex.stepAt(next.weight!!)
                 val asked = Progression.effectiveLoad(l.ex, next.weight!!, l.bw)
                 if (asked < ideal * 0.75 - step && asked > Progression.effectiveLoad(l.ex, Progression.minWeight(l.ex, l.bw), l.bw) + 1e-6) {
@@ -480,4 +514,66 @@ class GymRulesTest {
     }
 
     private fun Life.load(s: SlotState): Double = Progression.effectiveLoad(ex, s.weight ?: 0.0, bw)
+
+    /** What the plan asks of the muscles (see [demand]). */
+    private fun Life.demand(s: SlotState): Double = load(s) / OneRm.fractionForRtf((s.reps + spec.rir).toDouble())
+
+    /** A lifter who gets weaker: a little every session, or a fifth at once (illness, a hard month) without a break. */
+    private fun weaker(r: Random): Life = life(r).copy(gain = r.pick(-0.005, -0.01, -0.02, 0.0), drop = if (r.chance(0.5)) r.pick(0.8, 0.85) else 1.0)
+
+    /**
+     * A lifter who keeps failing is brought down: never four sessions in a row each with sets at the plan's weight
+     * short of the target and done to failure, none read as a stop by choice (a reserve said to be there is believed),
+     * with the plan asking as much as before every time. The weeks' best estimate (the floor of reductions) is kept as
+     * the app keeps it: the best of the last twenty sessions.
+     */
+    @Test fun gymLifeMeetsWhoKeepsFailing() = Fuzz.check("gym_life_meets", ::weaker, show = { it.toString() }, cases = 120) { l ->
+        val rng = Random(l.seed)
+        var state = SlotState.fresh(l.spec)
+        var e1rm: Double? = null
+        var true1 = l.oneRm
+        val bests = mutableListOf<Double>()
+        var failRun = 0
+        var askedBefore = Double.MAX_VALUE
+        val trail = mutableListOf<String>()
+        for (k in 0 until 40) {
+            if (k == 10) true1 *= l.drop
+            val p = Progression.prescribe(l.ex, l.spec, state, e1rm = e1rm, bodyWeight = l.bw, hint = Progression.startHint(l.ex, l.bw, false, 1.0), novice = l.novice)
+            var weight = p.weight ?: p.startHint ?: if (l.ex.load == LoadKind.EXTERNAL) (l.ex.bar ?: l.ex.step * 4) else 0.0
+            val done = mutableListOf<DoneSet>()
+            // The sets at the plan's weight short of the target and really to failure.
+            var short = 0
+            for (i in 0 until p.sets) {
+                val rtf = l.rtf(true1, weight, i)
+                val goal = when {
+                    p.calibrate -> rtf - p.rir
+                    p.top && i == p.sets - 1 -> max(p.reps, rtf - p.topRir)
+                    else -> p.reps
+                }
+                val reps = min(rtf, max(1, goal))
+                val rir = if (l.honest) (rtf - reps).coerceIn(0, 5) else if (rng.chance(0.5)) null else (rtf - reps + rng.nextInt(-1, 3)).coerceIn(0, 5)
+                done += DoneSet(weight, reps, rir)
+                if (!p.calibrate && abs(weight - (p.weight ?: weight)) < 1e-9 && reps < p.reps && rtf <= reps) short++
+                Progression.adjustAfterSet(l.ex, p, done.last(), l.bw, i)?.let { weight = it.weight }
+            }
+            val recent = bests.takeLast(20).maxOrNull()
+            val ev = Progression.evaluate(l.ex, l.spec, state, p, done, l.bw, l.novice, recent)
+            ev.e1rm?.let { e1rm = Progression.smoothE1rm(e1rm, it, l.novice); bests += it }
+            val next = ev.state
+            trail += "${k + 1}: план ${p.weight}×${p.reps}, сделано ${done.joinToString(" ") { "${it.weight}×${it.reps}${it.rir?.let { r -> "@$r" } ?: ""}" }} → ${ev.outcome}" +
+                " (застои ${next.stalls}, промахи ${next.misses}, срез с ${next.cutFrom}/${next.cutReps}, лучшая недель ${recent?.let { "%.1f".format(it) }})"
+            // A failure the engine can see: sets short to failure, and the session not read as a stop by choice (a reserve
+            // said to be there is believed, by design — whoever rates reserve on a set to failure is held on their word).
+            val failed = short > 0 && (ev.outcome as? Outcome.Hold)?.reason != forma.core.strength.HoldReason.STOPPED_EARLY
+            // The plan came down (less of the muscles than before this run of misses): the run is over.
+            if (failed) {
+                if (failRun == 0) askedBefore = l.demand(state)
+                failRun = if (l.demand(next) >= askedBefore * (1 - 1e-9)) failRun + 1 else 0
+            } else failRun = 0
+            if (failRun >= 4) return@check "4 тренировки подряд не доходит до плана на весе плана (до отказа) — а план не легче: ${next.weight}×${next.reps} (тренировка ${k + 1})\n" + trail.takeLast(6).joinToString("\n")
+            state = next
+            true1 *= 1 + l.gain
+        }
+        null
+    }
 }

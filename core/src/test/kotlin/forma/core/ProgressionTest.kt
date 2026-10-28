@@ -115,9 +115,10 @@ class ProgressionTest {
         val s = SlotSpec("db_curl", 3, 5, 8, 2, 75, SlotRole.ACCESSORY)
         // 10 → 12 kg would leave about 2 reps: a rep more with 10 kg instead.
         assertEquals(Outcome.AddReps(10.0, 8, 9), eval(SlotState(10.0, 8), sets(10.0, 8, 8, 9), s, curl).outcome)
-        // Lots to spare: 13 with 10 kg put 12 kg in reach for six with two to spare (a set past 12 counts as 12 — what it
-        // surely was at least; left out of the estimate, 12 kg looked out of reach and more reps came instead).
-        assertEquals(Outcome.AddWeight(10.0, 12.0, 6), eval(SlotState(10.0, 8), sets(10.0, 8, 8, 13), s, curl).outcome)
+        // Lots to spare: 13 with 10 kg put 12 kg in reach for seven with two to spare (a set past 12 counts as 12 with
+        // the rest in reserve — what it surely was at least; left out of the estimate, 12 kg looked out of reach and
+        // more reps came instead).
+        assertEquals(Outcome.AddWeight(10.0, 12.0, 7), eval(SlotState(10.0, 8), sets(10.0, 8, 8, 13), s, curl).outcome)
     }
 
     // ---------- falling short ----------

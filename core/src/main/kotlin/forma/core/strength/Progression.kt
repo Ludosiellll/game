@@ -148,8 +148,9 @@ data class NextSet(val weight: Double, val reps: Int, val change: Int, val reser
  * - Short: a near miss repeats the weight; a clear miss moves half way toward what was shown (all the way after two
  *   misses or when the first set was 3+ reps short), never more than −10 % at once; three stalls in a row → −10 % and
  *   back to the bottom of the range (Starting Strength reset). The linear phase ends at the first of these.
- * - Never below 85 % of what the best estimate of the last weeks supports: a few bad days or reps left on the table
- *   cannot drag the weights down session after session.
+ * - Never below 85 % of what the best estimate of the last weeks supports: a bad day or two, or reps left on the table,
+ *   cannot drag the weights down. The third session in a row short of the plan is no bad day: then the weight comes
+ *   down whatever the weeks' best says.
  * - Back after 2+ weeks off: 5–15 % lighter.
  */
 object Progression {
@@ -331,13 +332,14 @@ object Progression {
 
     /**
      * Best e1RM of the session. Estimates from sets past 12 reps or 4 in reserve are unreliable (they run high): such a
-     * set counts as 12 reps and 4 in reserve — what it surely was at least. Left out instead, one rep more (13 on the
-     * "+" set) or «ещё 5+» for «ещё 4» gave a lower estimate and a lighter next plan for the set done better. When every
-     * set is past 12 (a range of 15–20), they count as they are.
+     * set counts as 12 reps and at most 4 in reserve — what it surely was at least, the reps past 12 as reserve. Left
+     * out instead, one rep more (13 on the "+" set) or «ещё 5+» for «ещё 4» gave a lower estimate and a lighter next
+     * plan for the set done better; with the reps cut to 12 and the reserve kept as said, a rep more past the target
+     * (one less in reserve, unrated) did the same. When every set is past 12 (a range of 15–20), they count as they are.
      */
     fun e1rmOf(ex: Exercise, sets: List<DoneSet>, p: Prescription, bodyWeight: Double): Double? {
         val rated = sets.mapIndexedNotNull { i, s -> if (s.reps > 0) s to assumedRir(s, i, p) else null }
-        val good = if (rated.none { (s, _) -> s.reps <= 12 }) rated else rated.map { (s, rir) -> s.copy(reps = min(s.reps, 12)) to min(rir, 4) }
+        val good = if (rated.none { (s, _) -> s.reps <= 12 }) rated else rated.map { (s, rir) -> s.copy(reps = min(s.reps, 12)) to min(4, rir + max(0, s.reps - 12)) }
         return good.maxOfOrNull { (s, rir) -> OneRm.estimate(effectiveLoad(ex, s.weight, bodyWeight), s.reps, rir) }
     }
 
@@ -437,8 +439,11 @@ object Progression {
         @Suppress("NAME_SHADOWING") val state = if (abs(w - (state.weight ?: w)) > 1e-9 || state.reps != p.reps) state.copy(weight = w, reps = p.reps) else state
         val step = ex.stepAt(w)
         val inc = spec.increment ?: step
-        // 85 % of the total load (for assisted exercises that means more help, not 85 % of it).
-        val floor = recentBest?.let { floorTo(toWeight(ex, OneRm.loadFor(it, target, p.rir) * FLOOR, bodyWeight), step) }
+        // 85 % of the total load (for assisted exercises that means more help, not 85 % of it). It holds a bad day or
+        // two, not a third session in a row short of the plan: held up by the weeks' best for as long as it stood, a
+        // lifter a fifth weaker did 12, 11, 10, 10 to failure on 25 × 15 and was told «repeat 25 × 15» every time.
+        val floor = recentBest?.takeIf { state.stalls < 2 && state.misses < 2 }
+            ?.let { floorTo(toWeight(ex, OneRm.loadFor(it, target, p.rir) * FLOOR, bodyWeight), step) }
         fun floored(x: Double) = if (floor != null) max(x, min(floor, w)) else x
 
         if (lighter == planned.size) {
@@ -471,15 +476,15 @@ object Progression {
         // (30 × 8 with four to spare → 32.5 → 35 × 7) held and reset a lifter at 30 again and again: he never moved on.
         // The best over the reserves up to the one said: the chart's steps are uneven, and a rep more in reserve came out
         // as a rep less at [w] (62.5 × 5 «ещё 2» read 52.5 × 9 where «ещё 1» read × 10, and the plan was cut to 45).
-        val equiv = planned.mapIndexed { i, s ->
-            if (s.weight <= w + tol) s.reps else {
+        // To the nearest rep: the estimate is no finer, and 147.5 × 14 read as 142.5 × 14.95 was a miss (held) where the
+        // same sets a step lighter jumped by 20 kg. The reps themselves are kept for the reach of the range's bottom.
+        val atWeight = planned.mapIndexed { i, s ->
+            if (s.weight <= w + tol) null else {
                 val load = effectiveLoad(ex, s.weight, bodyWeight)
-                val atW = (0..assumedRir(s, i, p)).maxOf { r -> OneRm.rtfAt(OneRm.estimate(load, s.reps, r), effectiveLoad(ex, w, bodyWeight)) - r }
-                // To the nearest rep: the estimate is no finer, and 147.5 × 14 read as 142.5 × 14.95 was a miss (held) where
-                // the same sets a step lighter jumped by 20 kg.
-                max(s.reps, kotlin.math.floor(atW + 0.5).toInt())
+                (0..assumedRir(s, i, p)).maxOf { r -> OneRm.rtfAt(OneRm.estimate(load, s.reps, r), effectiveLoad(ex, w, bodyWeight)) - r }
             }
         }
+        val equiv = planned.mapIndexed { i, s -> atWeight[i]?.let { max(s.reps, kotlin.math.floor(it + 0.5 + 1e-9).toInt()) } ?: s.reps }
         val allAtTarget = lighter == 0 && equiv.all { it >= target }
         if (allAtTarget && planned.size < p.sets) {
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.FEWER_SETS), e1rm)
@@ -585,12 +590,23 @@ object Progression {
             return Evaluation(SlotState(to, r, 0, 0, sessions, state.linear), Outcome.AddWeight(w, to, r), e1rm)
         }
 
-        // Short of the target — but every set at the weight was stopped with the missing reps still in reserve (8 done,
-        // "2 more" said, 9 planned with 1 left): the lifter stopped, the weight did not stop them. Seen in half-year
-        // simulations: such a lifter's weights sank to 60–80 % of what they could lift. The weight and the target stay.
-        val atW = planned.filter { it.weight >= w - tol }
-        // Most of the sets is enough: a reported reserve is a guess, off by one now and then.
-        if (atW.isNotEmpty() && atW.count { s -> s.rir != null && s.reps + s.rir >= target + p.rir } * 2 > atW.size) {
+        // Short of the target — but the sets at the weight that fell short were stopped with the missing reps still in
+        // reserve (8 done, "2 more" said, 9 planned with 1 left): the lifter stopped, the weight did not stop them. Seen
+        // in half-year simulations: such a lifter's weights sank to 60–80 % of what they could lift. The weight and the
+        // target stay. Who says the weight did not stop them: a short set with the missing reps in reserve, a set at the
+        // target with more reserve than planned; a set at the target with the reserve as planned, or not rated, says
+        // nothing (two such outvoted a «+» set to failure one short, held as a stop by choice session after session and
+        // never stalled). Each set as the engine reads it: short and not rated was to failure. Most of those with a say
+        // is enough: a reported reserve is a guess, off by one now and then — and a «+» set that made the target with
+        // reserve keeps its say (12 «ещё 3» after 9 «ещё 5» lowered the target where 11 «ещё 3» held it).
+        val said = planned.indices.filter { planned[it].weight >= w - tol }.mapNotNull { i ->
+            val r = assumedRir(planned[i], i, p)
+            if (equiv[i] < target) equiv[i] + r >= target + p.rir else if (r > p.rir) true else null
+        }
+        // The «+» set, the one nearest failure, has the last word: short of the target with nothing to spare, the weight
+        // stopped them whatever the earlier sets had in reserve (3 «ещё 2», 3 «ещё 1», 3, then 2 to failure on 45 × 3).
+        val plusFailed = top != null && top.weight >= w - tol && equiv[regularCount] < target && assumedRir(top, regularCount, p) == 0
+        if (!plusFailed && said.isNotEmpty() && said.count { it } * 2 > said.size) {
             return Evaluation(state.copy(sessions = sessions), Outcome.Hold(w, target, HoldReason.STOPPED_EARLY), e1rm)
         }
         val first = planned.indexOfFirst { it.weight >= w - tol }.let { if (it < 0) 0 else equiv[it] }
@@ -601,20 +617,29 @@ object Progression {
         val near = first >= target - 1 && deficit <= max(1, p.sets - 1)
         val cutFrom = state.cutFrom
         val doneMin = planned.indices.filter { planned[it].weight >= w - tol }.minOfOrNull { equiv[it] } ?: spec.repMin
-        if (cutFrom != null && w < cutFrom - 1e-9 && doneMin <= (state.cutReps ?: 0)) {
+        // In reach of the range's bottom: a heavier set's reps at the weight read whole, not rounded up (10.9 at 60 is
+        // not a rep short of 12 — rounded to 11, the plan asked 60 × 12 where the estimate gave 10.9 to failure).
+        val reach = planned.indices.filter { planned[it].weight >= w - tol }
+            .minOfOrNull { i -> atWeight[i]?.let { max(planned[i].reps, kotlin.math.floor(it + 1e-9).toInt()) } ?: planned[i].reps } ?: spec.repMin
+        if (cutFrom != null && w < cutFrom - 1e-9 && doneMin <= (state.cutReps ?: 0) && state.stalls < 2) {
             // The weight already came down and the reps did not come up — in any set: the weight is not what limits.
             // Keep it and meet the lifter at the reps they do — the weakest set's, as a rep target lowered anywhere —
             // progress starts again from there. Judged on the first set alone, a rep more in it (7 then 2, cut at 6)
             // lowered the target to 2 where 6 then 2 kept it at 6; met at the first set's reps, a rep more in the second
             // (9 then 5, cut at 4) lowered it to 5 where 9 then 4 kept 9.
+            // Said twice at most, the cut still remembered. A first set that made the target is a stall counted: the
+            // lifter can do it fresh and the tail falls — a lifter getting weaker was told this on 4, 4, 4, 3, then on
+            // 4, 4, 3, 2, then on 4, 3, 2, 1, the stalls wiped each time, the weight held for ever; and two near misses
+            // had earned a reset where it was said instead, three sessions late. A first set short of the target is a
+            // new start: whoever stops a rep short of whatever is asked, and says nothing, is held, not cut every time.
             val r = max(1, min(target, doneMin))
-            return Evaluation(state.copy(reps = r, stalls = 0, misses = 0, sessions = sessions, linear = false, steady = 0),
+            return Evaluation(state.copy(reps = r, stalls = if (first >= target) stalls else 0, misses = 0, sessions = sessions, linear = false, steady = 0),
                 Outcome.Hold(w, r, HoldReason.NOT_THE_WEIGHT), e1rm)
         }
         // Room in the rep range: bring the rep target down to what was done before touching the weight (double
         // progression: the weight goes down only when even the bottom of the range is out of reach — a rep short of it
         // is in reach, two are not: 13 done kept the weight with 15 asked, the range's bottom).
-        if (target > spec.repMin && !(near && stalls < 2) && doneMin >= spec.repMin - 1) {
+        if (target > spec.repMin && !(near && stalls < 2) && reach >= spec.repMin - 1) {
             // Down to what the weakest set did (to the first set's reps instead, the simulated lifter who over-rates his
             // reserve missed 15 % of his targets, not 8 %).
             val r = max(spec.repMin, min(target - 1, doneMin))
@@ -637,7 +662,9 @@ object Progression {
             // Below a weight already cut from (or back at it), with the reps come up since (more than at the cut): the cut is
             // working, no second one — a rep more in reserve had taken 185 × 7 to 165 × 5, where the session a rep worse
             // held 185; the same sets a step heavier, back at the weight cut from, reset 45 to 35 where 42.5 was held.
-            val working = cutFrom != null && w <= cutFrom + 1e-9 && first > (state.cutReps ?: 0)
+            // One more session, not for good: a fourth stall at the weight is no cut working (a cut from 30 kept 25 × 15
+            // for whoever did 14 to failure session after session — the cut stays remembered until a session succeeds).
+            val working = cutFrom != null && w <= cutFrom + 1e-9 && first > (state.cutReps ?: 0) && stalls == 3
             if (to < w - 1e-9 && !working) {
                 // The range's bottom — no more than the target was (below the range, 75 × 9 went to 65 × 12) nor than the
                 // estimate (this session's or the weeks' best) gives there to failure.
@@ -684,6 +711,11 @@ object Progression {
         val secs = work.take(p.sets).map { it.reps }
         val minS = secs.min()
         val sessions = state.sessions + 1
+        // Every set held, fewer of them than planned: the target stays, as for a lift (one of two side planks held for
+        // 27 s of 25 was read as a miss, and the second time the target came down to 20 s).
+        if (secs.size < p.sets && minS >= p.reps) {
+            return Evaluation(state.copy(sessions = sessions), Outcome.Hold(0.0, p.reps, HoldReason.FEWER_SETS), null)
+        }
         if (secs.size >= p.sets && minS >= p.reps) {
             if (p.reps >= spec.repMax) {
                 return Evaluation(state.copy(stalls = 0, misses = 0, sessions = sessions), Outcome.Hold(0.0, p.reps, HoldReason.AT_TOP), null)

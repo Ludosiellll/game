@@ -289,6 +289,181 @@ class GymFuzzFindingsTest {
         assertTrue(e.state.reps <= there + 1, "${e.outcome}, ${"%.1f".format(there)} there")
     }
 
+    @Test fun fewerHoldsHeldInFullAreNoMiss() {
+        // Two side planks of 25 s planned, one done and held (27 s), a miss the time before: the target stayed 25 for a
+        // lift done this way (FEWER_SETS); the hold was read as a second miss and the target cut to 20 s.
+        val ex = Catalog["side_plank"]
+        val spec = SlotSpec(ex.id, 2, 20, 30, 0, 60, SlotRole.ACCESSORY)
+        val st = SlotState(null, 25, stalls = 2, misses = 1, sessions = 22, linear = false)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 111.2)
+        val e = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(0.0, 27)), 111.2)
+        assertTrue(e.state.reps >= 25, "${e.outcome}")
+    }
+
+    @Test fun theFloorGivesWayToWhoKeepsFailing() {
+        // Pec deck 25 × 15 (15–15, one in reserve), the weeks' best at 55 holding 25 as the floor: 12, 12, 12 to failure
+        // held the weight (one bad day), 11, 11, 11 again — and 10, 10, 10 again, for as long as the weeks' best stood.
+        val ex = Catalog["pec_deck"]
+        val spec = SlotSpec(ex.id, 3, 15, 15, 1, 60, SlotRole.ACCESSORY)
+        var st = SlotState(25.0, 15, sessions = 12, linear = false)
+        val trail = mutableListOf<Outcome>()
+        for (reps in listOf(12, 11, 10, 10)) {
+            val p = Progression.prescribe(ex, spec, st, bodyWeight = 55.2)
+            if (p.weight!! < 25.0) break
+            val e = Progression.evaluate(ex, spec, st, p, List(3) { DoneSet(25.0, reps, 0) }, 55.2, recentBest = 55.0)
+            trail += e.outcome
+            st = e.state
+        }
+        assertTrue(st.weight!! < 25.0 || st.reps < 15, "four sessions short to failure, and still 25 × 15: $trail")
+    }
+
+    @Test fun aCutThatWorksIsNotCutAgainButAFourthStallIs() {
+        // Pec deck cut from 30 (11 reps there) to 25 × 15: 14 to failure on the third stall is held (the reps came up
+        // since the cut); held for ever, with the cut remembered until a session succeeds — the fourth stall resets.
+        val ex = Catalog["pec_deck"]
+        val spec = SlotSpec(ex.id, 1, 15, 22, 1, 90, SlotRole.SECONDARY)
+        var st = SlotState(25.0, 15, stalls = 2, sessions = 16, linear = false, cutFrom = 30.0, cutReps = 11)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 58.9)
+        val third = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(25.0, 14, 0)), 58.9, recentBest = 57.1)
+        assertEquals(Outcome.Hold(25.0, 15, forma.core.strength.HoldReason.NEAR_MISS), third.outcome)
+        st = third.state
+        val fourth = Progression.evaluate(ex, spec, st, Progression.prescribe(ex, spec, st, bodyWeight = 58.9), listOf(DoneSet(25.0, 14, 0)), 58.9, recentBest = 57.1)
+        assertTrue(fourth.state.weight!! < 25.0, "${fourth.outcome}")
+    }
+
+    @Test fun aSetToFailureShortOfTheTargetIsNoStopByChoice() {
+        // Romanian deadlift 62.5 × 3 (nothing in reserve planned): 3 «ещё 1», 3 «ещё 0», then the «+» set 2 «ещё 0» — to
+        // failure, one short. Read as STOPPED_EARLY (two sets of three "had the reps in reserve": the two that reached
+        // the target), session after session, with no stall counted and so no reset ever: a near miss, as it is.
+        val ex = Catalog["rdl"]
+        val spec = SlotSpec(ex.id, 3, 3, 8, 0, 180, SlotRole.MAIN)
+        val st = SlotState(62.5, 3, stalls = 2, sessions = 8, linear = false)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 50.6)
+        val e = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(62.5, 3, 1), DoneSet(62.5, 3, 0), DoneSet(62.5, 2, 0)), 50.6)
+        assertTrue((e.outcome as? Outcome.Hold)?.reason != forma.core.strength.HoldReason.STOPPED_EARLY, "${e.outcome}")
+        // The third stall in a row: the reset, as after any near miss.
+        assertTrue(e.state.weight!! < 62.5, "${e.outcome}")
+    }
+
+    @Test fun notTheWeightHoldingTheTargetIsSaidTwiceAtMost() {
+        // Reverse pec deck reset from 22.5 (4 reps there) to 20 × 4, the lifter getting weaker: 4, 4, 4, 3 is «not the
+        // weight» (the tired last set did no more than the first one at the cut) — said again on 4, 4, 3, 2 and on
+        // 4, 3, 2, 1, every time with the stalls and misses wiped, and the weight stood for ever.
+        val ex = Catalog["reverse_pec_deck"]
+        val spec = SlotSpec(ex.id, 4, 4, 8, 1, 60, SlotRole.ACCESSORY)
+        var st = SlotState(20.0, 4, sessions = 23, linear = false, cutFrom = 22.5, cutReps = 4)
+        val trail = mutableListOf<Outcome>()
+        for (sets in listOf(listOf(4, 4, 4, 3), listOf(4, 4, 3, 2), listOf(4, 3, 2, 1), listOf(4, 3, 2, 1))) {
+            val p = Progression.prescribe(ex, spec, st, bodyWeight = 80.8)
+            if (p.weight!! < 20.0) break
+            val e = Progression.evaluate(ex, spec, st, p, sets.map { DoneSet(20.0, it, 0) }, 80.8, recentBest = 36.1)
+            trail += e.outcome
+            st = e.state
+        }
+        assertEquals(forma.core.strength.HoldReason.NOT_THE_WEIGHT, (trail.first() as? Outcome.Hold)?.reason, "$trail")
+        assertTrue(trail.count { (it as? Outcome.Hold)?.reason == forma.core.strength.HoldReason.NOT_THE_WEIGHT } <= 2, "$trail")
+        assertTrue(st.weight!! < 20.0, "four sessions short to failure after a cut, and still 20 × 4: $trail")
+    }
+
+    @Test fun aRepMorePastTwelveNeverLowersTheEstimate() {
+        // Barbell curls 22.5 × 16 asked, two in reserve: 17 done, not rated, is the same reserve a rep further — but
+        // counted as 12 reps with the reserve a rep less (a set of 11 beside it brings the cap in), it estimated lower
+        // than 16 done, and asked 22.5 × 10 next where 16 done asked × 12. Reps past twelve count as reserve (four at
+        // most), not thrown away.
+        val ex = Catalog["bb_curl"]
+        val sixteen = Progression.e1rmOf(ex, listOf(DoneSet(22.5, 16), DoneSet(20.0, 11)), 16, 2, 78.0)!!
+        val seventeen = Progression.e1rmOf(ex, listOf(DoneSet(22.5, 17), DoneSet(20.0, 11)), 16, 2, 78.0)!!
+        assertTrue(seventeen >= sixteen - 1e-9, "16 reps: ${"%.1f".format(sixteen)}, 17 reps: ${"%.1f".format(seventeen)}")
+        // And a set to failure past twelve is more than twelve to failure.
+        val twelve = Progression.e1rmOf(ex, listOf(DoneSet(22.5, 12, 0), DoneSet(20.0, 11)), 12, 2, 78.0)!!
+        val thirteen = Progression.e1rmOf(ex, listOf(DoneSet(22.5, 13, 0), DoneSet(20.0, 11)), 12, 2, 78.0)!!
+        assertTrue(thirteen > twelve, "12 to failure: ${"%.1f".format(twelve)}, 13: ${"%.1f".format(thirteen)}")
+    }
+
+    @Test fun aLighterSetBeforeThePlanDoneWithReserveIsNoStall() {
+        // Straight-arm pulldown 57.5 × 4 of four sets on the third stall: 55 × 4 (lighter), then 57.5 × 3 «ещё 3» is a
+        // stop by choice and held; 57.5 × 4 «ещё 3» — the plan met, with more reserve than asked — read as a near miss
+        // (the lighter set a rep short of the plan) and, the fourth stall, reset to 50.
+        val ex = Catalog["straight_arm_pulldown"]
+        val spec = SlotSpec(ex.id, 4, 4, 9, 2, 90, SlotRole.ACCESSORY)
+        val st = SlotState(57.5, 4, stalls = 3, sessions = 6, linear = true, steady = 3)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 105.5)
+        fun next(reps: Int) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(55.0, 4), DoneSet(57.5, reps, 3)), 105.5)
+        val three = next(3)
+        val four = next(4)
+        assertTrue(atLeast(three.state, four.state), "${three.outcome} / ${four.outcome}")
+    }
+
+    @Test fun aHeavierPlusSetJustUnderTheTargetAtTheWeightIsNoMiss() {
+        // Trap bar 140 × 15 (15–19) on the third stall: 140 × 15, 140 × 15, then the «+» set 145 × 14 reads as 15 at
+        // 140 and the reps go up; the same sets a step heavier — 142.5, 142.5, 147.5 × 14 — read 14.9 at 142.5, the
+        // step below made it 14, a miss, and the reset took it to 127.5.
+        val ex = Catalog["trap_bar_deadlift"]
+        val spec = SlotSpec(ex.id, 3, 15, 19, 2, 180, SlotRole.MAIN)
+        val st = SlotState(140.0, 15, stalls = 3, misses = 2, sessions = 17, linear = false, steady = 3)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 110.3)
+        fun next(w: Double) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(w, 15), DoneSet(w, 15), DoneSet(w + 5, 14)), 110.3)
+        val at = next(140.0)
+        val heavier = next(142.5)
+        assertTrue(atLeast(at.state, heavier.state), "${at.outcome} / ${heavier.outcome}")
+    }
+
+    @Test fun anUnratedSetAtTheTargetVotesAsDoneAsAsked() {
+        // Bench dips with 20 kg × 11 (12–16, two in reserve) on the third stall, three of five sets: 20 × 10 «ещё 5»,
+        // 12.5 × 11 (lighter), 20 × 11 — a stop by choice, held. A rep more on the first set, 20 × 11 «ещё 5»: the set
+        // not rated at the target had no vote, the lighter set's rep short made a near miss, and the reset went to 12.5.
+        val ex = Catalog["bench_dip"]
+        val spec = SlotSpec(ex.id, 5, 12, 16, 2, 90, SlotRole.ACCESSORY)
+        val st = SlotState(20.0, 11, stalls = 2, misses = 1, sessions = 38, linear = true, steady = 1)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 98.7, topRir = 2)
+        fun next(first: Int) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(20.0, first, 5), DoneSet(12.5, 11), DoneSet(20.0, 11)), 98.7)
+        val ten = next(10)
+        val eleven = next(11)
+        assertTrue(atLeast(ten.state, eleven.state), "${ten.outcome} / ${eleven.outcome}")
+    }
+
+    @Test fun aHeavierSetJustUnderTheRangeBottomDoesNotKeepTheWeight() {
+        // Romanian deadlift 60 × 13 (12–12, three in reserve), two sets: 62.5 × 10 (heavier, to failure — 10.9 at 60),
+        // then 47.5 × 13. Read as 11 at 60, a rep short of the range's bottom «in reach», the plan went to 60 × 12 where
+        // the estimate gave 10.9 to failure; the weight comes down instead.
+        val ex = Catalog["rdl"]
+        val spec = SlotSpec(ex.id, 2, 12, 12, 3, 150, SlotRole.SECONDARY)
+        val st = SlotState(60.0, 13, sessions = 7, linear = false)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 115.0)
+        val e = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(62.5, 10), DoneSet(47.5, 13)), 115.0)
+        val there = OneRm.rtfAt(e.e1rm!!, Progression.effectiveLoad(ex, e.state.weight!!, 115.0))
+        assertTrue(e.state.reps <= there + 1, "${e.outcome}, ${"%.1f".format(there)} there")
+    }
+
+    @Test fun aSetWithReserveAgainstAHeavierSetToFailureIsNoStall() {
+        // Belt squat 135 × 12 (15–20, two in reserve this week) on the third stall, three of four sets: 135 × 11 «ещё 5»,
+        // 130 × 12 (lighter), 150 × 9 (heavier, to failure) — a stop by choice, held. A rep more, 135 × 12 «ещё 5»: with
+        // the set with reserve one against one, the lighter set's rep short made a near miss and the reset went to 120.
+        val ex = Catalog["belt_squat"]
+        val spec = SlotSpec(ex.id, 4, 15, 20, 1, 150, SlotRole.MAIN)
+        val st = SlotState(145.0, 12, stalls = 3, misses = 2, sessions = 21, linear = false, steady = 3)
+        val p = Progression.prescribe(ex, spec, st, rirOffset = 1, bodyWeight = 105.0, daysSinceLast = 20)
+        assertEquals(135.0, p.weight)
+        fun next(first: Int) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(135.0, first, 5), DoneSet(130.0, 12), DoneSet(150.0, 9)), 105.0)
+        val eleven = next(11)
+        val twelve = next(12)
+        assertTrue(atLeast(eleven.state, twelve.state), "${eleven.outcome} / ${twelve.outcome}")
+    }
+
+    @Test fun aPlusSetMadeWithReserveKeepsItsSay() {
+        // Pull-through 5 × 12 (5–12, nothing in reserve), five sets: 9 «ещё 5», 12, 11, 12, then the «+» set 11 «ещё 3» —
+        // a stop by choice, held. The «+» set a rep better, 12 «ещё 3»: no longer short, it had no say, the unrated 11
+        // outvoted the 9 «ещё 5» one to one, and the target came down to 9.
+        val ex = Catalog["pull_through"]
+        val spec = SlotSpec(ex.id, 5, 5, 12, 0, 90, SlotRole.MAIN)
+        val st = SlotState(5.0, 12, sessions = 39, linear = false, steady = 1)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 52.0)
+        fun next(top: Int) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(5.0, 9, 5), DoneSet(5.0, 12), DoneSet(5.0, 11), DoneSet(5.0, 12), DoneSet(5.0, top, 3)), 52.0)
+        val eleven = next(11)
+        val twelve = next(12)
+        assertTrue(atLeast(eleven.state, twelve.state), "${eleven.outcome} / ${twelve.outcome}")
+    }
+
     @Test fun aTestDayFirstTimeFindsTheWeight() {
         val ex = Catalog["incline_pushup"]
         val spec = SlotSpec(ex.id, 1, 4, 8, 2, 90, SlotRole.ACCESSORY)
