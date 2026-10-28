@@ -141,10 +141,12 @@ class TrialHeldRepoTest {
         )
         assertEquals(listOf(5.4, 5.6, null, 5.5), summary.strides)
         assertEquals(2.9, summary.jog)
-        val review = RunReview.of(
+        val items = RunReview.of(
             RunReview.Run(w, summary.laps, 9, 1700, null, null, 1538 to 390, 1.0, false, null, summary.strides, summary.jog), denis.runGoal,
-        ).first()
-        assertEquals("Ускорения", review.title)
+        )
+        // The trial leads its debrief; the strides come after it.
+        assertEquals("Как пробежал", items.first().title)
+        val review = items.single { it.title == "Ускорения" }
         assertTrue("4 из 4" in review.text, review.text)
     }
 

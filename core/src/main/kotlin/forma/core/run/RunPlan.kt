@@ -466,13 +466,18 @@ object RunPlan {
     /** Strides after an easy run: 4 to start with and in a lighter week, 6 once running is regular. */
     fun strides(state: RunState, cutback: Boolean): Int = if (cutback || state.runs < 8) 4 else 6
 
+    /** The warm-up's strides as the clock runs them before fast running ([RunTimeline.stridesFrom]), for the notes. */
+    private val STRIDES_NOTE: String get() =
+        "В конце разминки — ${RunTimeline.STRIDES} ${Ru.plural(RunTimeline.STRIDES, "ускорение", "ускорения", "ускорений")} по " +
+            "${RunTimeline.STRIDE_SEC} с по таймеру, между ними ${RunTimeline.STRIDE_JOG} с трусцы."
+
     /** The goal race on its day: run as a time trial (its time is the fitness), said as the race. */
     fun race(state: RunState, goal: RunGoal): RunWorkout {
         val t = goalTest(state, goal, null)
         val name = if (goal.meters < 1000 || goal.meters % 1000 != 0) "${goal.meters} м" else "${goal.meters / 1000} км"
         return t.copy(
             title = "Забег · $name",
-            note = "Твой забег: $name за ${Ru.clock(goal.seconds)}. Разминка 12 минут и 3–4 ускорения по 15 с. Первую половину беги " +
+            note = "Твой забег: $name за ${Ru.clock(goal.seconds)}. Разминка 12 минут. $STRIDES_NOTE Первую половину беги " +
                 "ровно, в темпе цели, без рывка со старта. Вторую — на сколько хватит сил. После финиша впиши время с табло: по нему " +
                 "пересчитаются темпы.",
         )
@@ -524,7 +529,7 @@ object RunPlan {
             if (i < n - 1) segs += Segment(SegmentKind.RECOVERY, rest, p?.easy)
         }
         segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
-        val note = "Ускорения тяжёлые, но ровные: последнее не медленнее первого. Между ними — трусца. В конце разминки сделай 3–4 коротких ускорения по 15 с."
+        val note = "Ускорения тяжёлые, но ровные: последнее не медленнее первого. Между ними — трусца. $STRIDES_NOTE"
         return RunWorkout(RunType.INTERVALS, "Интервалы · $n × ${work / 60} мин", segs, note, targetRpe = 8, stage = stage, cutback = cutback && n < n0)
     }
 
@@ -628,7 +633,7 @@ object RunPlan {
             val lapRange = Ru.lapRange(Track.lapSec(range.fast.toDouble(), lapMeters), Track.lapSec(range.slow.toDouble(), lapMeters))
             "Каждый круг — за $lapRange. На ${lapSec.roundToInt()}-й секунде телефон пискнет: в этот момент ты должен быть на линии. " +
                 "Быстрее не надо: на этой дистанции главное — ровный темп. Между отрезками $restWords шагом или трусцой. " +
-                    "В конце разминки — 3–4 ускорения по 15 с. " +
+                    "$STRIDES_NOTE " +
                 "Круги засчитает GPS (или жми «Круг» на линии): по ним приложение решит, что дальше." +
                 (work.lastOrNull()?.laps?.takeIf { it % 1.0 != 0.0 }?.let { " Отрезок в ${Ru.laps(it)} начни ${startWords(it % 1.0)}." } ?: "")
         } else {
@@ -729,7 +734,7 @@ object RunPlan {
         )
         val distance = if (laps != null) "${Ru.laps(laps)} (${meters.roundToInt()} м)" else "${goal.meters} м"
         val note = buildString {
-            append("Контрольный забег: $distance в полную силу, но ровно. В конце разминки — 3–4 ускорения по 15 с. ")
+            append("Контрольный забег: $distance в полную силу, но ровно. $STRIDES_NOTE ")
             if (lapSec != null) {
                 append("Первые круги — по ${Ru.lap(lapSec)}, телефон пищит на каждом. Со второй половины прибавь, если есть силы. ")
                 append("Не держишь — сбавь, но добеги: форма посчитается и по всему времени, и по тому, сколько от старта ты держал темп, — что лучше. ")

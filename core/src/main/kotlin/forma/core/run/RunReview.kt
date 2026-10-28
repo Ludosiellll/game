@@ -41,9 +41,10 @@ object RunReview {
     fun of(r: Run, goal: RunGoal? = null, gym: Boolean = true): List<Item> {
         val w = r.workout
         val out = mutableListOf<Item>()
-        strides(r)?.let { out += it }
         how(r, goal)?.let { out += it }
         effort(r)?.let { out += it }
+        // After the run itself: the strides are a side of the warm-up, not what the session was for.
+        strides(r)?.let { out += it }
         val why = RunExplain.of(w, goal)
         if (w.type == RunType.FREE) {
             out += Item("Что это даёт телу", freeBody(r.rpe), 0)

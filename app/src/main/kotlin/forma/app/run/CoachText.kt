@@ -73,8 +73,11 @@ object CoachText {
                 if (RunTimeline.startOnLine(w) == c.index + 1) "Через минуту ${startWhat(w)}. Закончи круг и подходи к старту." else "Осталась минута."
             is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)}. " +
                 if (gps) "Старт засчитаю сам, когда побежишь. Можно и нажать «Круг»." else "Когда побежишь, нажми «Круг»: время пойдёт с нажатия."
+            // Explained ahead: a stride is 15 s, at its start there is time only for «пошёл».
+            is Cue.StridesAhead -> "Через ${RunTimeline.STRIDES_AHEAD} секунд ускорения: ${RunTimeline.STRIDES} по ${RunTimeline.STRIDE_SEC} секунд, " +
+                "между ними ${RunTimeline.STRIDE_JOG} секунд трусцы. Быстро, но легко, не в полную силу."
             is Cue.Stride -> when {
-                c.on && c.n == 1 -> "Ускорения: ${c.of} по ${RunTimeline.STRIDE_SEC} секунд, между ними ${RunTimeline.STRIDE_JOG} секунд трусцы. Первое — пошёл: быстро, но легко, не в полную силу."
+                c.on && c.n == 1 -> "Первое ускорение — пошёл. Быстро, но легко."
                 c.on -> "Ускорение ${c.n}."
                 c.n < c.of -> "Трусца."
                 else -> "Ускорения сделаны. Трусца."

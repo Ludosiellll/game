@@ -30,6 +30,8 @@ sealed interface Cue {
      * [RunTimeline.stride]).
      */
     data class Stride(override val at: Int, val index: Int, val n: Int, val of: Int, val on: Boolean) : Cue
+    /** [RunTimeline.STRIDES_AHEAD] s before the first stride: what they are, said while there is time to hear it. */
+    data class StridesAhead(override val at: Int, val index: Int) : Cue
     data class Finished(override val at: Int) : Cue
 }
 
@@ -74,8 +76,8 @@ object RunTimeline {
     /** The strides start this long before the warm-up ends: the last is over a minute before it (time to get to the line). */
     private const val STRIDES_BEFORE_END = 225
 
-    /** Said this long before the first stride. */
-    private const val STRIDES_AHEAD = 30
+    /** Shown and said this long before the first stride ([Cue.StridesAhead]). */
+    const val STRIDES_AHEAD = 30
 
     /**
      * Where the strides of a warm-up stand: in the stride [n] of [of] ([on]: [left] seconds of it to go, [into] seconds
@@ -143,10 +145,13 @@ object RunTimeline {
                 if (s.seconds >= 3 * 60) out += Cue.MinuteLeft(end - 60, i)
                 // Before race pace, intervals or a time trial: strides in the last minutes of the warm-up.
                 val from = stridesFrom(workout)
-                if (from != null && from in start until end) for (k in 0 until STRIDES) {
-                    val on = from + k * (STRIDE_SEC + STRIDE_JOG)
-                    out += Cue.Stride(on, i, k + 1, STRIDES, true)
-                    out += Cue.Stride(on + STRIDE_SEC, i, k + 1, STRIDES, false)
+                if (from != null && from in start until end) {
+                    out += Cue.StridesAhead(from - STRIDES_AHEAD, i)
+                    for (k in 0 until STRIDES) {
+                        val on = from + k * (STRIDE_SEC + STRIDE_JOG)
+                        out += Cue.Stride(on, i, k + 1, STRIDES, true)
+                        out += Cue.Stride(on + STRIDE_SEC, i, k + 1, STRIDES, false)
+                    }
                 }
             }
             // Before a rep that waits on the line no countdown: the runner starts it, the app asks to go to the line.

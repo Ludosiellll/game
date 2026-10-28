@@ -58,6 +58,8 @@ data class TrackerSnapshot(
     /** The warm-up's strides: the satellites' speeds in each, by its number; and the jog before them (sum, count). */
     val strideSpeeds: Map<Int, List<Double>> = emptyMap(),
     val jog: List<Double> = emptyList(),
+    /** Strides the plan jumped over («skip» in the warm-up): never started, whatever the timeline says. */
+    val skippedStrides: Int = 0,
 )
 
 /** What a press of the lap button was. */
@@ -534,6 +536,13 @@ class RunTracker(
         val seg = tl.segment ?: return
         if (seg.kind == SegmentKind.WORK || seg.kind == SegmentKind.RUN) skippedWorkSec += tl.segmentRemaining
         if (seg.kind == SegmentKind.WORK && tl.segmentRemaining * 4 > seg.seconds) skippedReps += tl.index
+        // The strides of the rest of this warm-up are jumped over, not run: they are not «done» in the debrief.
+        RunTimeline.stridesFrom(workout)?.let { from ->
+            val sec = tl.totalElapsed
+            skippedStrides += (0 until RunTimeline.STRIDES).count { k ->
+                from + k * (RunTimeline.STRIDE_SEC + RunTimeline.STRIDE_JOG) in (sec + 1)..(sec + tl.segmentRemaining)
+            }
+        }
         skipMs += tl.segmentRemaining * 1000L
         lastTickSec = (timelineMs(nowMs) / 1000).toInt() - 1
     }
@@ -628,9 +637,13 @@ class RunTracker(
     private var jogSum = 0.0
     private var jogN = 0
 
+    /** Strides «skip» jumped over in the warm-up (see [skipSegment]): never started. */
+    private var skippedStrides = 0
+
     /**
      * A speed [v] (m/s) at [active]: in a stride from its 4th second (the pick-up left out) it is the stride's; in the
-     * warm-up before the strides, running (1 m/s and more), the jog's — what the strides are measured against.
+     * warm-up before the strides, running ([JOG_SPEED] and more — a walk to the track or a stop at a light is not the
+     * jog), the jog's — what the strides are measured against.
      */
     private fun noteStride(v: Double, active: Long) {
         val from = RunTimeline.stridesFrom(workout) ?: return
@@ -639,7 +652,7 @@ class RunTracker(
         val st = RunTimeline.stride(workout, sec)
         if (st != null && st.on) {
             if (st.into >= 4) strideSpeeds.getOrPut(st.n) { mutableListOf() } += v
-        } else if (sec < from && v >= 1.0 && workout.segments.getOrNull(segmentAt(t))?.kind == SegmentKind.WARMUP) {
+        } else if (sec < from && v >= JOG_SPEED && workout.segments.getOrNull(segmentAt(t))?.kind == SegmentKind.WARMUP) {
             jogSum += v
             jogN++
         }
@@ -647,13 +660,14 @@ class RunTracker(
 
     /**
      * The speed of each stride started by timeline [t] (m/s, null where GPS had too little of it), or null when the strides
-     * had not begun; the jog's speed before them.
+     * had not begun (or were jumped over by «skip»); the jog's speed before them.
      */
     private fun strideResult(t: Long): Pair<List<Double?>?, Double?> {
         val from = RunTimeline.stridesFrom(workout) ?: return null to null
         val sec = (t / 1000).toInt()
-        val started = if (sec < from) 0 else ((sec - from) / (RunTimeline.STRIDE_SEC + RunTimeline.STRIDE_JOG) + 1).coerceAtMost(RunTimeline.STRIDES)
-        val speeds = if (started == 0) null else (1..started).map { n -> strideSpeeds[n]?.takeIf { it.size >= 3 }?.average() }
+        val started = (if (sec < from) 0 else (sec - from) / (RunTimeline.STRIDE_SEC + RunTimeline.STRIDE_JOG) + 1)
+            .coerceAtMost(RunTimeline.STRIDES - skippedStrides)
+        val speeds = if (started <= 0) null else (1..started).map { n -> strideSpeeds[n]?.takeIf { it.size >= 3 }?.average() }
         return speeds to (if (jogN >= 10) jogSum / jogN else null)
     }
 
@@ -783,7 +797,7 @@ class RunTracker(
         line?.let { listOf(it.first, it.second) }, freeLaps, steps, runSteps, runStepMs,
         stride?.let { listOf(it.first, it.second) }, strides.map { listOf(it.first, it.second) },
         lineT, lineDistM, startedOff, away, kmSplitList.toList(), loop?.ground(), waitEvery,
-        strideSpeeds.mapValues { it.value.toList() }, listOf(jogSum, jogN.toDouble()),
+        strideSpeeds.mapValues { it.value.toList() }, listOf(jogSum, jogN.toDouble()), skippedStrides,
     )
 
     /** Start and end of every segment on the timeline, ms. */
@@ -1366,6 +1380,9 @@ class RunTracker(
         /** A press moves the line only when its lap is within this share of the lap expected (see [onTime]). */
         const val LINE_LAP = 0.25
 
+        /** Slower than this (m/s; 9:50/km) in a warm-up is a walk, not the jog the strides are measured against. */
+        const val JOG_SPEED = 1.7
+
         /**
          * The run as it was at [s]. A run that was going is paused at that point: what happened after it was not tracked,
          * so it does not count; the runner resumes or finishes. A finished run stays finished.
@@ -1408,6 +1425,7 @@ class RunTracker(
                 jogSum = s.jog[0]
                 jogN = s.jog[1].toInt()
             }
+            skippedStrides = s.skippedStrides
             when (s.state) {
                 State.READY -> Unit
                 State.FINISHED -> {
