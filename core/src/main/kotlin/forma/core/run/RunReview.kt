@@ -30,6 +30,8 @@ object RunReview {
         val completed: Double? = null,
         /** A trial: whether the plan counted the goal reached (`RunOutcome.GoalReached`); null when not known. */
         val goalReached: Boolean? = null,
+        /** A trial counted on the stretch held from its start (`RunOutcome.TestFromPart`): metres and seconds. */
+        val held: Pair<Int, Int>? = null,
     )
 
     /** [gym]: the person also lifts (the advice between hard runs names the gym only then). */
@@ -154,7 +156,16 @@ object RunReview {
 
     /** A time trial: its time, against the goal, and how even it was. */
     private fun trial(r: Run, goal: RunGoal?): Item? {
-        val (m, sec) = r.trial ?: return null
+        val held = r.held
+        val (m, sec) = r.trial ?: return held?.let { (hm, hs) ->
+            // Not run in pace to the end: what was held from the start is the measure.
+            Item(
+                "Как пробежал",
+                "Контрольный не добежан в темпе до конца. Ровно от старта — $hm м за ${Ru.clock(hs)}. " +
+                    "Полный контрольный — через две недели: начни его чуть спокойнее, чтобы хватило до конца.",
+                0,
+            )
+        }
         val parts = mutableListOf("Контрольный: $m м за ${Ru.clock(sec)}.")
         var tone = 0
         // The goal's distance in whole laps — up to 15 % off on a loop shorter than the lap length set (read on the loop GPS
@@ -168,8 +179,11 @@ object RunReview {
             val reached = r.goalReached ?: (est <= goal.seconds)
             val gap = kotlin.math.ceil(est - goal.seconds).toInt().coerceAtLeast(1)
             parts += if (reached) "Это цель: ${goal.meters} м за ${Ru.clock(goal.seconds)} или быстрее!".also { tone = 1 }
-            else "До цели ${Ru.clock(goal.seconds)} — ещё ${if (gap < 60) "$gap с" else Ru.clock(gap)}. Темпы пересчитаны по этому времени."
+            else "До цели ${Ru.clock(goal.seconds)} — ещё ${if (gap < 60) "$gap с" else Ru.clock(gap)}." +
+                if (held != null) "" else " Темпы пересчитаны по этому времени."
         }
+        // Faded: the stretch held from the start says more of the form than the whole time.
+        if (held != null) parts += "Первые ${held.first} м ты держал темп (${Ru.clock(held.second)}), потом сбавил — темпы посчитаны по ним."
         val laps = r.laps.filter { it.rep != null }
         if (laps.size >= 4) {
             val half = laps.size / 2

@@ -1112,7 +1112,9 @@ fun RunDoneScreen(workoutId: Long) {
                         result.testSeconds != null && tracker.laps.any { it.rough } -> "Время по кнопке «Круг» и GPS. Круг без нажатия засчитан примерно (±2–3 с). Если засекал сам — поправь."
                         result.testSeconds != null && tracker.laps.any { it.auto } -> "Время по GPS: круги засчитаны на линии стадиона, до нескольких десятых. Если засекал сам — поправь."
                         result.testSeconds != null -> "Время по кнопке «Круг». Если засекал сам — поправь."
-                        else -> "Впиши время с секундомера: без него забег не засчитается."
+                        else -> forma.core.run.RunPlan.held(w, result)?.let { h ->
+                            "Ровно от старта — ${h.meters.roundToInt()} м за ${Ru.clock(h.seconds.roundToInt())}: форма посчитается по ним. Засекал весь забег сам — впиши время."
+                        } ?: "Впиши время с секундомера, иначе форму не посчитать: ровно от старта меньше половины забега."
                     },
                     style = T.secondary(13.sp).copy(color = if (testTime.isNotBlank() && typed == null) F.c.warn else F.c.text2),
                 )

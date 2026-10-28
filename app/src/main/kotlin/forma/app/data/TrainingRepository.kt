@@ -569,7 +569,7 @@ class TrainingRepository(
                 }
                 else -> {
                     val outcomes = runCatching { AppJson.decodeFromString(RunSummary.serializer(), json) }.getOrNull()?.outcomes ?: return null
-                    if (outcomes.isEmpty() || outcomes.any { it is RunOutcome.TestTime || it == RunOutcome.TestNotCounted || it is RunOutcome.TestDoubtful || it is RunOutcome.LighterWeek }) return null
+                    if (outcomes.isEmpty() || outcomes.any { it is RunOutcome.TestTime || it == RunOutcome.TestNotCounted || it is RunOutcome.TestDoubtful || it is RunOutcome.TestFromPart || it is RunOutcome.TestStopped || it is RunOutcome.LighterWeek }) return null
                     outcomes.none { it is RunOutcome.StageRepeat || it is RunOutcome.StageDown || it is RunOutcome.Shorter || it == RunOutcome.TooSlow }
                 }
             }
@@ -2321,7 +2321,9 @@ class TrainingRepository(
         val caps = capsOn(date) ?: forma.core.run.RunCaps(45, 90)
         val after = RunPlan.after(st, workout, result, caps, date.toEpochDay(), goal = store.profileNow()?.runGoal)
         var next = after.state
-        if (workout.type == RunType.TEST && after.outcomes.any { it is RunOutcome.VdotChanged }) next = next.copy(lastTestDay = date.toEpochDay())
+        // A trial counted on what was held of it, not run to the end, is no full trial: the next comes in two weeks too.
+        val part = after.outcomes.any { it is RunOutcome.TestFromPart && !it.finished }
+        if (workout.type == RunType.TEST && !part && after.outcomes.any { it is RunOutcome.VdotChanged }) next = next.copy(lastTestDay = date.toEpochDay())
         // A test run but not counted (no time, a doubtful one): the next waits two weeks, not until the next hard day.
         else if (workout.type == RunType.TEST) next = next.copy(lastTrialTryDay = date.toEpochDay())
         return next to after.outcomes

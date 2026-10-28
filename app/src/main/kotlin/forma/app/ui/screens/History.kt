@@ -370,9 +370,10 @@ fun RunDebrief(workout: forma.app.data.WorkoutEntity, run: RunEntity, summary: R
         val trial = summary?.outcomes?.filterIsInstance<forma.core.run.RunOutcome.TestTime>()?.firstOrNull()?.let { it.meters to it.seconds }
         // Reached or not, as the plan counted it (fitness against the goal's, not rounded seconds).
         val reached = if (trial != null) summary?.outcomes?.any { it is forma.core.run.RunOutcome.GoalReached } == true else null
+        val held = summary?.outcomes?.filterIsInstance<forma.core.run.RunOutcome.TestFromPart>()?.firstOrNull()?.let { it.meters to it.seconds }
         forma.core.run.RunReview.of(
             forma.core.run.RunReview.Run(
-                plan, summary?.laps.orEmpty(), workout.rpe, run.movingSec, run.avgPace, run.workPace, trial, run.completed, reached,
+                plan, summary?.laps.orEmpty(), workout.rpe, run.movingSec, run.avgPace, run.workPace, trial, run.completed, reached, held,
             ),
             profile?.runGoal,
             gym = profile?.aim?.lifts != false,

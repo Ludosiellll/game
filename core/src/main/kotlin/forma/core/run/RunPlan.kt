@@ -213,6 +213,14 @@ sealed interface RunOutcome {
     @Serializable data class TestDoubtful(val vdot: Double) : RunOutcome
     /** A test that gave no time (laps missed, nothing typed): not counted. */
     @Serializable data object TestNotCounted : RunOutcome
+    /**
+     * A time trial counted on the stretch held from its start ([meters] in [seconds], see [RunPlan.held]): [finished] —
+     * run to the end, but slower after it (the whole time would give a lower fitness); else stopped, walked or a lap not
+     * trusted, and a full trial comes again. [kept]: the fitness known was higher, and a part never lowers it.
+     */
+    @Serializable data class TestFromPart(val meters: Int, val seconds: Int, val finished: Boolean, val kept: Boolean = false) : RunOutcome
+    /** A time trial held from its start only [meters]: under half of it or three minutes, too little to count. */
+    @Serializable data class TestStopped(val meters: Int) : RunOutcome
 }
 
 data class RunAfter(val state: RunState, val outcomes: List<RunOutcome>)
@@ -346,6 +354,47 @@ object RunPlan {
      */
     fun believable(vdot: Double, current: Double?): Boolean =
         vdot in MIN_VDOT..MAX_VDOT && (current == null || abs(vdot - current) <= 8.0)
+
+    /** A stretch of a time trial held from its start: [meters] in [seconds], and the fitness ([vdot]) it gives. */
+    data class Held(val meters: Double, val seconds: Double, val vdot: Double)
+
+    /**
+     * What the runner held of a time trial [w] from its start: of the laps from the start up to the first one that is no
+     * lap (under half or over 1.7 times its planned time — a press doubled or missed, a walk, a stop), the stretch ending
+     * on a lap that gives the highest fitness, at least half the trial and three minutes (shorter efforts are no measure
+     * of a race). On the road, without laps, the distance GPS measured in the trial's time. Running at a pace until it
+     * cannot be held is what a race measures (Daniels' model: the share of VO2max held for that long), so a trial run off
+     * too fast and faded, or stopped, still says how fit the runner is; null when nothing of that length was held.
+     */
+    fun held(w: RunWorkout, r: RunResult): Held? {
+        val tm = w.testMeters ?: return null
+        val lapM = w.lapMeters
+        fun counted(m: Double, sec: Double) = m >= tm / 2.0 - 1e-6 && sec >= HELD_MIN_SEC && sec / (m / 1000) in PLAUSIBLE_PACE
+        if (lapM == null) {
+            val d = r.workDistanceM ?: return null
+            val sec = (r.workSec ?: return null).toDouble()
+            return if (d <= tm * 1.05 && counted(d, sec)) Held(d, sec, Vdot.fromRace(d, sec)) else null
+        }
+        var m = 0.0
+        var sec = 0.0
+        var best: Held? = null
+        heldLaps(w, r).forEach { l ->
+            m += l.part * lapM
+            sec += l.seconds
+            if (counted(m, sec)) Vdot.fromRace(m, sec).let { v -> if (best?.let { v > it.vdot } != false) best = Held(m, sec, v) }
+        }
+        return best
+    }
+
+    /** The trial's laps from its start, up to the first that is no lap (see [held]). */
+    fun heldLaps(w: RunWorkout, r: RunResult): List<Lap> {
+        val lapSec = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.lapSec ?: return emptyList()
+        val laps = r.laps.orEmpty().filter { it.rep == 1 }
+        return laps.withIndex().takeWhile { (i, l) -> l.number == i + 1 && l.seconds / (lapSec * l.part) in 0.5..1.7 }.map { it.value }
+    }
+
+    /** The shortest stretch of a time trial that counts as a measure of it (see [held]). */
+    const val HELD_MIN_SEC = 180.0
 
     /** Tempo ladder: (repeats, work seconds, recovery seconds) at threshold pace. */
     private val TEMPO = listOf(
@@ -665,6 +714,7 @@ object RunPlan {
             append("Контрольный забег: $distance в полную силу, но ровно. В конце разминки — 3–4 ускорения по 15 с. ")
             if (lapSec != null) {
                 append("Первые круги — по ${Ru.lap(lapSec)}, телефон пищит на каждом. Со второй половины прибавь, если есть силы. ")
+                append("Не держишь — сбавь, но добеги: форма посчитается и по всему времени, и по тому, сколько от старта ты держал темп, — что лучше. ")
                 if (laps != null && laps % 1.0 != 0.0) append("Старт — ${startWords(laps % 1.0)}. ")
                 append("Круги засчитает GPS (или жми «Круг» на каждой линии). Время забега — по последнему кругу.")
             } else {
@@ -1109,20 +1159,50 @@ object RunPlan {
                         w.lapMeters == null && done && d != null && d >= tm * 0.8 && sec > 0 && sec / (d / 1000) in PLAUSIBLE_PACE -> Vdot.fromRace(d, sec.toDouble())
                         else -> null
                     }
+                    // What was held from the start: faded after it, the whole time underrates the runner; stopped or
+                    // walked, it is all there is.
+                    val part = held(w, r)
+                    val better = part != null && raw != null && (part.vdot * 2).roundToInt() > (raw * 2).roundToInt()
                     when {
-                        raw == null -> out += RunOutcome.TestNotCounted
-                        !believable(raw, state.vdot) -> out += RunOutcome.TestDoubtful((raw * 2).roundToInt() / 2.0)
+                        raw != null -> {
+                            val used = if (better) part!!.vdot else raw
+                            if (!believable(used, state.vdot)) {
+                                out += RunOutcome.TestDoubtful((used * 2).roundToInt() / 2.0)
+                            } else {
+                                val nv = (used * 2).roundToInt() / 2.0
+                                if (t != null) out += RunOutcome.TestTime(tm, t)
+                                if (better) out += RunOutcome.TestFromPart(part!!.meters.roundToInt(), part.seconds.roundToInt(), finished = true)
+                                out += RunOutcome.VdotChanged(state.vdot, nv)
+                                s = s.copy(vdot = nv, testSoon = false)
+                                // Judged on the unrounded fitness: 1495 m in 5:33 is faster than 1500 m in 5:35 — and on
+                                // the whole time only: a stretch at the goal's pace is not the goal run.
+                                val reached = goal != null && raw >= Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble())
+                                if (reached) out += RunOutcome.GoalReached
+                                // Not there yet after the whole ladder: back to the 400s to build up again — not to the
+                                // longest reps, the hardest sessions of the ladder.
+                                if (goal != null && !reached && state.goalStage >= GOAL.lastIndex) s = s.copy(goalStage = GOAL_RESTART, goalFails = 0)
+                            }
+                        }
+                        part != null -> {
+                            // Stopped, walked, or a lap not trusted: the stretch held is the measure, but only as far as
+                            // it goes — a runner who stops may have had more, so a part raises the fitness or sets it,
+                            // never lowers it. A full trial comes again.
+                            if (!believable(part.vdot, state.vdot)) {
+                                out += RunOutcome.TestDoubtful((part.vdot * 2).roundToInt() / 2.0)
+                            } else {
+                                val nv = (part.vdot * 2).roundToInt() / 2.0
+                                val kept = state.vdot != null && nv <= state.vdot
+                                out += RunOutcome.TestFromPart(part.meters.roundToInt(), part.seconds.roundToInt(), finished = false, kept = kept)
+                                if (!kept) {
+                                    out += RunOutcome.VdotChanged(state.vdot, nv)
+                                    s = s.copy(vdot = nv)
+                                }
+                                s = s.copy(testSoon = true)
+                            }
+                        }
                         else -> {
-                            val nv = (raw * 2).roundToInt() / 2.0
-                            if (t != null) out += RunOutcome.TestTime(tm, t)
-                            out += RunOutcome.VdotChanged(state.vdot, nv)
-                            s = s.copy(vdot = nv, testSoon = false)
-                            // Judged on the unrounded fitness: 1495 m in 5:33 is faster than 1500 m in 5:35.
-                            val reached = goal != null && raw >= Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble())
-                            if (reached) out += RunOutcome.GoalReached
-                            // Not there yet after the whole ladder: back to the 400s to build up again — not to the longest
-                            // reps, the hardest sessions of the ladder.
-                            if (goal != null && !reached && state.goalStage >= GOAL.lastIndex) s = s.copy(goalStage = GOAL_RESTART, goalFails = 0)
+                            val run = heldLaps(w, r).sumOf { it.part } * (w.lapMeters ?: 0)
+                            out += if (run > 0) RunOutcome.TestStopped(run.roundToInt()) else RunOutcome.TestNotCounted
                         }
                     }
                 } else {
