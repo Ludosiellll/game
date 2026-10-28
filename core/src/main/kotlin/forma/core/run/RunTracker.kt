@@ -808,7 +808,10 @@ class RunTracker(
 
     /**
      * The WORK segment a press at timeline [t] belongs to: the one running, or one that ended a moment ago (a rep finished
-     * a little slower than the beep: up to 40 % of the rep, at most half of what follows). A skipped rep gets no laps.
+     * a little slower than the beep: up to 40 % of the rep, at most half of what follows). A time trial has nothing after
+     * it but the cool-down, and a runner far slower than the beeps finishes in it: its laps go on through the cool-down
+     * (a 3000 m run 40 % slower than the beeps had its last press land in the cool-down as a lap of the jog, the trial
+     * never closed and «not run to the end»). A skipped rep gets no laps.
      */
     private fun repAt(t: Long): Int? {
         val segs = workout.segments
@@ -816,7 +819,7 @@ class RunTracker(
             if (segs[i].kind != SegmentKind.WORK || i in skippedReps) continue
             val b = bounds[i]
             val after = segs.getOrNull(i + 1)?.seconds ?: 0
-            val grace = minOf(after * 500L, maxOf(20_000L, segs[i].seconds * 400L))
+            val grace = if (workout.testMeters != null) after * 1000L else minOf(after * 500L, maxOf(20_000L, segs[i].seconds * 400L))
             if (t >= b.first && t < b.last + 1 + grace) return i
         }
         return null
@@ -872,6 +875,15 @@ class RunTracker(
             lastTickSec = maxOf(lastTickSec, (bounds[next].first / 1000).toInt() - 1)
             return Press.Start
         }
+        // The line after a touch mid-lap that closed a lap early: that lap takes this press's time (see [retimeStray]) —
+        // unless GPS has this press away from the line on the loop it follows.
+        if (!farFromLine(active)) retimeStray(active)?.let { p ->
+            lastPressMs = active
+            lineDistM = distanceM
+            lineT = t
+            learnLine(active, p.lap)
+            return p
+        }
         val retimed = retimeAuto(t)
         val p = retimed ?: pressAt(t, auto = false, far = farFromLine(active))
         if (p == Press.Ignored || p == Press.OffLine) {
@@ -923,6 +935,38 @@ class RunTracker(
                 lastTickSec = maxOf(lastTickSec, (end / 1000).toInt() - 1)
             }
         }
+        return Press.Done(fixed)
+    }
+
+    /**
+     * A press soon after a press that closed a lap of a rep, when that lap was clearly shorter than the rep's laps
+     * before it (under [STRAY_CLOSE] of the longer of their median and the last) and this press makes it about one of
+     * them (up to [STRAY_WHOLE] of it): the press before was a touch mid-lap, this one is the line. The lap takes
+     * this press's time — the lap as run, not the touch's share of it and the rest on the next lap (a runner slowing down
+     * who touched the screen two thirds round had the next lap 1,4 of his own, past belief for a lap, and lost a time
+     * that was right); a rep the touch closed stays closed (the recovery or the cool-down a little early). Null when this
+     * press is nothing of the kind: a touch after the line (the lap before it a lap) is left to [tooShort].
+     */
+    private fun retimeStray(active: Long): Press.Done? {
+        val k = lapList.lastIndex
+        if (k < 0) return null
+        val lap = lapList[k]
+        val last = lastPressMs ?: return null
+        if (lap.auto || lap.rep == null) return null
+        // The rep's laps before it: their median, or the last one when the runner is slowing down — but a lap walked
+        // (far over the median) is no measure of the next, which would then pass for a touch. The rep's first lap has
+        // none to tell by, only the planned lap, and a runner out fast is well under that: it was a touch only when
+        // nobody runs a lap that fast (under [STRAY_FIRST] of the planned one).
+        val before = lapList.take(k).filter { it.rep == lap.rep && !it.auto }.map { it.seconds / it.part }
+        val usual = if (before.isEmpty()) (plannedLap(lap) ?: return null) else usual(before) * lap.part
+        val short = if (before.isEmpty()) STRAY_FIRST else STRAY_CLOSE
+        val late = (active - last) / 1000.0
+        if (late <= 0) return null
+        val whole = lap.seconds + late
+        if (lap.seconds >= short * usual || whole > STRAY_WHOLE * usual) return null
+        val fixed = lap.copy(seconds = whole)
+        lapList[k] = fixed
+        taps[k] = taps[k] + (active - last)
         return Press.Done(fixed)
     }
 
@@ -984,8 +1028,9 @@ class RunTracker(
             }
             l
         }
-        if (!auto && tooShort(result)) return Press.Ignored
+        // Far from the line on a loop GPS follows: said so, whatever the lap it makes; else a lap too short is a touch.
         if (!auto && far && !strayAgrees()) return Press.OffLine
+        if (!auto && tooShort(result)) return Press.Ignored
         taps += t
         lapList += result
         if (auto) lineDistM = dist
@@ -1076,7 +1121,20 @@ class RunTracker(
         // key pressed twice made a lap of 230 m in 6 s in a recovery.
         val lapM = workout.lapMeters
         if (lapM != null && l.seconds < lapM * l.part / MAX_LAP_SPEED) return true
+        // In a rep, far quicker than its laps pressed before it (under [STRAY_LAP] of the lap he is on, see [usual]): a
+        // thumb on the screen mid-lap. Against the target alone a trial run slower than the beeps (60 s laps at 48,7) took
+        // a touch half way round for a lap, the press on the line after it for another, and the eighth press closed the
+        // trial a lap early: 6:24 for 7:24, a fitness seven points too high. Of the two presses a touch makes at most one
+        // can be over half the lap, so one touch never adds a lap: the one taken, the line press after it is the short one.
         val ref = l.fast ?: l.slow ?: return false
+        if (l.rep != null) {
+            val before = lapList.filter { it.rep == l.rep && !it.auto }.map { it.seconds / it.part }
+            // Against the median of the rep's laps, not the last one: after one slow lap (not yet a walk) the lap run
+            // at the usual pace again is no touch. The rep's first lap has none before it: the planned lap (the beeps)
+            // stands for them.
+            val usual = if (before.isEmpty()) (plannedLap(l) ?: ref) else before.sorted()[(before.size - 1) / 2] * l.part
+            if (l.seconds < STRAY_LAP * usual) return true
+        }
         return l.seconds < SHORT_LAP * ref
     }
 
@@ -1266,9 +1324,11 @@ class RunTracker(
     }
 
     /**
-     * The trial's laps look like laps: none under half or over 1.7 times its planned time. A forgotten press makes one
-     * lap double, and then a press in the cool-down would close the trial a minute late — the time is not trusted, the
-     * runner types it.
+     * The trial's laps look like laps: none shorter than a press is taken for a lap at all ([tooShort]: a lap pressed
+     * shorter was never kept, and the bound is the same, so no lap kept fails here — against half the planned lap a
+     * touch just over the bound kept a lap and lost the time), none over 1.7 times its planned time (a walk, as the plan
+     * reads it). A forgotten press makes one lap double, and then a press in the cool-down would close the trial a
+     * minute late — the time is not trusted, the runner types it.
      */
     private fun trialLapsSane(): Boolean {
         val seg = workout.segments.firstOrNull { it.kind == SegmentKind.WORK } ?: return true
@@ -1277,8 +1337,27 @@ class RunTracker(
         val first = if (laps % 1.0 != 0.0) laps % 1.0 else 1.0
         return lapList.filter { it.rep == 1 }.all { l ->
             val expected = lapSec * if (l.number == 1) first else 1.0
-            l.seconds in expected * 0.5..expected * 1.7
+            l.seconds >= SHORT_LAP * (l.fast ?: l.slow ?: expected) && l.seconds <= expected * 1.7
         }
+    }
+
+    /** The planned time of the lap [l] of a rep (the beeps), its part of a lap included; null off a rep of laps. */
+    private fun plannedLap(l: Lap): Double? {
+        val rep = l.rep ?: return null
+        val seg = workout.segments.filter { it.kind == SegmentKind.WORK }.getOrNull(rep - 1) ?: return null
+        return seg.lapSec?.times(l.part)
+    }
+
+    /**
+     * The lap a runner is on, from the whole laps [before] it in the rep (seconds each): their median, or the last one
+     * when the runner is slowing down — while it is within [USUAL_DRIFT] of the median; a lap walked (over it) is no
+     * measure of the next, which would then pass for a touch.
+     */
+    private fun usual(before: List<Double>): Double {
+        // The lower middle of an even count: of two laps, one of them walked, the lap is the other.
+        val median = before.sorted()[(before.size - 1) / 2]
+        val last = before.last()
+        return if (last <= USUAL_DRIFT * median) maxOf(median, last) else median
     }
 
     /** Seconds into the lap being run: since the last press, or since the current segment began if it came later. */
@@ -1337,6 +1416,22 @@ class RunTracker(
 
         /** A pressed lap under this share of its target is a stray touch, not a lap (see [tooShort]). */
         const val SHORT_LAP = 0.45
+
+        /** A pressed lap of a rep under this share of the rep's own laps before it is a stray touch too (see [tooShort]). */
+        const val STRAY_LAP = 0.6
+
+        /**
+         * A rep's lap closed under this share of its laps before, and a press soon after that makes it at most
+         * [STRAY_WHOLE] of them: the close was a touch, the press is the line (see [retimeStray]).
+         */
+        const val STRAY_CLOSE = 0.9
+        const val STRAY_WHOLE = 1.3
+
+        /** The same for a rep's first lap, against the planned lap: only a lap nobody runs (see [retimeStray]). */
+        const val STRAY_FIRST = 0.75
+
+        /** The last lap of a rep counts for the lap a runner is on while within this much of the rep's median (see [usual]). */
+        const val USUAL_DRIFT = 1.6
 
         /** No lap is run faster than this (m/s; the 200 m record is 10.4): a lap pressed faster is a touch (see [tooShort]). */
         const val MAX_LAP_SPEED = 10.0

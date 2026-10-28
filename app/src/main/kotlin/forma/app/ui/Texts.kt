@@ -186,6 +186,8 @@ object Texts {
             if (from == null) "Темпы рассчитаны: VDOT ${Ru.one(o.to)}."
             else if (o.to > from && o.easier) "Три тяжёлые пробежки прошли в темпе и с запасом. Темпы на шаг быстрее: VDOT ${Ru.one(from)} → ${Ru.one(o.to)}. Проверим на контрольном."
             else if (o.to > from) "Форма выросла: VDOT ${Ru.one(from)} → ${Ru.one(o.to)}, темпы станут быстрее."
+            // A trial that gives the form known to the half point: nothing moves, and «чуть спокойнее» would be untrue.
+            else if (o.to == from) "Форма подтвердилась: VDOT ${Ru.one(from)}, темпы прежние."
             else "VDOT ${Ru.one(from)} → ${Ru.one(o.to)}: темпы чуть спокойнее."
         }
         is RunOutcome.TestTime -> "Контрольный: ${o.meters} м за ${Ru.clock(o.seconds)}."

@@ -82,6 +82,7 @@ class LivesRulesTest {
             }
             gymNeverLost(sim)?.let { return it }
             trialsApart(sim)?.let { return it }
+            fitnessNearTheTruth(sim)?.let { return it }
             textsClean(sim)?.let { return it }
             // The coach's brief: builds, and fits what the coach takes (60 000 characters).
             val brief = runBlocking { coachContext(sim.repo, start.plusWeeks(weeks.toLong())) }
@@ -125,6 +126,27 @@ class LivesRulesTest {
         val trials = sim.runLog.filter { it.type == RunType.TEST }
         for ((a, b) in trials.zipWithNext()) {
             if (b.day.toEpochDay() - a.day.toEpochDay() < 14) return "контрольные ${a.day} и ${b.day}: меньше двух недель"
+        }
+        return null
+    }
+
+    /**
+     * The fitness the app holds against the runner's true one (the simulation knows it, the app never does): after a
+     * trial counted within 3 (a trial run a day's form and a fast start off, 1,5 % of the time, is about 1 of fitness),
+     * never further than 5 at any run after the first trial — the ladders and the easy runs move it by one at a time,
+     * and the next trial puts it right. Seen without it: nothing in the lives said whether the paces were the runner's.
+     */
+    private fun fitnessNearTheTruth(sim: Simulation): String? {
+        var trialSeen = false
+        for (r in sim.runLog) {
+            val app = r.appVdot ?: continue
+            val truth = r.trueVdot ?: continue
+            val counted = r.type == RunType.TEST && r.outcomes.any { it.startsWith("VdotChanged") }
+            if (counted) trialSeen = true
+            if (!trialSeen) continue
+            val gap = kotlin.math.abs(app - truth)
+            if (counted && gap > 3.0) return "${r.day} ${r.title}: после контрольного форма $app, а бегун на ${"%.1f".format(truth)} (${r.outcomes})"
+            if (gap > 5.0) return "${r.day} ${r.title}: форма $app ушла от бегуна (${"%.1f".format(truth)})"
         }
         return null
     }

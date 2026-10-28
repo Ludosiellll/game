@@ -19,6 +19,7 @@ import forma.core.run.RunType
 import forma.core.run.RunWorkout
 import forma.core.run.SegmentKind
 import forma.core.run.Vdot
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -50,19 +51,24 @@ class RunRulesTest {
     }
 
     private fun state(r: Random, day: Long): RunState {
-        val walk = if (r.chance(0.15)) r.nextInt(0, 9) else -1
+        // The whole run/walk ladder, its last rungs too (a graduation); the top of the race-pace ladder now and then (the
+        // trial next, or one too soon); easy runs that agree five times in a row (the paces follow them).
+        val walk = if (r.chance(0.15)) (if (r.chance(0.3)) RunPlan.walkLadderSize - 1 else r.nextInt(0, RunPlan.walkLadderSize)) else -1
         val recent = (1..r.nextInt(0, 14)).map { RunLog(day - r.nextInt(1, 30), r.nextInt(10, 90)) }.sortedBy { it.day }
+        val top = r.chance(0.2)
+        val signs = if (r.chance(0.2)) (if (r.chance(0.5)) 1 else -1).let { sign -> List(r.nextInt(4, 7)) { sign } } else List(r.nextInt(0, 7)) { r.nextInt(-1, 2) }
         return RunState(
             vdot = if (r.chance(0.2)) null else r.range(28.0, 70.0).let { (it * 2).roundToInt() / 2.0 },
             walkStage = walk, easyMinutes = r.nextInt(20, 61), longMinutes = r.nextInt(30, 121),
-            intervalStage = r.nextInt(0, 6), tempoStage = r.nextInt(0, 7), qualityCount = r.nextInt(0, 20), runs = r.nextInt(0, 200),
-            lastTestDay = if (r.chance(0.4)) day - r.nextInt(5, 90) else null,
+            intervalStage = r.nextInt(0, RunPlan.intervalLadderSize), tempoStage = r.nextInt(0, RunPlan.tempoLadderSize), qualityCount = r.nextInt(0, 20), runs = r.nextInt(0, 200),
+            lastTestDay = if (r.chance(0.4)) day - r.nextInt(5, 90) else if (top && r.chance(0.5)) day - r.nextInt(1, 21) else null,
             qualityOnPace = r.nextInt(0, 3), qualityFails = r.nextInt(0, 3), intervalFails = r.nextInt(0, 2), tempoFails = r.nextInt(0, 2),
             tempoSoft = 3 * r.nextInt(0, 5), walkFails = r.nextInt(0, 2), lastVdotUpDay = if (r.chance(0.3)) day - r.nextInt(1, 60) else null,
             lastRunDay = if (r.chance(0.85)) day - r.nextInt(1, 5) else if (r.chance(0.5)) day - r.nextInt(8, 60) else null,
-            recent = recent, returnEasy = if (r.chance(0.1)) r.nextInt(1, 3) else 0, goalStage = r.nextInt(0, RunPlan.goalLadderSize),
+            recent = recent, returnEasy = if (r.chance(0.1)) r.nextInt(1, 3) else 0,
+            goalStage = if (top) RunPlan.goalLadderSize - 1 else r.nextInt(0, RunPlan.goalLadderSize),
             goalFails = r.nextInt(0, 2), testSoon = r.chance(0.2), lastTrialTryDay = if (r.chance(0.1)) day - r.nextInt(1, 30) else null,
-            easyRpes = List(r.nextInt(0, 9)) { r.nextInt(2, 9) }, easySigns = List(r.nextInt(0, 7)) { r.nextInt(-1, 2) },
+            easyRpes = List(r.nextInt(0, 9)) { r.nextInt(2, 9) }, easySigns = signs,
             goalDeferredOn = if (r.chance(0.1)) day - r.nextInt(1, 5) else null,
         )
     }
@@ -92,15 +98,21 @@ class RunRulesTest {
         }
     }
 
-    /** Laps of the reps as run: on the planned time, faster or slower, now and then a walk, a stop, a press missed. */
+    /**
+     * Laps of the reps as run: on the planned time, faster or slower, now and then a fade, a walk (far over the planned
+     * lap), a stop, a press missed (a lap doubled). A trial walks and stops more often than reps do: its stretch held,
+     * walked to the end or stopped after slowing, is what the plan reads most carefully.
+     */
     private fun laps(r: Random, w: RunWorkout): List<Lap>? {
         if (w.lapMeters == null) return null
         val reps = w.segments.filter { it.kind == SegmentKind.WORK && it.laps != null }
         if (reps.isEmpty()) return null
+        val trial = w.testMeters != null
         val out = mutableListOf<Lap>()
         val pace = r.range(0.85, 1.15)
         val fadeAt = if (r.chance(0.4)) r.nextInt(1, 8) else 99
-        val stopRep = if (r.chance(0.2)) r.nextInt(1, reps.size + 1) else 99
+        val walkAt = if (r.chance(if (trial) 0.25 else 0.08)) r.nextInt(2, 9) else 99
+        val stopRep = if (r.chance(if (trial) 0.3 else 0.2)) r.nextInt(1, reps.size + 1) else 99
         reps.forEachIndexed { k, s ->
             if (k + 1 > stopRep) return out
             val of = ceil(s.laps!!).toInt()
@@ -109,6 +121,7 @@ class RunRulesTest {
             for (n in 1..stopLap) {
                 val part = if (n == 1) first else 1.0
                 var sec = s.lapSec!! * part * pace * (if (n >= fadeAt) r.range(1.05, 1.5) else r.range(0.97, 1.03))
+                if (n == walkAt || n == walkAt + 1 && r.chance(0.5)) sec *= r.range(1.6, 2.6)
                 if (r.chance(0.03)) sec *= 2.0
                 out += Lap(sec, s.lapSec!! * part * 0.98, s.lapSec!! * part * 1.02, n, of, k + 1, part)
             }
@@ -121,7 +134,8 @@ class RunRulesTest {
         val target = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.pace?.let { (it.fast + it.slow) / 2.0 }
         val laps = laps(r, w)
         val tm = w.testMeters
-        val trialSec = if (tm != null && r.chance(0.6)) (Vdot.predictSeconds(st.vdot ?: 40.0, tm.toDouble()) * r.range(0.85, 1.25)).roundToInt() else null
+        // A time typed: most trials on the road, fewer with laps (the laps alone are the trial then — or none of it).
+        val trialSec = if (tm != null && r.chance(if (laps != null) 0.4 else 0.7)) (Vdot.predictSeconds(st.vdot ?: 40.0, tm.toDouble()) * r.range(0.85, 1.25)).roundToInt() else null
         val road = w.type == RunType.TEST && w.lapMeters == null
         val workSec = if (road) (w.workSeconds * r.range(0.4, 1.0)).roundToInt() else null
         return RunResult(
@@ -159,6 +173,58 @@ class RunRulesTest {
 
     /** No break before this run: the form and the minutes are what the state says (a break cuts them, on purpose). */
     private fun noBreak(c: Case) = RunPlan.breakDays(c.state, c.day) == null
+
+    /** What an outcome is for the reach count: its kind, and for a trial's stretch and a form change which way it went. */
+    private fun kind(o: RunOutcome): String = when (o) {
+        is RunOutcome.TestFromPart -> "TestFromPart(finished=${o.finished}, kept=${o.kept}, capped=${o.capped})"
+        is RunOutcome.StageUp -> "StageUp(${o.ladder})"
+        is RunOutcome.StageDown -> "StageDown(${o.ladder})"
+        is RunOutcome.StageRepeat -> "StageRepeat(${o.ladder})"
+        is RunOutcome.LighterWeek -> "LighterWeek(${o.ladder})"
+        is RunOutcome.LadderTop -> "LadderTop(${o.ladder})"
+        is RunOutcome.VdotChanged -> "VdotChanged(" + (if (o.from == null) "set" else if (o.to > o.from) "up" else if (o.to < o.from) "down" else "same") + if (o.easier) ", easier)" else ")"
+        is RunOutcome.TempoPace -> "TempoPace(softer=${o.softer})"
+        is RunOutcome.EasyPaces -> "EasyPaces(${if (o.to > o.from) "up" else "down"})"
+        else -> o::class.simpleName ?: o.toString()
+    }
+
+    /**
+     * The cases the rules see reach every decision that matters: a rule on cases that never get to a branch says nothing
+     * of it (seen: the stretch of a stopped trial held back by the time to its end, for a form not known, was reached by
+     * none of 4000 cases; the paces moved by the easy runs by one). Counted on [REACH] cases, written to
+     * `build/fuzz/reach/outcomes.txt`; a kind never reached fails.
+     */
+    @Test fun runCasesReachEveryDecisionThatMatters() {
+        val seen = sortedMapOf<String, Int>()
+        val types = sortedMapOf<RunType, Int>()
+        // The same cases every time, whatever seed the background run has: the count is of the generator, not of the
+        // engine, and a rare kind missed by one seed must not fail a run with no report to show for it.
+        for (i in 0 until REACH) {
+            val c = gen(Random(REACH_SEED + i))
+            types.merge(c.w.type, 1, Int::plus)
+            after(c).outcomes.forEach { seen.merge(kind(it), 1, Int::plus) }
+        }
+        val must = listOf(
+            "TestTime", "GoalReached", "TestDoubtful", "TestNotCounted", "TestStopped", "TestNext", "TrialLater", "LoopShorter",
+            "TestFromPart(finished=true, kept=false, capped=false)", "TestFromPart(finished=true, kept=false, capped=true)",
+            "TestFromPart(finished=false, kept=false, capped=false)", "TestFromPart(finished=false, kept=false, capped=true)",
+            "TestFromPart(finished=false, kept=true, capped=false)",
+            "VdotChanged(set)", "VdotChanged(up)", "VdotChanged(down)", "VdotChanged(up, easier)", "EasyPaces(up)", "EasyPaces(down)",
+            "StageUp(goal)", "StageDown(goal)", "StageRepeat(goal)", "StageUp(intervals)", "StageDown(intervals)", "StageUp(tempo)", "StageDown(tempo)",
+            "StageUp(walk)", "StageDown(walk)", "Graduated", "TooFast", "TooFastRepeat", "TooSlow", "PaceUnknown", "Longer", "Shorter", "Same",
+            "LighterWeek(goal)", "LighterWeek(intervals)", "LighterWeek(tempo)", "LadderTop(intervals)", "TempoPace(softer=true)", "TempoPace(softer=false)", "OwnScale",
+        )
+        val text = buildString {
+            appendLine("случаев $REACH")
+            types.forEach { (t, n) -> appendLine("$t\t$n") }
+            seen.forEach { (k, n) -> appendLine("$k\t$n") }
+        }
+        // In its own folder: the background run opens an issue for every `build/fuzz/*.txt` when a rule is broken.
+        File("build/fuzz/reach").mkdirs()
+        File("build/fuzz/reach/outcomes.txt").writeText(text)
+        val missing = must.filter { (seen[it] ?: 0) == 0 }
+        if (missing.isNotEmpty()) throw AssertionError("случаи не доходят до: $missing\n$text")
+    }
 
     @Test fun runStateStaysSane() = check("run_state_sane") { c ->
         val a = after(c)
@@ -324,6 +390,12 @@ class RunRulesTest {
         // Every second of the plan is in exactly one segment.
         if (w.segments.sumOf { it.seconds } != total) return@check "сумма отрезков ${w.segments.sumOf { it.seconds }} ≠ $total"
         null
+    }
+
+    companion object {
+        /** Cases counted for the reach of the decisions, and their fixed seed (see [runCasesReachEveryDecisionThatMatters]). */
+        const val REACH = 3000
+        const val REACH_SEED = 20_261_028L * 7
     }
 
     @Test fun runDebriefAndExplanationSayNothingBroken() = check("run_texts_sane") { c ->

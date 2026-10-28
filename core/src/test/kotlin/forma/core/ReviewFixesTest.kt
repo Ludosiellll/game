@@ -18,6 +18,7 @@ import forma.core.strength.SlotSpec
 import forma.core.strength.SlotState
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -140,15 +141,16 @@ class ReviewFixesTest {
         val easy = RunPlan.easy(st)
         val late = RunPlan.after(st, easy, RunResult(1.0, 4, easy.totalSeconds), caps, day = 10)
         assertEquals(20L, late.state.lastRunDay)
-        // A tap, the app restored, a second tap 0.6 s later: one press.
+        // A lap pressed (50 s, about the lap planned: a press far quicker than the rep's lap is a touch, not a lap),
+        // the app restored, a second tap 0.6 s later: one press.
         val w = RunPlan.goalPace(RunState(walkStage = -1), goal, 230)
         val t = RunTracker(w)
         t.start(0)
         t.press(warm)
-        t.press(warm + 30_000)
-        val back = RunTracker.restore(t.snapshot(warm + 30_000), warm + 30_000)
-        back.resume(warm + 30_000)
-        assertEquals(Press.Ignored, back.press(warm + 30_600))
+        assertIs<Press.Done>(t.press(warm + 50_000))
+        val back = RunTracker.restore(t.snapshot(warm + 50_000), warm + 50_000)
+        back.resume(warm + 50_000)
+        assertEquals(Press.Ignored, back.press(warm + 50_600))
     }
 
     @Test fun fourDaysForA1500mGoalHoldTwoHardAndTwoEasyRuns() {

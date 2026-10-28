@@ -54,7 +54,21 @@ object Fuzz {
         var i = one ?: 0L
         var n = 0L
         while (true) {
-            val c = gen(random(name, i))
+            // A case the generator cannot make (a plan that throws for a state): a finding too, reported like a rule
+            // broken, not a test that fails with no report and no issue.
+            val c = try {
+                gen(random(name, i))
+            } catch (e: Throwable) {
+                val text = buildString {
+                    appendLine("Правило «$name»: случай не построился.")
+                    appendLine("Повторить: FORMA_FUZZ_SEED=$seed FORMA_FUZZ_ONLY=$name FORMA_FUZZ_CASE=$i")
+                    appendLine()
+                    appendLine("Что не так: ${e::class.simpleName}: ${e.message}")
+                    e.stackTrace.take(8).forEach { appendLine("    at $it") }
+                }
+                File(out, "$name.txt").writeText(text)
+                throw AssertionError(text)
+            }
             val why = broken(c)
             n++
             if (why != null) {

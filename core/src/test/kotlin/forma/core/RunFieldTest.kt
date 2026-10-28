@@ -224,17 +224,21 @@ class RunFieldTest {
         val t = RunTracker(three)
         t.setLine(53.9, 27.56)
         val go = onTheLine(t)
-        // 30 s into a 50.6-second lap, 40 m off: long enough to pass for a lap, too short to say where the line is.
-        assertIs<Press.Done>(pressNear(t, go + 30_000, 40.0))
+        // 35 s into a 50.6-second lap, 40 m off: long enough to pass for a lap (over 0,6 of it), too short to say where
+        // the line is. A touch at 30 s is no lap at all now: under 0,6 of the lap the rep is run at.
+        assertIs<Press.Done>(pressNear(t, go + 35_000, 40.0))
         assertEquals(53.9 to 27.56, t.line)
-        // The press on the line 20 s later is too short a lap now, and the next one, 71 s after the touch, too long.
-        assertEquals(Press.Ignored, pressNear(t, go + 50_600, 2.0))
-        assertIs<Press.Done>(pressNear(t, go + 101_200, 2.0))
-        assertEquals(53.9 to 27.56, t.line)
-        // A lap on time, 5 m off: the line moves toward it a little.
-        assertIs<Press.Done>(pressNear(t, go + 151_800, 5.0))
+        // The press on the line 15,6 s later is the line: the touch's lap takes its time, a whole lap — and that press,
+        // 2 m off, moves the line toward it a little, as any press on the line does.
+        val fixed = assertIs<Press.Done>(pressNear(t, go + 50_600, 2.0))
+        assertEquals(50.6, fixed.lap.seconds, 0.01)
+        assertEquals(1, t.laps.size)
         val line = assertNotNull(t.line)
-        assertEquals(1.5, Geo.haversine(53.9, 27.56, line.first, line.second), 0.1)
+        assertEquals(0.6, Geo.haversine(53.9, 27.56, line.first, line.second), 0.1)
+        // The next lap, on the line: a lap of its own.
+        assertIs<Press.Done>(pressNear(t, go + 101_200, 2.0))
+        assertEquals(2, t.laps.size)
+        assertEquals(50.6, t.laps.last().seconds, 0.01)
     }
 
     @Test fun aNewStadiumTakesTwoPressesThatAgree() {
