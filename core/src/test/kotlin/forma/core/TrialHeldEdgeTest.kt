@@ -120,6 +120,22 @@ class TrialHeldEdgeTest {
     }
 
     /**
+     * Stopped after a lap slowed to 75.2 s on a 230 m loop, or that lap run once more to the end: the same, to the tenth —
+     * the laps' sum rounded to a whole second gave 44 for the trial run to its end and 44.5 for the stop.
+     */
+    @Test fun runningOnAtThePaceComeDownToIsTheStopToTheTenth() {
+        val fresh = RunState(walkStage = -1)
+        val g = RunGoal(1500, 325)
+        val w = RunPlan.goalTest(fresh, g, 230)
+        val laps = listOf(26.2, 52.1, 51.2, 50.7, 52.0, 75.2)
+        val ls = laps.mapIndexed { i, s -> Lap(s, number = i + 1, of = 7, rep = 1, part = if (i == 0) 0.5 else 1.0) }
+        fun after(l: List<Lap>) = RunPlan.after(fresh, w, RunResult(1.0, 6, 1235, laps = l), caps, day = 20, goal = g).state.vdot!!
+        val stopped = after(ls)
+        val ran = after(ls + Lap(75.2, number = 7, of = 7, rep = 1))
+        assertTrue(ran >= stopped, "stopped $stopped, ran on $ran")
+    }
+
+    /**
      * A trial 2 % faster never gives a lower fitness: a stretch just past belief next to the fitness known (36: 922 m in
      * 3:34 a 43.8, 2 % faster a 44.8) once dropped and the whole time alone counted — 38.5 for the faster trial, 44 for
      * the slower one (found on random runners: run_trial_faster).

@@ -1217,8 +1217,12 @@ object RunPlan {
                     val t = (r.testSeconds ?: trialLapsTime(w, r.laps))?.takeIf { it / (tm / 1000.0) in PLAUSIBLE_PACE }
                     val d = r.workDistanceM
                     val sec = r.workSec ?: w.workSeconds
+                    // The laps' own time to the tenth where none was typed: rounded to the second, a trial run to its end
+                    // and the same trial stopped a lap earlier (the rest taken at the last lap's pace) came out a rounding
+                    // step apart (44 against 44.5).
+                    val exact = if (r.testSeconds == null && t != null) lapsToTheEnd(w, r.laps) ?: t.toDouble() else t?.toDouble()
                     val raw = when {
-                        t != null -> Vdot.fromRace(tm.toDouble(), t.toDouble())
+                        exact != null -> Vdot.fromRace(tm.toDouble(), exact)
                         // Run to the end of its time: the distance in it is the result, however short of the trial's (a
                         // runner slower than the plan) — 79 % kept the form, 81 % lowered it. Half of it at least: less
                         // is GPS lost more likely than a runner that slow.
