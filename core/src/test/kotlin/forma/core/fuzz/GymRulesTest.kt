@@ -250,9 +250,11 @@ class GymRulesTest {
         // estimate is kept low on purpose (a set past 12 counts as 12): what was done at that weight or heavier counts too.
         val shown = c.done.filter { it.reps > 0 && Progression.effectiveLoad(c.ex, it.weight, c.bw) >= l - 1e-6 }.maxOfOrNull { it.reps + (it.rir ?: 0) } ?: 0
         val there = max(OneRm.rtfAt(est, l), shown.toDouble())
-        // A beginner's linear progress — a step more at the same reps — asks for the session's progress on purpose.
+        // A beginner's linear progress — one step more at the same reps — asks for the session's progress on purpose: the
+        // reps done, again, a step heavier (the simulated beginners say whether that works; it does).
         val linear = (e.outcome as? Outcome.AddWeight)?.let { c.state.linear && it.reps == c.p.reps && it.to <= it.from + max(c.ex.stepAt(it.from), c.spec.increment ?: 0.0) + 1e-9 } == true
-        if (s.reps > there + (if (linear) 2 else 1) + 1e-9) "дальше $w × ${s.reps} — а по оценке этой тренировки там ${"%.1f".format(there)} до отказа (${e.outcome})" else null
+        if (linear) return@check null
+        if (s.reps > there + 1 + 1e-9) "дальше $w × ${s.reps} — а по оценке этой тренировки там ${"%.1f".format(there)} до отказа (${e.outcome})" else null
     }
 
     @Test fun gymStepsAreSane() = check("gym_steps_sane", { gen(it, Phase.NORMAL, false) }) { c ->
@@ -308,8 +310,13 @@ class GymRulesTest {
         val a = e0.state
         val eb = eval(c, heavier)
         val b = eb.state
+        // Both moved on: how far is the engine's call — a jump at one, a step at the other (the spare read against a
+        // weight a step apart) — not the heavier session asked less of.
+        if (up(e0.outcome) && up(eb.outcome)) return@check null
         if (atLeast(c, b, a)) null else "те же подходы на шаг тяжелее — а план легче: было бы ${a.weight}×${a.reps}, стало ${b.weight}×${b.reps} (${e0.outcome} / ${eb.outcome})"
     }
+
+    private fun up(o: Outcome) = o is Outcome.AddWeight || o is Outcome.Jump || o is Outcome.AddReps
 
     @Test fun gymMoreReserveNeverAsksLess() = Fuzz.check(
         "gym_more_reserve_never_less", { r -> gen(r, Phase.NORMAL, false) }, ::shrink, { it.toString() },

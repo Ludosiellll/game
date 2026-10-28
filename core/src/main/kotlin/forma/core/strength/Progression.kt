@@ -475,7 +475,9 @@ object Progression {
             if (s.weight <= w + tol) s.reps else {
                 val load = effectiveLoad(ex, s.weight, bodyWeight)
                 val atW = (0..assumedRir(s, i, p)).maxOf { r -> OneRm.rtfAt(OneRm.estimate(load, s.reps, r), effectiveLoad(ex, w, bodyWeight)) - r }
-                max(s.reps, kotlin.math.floor(atW + 1e-9).toInt())
+                // To the nearest rep: the estimate is no finer, and 147.5 × 14 read as 142.5 × 14.95 was a miss (held) where
+                // the same sets a step lighter jumped by 20 kg.
+                max(s.reps, kotlin.math.floor(atW + 0.5).toInt())
             }
         }
         val allAtTarget = lighter == 0 && equiv.all { it >= target }

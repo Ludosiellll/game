@@ -235,6 +235,10 @@ class RunRulesTest {
         val human = { x: List<RunOutcome> -> x.none { o -> o is RunOutcome.TestFromPart && o.seconds / (o.meters / 1000.0) < 140.0 ||
             o is RunOutcome.TestTime && o.seconds / (o.meters / 1000.0) < 140.0 } }
         if (!human(a.outcomes) || !human(b.outcomes)) return@check null
+        // Laps far from the time typed (a tenth and more) are no record of that trial (past a sixth the engine drops them):
+        // which side of that line a trial 2 % faster falls on is the seconds' rounding, not the rule.
+        val laps = c.r.laps?.filter { it.rep == 1 }?.sumOf { it.seconds }
+        if (laps != null && c.r.testSeconds != null && abs(laps / c.r.testSeconds!! - 1) > 0.10) return@check null
         val x = a.state.vdot ?: 0.0
         val y = b.state.vdot ?: 0.0
         // A stretch held is the best of those of half the trial and 600 m at least: faster, another one with more of the
