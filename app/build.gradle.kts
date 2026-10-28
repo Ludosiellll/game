@@ -121,6 +121,11 @@ tasks.withType<Test>().configureEach {
         systemProperty("robolectric.dependency.repo.url", it)
     }
     maxHeapSize = "3g"
+    // The lives on random people (sim/LivesRulesTest) read these: a new seed, time or person is a new run, not an
+    // up-to-date one.
+    listOf("FORMA_FUZZ_SEED", "FORMA_LIVES_SECONDS", "FORMA_LIVES_ID").forEach { name ->
+        inputs.property(name, providers.environmentVariable(name).orElse(""))
+    }
     // Robolectric on Android 16 images touches FileDescriptor internals.
     jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED", "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED")
 }
