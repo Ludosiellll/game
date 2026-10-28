@@ -44,10 +44,11 @@ class TrialHeldEdgeTest {
 
     /**
      * Fitness 40 known. Away far too fast (923 m at 3:25/km, a fitness of 50 for that stretch — not believable next to
-     * 40) and then jogging to the line: the whole time (7:09, a fitness of 37,6) is a trial like any other and counts.
-     * Only the stretch is beyond belief, not the trial.
+     * 40) and then jogging to the line: the whole time (7:09, a fitness of 37,6) is a trial like any other and counts,
+     * and the stretch adds to it what any faded trial's does, 3 at most — capped, not dropped: dropped at the edge of
+     * belief, a trial run faster gave a lower fitness.
      */
-    @Test fun aStretchTooGoodToBelieveLeavesTheWholeTimeToCount() {
+    @Test fun aStretchTooGoodToBelieveAddsAtMostThreeToTheWholeTime() {
         val known = RunState(walkStage = -1, vdot = 40.0)
         val (w, r) = run(known, listOf(21.0) + List(4) { 42.0 } + List(3) { 80.0 })
         val t = assertNotNull(r.testSeconds)
@@ -57,7 +58,23 @@ class TrialHeldEdgeTest {
         val after = RunPlan.after(known, w, r, caps, day = 20, goal = goal)
         assertTrue(after.outcomes.none { it is RunOutcome.TestDoubtful }, "${after.outcomes}")
         assertTrue(after.outcomes.any { it is RunOutcome.TestTime && it.seconds == t }, "${after.outcomes}")
-        assertEquals((raw * 2).roundToInt() / 2.0, after.state.vdot)
+        assertEquals(((raw + RunPlan.PART_OVER_WHOLE) * 2).roundToInt() / 2.0, after.state.vdot)
+    }
+
+    /**
+     * A trial 2 % faster never gives a lower fitness: a stretch just past belief next to the fitness known (36: 922 m in
+     * 3:34 a 43.8, 2 % faster a 44.8) once dropped and the whole time alone counted — 38.5 for the faster trial, 44 for
+     * the slower one (found on random runners: run_trial_faster).
+     */
+    @Test fun aFasterTrialNeverGivesALowerFitnessAtTheEdgeOfBelief() {
+        val known = RunState(walkStage = -1, vdot = 36.0)
+        fun after(scale: Double): Double {
+            val (w, r) = run(known, (listOf(23.0) + List(4) { 47.75 } + List(3) { 72.0 }).map { it * scale })
+            return RunPlan.after(known, w, r, caps, day = 20, goal = goal).state.vdot!!
+        }
+        val slower = after(1.0)
+        val faster = after(0.98)
+        assertTrue(faster >= slower, "slower $slower, faster $faster")
     }
 
     /**

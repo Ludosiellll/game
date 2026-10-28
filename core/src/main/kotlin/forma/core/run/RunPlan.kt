@@ -220,9 +220,10 @@ sealed interface RunOutcome {
     /**
      * A time trial counted on the stretch held from its start ([meters] in [seconds], see [RunPlan.held]): [finished] —
      * run to the end, but slower after it (the whole time would give a lower fitness); else stopped, walked or a lap not
-     * trusted, and a full trial comes again. [kept]: the fitness known was higher, and a part never lowers it.
+     * trusted, and a full trial comes again. [kept]: the fitness known was higher, and a part never lowers it. [capped]:
+     * run to the end far slower than the stretch, the fitness is below the stretch's — 3 above the whole time's at most.
      */
-    @Serializable data class TestFromPart(val meters: Int, val seconds: Int, val finished: Boolean, val kept: Boolean = false) : RunOutcome
+    @Serializable data class TestFromPart(val meters: Int, val seconds: Int, val finished: Boolean, val kept: Boolean = false, val capped: Boolean = false) : RunOutcome
     /** A time trial held from its start only [meters]: under half of it or three minutes, too little to count. */
     @Serializable data class TestStopped(val meters: Int) : RunOutcome
 }
@@ -413,8 +414,23 @@ object RunPlan {
         return reps.sumOf { it.seconds }.roundToInt().takeIf { it > 0 }
     }
 
+    /**
+     * The time a trial's [laps] took to its end when a lap of it was walked (far slower than a lap, see [heldLaps]): no
+     * press doubled, the last lap closing the trial. Not the trial's time — a walk is no race — but how far the runner
+     * fell back after the stretch held.
+     */
+    private fun lapsToTheEnd(w: RunWorkout, laps: List<Lap>?): Int? {
+        val lapSec = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.lapSec ?: return null
+        val reps = laps.orEmpty().filter { it.rep == 1 }
+        if (reps.none { it.closesRep } || reps.withIndex().any { (i, l) -> l.number != i + 1 || l.seconds / (lapSec * l.part) < 0.5 }) return null
+        return reps.sumOf { it.seconds }.roundToInt().takeIf { it > 0 }
+    }
+
     /** The shortest stretch of a time trial that counts as a measure of it, besides half of it (see [held]). */
     const val HELD_MIN_M = 600.0
+
+    /** How far above the whole time a stretch held may put a trial run to its end and faded (see [held]). */
+    const val PART_OVER_WHOLE = 3.0
 
     /** Tempo ladder: (repeats, work seconds, recovery seconds) at threshold pace. */
     private val TEMPO = listOf(
@@ -739,7 +755,7 @@ object RunPlan {
             append("Контрольный забег: $distance в полную силу, но ровно. $STRIDES_NOTE ")
             if (lapSec != null) {
                 append("Первые круги — по ${Ru.lap(lapSec)}, телефон пищит на каждом. Со второй половины прибавь, если есть силы. ")
-                append("Не держишь — сбавь, но добеги: форма посчитается и по всему времени, и по тому, сколько от старта ты держал темп, — что лучше. ")
+                append("Не держишь — сбавь, но добеги: форма посчитается по всему времени, а если начало было заметно быстрее конца — чуть выше. ")
                 if (laps != null && laps % 1.0 != 0.0) append("Старт — ${startWords(laps % 1.0)}. ")
                 append("Круги засчитает GPS (или жми «Круг» на каждой линии). Время забега — по последнему кругу.")
             } else {
@@ -1203,19 +1219,22 @@ object RunPlan {
                         r.copy(laps = r.laps?.map { if (it.rep == 1) it.copy(seconds = it.seconds * r.testSeconds / lapsTime) else it })
                     } else r
                     val part = if (w.lapMeters == null && raw != null) null else held(w, read)
-                    // Beyond belief next to the fitness known (away far too fast, then a jog): the whole time still counts.
                     // A stretch is a part of the trial: the whole of it is the whole time.
-                    val better = part != null && raw != null && part.meters < tm - 1 && believable(part.vdot, state.vdot) &&
-                        (part.vdot * 2).roundToInt() > (raw * 2).roundToInt()
+                    val better = part != null && raw != null && part.meters < tm - 1 && (part.vdot * 2).roundToInt() > (raw * 2).roundToInt()
                     when {
                         raw != null -> {
-                            val used = if (better) part!!.vdot else raw
+                            // Faded, the stretch corrects the whole time by 3 at most, and never past the fitness known
+                            // by more than belief allows (away far too fast, then a jog): a runner who died after half
+                            // lacks some of the endurance the stretch alone would credit. Capped, not dropped: a stretch
+                            // just past belief once dropped, the form 6–8 lower for a trial run 2 % faster.
+                            val used = if (better) minOf(part!!.vdot, raw + PART_OVER_WHOLE, (state.vdot ?: Double.MAX_VALUE) + 8.0) else raw
+                            val capped = better && (used * 2).roundToInt() < (part!!.vdot * 2).roundToInt()
                             if (!believable(used, state.vdot)) {
                                 out += RunOutcome.TestDoubtful((used * 2).roundToInt() / 2.0)
                             } else {
                                 val nv = (used * 2).roundToInt() / 2.0
                                 if (t != null) out += RunOutcome.TestTime(tm, t)
-                                if (better) out += RunOutcome.TestFromPart(part!!.meters.roundToInt(), part.seconds.roundToInt(), finished = true)
+                                if (better) out += RunOutcome.TestFromPart(part!!.meters.roundToInt(), part.seconds.roundToInt(), finished = true, capped = capped)
                                 out += RunOutcome.VdotChanged(state.vdot, nv)
                                 s = s.copy(vdot = nv, testSoon = false)
                                 // Judged on the unrounded fitness: 1495 m in 5:33 is faster than 1500 m in 5:35 — and on
@@ -1230,14 +1249,19 @@ object RunPlan {
                         part != null -> {
                             // Stopped, walked, or a lap not trusted: the stretch held is the measure, but only as far as
                             // it goes — a runner who stops may have had more, so a part raises the fitness or sets it,
-                            // never lowers it. A full trial comes again.
-                            val nv = (part.vdot * 2).roundToInt() / 2.0
+                            // never lowers it. A full trial comes again. Walked to the end, the time to it holds the
+                            // stretch back as a slower end does (3 above it at most): a lap walked is no better than one
+                            // jogged at a breath slower (that one counted the whole time, this one the stretch alone).
+                            val end = lapsToTheEnd(w, read.laps)?.takeIf { it / (tm / 1000.0) in PLAUSIBLE_PACE }
+                            val v = if (end == null) part.vdot else min(part.vdot, Vdot.fromRace(tm.toDouble(), end.toDouble()) + PART_OVER_WHOLE)
+                            val nv = (v * 2).roundToInt() / 2.0
                             val kept = state.vdot != null && nv <= state.vdot
                             // Lower than the fitness known it changes nothing, so it is no typo either; far above it is.
-                            if (!kept && !believable(part.vdot, state.vdot)) {
+                            if (!kept && !believable(v, state.vdot)) {
                                 out += RunOutcome.TestDoubtful(nv)
                             } else {
-                                out += RunOutcome.TestFromPart(part.meters.roundToInt(), part.seconds.roundToInt(), finished = false, kept = kept)
+                                out += RunOutcome.TestFromPart(part.meters.roundToInt(), part.seconds.roundToInt(), finished = false, kept = kept,
+                                    capped = nv < (part.vdot * 2).roundToInt() / 2.0)
                                 if (!kept) {
                                     out += RunOutcome.VdotChanged(state.vdot, nv)
                                     s = s.copy(vdot = nv)

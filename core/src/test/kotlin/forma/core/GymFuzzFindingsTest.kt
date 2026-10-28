@@ -2,6 +2,7 @@ package forma.core
 
 import forma.core.model.Catalog
 import forma.core.strength.DoneSet
+import forma.core.strength.Outcome
 import forma.core.strength.Phase
 import forma.core.strength.Progression
 import forma.core.strength.SlotRole
@@ -63,6 +64,41 @@ class GymFuzzFindingsTest {
         val p = Progression.prescribe(squat, spec, SlotState(60.0, 8))
         val adj = Progression.adjustAfterSet(squat, p, DoneSet(90.0, 8, 0), 80.0, 0)
         assertTrue(adj == null || !adj.heavier, "$adj")
+    }
+
+    @Test fun twoRepsShortOfTheRangeBottomTheWeightComesDown() {
+        // 40 × 18 planned (range 15–16), 13 done: not «40 × 15» — two reps more than there were.
+        val ex = Catalog["incline_pushup"]
+        val spec = SlotSpec(ex.id, 1, 15, 16, 1, 90, SlotRole.ACCESSORY)
+        val state = SlotState(40.0, 18, misses = 1, sessions = 25, linear = true, steady = 2, cutFrom = 52.5, cutReps = 9)
+        val p = Progression.prescribe(ex, spec, state, bodyWeight = 75.9)
+        assertEquals(40.0, p.weight)
+        val e = Progression.evaluate(ex, spec, state, p, listOf(DoneSet(40.0, 13)), 75.9)
+        assertTrue(e.state.weight!! < 40.0 || e.state.reps <= 14, "${e.outcome}")
+    }
+
+    @Test fun oneRepShortOfTheRangeBottomKeepsTheWeight() {
+        val squat = Catalog["squat"]
+        val spec = SlotSpec("squat", 3, 5, 8, 2, 150, SlotRole.MAIN)
+        val state = SlotState(60.0, 7)
+        val p = Progression.prescribe(squat, spec, state)
+        val e = Progression.evaluate(squat, spec, state, p, listOf(DoneSet(60.0, 5), DoneSet(60.0, 5), DoneSet(60.0, 4)), 80.0)
+        assertEquals(Outcome.LowerReps(60.0, 7, 5), e.outcome)
+    }
+
+    @Test fun aCoarseStepAtTheTopAsksTheRepsTheEstimateGives() {
+        // 2.5 kg × 18 four times, the last with 2 left, at the top of 10–14 with room to spare: the next step doubles the
+        // load. Not «5 × 9» (the bottom of the range less one) where the estimate gives about one rep.
+        val ex = Catalog["face_pull"]
+        val spec = SlotSpec(ex.id, 4, 10, 14, 2, 90, SlotRole.ACCESSORY)
+        val state = SlotState(2.5, 18, sessions = 23, steady = 3, cutFrom = 10.0)
+        val p = Progression.prescribe(ex, spec, state, bodyWeight = 49.6)
+        val e = Progression.evaluate(ex, spec, state, p, List(3) { DoneSet(2.5, 18) } + DoneSet(2.5, 18, 2), 49.6)
+        val next = e.state
+        if (next.weight!! > 2.5) {
+            val there = forma.core.strength.OneRm.rtfAt(e.e1rm!!, Progression.effectiveLoad(ex, next.weight!!, 49.6))
+            assertTrue(next.reps <= there + 1, "${e.outcome}, ${"%.1f".format(there)} there")
+        }
     }
 
     @Test fun aTestDayFirstTimeFindsTheWeight() {

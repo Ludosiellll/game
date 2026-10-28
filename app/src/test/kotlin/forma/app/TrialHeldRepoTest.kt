@@ -129,7 +129,7 @@ class TrialHeldRepoTest {
         val review = RunReview.of(
             RunReview.Run(w, summary.laps.orEmpty(), 9, 1700, null, null, 1538 to 403, 1.0, false, 923 to 219), denis.runGoal,
         ).joinToString(" ") { it.text }
-        assertTrue("Первые 923 м" in review && "темпы посчитаны по ним" in review, review)
+        assertTrue("Первые 923 м" in review && "темпы посчитаны с учётом этого" in review, review)
     }
 
     @Test fun theWarmUpStridesAreKeptWithTheRun() = runBlocking<Unit> {

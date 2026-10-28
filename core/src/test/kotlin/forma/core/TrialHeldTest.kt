@@ -20,8 +20,9 @@ import kotlin.test.assertTrue
 /**
  * Denis before his first trial (1500 m in 5:30 as the goal, a 205 m loop, no fitness known yet: the beeps at 48.7 s a
  * lap): «он начнет в нужном темпе но просто не факт что добежит с нужной скоростью». A trial whose second half is slower,
- * or that ends in a walk or a stop, still says what the runner held from the start: the fitness is the better of the
- * whole time and that stretch (at least half the trial and three minutes), never thrown away.
+ * or that ends in a walk or a stop, still says what the runner held from the start (at least half the trial and three
+ * minutes), never thrown away: stopped, the fitness is that stretch's; run to the end slower, the whole time's, raised
+ * toward the stretch's by 3 at most (a runner who died after half lacks some of what the stretch alone would credit).
  */
 class TrialHeldTest {
     private val goal = RunGoal(1500, 330)
@@ -75,9 +76,23 @@ class TrialHeldTest {
         val (w, r) = run(fresh, held + listOf(65.0, 90.0, 80.0))
         assertNull(r.testSeconds)
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)
-        assertEquals(42.5, after.state.vdot)
-        assertNotNull(after.outcomes.filterIsInstance<RunOutcome.TestFromPart>().singleOrNull())
+        // The stretch gives 42.6; the trial walked to its end in 7:34 gives 35.6: 3 above that, as a slower end would.
+        assertEquals(((Vdot.fromRace(1537.5, 454.15) + RunPlan.PART_OVER_WHOLE) * 2).roundToInt() / 2.0, after.state.vdot)
+        assertEquals(38.5, after.state.vdot)
+        val part = assertNotNull(after.outcomes.filterIsInstance<RunOutcome.TestFromPart>().singleOrNull())
+        assertTrue(!part.finished && part.capped)
         assertTrue(RunOutcome.TestNotCounted !in after.outcomes)
+        assertTrue(after.state.testSoon)
+    }
+
+    /**
+     * The last laps jogged at 82 s (just under 1.7 times the beeps: the whole time counts) or walked at 84 s (just over
+     * it: the stretch counts, held back by the time to the end): a slower lap never gives the higher fitness.
+     */
+    @Test fun walkingTheLastLapsNeverBeatsJoggingThem() {
+        val jogged = run(fresh, held + List(3) { 82.0 }).let { (w, r) -> RunPlan.after(fresh, w, r, caps, day = 20, goal = goal) }
+        val walked = run(fresh, held + List(3) { 84.0 }).let { (w, r) -> RunPlan.after(fresh, w, r, caps, day = 20, goal = goal) }
+        assertTrue(walked.state.vdot!! <= jogged.state.vdot!!, "jogged ${jogged.state.vdot}, walked ${walked.state.vdot}")
     }
 
     @Test fun stoppedAfterHalfTheRunPartCountsAndAFullTrialComesAgain() {
@@ -134,10 +149,15 @@ class TrialHeldTest {
     }
 
     @Test fun theGoalIsReachedOnlyByTheWholeTime() {
-        // Away fast and faded: the first stretch is at the goal's fitness, the whole time far from it.
+        // Away fast and faded: the first stretch is at the goal's fitness, the whole time far from it — 3 above the whole
+        // time's, and no goal.
         val (w, r) = run(fresh, listOf(21.0) + List(4) { 42.0 } + listOf(60.0, 66.0, 70.0))
+        val part = assertNotNull(RunPlan.held(w, r))
+        assertTrue(part.vdot >= Vdot.fromRace(1500.0, 330.0) - 0.5)
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)
-        assertTrue(after.state.vdot!! >= Vdot.fromRace(1500.0, 330.0) - 0.5)
+        val raw = Vdot.fromRace(w.testMeters!!.toDouble(), r.testSeconds!!.toDouble())
+        assertEquals(((raw + RunPlan.PART_OVER_WHOLE) * 2).roundToInt() / 2.0, after.state.vdot)
+        assertTrue(after.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single().let { it.finished && it.capped })
         assertTrue(RunOutcome.GoalReached !in after.outcomes)
     }
 

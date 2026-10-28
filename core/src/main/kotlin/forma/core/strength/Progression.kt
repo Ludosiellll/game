@@ -561,7 +561,9 @@ object Progression {
                 // The next weight is still out of reach (a big step): more reps with this one first.
                 return Evaluation(SlotState(w, target + 1, 0, 0, sessions, state.linear), Outcome.AddReps(w, target, target + 1), e1rm)
             }
-            val r = expected.toInt().coerceIn(max(1, spec.repMin - 1), max(spec.repMin, spec.repMax - 1))
+            // Not pulled up to the range's bottom: the reps at their most here, the next weight is taken at the reps the
+            // estimate gives there, from below the range (2.5 × 19 went to 5 × 9 where one rep was there).
+            val r = expected.toInt().coerceIn(1, max(spec.repMin, spec.repMax - 1))
             return Evaluation(SlotState(to, r, 0, 0, sessions, state.linear), Outcome.AddWeight(w, to, r), e1rm)
         }
 
@@ -585,11 +587,12 @@ object Progression {
             return Evaluation(state.copy(reps = r, stalls = 0, misses = 0, sessions = sessions, linear = false, steady = 0),
                 Outcome.Hold(w, r, HoldReason.NOT_THE_WEIGHT), e1rm)
         }
-        if (target > spec.repMin && !(near && stalls < 2)) {
-            // Room in the rep range: bring the rep target down to what was done before touching the weight
-            // (double progression: the weight goes down only when even the bottom of the range is out of reach).
-            val doneAtW = planned.indices.filter { planned[it].weight >= w - tol }.map { equiv[it] }
-            val r = max(spec.repMin, min(target - 1, doneAtW.minOrNull() ?: spec.repMin))
+        // Room in the rep range: bring the rep target down to what was done before touching the weight (double
+        // progression: the weight goes down only when even the bottom of the range is out of reach — a rep short of it
+        // is in reach, two are not: 13 done kept the weight with 15 asked, the range's bottom).
+        val doneMin = planned.indices.filter { planned[it].weight >= w - tol }.minOfOrNull { equiv[it] } ?: spec.repMin
+        if (target > spec.repMin && !(near && stalls < 2) && doneMin >= spec.repMin - 1) {
+            val r = max(spec.repMin, min(target - 1, doneMin))
             return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
         }
         if (w <= lowest + 1e-9 && !(near && stalls < 2)) {

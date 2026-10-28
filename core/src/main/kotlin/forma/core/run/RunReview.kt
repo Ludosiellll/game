@@ -187,8 +187,8 @@ object RunReview {
             else "До цели ${Ru.clock(goal.seconds)} — ещё ${if (gap < 60) "$gap с" else Ru.clock(gap)}." +
                 if (held != null) "" else " Темпы пересчитаны по этому времени."
         }
-        // Faded: the stretch held from the start says more of the form than the whole time.
-        if (held != null) parts += "Первые ${held.first} м ты держал темп (${Ru.clock(held.second)}), потом сбавил — темпы посчитаны по ним."
+        // Faded: the stretch held from the start says more of the form than the whole time (3 above it at most).
+        if (held != null) parts += "Первые ${held.first} м ты держал темп (${Ru.clock(held.second)}), потом сбавил — темпы посчитаны с учётом этого."
         val laps = r.laps.filter { it.rep != null }
         if (laps.size >= 4) {
             val half = laps.size / 2
