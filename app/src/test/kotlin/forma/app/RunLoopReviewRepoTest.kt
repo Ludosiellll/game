@@ -238,6 +238,29 @@ class RunLoopReviewRepoTest {
         assertEquals(20 * measured.toDouble(), run.distanceM!!, 1.0)
     }
 
+    /**
+     * Denis: «у егора и у меня все данные обновятся старые исходя из того что круг 205». The lap length was put right in
+     * the cloud after his runs; the saved ones are counted again on it (22.10: 18 laps were 3690 m, not 4140), and the last
+     * one, nothing built on it yet, is decided again (26.10: too slow, not too fast).
+     */
+    @Test fun pastRunsAreCountedAgainOnTheLapSetLater() = runBlocking<Unit> {
+        repo.store.setRunState(after26.copy(qualityCount = 0, runs = 4, lastRunDay = 20749))
+        val d22 = LocalDate.of(2026, 10, 22)
+        at(d22, 15)
+        val free = repo.saveRun(repo.freeRun(230), RunResult(1.0, 4, 1517, distanceM = 18 * 230.0, laps = List(18) { Lap(84.3, number = it + 1) }), clock - 1517_000L, emptyList(), d22).first
+        repo.store.setRunState(after26.copy(qualityCount = 0, runs = 4, lastRunDay = 20749))
+        val race = racePace26()
+        assertTrue(RunOutcome.TooFastRepeat in summaryOf(race).outcomes, "reproduces his phone: ${summaryOf(race).outcomes}")
+        // The setting as the cloud brought it.
+        repo.store.setProfile(repo.store.profileNow()!!.copy(lapMeters = measured))
+        assertEquals(2 to 230, repo.runsOnOtherLap())
+        repo.recountLaps(230)
+        assertEquals(18 * measured.toDouble(), db.runs().get(free)!!.distanceM!!, 1.0)
+        assertEquals(1517 / (18 * measured / 1000.0), db.runs().get(free)!!.avgPace!!, 0.5)
+        assertTrue(RunOutcome.TooSlow in summaryOf(race).outcomes && RunOutcome.TooFastRepeat !in summaryOf(race).outcomes, "${summaryOf(race).outcomes}")
+        assertEquals(null, repo.runsOnOtherLap())
+    }
+
     @Test fun hisWeekIsPlannedAsHisPhoneHadIt() = runBlocking<Unit> {
         repo.store.setRunState(after26.copy(qualityCount = 0, runs = 4, lastRunDay = 20749, recent = after26.recent.dropLast(1)))
         at(LocalDate.of(2026, 10, 26), 10)

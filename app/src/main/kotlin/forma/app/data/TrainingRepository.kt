@@ -103,6 +103,53 @@ class TrainingRepository(
     }
 
     /**
+     * Saved stadium runs counted on another lap length than the one set now — the setting put right after them (Denis:
+     * 230 m for weeks, his loop 205; set in the cloud, it came to the phone by sync): how many, and that length (the most
+     * common one). Null when there are none.
+     */
+    suspend fun runsOnOtherLap(): Pair<Int, Int>? {
+        val lap = store.profileNow()?.lapMeters ?: return null
+        val laps = db.runs().observeAll().first().mapNotNull { run ->
+            runCatching { AppJson.decodeFromString(RunWorkout.serializer(), run.planJson).lapMeters }.getOrNull()
+        }.filter { it != lap }
+        if (laps.isEmpty()) return null
+        val old = laps.groupingBy { it }.eachCount().maxBy { it.value }.key
+        return laps.count { it == old } to old
+    }
+
+    /**
+     * The saved runs counted on laps of [old] m counted again on the lap length set now: the history's distance, pace and
+     * the laps' targets (the time of each lap as pressed), a trial's distance. The plan's decisions on them stay, but the
+     * last run's, while nothing has been built on it: it is decided again on the loop as it is.
+     */
+    suspend fun recountLaps(old: Int) = sessionLock.withLock {
+        val lap = store.profileNow()?.lapMeters ?: return@withLock
+        if (lap == old) return@withLock
+        for (run in db.runs().observeAll().first()) {
+            val plan = runCatching { AppJson.decodeFromString(RunWorkout.serializer(), run.planJson) }.getOrNull() ?: continue
+            if (plan.lapMeters != old) continue
+            val w = db.workouts().get(run.workoutId) ?: continue
+            val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() } ?: continue
+            val before = forma.core.run.RunResult(run.completed, w.rpe ?: 5, run.movingSec, run.distanceM, run.workPace, run.workDistanceM, laps = summary.laps)
+            val (plan2, r) = forma.core.run.RunPlan.onLoop(plan, before, lap)
+            db.runs().insert(
+                run.copy(
+                    planJson = AppJson.encodeToString(RunWorkout.serializer(), plan2), distanceM = r.distanceM,
+                    avgPace = r.distanceM?.takeIf { it > 50 }?.let { run.movingSec / (it / 1000.0) }, workPace = r.workPace,
+                ),
+            )
+            val outcomes = summary.outcomes.map { o -> if (o is RunOutcome.TestTime) o.copy(meters = (o.meters * lap / old.toDouble()).roundToInt()) else o }
+            db.workouts().update(w.copy(summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary.copy(laps = r.laps.orEmpty(), outcomes = outcomes))))
+        }
+        val last = store.lastRunNow()?.takeIf { it.after == store.runStateNow() && it.workout.lapMeters == old }
+        if (last != null) {
+            val (w, r) = forma.core.run.RunPlan.onLoop(last.workout, last.result, lap)
+            redecideLast(last, w, r)
+        }
+        onChange()
+    }
+
+    /**
      * The last run decided again from [workout] and [result] put right (the lap length, the laps): the progress, the stored
      * plan, distance and pace, the outcomes. Only while nothing has been built on it ([LastRun.after] is the state now).
      */

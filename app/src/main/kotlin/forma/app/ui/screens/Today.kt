@@ -224,6 +224,7 @@ fun TodayScreen() {
             }
         }
         LoopCard()
+        RecountCard()
         PicksInvite()
         val strength = remember(rows, bw) { Stats.changePct(Stats.strengthIndex(rows, bw)) }
         fun toProgress(tab: Int) {
@@ -761,6 +762,37 @@ private fun PicksInvite() {
 }
 
 private const val PICKS_SEEN = "my_exercises_card"
+
+/**
+ * Runs saved on another lap length than the one set now (the setting put right after them): offered to count them
+ * again on it, once — put aside, it is not asked again for these two lengths.
+ */
+@Composable
+private fun RecountCard() {
+    val repo = LocalRepo.current
+    val scope = rememberCoroutineScope()
+    val settings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+    val me by repo.store.profile.collectAsState(initial = null)
+    val lap = me?.lapMeters ?: return
+    var tick by remember { mutableStateOf(0) }
+    val other by produceState<Pair<Int, Int>?>(null, lap, tick) { value = repo.runsOnOtherLap() }
+    val (n, old) = other ?: return
+    val key = "lap_recount_${old}_$lap"
+    if (key in settings.hintsSeen) return
+    FCard(gap = 8.dp) {
+        SectionLabel("Длина круга")
+        Text("Пересчитать прошлые пробежки на $lap м?", style = T.body(16.sp, FontWeight.SemiBold))
+        Text(
+            (if (n == 1) "Сохранённая пробежка на стадионе посчитана" else "Сохранённые пробежки на стадионе ($n) посчитаны") +
+                " по кругу $old м. Пересчитай — дистанция и темп в истории станут настоящими, а последняя пробежка будет решена заново.",
+            style = T.secondary(14.sp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryButton("Пересчитать", { scope.launch { repo.recountLaps(old); tick++ } }, Modifier.weight(1f))
+            GhostButton("Не надо", { scope.launch { repo.updateSettings { it.copy(hintsSeen = it.hintsSeen + key) } } }, Modifier.weight(1f))
+        }
+    }
+}
 
 /**
  * The stadium loop GPS measured clearly shorter than the lap length set (Denis: ≈205 m against 230): every lap time of
