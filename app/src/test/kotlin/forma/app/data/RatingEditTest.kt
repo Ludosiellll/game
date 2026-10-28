@@ -22,7 +22,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** "How hard it was" put right after the workout: the load follows; the last run is decided again, an older one not. */
+/**
+ * "How hard it was" put right after the workout: the load follows; the last run is decided again, an older one only while
+ * no run since was built on its decision ([RunRatingAgainTest]).
+ */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [36])
 class RatingEditTest {
@@ -66,11 +69,11 @@ class RatingEditTest {
         assertEquals(25, repo.store.runStateNow().easyMinutes)
     }
 
-    @Test fun anOlderRunKeepsItsDecisions() = runBlocking {
+    @Test fun anOlderRunAnotherWasPlannedFromKeepsItsDecisions() = runBlocking {
         val first = easyRun(day, 7)
         easyRun(day.plusDays(2), 5)
         val state = repo.store.runStateNow()
-        // A run after it was planned from its decision: only the rating and the load change.
+        // The easy run after it was planned from its decision (25 minutes, not 30): only the rating and the load change.
         assertFalse(repo.setRating(first, 4))
         assertEquals(state, repo.store.runStateNow())
         assertEquals(4, db.workouts().get(first)!!.rpe)

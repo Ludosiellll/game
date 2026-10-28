@@ -867,6 +867,17 @@ object RunPlan {
         return s.copy(vdot = to, lastVdotUpDay = day, easySigns = emptyList())
     }
 
+    /**
+     * What an easy or long run decides by itself in [after], from how it went: the length of its kind, and for an easy run
+     * its rating on the runner's scale ([RunState.easyRpes]) and its pace sign ([RunState.easySigns]). [into] with those of
+     * [from]; other kinds of run are left as they are (their ladders are what the next session of the cycle reads).
+     */
+    fun withOwnDecision(type: RunType, into: RunState, from: RunState): RunState = when (type) {
+        RunType.EASY -> into.copy(easyMinutes = from.easyMinutes, easyRpes = from.easyRpes, easySigns = from.easySigns)
+        RunType.LONG -> into.copy(longMinutes = from.longMinutes)
+        else -> into
+    }
+
     fun after(state: RunState, w: RunWorkout, r: RunResult, caps: RunCaps, day: Long = 0, goal: RunGoal? = null): RunAfter {
         val out = mutableListOf<RunOutcome>()
         val minutes = (r.durationSec / 60.0).roundToInt()

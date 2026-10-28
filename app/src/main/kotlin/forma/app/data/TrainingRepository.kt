@@ -2216,8 +2216,9 @@ class TrainingRepository(
     /**
      * The rating of a finished workout put right ("how hard it was"): its load — and so freshness — follows. The last
      * run saved, while nothing has been built on it (no run since, the progress as it left it), is decided again as if
-     * rated so: easy runs longer or shorter, a ladder's step. An older run keeps its decisions: the runs after it were
-     * planned from them. True when the plan decided again.
+     * rated so: easy runs longer or shorter, a ladder's step. An older easy or long run is decided again in what it decides
+     * by itself while no run since was built on that ([decideOlderAgain]); otherwise an older run keeps its decisions: the
+     * runs after it were planned from them. True when the plan decided again.
      */
     suspend fun setRating(workoutId: Long, rpe: Int): Boolean = sessionLock.withLock {
         val w = db.workouts().get(workoutId)?.takeIf { it.status == Status.DONE } ?: return@withLock false
@@ -2244,10 +2245,54 @@ class TrainingRepository(
             if (decided.any { it is RunOutcome.Graduated } && outcomes?.any { it is RunOutcome.Graduated } != true) graduate()
             outcomes = decided
         }
+        val older = if (last == null) decideOlderAgain(w, r) else null
+        if (older != null) outcomes = older
         val fixed = summary?.copy(load = load, outcomes = outcomes ?: summary.outcomes)
         db.workouts().update(w.copy(rpe = r, load = load, summaryJson = fixed?.let { AppJson.encodeToString(RunSummary.serializer(), it) } ?: w.summaryJson))
         onChange()
-        last != null
+        last != null || older != null
+    }
+
+    /**
+     * An older easy or long run [w] rated [rpe] again: what it decided by itself ([RunPlan.withOwnDecision] — the length
+     * of its kind; for an easy run its rating on the runner's scale too) is decided again from its record, while nothing
+     * since was built on it: no run of its kind since (it was planned from that length), those numbers still as the run
+     * left them, and nothing the runs since read moves with the new decision (the fitness, the offset of the runner's
+     * scale). Seen: an easy run rated 7 by mistake and put right to 4 after the race-pace session that followed it kept the
+     * easy runs 5 minutes shorter and the 7 on the runner's scale, its debrief saying "rated 4" next to "the next one will
+     * be shorter". The new decision, or null when the old one stands.
+     */
+    private suspend fun decideOlderAgain(w: WorkoutEntity, rpe: Int): List<RunOutcome>? {
+        val earlier = store.earlierRunsNow()
+        val i = earlier.indexOfFirst { it.workoutId == w.id && it.day == w.epochDay && it.workout.title == w.title }
+        if (i < 0) return null
+        val run = earlier[i]
+        val type = run.workout.type
+        if (type != RunType.EASY && type != RunType.LONG) return null
+        // A run of its kind since, saved here or come from the cloud, was planned from its length and decided on it.
+        if (db.workouts().allDone().any { it.kind == Kind.RUN && it.id > w.id && it.templateId == type.name }) return null
+        val since = earlier.drop(i + 1) + listOfNotNull(store.lastRunNow())
+        val now = store.runStateNow()
+        fun own(s: RunState) = RunPlan.withOwnDecision(type, RunState(), s)
+        // Changed since (a break, the coach, another phone): the numbers are no longer this run's to decide.
+        if ((since.flatMap { listOf(it.before, it.after) } + now).any { own(it) != own(run.after) }) return null
+        val result = run.result.copy(rpe = rpe)
+        val (next, decided) = decideRun(run.before, run.workout, result, LocalDate.ofEpochDay(run.day))
+        if (RunPlan.withOwnDecision(type, run.after, next) != next || next.rpeOffset != run.after.rpeOffset) return null
+        fun fix(s: RunState) = RunPlan.withOwnDecision(type, s, next)
+        store.setRunState(fix(now))
+        // The records after it as if it had been rated so from the start: the last run stays one to decide again.
+        store.setEarlierRuns(
+            earlier.mapIndexed { j, e ->
+                when {
+                    j == i -> e.copy(after = next, result = result)
+                    j > i -> e.copy(before = fix(e.before), after = fix(e.after))
+                    else -> e
+                }
+            },
+        )
+        store.lastRunNow()?.let { store.setLastRun(it.copy(before = fix(it.before), after = fix(it.after))) }
+        return decided
     }
 
     /**

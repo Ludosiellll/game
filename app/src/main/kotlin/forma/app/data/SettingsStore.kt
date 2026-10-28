@@ -250,6 +250,7 @@ class SettingsStore(context: Context, name: String = "forma") {
         val lift = stringPreferencesKey("lift_state")
         val custom = stringPreferencesKey("custom_exercises")
         val lastRun = stringPreferencesKey("last_run")
+        val earlierRuns = stringPreferencesKey("earlier_runs")
         val coachLog = stringPreferencesKey("coach_log")
         val coachReviews = stringPreferencesKey("coach_reviews")
         val coachChat = stringPreferencesKey("coach_chat")
@@ -320,7 +321,27 @@ class SettingsStore(context: Context, name: String = "forma") {
 
     /** The last run saved on this phone, to decide again when its rating is put right; not copied to the cloud. */
     suspend fun lastRunNow(): LastRun? = read(Keys.lastRun, LastRun.serializer()).first()
-    suspend fun setLastRun(r: LastRun) = write(Keys.lastRun, LastRun.serializer(), r)
+
+    /** [r] as the last run: the record of another run before it moves to [earlierRunsNow]. */
+    suspend fun setLastRun(r: LastRun) {
+        store.edit { p ->
+            val prev = p[Keys.lastRun]?.let { runCatching { AppJson.decodeFromString(LastRun.serializer(), it) }.getOrNull() }
+            if (prev != null && prev.workoutId != r.workoutId) {
+                val earlier = p[Keys.earlierRuns]?.let { runCatching { AppJson.decodeFromString(runRecords, it) }.getOrNull() }.orEmpty()
+                p[Keys.earlierRuns] = AppJson.encodeToString(runRecords, (earlier + prev).takeLast(EARLIER_RUNS))
+            }
+            p[Keys.lastRun] = AppJson.encodeToString(LastRun.serializer(), r)
+        }
+    }
+
+    /**
+     * The runs saved before the last one, oldest first (the last [EARLIER_RUNS]): an older easy or long run rated again is
+     * decided again from its record while nothing was built on it since. Not copied to the cloud.
+     */
+    suspend fun earlierRunsNow(): List<LastRun> = read(Keys.earlierRuns, runRecords).first().orEmpty()
+    suspend fun setEarlierRuns(list: List<LastRun>) = write(Keys.earlierRuns, runRecords, list)
+
+    private val runRecords: KSerializer<List<LastRun>> = ListSerializer(LastRun.serializer())
 
     /** What the coach changed on this phone, newest last (the last [COACH_LOG] kept); not copied to the cloud. */
     val coachLog: Flow<List<CoachLogEntry>> = read(Keys.coachLog, ListSerializer(CoachLogEntry.serializer())).map { it.orEmpty() }
@@ -389,5 +410,7 @@ class SettingsStore(context: Context, name: String = "forma") {
         const val COACH_LOG = 50
         const val COACH_REVIEWS = 40
         const val COACH_CHAT = 80
+        /** Runs kept before the last one: a long run and the five of a six-day week after it. */
+        const val EARLIER_RUNS = 8
     }
 }
