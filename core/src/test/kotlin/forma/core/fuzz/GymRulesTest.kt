@@ -277,9 +277,11 @@ class GymRulesTest {
     ) { (c, k) ->
         val better = moreReps(c, k)
         if (!normal(c) || better == null) return@check null
-        val a = eval(c).state
-        val b = eval(c, better).state
-        if (atLeast(c, b, a)) null else "на повтор больше — а план легче: было бы ${a.weight}×${a.reps}, стало ${b.weight}×${b.reps}"
+        val ea = eval(c)
+        val eb = eval(c, better)
+        val a = ea.state
+        val b = eb.state
+        if (atLeast(c, b, a)) null else "на повтор больше — а план легче: было бы ${a.weight}×${a.reps}, стало ${b.weight}×${b.reps} (${ea.outcome} / ${eb.outcome})"
     }
 
     @Test fun gymHeavierNeverAsksLess() = Fuzz.check(
@@ -295,8 +297,9 @@ class GymRulesTest {
         val e0 = eval(c)
         if ((e0.outcome as? Outcome.Hold)?.reason == forma.core.strength.HoldReason.NOT_THE_WEIGHT) return@check null
         val a = e0.state
-        val b = eval(c, heavier).state
-        if (atLeast(c, b, a)) null else "те же подходы на шаг тяжелее — а план легче: было бы ${a.weight}×${a.reps}, стало ${b.weight}×${b.reps}"
+        val eb = eval(c, heavier)
+        val b = eb.state
+        if (atLeast(c, b, a)) null else "те же подходы на шаг тяжелее — а план легче: было бы ${a.weight}×${a.reps}, стало ${b.weight}×${b.reps} (${e0.outcome} / ${eb.outcome})"
     }
 
     @Test fun gymMoreReserveNeverAsksLess() = Fuzz.check(
@@ -305,9 +308,11 @@ class GymRulesTest {
         if (!normal(c)) return@check null
         val k = c.done.indexOfFirst { it.rir != null && it.reps > 0 }.takeIf { it >= 0 } ?: return@check null
         val more = c.done.toMutableList().also { it[k] = it[k].copy(rir = it[k].rir!! + 1) }
-        val a = eval(c).state
-        val b = eval(c, more).state
-        if (atLeast(c, b, a)) null else "подход $k с запасом на 1 больше — а план легче: было бы ${a.weight}×${a.reps}, стало ${b.weight}×${b.reps}"
+        val ea = eval(c)
+        val eb = eval(c, more)
+        val a = ea.state
+        val b = eb.state
+        if (atLeast(c, b, a)) null else "подход $k с запасом на 1 больше — а план легче: было бы ${a.weight}×${a.reps}, стало ${b.weight}×${b.reps} (${ea.outcome} / ${eb.outcome})"
     }
 
     @Test fun gymLighterWeeksAndGoalDaysKeepProgress() = check("gym_phases_keep", { gen(it, it.pick(Phase.DELOAD, Phase.TAPER, Phase.TEST), false) }) { c ->

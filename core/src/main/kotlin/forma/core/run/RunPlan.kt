@@ -415,15 +415,34 @@ object RunPlan {
     }
 
     /**
-     * The time a trial's [laps] took to its end when a lap of it was walked (far slower than a lap, see [heldLaps]): no
-     * press doubled, the last lap closing the trial. Not the trial's time — a walk is no race — but how far the runner
-     * fell back after the stretch held.
+     * The time a trial's [laps] took to its end, a lap walked (far slower than a lap, see [heldLaps]) or a press missed
+     * and all: no press doubled, the last lap closing the trial. With a lap walked it is not the trial's time — a walk is
+     * no race — but how far the runner fell back after the stretch held.
      */
     private fun lapsToTheEnd(w: RunWorkout, laps: List<Lap>?): Int? {
+        val reps = lapsRun(w, laps) ?: return null
+        if (reps.none { it.closesRep }) return null
+        return reps.sumOf { it.seconds }.roundToInt().takeIf { it > 0 }
+    }
+
+    /**
+     * A trial stopped before its end ([laps] not closing it): its time to the end had the rest been run at the pace of
+     * the last lap run — the pace the runner had come down to. Null without laps, or with a press doubled.
+     */
+    private fun projectedEnd(w: RunWorkout, laps: List<Lap>?): Double? {
+        val lapM = w.lapMeters ?: return null
+        val tm = w.testMeters ?: return null
+        val reps = lapsRun(w, laps)?.takeIf { it.isNotEmpty() && it.none { l -> l.closesRep } } ?: return null
+        val last = reps.last().takeIf { it.seconds > 0 && it.part > 0 } ?: return null
+        val rest = tm - reps.sumOf { it.part } * lapM
+        return reps.sumOf { it.seconds } + max(0.0, rest) / (last.part * lapM) * last.seconds
+    }
+
+    /** A trial's laps in order with no press doubled (a lap under half its time), or null. */
+    private fun lapsRun(w: RunWorkout, laps: List<Lap>?): List<Lap>? {
         val lapSec = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.lapSec ?: return null
         val reps = laps.orEmpty().filter { it.rep == 1 }
-        if (reps.none { it.closesRep } || reps.withIndex().any { (i, l) -> l.number != i + 1 || l.seconds / (lapSec * l.part) < 0.5 }) return null
-        return reps.sumOf { it.seconds }.roundToInt().takeIf { it > 0 }
+        return reps.takeIf { reps.withIndex().none { (i, l) -> l.number != i + 1 || l.seconds / (lapSec * l.part) < 0.5 } }
     }
 
     /** The shortest stretch of a time trial that counts as a measure of it, besides half of it (see [held]). */
@@ -1214,7 +1233,9 @@ object RunPlan {
                     // 3:45 over the 4:04 typed.
                     // Brought to it in proportion (the error spread over the laps) rather than trusted or dropped on a few
                     // seconds: a stretch that counted at 2 s apart and vanished at 3 moved the fitness by 6.
-                    val lapsTime = trialLapsTime(w, r.laps)
+                    // A lap walked or a press missed is no reason to read the laps apart from the time typed: they are
+                    // brought to it all the same (dropped there, a trial run 2 % faster had its stretch 5 % slower).
+                    val lapsTime = lapsToTheEnd(w, r.laps)
                     val read = if (r.testSeconds != null && lapsTime != null && lapsTime != r.testSeconds) {
                         r.copy(laps = r.laps?.map { if (it.rep == 1) it.copy(seconds = it.seconds * r.testSeconds / lapsTime) else it })
                     } else r
@@ -1252,8 +1273,10 @@ object RunPlan {
                             // never lowers it. A full trial comes again. Walked to the end, the time to it holds the
                             // stretch back as a slower end does (3 above it at most): a lap walked is no better than one
                             // jogged at a breath slower (that one counted the whole time, this one the stretch alone).
-                            val end = lapsToTheEnd(w, read.laps)?.takeIf { it / (tm / 1000.0) in PLAUSIBLE_PACE }
-                            val v = if (end == null) part.vdot else min(part.vdot, Vdot.fromRace(tm.toDouble(), end.toDouble()) + PART_OVER_WHOLE)
+                            // Stopped after slowing, the rest is taken at the pace come down to: a stop is no better
+                            // than running on at it to the end (48 stopped, 47.5 run to the end, before).
+                            val end = (lapsToTheEnd(w, read.laps)?.toDouble() ?: projectedEnd(w, read.laps))?.takeIf { it / (tm / 1000.0) in PLAUSIBLE_PACE }
+                            val v = if (end == null) part.vdot else min(part.vdot, Vdot.fromRace(tm.toDouble(), end) + PART_OVER_WHOLE)
                             val nv = (v * 2).roundToInt() / 2.0
                             val kept = state.vdot != null && nv <= state.vdot
                             // Lower than the fitness known it changes nothing, so it is no typo either; far above it is.

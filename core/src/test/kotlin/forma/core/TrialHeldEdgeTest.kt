@@ -1,6 +1,7 @@
 package forma.core
 
 import forma.core.model.RunGoal
+import forma.core.run.Lap
 import forma.core.run.ManualLaps
 import forma.core.run.ManualRun
 import forma.core.run.Press
@@ -59,6 +60,44 @@ class TrialHeldEdgeTest {
         assertTrue(after.outcomes.none { it is RunOutcome.TestDoubtful }, "${after.outcomes}")
         assertTrue(after.outcomes.any { it is RunOutcome.TestTime && it.seconds == t }, "${after.outcomes}")
         assertEquals(((raw + RunPlan.PART_OVER_WHOLE) * 2).roundToInt() / 2.0, after.state.vdot)
+    }
+
+    /**
+     * A 3 km trial on 205 m laps typed as 14:55, a lap walked in the middle (1.72 times the beeps): the laps were read
+     * apart from the time typed and the stretch counted as run; 2 % faster the walked lap passed for a lap (1.69 times),
+     * the laps were brought to the time typed — the stretch 5 % slower, the fitness 1.5 lower for the faster trial.
+     */
+    @Test fun aWalkedLapDoesNotSetTheLapsApartFromTheTimeTyped() {
+        val known = RunState(walkStage = -1, vdot = 38.0)
+        val g = RunGoal(3000, 777)
+        val w = RunPlan.goalTest(known, g, lap)
+        val lapSec = w.segments.first { it.laps != null }.lapSec!!
+        val laps = listOf(51.0, 52.2, 52.7, 53.0, 52.0, 51.7, 51.1, 50.3, 103.7, 52.6, 52.5, 51.5, 52.9, 52.0, 53.0)
+        assertTrue(103.7 / lapSec > 1.7 && 103.7 * 0.98 / lapSec < 1.7, "lap $lapSec")
+        fun after(scale: Double): Double {
+            val ls = laps.mapIndexed { i, s -> Lap(s * scale, number = i + 1, of = laps.size, rep = 1) }
+            val r = RunResult(1.0, 9, 2400, laps = ls, testSeconds = (895 * scale).roundToInt())
+            return RunPlan.after(known, w, r, caps, day = 20, goal = g).state.vdot!!
+        }
+        val slower = after(1.0)
+        val faster = after(0.98)
+        assertTrue(faster >= slower, "slower $slower, faster $faster")
+    }
+
+    /**
+     * Stopped after a lap slowed to 60.7 s (6.5 of 7.5 laps): no better than running the last lap at 60.7 too — the stop
+     * counted the stretch whole (48), the trial run to its end 3 above its time (47.5).
+     */
+    @Test fun aStopIsNoBetterThanRunningOnAtThePaceComeDownTo() {
+        val fresh = RunState(walkStage = -1)
+        val g = RunGoal(1500, 337)
+        val w = RunPlan.goalTest(fresh, g, 200)
+        val laps = listOf(22.2, 43.6, 42.8, 43.0, 43.9, 44.4, 60.7)
+        val ls = laps.mapIndexed { i, s -> Lap(s, number = i + 1, of = 8, rep = 1, part = if (i == 0) 0.5 else 1.0) }
+        fun after(l: List<Lap>) = RunPlan.after(fresh, w, RunResult(1.0, 9, 1354, laps = l), caps, day = 20, goal = g).state.vdot!!
+        val stopped = after(ls)
+        val ran = after(ls + Lap(60.7, number = 8, of = 8, rep = 1))
+        assertTrue(ran >= stopped, "stopped $stopped, ran on $ran")
     }
 
     /**

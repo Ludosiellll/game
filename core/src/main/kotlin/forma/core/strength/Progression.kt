@@ -459,13 +459,15 @@ object Progression {
         val regularCount = if (p.top) p.sets - 1 else p.sets
         val regular = planned.take(regularCount)
         val top = if (p.top) planned.getOrNull(regularCount) else null
-        // The reps of each set as they would be at [w] with the same reserve: a set done heavier (after a hint) and short
-        // of the target is no miss of [w] — 35 × 7 to failure is about 30 × 11. Counted as a miss, the hints' own climb
-        // (30 × 8 with four to spare → 32.5 → 35 × 7) held and reset a lifter at 30 again and again: he never moved on.
+        // The reps of each set as they would be at [w] with the reserve the plan asks: a set done heavier (after a hint)
+        // and short of the target is no miss of [w] — 35 × 7 to failure is about 30 × 11 to failure, 30 × 9 with two left.
+        // Counted as a miss, the hints' own climb (30 × 8 with four to spare → 32.5 → 35 × 7) held and reset a lifter at 30
+        // again and again: he never moved on. With the set's own reserve taken off instead, a rep more in reserve came out
+        // as a rep less at [w] (62.5 × 5 «ещё 2» read 52.5 × 9 where «ещё 1» read × 10, and the plan was cut to 45).
         val equiv = planned.mapIndexed { i, s ->
             if (s.weight <= w + tol) s.reps else {
-                val rir = assumedRir(s, i, p)
-                val atW = OneRm.rtfAt(OneRm.estimate(effectiveLoad(ex, s.weight, bodyWeight), s.reps, rir), effectiveLoad(ex, w, bodyWeight)) - rir
+                val asked = if (p.top && i == p.sets - 1) p.topRir else p.rir
+                val atW = OneRm.rtfAt(OneRm.estimate(effectiveLoad(ex, s.weight, bodyWeight), s.reps, assumedRir(s, i, p)), effectiveLoad(ex, w, bodyWeight)) - asked
                 max(s.reps, kotlin.math.floor(atW + 1e-9).toInt())
             }
         }
@@ -522,8 +524,11 @@ object Progression {
                     return Evaluation(SlotState(w + inc, below, 0, 0, sessions, state.linear), Outcome.AddWeight(w, w + inc, below), e1rm)
                 }
                 val cap = floorTo(w * (if (novice) 1.15 else 1.10), step)
-                val to = max(w + step, min(floorTo(supported(e1rm, target, p.rir), step), cap))
-                if (to > w + inc + 1e-9 || !linear) {
+                val held = floorTo(supported(e1rm, target, p.rir), step)
+                val to = max(w + step, min(held, cap))
+                // Not even a step is there at these reps (+2.5 kg on knee raises, 7 asked where 4.8 were): no jump — the
+                // reps first, or at the top the next weight at the reps the estimate gives there (below).
+                if (held >= w + step - 1e-9 && (to > w + inc + 1e-9 || !linear)) {
                     return Evaluation(SlotState(to, target, 0, 0, sessions, state.linear), Outcome.Jump(w, to, target), e1rm)
                 }
             }
@@ -592,7 +597,9 @@ object Progression {
         // is in reach, two are not: 13 done kept the weight with 15 asked, the range's bottom).
         val doneMin = planned.indices.filter { planned[it].weight >= w - tol }.minOfOrNull { equiv[it] } ?: spec.repMin
         if (target > spec.repMin && !(near && stalls < 2) && doneMin >= spec.repMin - 1) {
-            val r = max(spec.repMin, min(target - 1, doneMin))
+            // Down to what the first set (the freshest) did, as when the weight already came down above: a set given up
+            // later (6 then 2 of 6) is no target — one rep more in the first set had taken the plan from × 6 to × 2.
+            val r = max(spec.repMin, min(target - 1, first))
             return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
         }
         if (w <= lowest + 1e-9 && !(near && stalls < 2)) {
@@ -608,8 +615,11 @@ object Progression {
         // The third session in a row without progress: −10 % and the range's bottom (Starting Strength's reset) — after a
         // clear miss as after a near one: a clear miss had cut less than a near one (−2.5 kg for 72.5 × 3, −7.5 for × 4).
         if (stalls >= 3) {
-            val to = floored(max(lowest, floorTo(lighter(ex, w, bodyWeight), step)))
-            if (to < w - 1e-9) {
+            val cut = max(lowest, floorTo(lighter(ex, w, bodyWeight), step))
+            val to = floored(cut)
+            // Held up by the floor of the weeks' best to less than half the cut, it is no reset: the range's bottom at a
+            // sliver lighter asks less than the miss itself (125 × 3 of 8 reset to 122.5 × 6, where 122.5 × 3 held × 8).
+            if (to < w - 1e-9 && w - to >= (w - cut) / 2 - 1e-9) {
                 return Evaluation(SlotState(to, spec.repMin, 0, 0, sessions, false, cutFrom = w, cutReps = first), Outcome.Reset(w, to, spec.repMin), e1rm)
             }
             // Already the lightest load: it cannot step back, the target stays.
