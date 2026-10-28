@@ -211,6 +211,33 @@ class RunLoopReviewRepoTest {
         )
     }
 
+    /**
+     * His 26.10 reps with the loop the tracker now fits (205 m): «too slow», said why, and the debrief agrees — the laps'
+     * targets as on the loop (45 s, not 50,6), not «много кругов быстрее цели».
+     */
+    @Test fun hisRacePaceOnTheLoopMeasuredIsSlowInTheDecisionAndTheDebrief() = runBlocking<Unit> {
+        repo.store.setRunState(after26.copy(qualityCount = 0, runs = 4, lastRunDay = 20749))
+        val d = LocalDate.of(2026, 10, 26)
+        at(d, 14)
+        val w = repo.runFor(SessionKind.RUN_QUALITY, d)
+        // 15 laps of warm-up, jogs and cool-down around his five reps: 20 laps, the distance from them.
+        val reps = reps26.mapIndexed { i, s -> Lap(s, 49.91, 51.29, 1, 1, i + 1) }
+        val laps = List(9) { Lap(84.0, number = it + 1) } + reps + List(6) { Lap(82.0, number = it + 1) }
+        val pace = reps.sumOf { it.seconds } / (5 * 230 / 1000.0)
+        val id = repo.saveRun(
+            w, RunResult(1.0, 7, 2142, distanceM = 20 * 230.0, workPace = pace, laps = laps, reps = 5, loopM = measured.toDouble()), clock - 2142_000L, emptyList(), d,
+        ).first
+        val s = summaryOf(id)
+        assertTrue(RunOutcome.LoopShorter(measured, 230) in s.outcomes && RunOutcome.TooSlow in s.outcomes, "${s.outcomes}")
+        val run = db.runs().get(id)!!
+        val plan = AppJson.decodeFromString(forma.core.run.RunWorkout.serializer(), run.planJson)
+        assertEquals(measured, plan.lapMeters)
+        val review = forma.core.run.RunReview.of(forma.core.run.RunReview.Run(plan, s.laps, 7, run.movingSec, run.avgPace, run.workPace, null, run.completed, null), goal)
+        val text = review.joinToString(" ") { it.text }
+        assertTrue("быстрее цели" !in text && "медленнее" in text, text)
+        assertEquals(20 * measured.toDouble(), run.distanceM!!, 1.0)
+    }
+
     @Test fun hisWeekIsPlannedAsHisPhoneHadIt() = runBlocking<Unit> {
         repo.store.setRunState(after26.copy(qualityCount = 0, runs = 4, lastRunDay = 20749, recent = after26.recent.dropLast(1)))
         at(LocalDate.of(2026, 10, 26), 10)

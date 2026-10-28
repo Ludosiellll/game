@@ -836,7 +836,8 @@ object RunPlan {
 
     /**
      * The run as it was on a loop of [meters] instead of the lap length it was planned on: the lap length, the trial's
-     * distance, the lap times aimed at, the reps' pace and the distance from laps — the time of every lap as pressed.
+     * distance, the lap times aimed at (in the plan and in each lap), the reps' pace and the distance from laps — the time
+     * of every lap as pressed.
      */
     fun onLoop(w: RunWorkout, r: RunResult, meters: Int): Pair<RunWorkout, RunResult> {
         val set = w.lapMeters ?: return w to r
@@ -850,6 +851,8 @@ object RunPlan {
         ) to r.copy(
             workPace = r.workPace?.let { it / k },
             distanceM = if (fromLaps) r.distanceM?.let { it * k } else r.distanceM,
+            // The lap times aimed at, as on the loop: each lap's verdict in the debrief follows.
+            laps = r.laps?.map { it.copy(fast = it.fast?.let { f -> f * k }, slow = it.slow?.let { sl -> sl * k }) },
         )
     }
 

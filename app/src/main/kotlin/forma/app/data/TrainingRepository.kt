@@ -2208,7 +2208,7 @@ class TrainingRepository(
         val (stored, measured) = forma.core.run.RunPlan.onMeasuredLoop(workout, result) ?: (workout to result)
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
-        val summary = RunSummary(outcomes, minutes, load, result.laps.orEmpty(), result.cadence, manual, result.kmSplits.orEmpty())
+        val summary = RunSummary(outcomes, minutes, load, measured.laps.orEmpty(), result.cadence, manual, result.kmSplits.orEmpty())
         val avgPace = measured.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
         val id = db.withTransaction {
             val id = db.workouts().insert(

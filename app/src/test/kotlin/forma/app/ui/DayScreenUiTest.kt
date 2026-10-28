@@ -193,7 +193,7 @@ class DayScreenUiTest {
         show(repo) { TodayScreen() }
         compose.onNodeWithText("Круг стадиона по GPS — около 205 м").performScrollTo().assertExists()
         compose.onNodeWithText("Поставить 205\u00A0м").performScrollTo().performClick()
-        settle()
+        compose.waitUntil(10_000) { settle(); runBlocking { repo.store.profileNow()!!.lapMeters } == 205 }
         assertEquals(205, runBlocking { repo.store.profileNow()!!.lapMeters })
         compose.onAllNodesWithText("Круг стадиона по GPS", substring = true).assertCountEquals(0)
     }
