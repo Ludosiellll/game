@@ -187,7 +187,7 @@ fun HistoryItemScreen(workoutId: Long) {
             if (summary?.manual == true) Text("Внесено вручную: бег без телефона.", style = T.secondary(14.sp))
             summary?.cadence?.let { Text("Шагов в минуту: $it", style = T.secondary(14.sp)) }
             if (r != null) RunDebrief(workout, r, summary)
-            if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
+            if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime || it is forma.core.run.RunOutcome.TestFromPart || it is forma.core.run.RunOutcome.TestStopped })
             if (summary != null && summary.laps.isNotEmpty()) LapsEditor(workout.id, summary.laps)
             // On the road: the time of each kilometre, as the voice said it (active time, the tracker's distance).
             val splits = summary?.kmSplits.orEmpty()

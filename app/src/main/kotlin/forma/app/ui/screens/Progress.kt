@@ -205,9 +205,12 @@ private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState
             else -> Text("Прогноз сейчас: ${Ru.clock(now.roundToInt())}, до цели ${Ru.clock((now - goal.seconds).roundToInt())}.", style = T.body(14.sp))
         }
         if (goal.middleDistance && st != null && st.canRunContinuously) {
+            // A trial tried lately (stopped, not counted) comes again only two weeks after it.
+            val today = forma.app.ui.rememberToday(forma.app.ui.LocalRepo.current).toEpochDay()
+            val trialNext = st.testSoon && st.lastTrialTryDay?.let { today - it >= 14 } != false
             Text(
                 "Отрезки в темпе цели: шаг ${st.goalStage + 1} из ${RunPlan.goalLadderSize}" +
-                    if (st.testSoon) ". Следующая тяжёлая пробежка — контрольный забег." else ".",
+                    if (trialNext) ". Следующая тяжёлая пробежка — контрольный забег." else if (st.testSoon) ". Контрольный забег — через две недели после прошлого." else ".",
                 style = T.secondary(13.sp),
             )
         }

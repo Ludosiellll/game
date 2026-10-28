@@ -116,6 +116,16 @@ class TrialHeldTest {
         assertEquals(42.5, raised.state.vdot)
     }
 
+    @Test fun aStretchFarBelowAKnownFitnessKeepsItAndIsNoTypo() {
+        // 52 known (a few years back, say); stopped after 922 m at the beeps: 42.6 — kept, not "a typo".
+        val known = fresh.copy(vdot = 52.0)
+        val (w, r) = run(known, List(1) { 24.35 } + List(4) { 48.7 })
+        val after = RunPlan.after(known, w, r, caps, day = 20, goal = goal)
+        assertEquals(52.0, after.state.vdot)
+        assertTrue(after.outcomes.none { it is RunOutcome.TestDoubtful }, "${after.outcomes}")
+        assertTrue(after.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single().kept)
+    }
+
     @Test fun anEvenTrialIsItsTime() {
         val (w, r) = run(fresh, listOf(26.0) + List(7) { 52.0 })
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)

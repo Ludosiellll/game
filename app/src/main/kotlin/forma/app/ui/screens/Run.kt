@@ -1123,7 +1123,8 @@ fun RunDoneScreen(workoutId: Long) {
                         result.testSeconds != null && tracker.laps.any { it.rough } -> "Время по кнопке «Круг» и GPS. Круг без нажатия засчитан примерно (±2–3 с). Если засекал сам — поправь."
                         result.testSeconds != null && tracker.laps.any { it.auto } -> "Время по GPS: круги засчитаны на линии стадиона, до нескольких десятых. Если засекал сам — поправь."
                         result.testSeconds != null -> "Время по кнопке «Круг». Если засекал сам — поправь."
-                        else -> forma.core.run.RunPlan.held(w, result)?.let { h ->
+                        // Read as the plan will read it: on the loop GPS measured when the lap length set is off.
+                        else -> (forma.core.run.RunPlan.onMeasuredLoop(w, result)?.let { (lw, lr) -> forma.core.run.RunPlan.held(lw, lr) } ?: forma.core.run.RunPlan.held(w, result))?.let { h ->
                             "Ровно от старта — ${h.meters.roundToInt()} м за ${Ru.clock(h.seconds.roundToInt())}: форма посчитается по ним. Засекал весь забег сам — впиши время."
                         } ?: "Впиши время с секундомера, иначе форму не посчитать: ровно от старта меньше половины забега."
                     },
@@ -1265,7 +1266,7 @@ fun RunDoneScreen(workoutId: Long) {
                 }
                 if (s.second.outcomes.isEmpty()) Text("Пробежка записана в историю.", style = T.body(15.sp), modifier = Modifier.padding(vertical = 12.dp))
             }
-            LapsCard(s.second.laps, test = s.second.outcomes.any { it is forma.core.run.RunOutcome.TestTime })
+            LapsCard(s.second.laps, test = s.second.outcomes.any { it is forma.core.run.RunOutcome.TestTime || it is forma.core.run.RunOutcome.TestFromPart || it is forma.core.run.RunOutcome.TestStopped })
             Text("Нагрузка: ${s.second.load.roundToInt()} (оценка × минуты).", style = T.secondary(13.sp))
             NextPlannedCard(forma.app.ui.rememberToday(repo))
             NextToday { nav.tab(Screen.Today) }

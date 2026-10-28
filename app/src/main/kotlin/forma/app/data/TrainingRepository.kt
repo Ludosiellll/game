@@ -155,7 +155,16 @@ class TrainingRepository(
                     avgPace = r.distanceM?.takeIf { it > 50 }?.let { run.movingSec / (it / 1000.0) }, workPace = r.workPace,
                 ),
             )
-            val outcomes = summary.outcomes.map { o -> if (o is RunOutcome.TestTime) o.copy(meters = (o.meters * lap / old.toDouble()).roundToInt()) else o }
+            // The trial's distance, and the stretch of it held, in the new metres.
+            fun scaled(m: Int) = (m * lap / old.toDouble()).roundToInt()
+            val outcomes = summary.outcomes.map { o ->
+                when (o) {
+                    is RunOutcome.TestTime -> o.copy(meters = scaled(o.meters))
+                    is RunOutcome.TestFromPart -> o.copy(meters = scaled(o.meters))
+                    is RunOutcome.TestStopped -> o.copy(meters = scaled(o.meters))
+                    else -> o
+                }
+            }
             db.workouts().update(w.copy(summaryJson = AppJson.encodeToString(RunSummary.serializer(), summary.copy(laps = r.laps.orEmpty(), outcomes = outcomes))))
         }
         val last = store.lastRunNow()?.takeIf { it.after == store.runStateNow() && it.workout.lapMeters == old }
@@ -2425,8 +2434,12 @@ class TrainingRepository(
         fun times(l: List<forma.core.run.Lap>?) = l.orEmpty().filter { it.rep != null }.map { it.rep to it.seconds to it.part }
         if (last != null && lapM != null && times(last.result.laps) != times(laps)) {
             val pace = forma.core.run.ManualLaps.repPace(laps, lapM)
-            val trial = last.workout.testMeters?.let { laps.filter { it.rep == 1 }.sumOf { l -> l.seconds }.takeIf { s -> s > 0 }?.roundToInt() }
-            redecideLast(last, last.workout, last.result.copy(laps = laps, workPace = pace ?: last.result.workPace, testSeconds = trial ?: last.result.testSeconds), keepDistance = true)
+            // A trial's time as the laps now give it: only when they run it to its end and each is a lap (as the timer
+            // reads them) — the sum of a trial stopped at half is no time of it. A time typed by hand (the laps gave none)
+            // stays.
+            val trial = RunPlan.trialLapsTime(last.workout, laps)
+                ?: last.result.testSeconds.takeIf { RunPlan.trialLapsTime(last.workout, last.result.laps) == null }
+            redecideLast(last, last.workout, last.result.copy(laps = laps, workPace = pace ?: last.result.workPace, testSeconds = trial), keepDistance = true)
             onChange()
         }
     }

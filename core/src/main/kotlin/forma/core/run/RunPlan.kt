@@ -391,10 +391,24 @@ object RunPlan {
     }
 
     /** The trial's laps from its start, up to the first that is no lap (see [held]). */
-    fun heldLaps(w: RunWorkout, r: RunResult): List<Lap> {
+    fun heldLaps(w: RunWorkout, r: RunResult): List<Lap> = heldLaps(w, r.laps)
+
+    private fun heldLaps(w: RunWorkout, all: List<Lap>?): List<Lap> {
         val lapSec = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.lapSec ?: return emptyList()
-        val laps = r.laps.orEmpty().filter { it.rep == 1 }
+        val laps = all.orEmpty().filter { it.rep == 1 }
         return laps.withIndex().takeWhile { (i, l) -> l.number == i + 1 && l.seconds / (lapSec * l.part) in 0.5..1.7 }.map { it.value }
+    }
+
+    /**
+     * A time trial's time from its [laps], as the timer reads it: they close the trial's last lap and each is a lap (see
+     * [heldLaps]). Null when the trial was stopped before its end or a lap is not trusted (a press missed, a walk): the
+     * laps' sum is then no time of the trial, and what was held from the start is the measure ([held]).
+     */
+    fun trialLapsTime(w: RunWorkout, laps: List<Lap>?): Int? {
+        if (w.testMeters == null) return null
+        val reps = laps.orEmpty().filter { it.rep == 1 }
+        if (reps.none { it.closesRep } || heldLaps(w, laps).size != reps.size) return null
+        return reps.sumOf { it.seconds }.roundToInt().takeIf { it > 0 }
     }
 
     /** The shortest stretch of a time trial that counts as a measure of it (see [held]). */
@@ -1155,7 +1169,8 @@ object RunPlan {
                     // A time trial over the race distance: its time is the fitness. A pace outside 2:10–15:00 a km is
                     // a typo ("552" for 5:52), not a result. Without a time (no laps on a road) the GPS distance in the
                     // trial's time says the same, as in the 12-minute test.
-                    val t = r.testSeconds?.takeIf { it / (tm / 1000.0) in PLAUSIBLE_PACE }
+                    // The time given, or the laps' when they run the trial to its end (typed in by hand, put right after).
+                    val t = (r.testSeconds ?: trialLapsTime(w, r.laps))?.takeIf { it / (tm / 1000.0) in PLAUSIBLE_PACE }
                     val d = r.workDistanceM
                     val sec = r.workSec ?: w.workSeconds
                     val raw = when {
@@ -1164,9 +1179,11 @@ object RunPlan {
                         else -> null
                     }
                     // What was held from the start: faded after it, the whole time underrates the runner; stopped or
-                    // walked, it is all there is.
-                    val part = held(w, r)
-                    val better = part != null && raw != null && (part.vdot * 2).roundToInt() > (raw * 2).roundToInt()
+                    // walked, it is all there is. On the road the GPS distance in the trial's time is the same run as
+                    // the time typed, not a stretch of it: only without a time does it stand in.
+                    val part = if (w.lapMeters == null && raw != null) null else held(w, r)
+                    // Beyond belief next to the fitness known (away far too fast, then a jog): the whole time still counts.
+                    val better = part != null && raw != null && believable(part.vdot, state.vdot) && (part.vdot * 2).roundToInt() > (raw * 2).roundToInt()
                     when {
                         raw != null -> {
                             val used = if (better) part!!.vdot else raw
@@ -1191,11 +1208,12 @@ object RunPlan {
                             // Stopped, walked, or a lap not trusted: the stretch held is the measure, but only as far as
                             // it goes — a runner who stops may have had more, so a part raises the fitness or sets it,
                             // never lowers it. A full trial comes again.
-                            if (!believable(part.vdot, state.vdot)) {
-                                out += RunOutcome.TestDoubtful((part.vdot * 2).roundToInt() / 2.0)
+                            val nv = (part.vdot * 2).roundToInt() / 2.0
+                            val kept = state.vdot != null && nv <= state.vdot
+                            // Lower than the fitness known it changes nothing, so it is no typo either; far above it is.
+                            if (!kept && !believable(part.vdot, state.vdot)) {
+                                out += RunOutcome.TestDoubtful(nv)
                             } else {
-                                val nv = (part.vdot * 2).roundToInt() / 2.0
-                                val kept = state.vdot != null && nv <= state.vdot
                                 out += RunOutcome.TestFromPart(part.meters.roundToInt(), part.seconds.roundToInt(), finished = false, kept = kept)
                                 if (!kept) {
                                     out += RunOutcome.VdotChanged(state.vdot, nv)
