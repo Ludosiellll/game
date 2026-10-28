@@ -1350,14 +1350,17 @@ class RunTracker(
 
     /**
      * The lap a runner is on, from the whole laps [before] it in the rep (seconds each): their median, or the last one
-     * when the runner is slowing down — while it is within [USUAL_DRIFT] of the median; a lap walked (over it) is no
-     * measure of the next, which would then pass for a touch.
+     * when the runner is slowing down — while it is within [USUAL_DRIFT] of the median and a step of at most
+     * [USUAL_STEP] from the lap before it (a fade comes a little at a time). A lap walked (over the median), or one lap
+     * far slower than the one before it (a stumble: 64 s after 41, then the usual pace again), is no measure of the next,
+     * which would then pass for a touch — and the line after it for its line, the two made one lap past belief.
      */
     private fun usual(before: List<Double>): Double {
         // The lower middle of an even count: of two laps, one of them walked, the lap is the other.
         val median = before.sorted()[(before.size - 1) / 2]
         val last = before.last()
-        return if (last <= USUAL_DRIFT * median) maxOf(median, last) else median
+        val step = if (before.size >= 2) last / before[before.size - 2] else 1.0
+        return if (last <= USUAL_DRIFT * median && step <= USUAL_STEP) maxOf(median, last) else median
     }
 
     /** Seconds into the lap being run: since the last press, or since the current segment began if it came later. */
@@ -1432,6 +1435,9 @@ class RunTracker(
 
         /** The last lap of a rep counts for the lap a runner is on while within this much of the rep's median (see [usual]). */
         const val USUAL_DRIFT = 1.6
+
+        /** … and while it is at most this much over the lap before it: a fade, not one slow lap (see [usual]). */
+        const val USUAL_STEP = 1.25
 
         /** No lap is run faster than this (m/s; the 200 m record is 10.4): a lap pressed faster is a touch (see [tooShort]). */
         const val MAX_LAP_SPEED = 10.0
