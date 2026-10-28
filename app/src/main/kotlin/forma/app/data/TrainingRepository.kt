@@ -301,6 +301,19 @@ class TrainingRepository(
             .mapNotNull { it.e1rm }
             .maxOrNull()
 
+    /**
+     * The estimate from the latest session of [exerciseId] (8 weeks before [day]) when every working set of it was done
+     * without help — the body alone or more; null when it had help or there is none.
+     */
+    internal suspend fun ownBest(exerciseId: String, day: Long): Double? {
+        val sets = db.sets().history(exerciseId).filter { it.reps > 0 }
+        val ids = sets.map { it.workoutId }.toSet()
+        val last = db.workouts().allDone().filter { it.kind == Kind.LIFT && it.id in ids && it.epochDay in (day - 56)..day }
+            .maxWithOrNull(compareBy<WorkoutEntity> { it.epochDay }.thenBy { it.startedAt }) ?: return null
+        if (sets.any { it.workoutId == last.id && it.weight < 0 }) return null
+        return liftSummaryOf(last)?.reports?.firstOrNull { it.exerciseId == exerciseId }?.e1rm?.takeIf { it > 0 }
+    }
+
     // ---------- lifting ----------
 
     companion object {
@@ -869,8 +882,8 @@ class TrainingRepository(
             topRir = if (ex.lowerBody && hardRunSoon(program, date)) 2 else 1,
             // A novice's gentle first time, unless the person set this exercise's sets themselves.
             novice = profile.experience == Experience.NOVICE && (restKey == null || restKey !in settings.sets),
-            // The best of the last weeks: no help on pull-ups for whoever did five and more with the body alone.
-            recentBest = if (ex.assisted) recentBest(ex.id, date.toEpochDay(), -1L) else null,
+            // The latest session without help: help left from before goes for whoever did five and more with the body alone.
+            ownBest = if (ex.assisted && spec.key !in settings.chosenHelp) ownBest(ex.id, date.toEpochDay()) else null,
         )
         // The ramp leads to the working weight, or the first time to the weight to start the search from.
         val work = p.weight ?: p.startHint?.takeIf { p.calibrate }
@@ -1338,6 +1351,9 @@ class TrainingRepository(
         val first = db.workouts().get(workoutId) ?: error("no workout")
         if (first.status == Status.DONE) return@withLock liftSummaryOf(first) ?: LiftSummary(emptyList(), 0.0, 0, 0, 0.0)
         val summary = db.withTransaction { evaluateLift(workoutId, rpe) }
+        // Help the person chose is over once the progress reaches the body alone.
+        val chosen = store.settingsNow().chosenHelp.filter { (db.state().slot(it)?.weight ?: -1.0) >= 0 }
+        if (chosen.isNotEmpty()) store.editSettings { it.copy(chosenHelp = it.chosenHelp - chosen.toSet()) }
         checkReactiveDeload(LocalDate.ofEpochDay(first.epochDay))
         onChange()
         summary

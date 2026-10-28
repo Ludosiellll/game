@@ -578,6 +578,8 @@ object CoachActions {
                         now?.copy(weight = w, exerciseId = p.tuned.exerciseId, reps = reps, stalls = 0, misses = 0, steady = 0)
                             ?: SlotStateEntity(p.tuned.key, p.tuned.exerciseId, w, reps, 0, 0, 0, repo.nowMs()),
                     )
+                    // Help chosen (a sore shoulder, a band for more reps) stays: sets done without it do not take it away.
+                    repo.store.editSettings { it.copy(chosenHelp = if (w < 0) it.chosenHelp + p.tuned.key else it.chosenHelp - p.tuned.key) }
                     repo.changed()
                     CoachCall(
                         "undo_weight",
@@ -1150,6 +1152,7 @@ object CoachActions {
                 else {
                     val old = (a["row"] as? JsonObject)?.let { AppJson.decodeFromJsonElement(SlotStateEntity.serializer(), it) }
                     repo.db.state().upsertSlot(old?.copy(updatedAt = now.updatedAt) ?: now.copy(weight = null))
+                    repo.store.editSettings { it.copy(chosenHelp = it.chosenHelp - key) }
                     repo.changed()
                     true
                 }

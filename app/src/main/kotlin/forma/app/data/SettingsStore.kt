@@ -88,6 +88,11 @@ data class Settings(
     val dislikes: Set<String> = emptySet(),
     /** Plan exercise ids whose replacement in [swaps] the picks made (a pick cleared brings the plan's own back). */
     val pickSwaps: Set<String> = emptySet(),
+    /**
+     * Rep ranges ([forma.core.strength.SlotSpec.key]) of pull-ups or dips whose help the person chose through the coach:
+     * kept, not taken away by sets done without it. Cleared when the progress reaches the body alone.
+     */
+    val chosenHelp: Set<String> = emptySet(),
     /** «Идеальный план» changes the person said not to propose (change ids, [forma.core.plan.PlanAdvisor.Change.id]). */
     val adviceHidden: Set<String> = emptySet(),
     /** The first look round the app was seen (after the questionnaire, or skipped). */

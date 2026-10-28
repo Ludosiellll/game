@@ -128,8 +128,12 @@ object LoadExplain {
         val low = "самая низкая — ${Ru.pct(d.lowestPct)} (утром ${Ru.date(d.lowestDay)})"
         val rest = if (d.restDays > 0) "дней без тренировок: ${d.restDays}" else "без дня отдыха"
         return if (d.recovered == null) {
-            "С ${Ru.date(d.from)} ты ниже линии отдыха: $low" + (now?.let { ", сейчас ${Ru.pct(it)}" } ?: "") +
-                ". Нужен отдых: день-два или лёгкая тренировка ($rest)."
+            when {
+                // Today's own freshness is the lowest: no morning to name, and no "lowest" above "now".
+                d.lowestNow && d.from == d.lowestDay -> "Сегодня свежесть ушла ниже линии отдыха: ${Ru.pct(d.lowestPct)}."
+                d.lowestNow -> "С ${Ru.date(d.from)} ты ниже линии отдыха, и свежесть ещё падает: сейчас ${Ru.pct(d.lowestPct)}, ниже, чем за эти дни."
+                else -> "С ${Ru.date(d.from)} ты ниже линии отдыха: $low" + (now?.let { ", сейчас ${Ru.pct(it)}" } ?: "") + "."
+            } + " Нужен отдых: день-два или лёгкая тренировка" + (if (d.from == d.lowestDay && d.lowestNow) "." else " ($rest).")
         } else "${Ru.dates(d.from, d.to)} свежесть падала ниже линии отдыха, $low — нужен был отдых. Пришёл в норму к ${Ru.date(d.recovered)}, $rest."
     }
 

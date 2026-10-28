@@ -40,7 +40,7 @@ class AssistedPullupsTest {
     /** The help an older version left (7.5 kg), while his last weeks show 9 to failure with the body alone. */
     @Test fun helpLeftFromBeforeGoesWhenOwnSetsShowNoNeed() {
         val stale = SlotState(-7.5, 5, sessions = 4, steady = 1)
-        val p = Progression.prescribe(ex, spec, stale, e1rm = 64.14, bodyWeight = bw, recentBest = OneRm.estimate(bw, 5, 4))
+        val p = Progression.prescribe(ex, spec, stale, e1rm = 64.14, bodyWeight = bw, ownBest = OneRm.estimate(bw, 5, 4))
         assertEquals(0.0 to 5, p.weight to p.reps)
     }
 

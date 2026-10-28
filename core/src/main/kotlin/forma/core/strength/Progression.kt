@@ -217,7 +217,7 @@ object Progression {
         daysSinceLast: Long? = null,
         topRir: Int = TOP_RIR,
         novice: Boolean = false,
-        recentBest: Double? = null,
+        ownBest: Double? = null,
     ): Prescription {
         val rir = (spec.rir + rirOffset).coerceIn(0, 5)
         if (ex.load == LoadKind.TIMED) {
@@ -227,36 +227,45 @@ object Progression {
         var weight = state.weight?.let { floorTo(it, ex.stepAt(it)) }
         var reps = state.reps
         var calibrate = false
-        // The best the person showed lately: whether help is needed at all ([lightest]).
-        val known = listOfNotNull(e1rm, recentBest).filter { it > 0 }.maxOrNull()
+        // Whether help is needed at all ([lightest]): by the estimate, or by the latest session done without help.
+        val known = listOfNotNull(e1rm, ownBest).filter { it > 0 }.maxOrNull()
         val lowest = lightest(ex, bodyWeight, known)
+        // The body alone cannot get lighter: where the weight was to come down below it, the reps do instead.
+        fun heldAtBody(w: Double, raw: Double) = ex.assisted && known != null && w <= lowest + 1e-9 && raw < lowest - 1e-9
         if (weight == null) {
             if (e1rm != null && e1rm > 0) {
                 // A new rep range of a known exercise: from the estimate, lighter after a break like any weight.
                 val raw = toWeight(ex, OneRm.loadFor(e1rm, state.reps, rir) * layoffFactor(daysSinceLast), bodyWeight)
                 weight = floorTo(raw, ex.stepAt(raw)).coerceAtLeast(lowest)
                 // The body alone is more than the range's bottom asks for: the reps it allows, built up from there.
-                if (raw < lowest - 1e-9 && known != null) reps = repsAt(ex, known, lowest, rir, bodyWeight, state.reps)
+                if (raw < lowest - 1e-9 && known != null) reps = repsAt(ex, known * layoffFactor(daysSinceLast), lowest, rir, bodyWeight, state.reps)
             } else {
                 calibrate = true
             }
         } else {
-            // Help left from before (an older version, a weaker month) while the sets of the last weeks show five and
-            // more with the body alone: the body alone, at the reps that go with it.
-            if (ex.assisted && weight < lowest - 1e-9 && known != null) {
-                reps = repsAt(ex, known, lowest, rir, bodyWeight, state.reps)
-                weight = lowest
+            // Help left from before (an older version kept it while the sets went on with the body alone) and the latest
+            // session, done without help, shows five and more with the body: the body alone, at the reps it shows. Only
+            // that session's sets count — not an estimate made from sets with help (a step at a time takes the help away
+            // there), nor help the person or the coach chose (then [ownBest] is null).
+            if (ex.assisted && weight < 0 && ownBest != null && lightest(ex, bodyWeight, ownBest) >= 0.0) {
+                reps = repsAt(ex, ownBest, 0.0, rir, bodyWeight, state.reps)
+                weight = 0.0
             }
             // Back after a break: strength holds for about three weeks, then fades.
             val factor = layoffFactor(daysSinceLast)
             if (factor < 1.0) {
                 val load = effectiveLoad(ex, weight, bodyWeight)
-                weight = down(ex, weight, toWeight(ex, load * factor, bodyWeight), lowest)
+                val raw = toWeight(ex, load * factor, bodyWeight)
+                weight = down(ex, weight, raw, lowest)
+                if (heldAtBody(weight, raw)) reps = repsAt(ex, known!! * factor, weight, rir, bodyWeight, reps)
             }
         }
         val deload = phase == Phase.DELOAD
         if (deload && weight != null) {
-            weight = down(ex, weight, toWeight(ex, effectiveLoad(ex, weight, bodyWeight) * 0.9, bodyWeight), lowest)
+            val raw = toWeight(ex, effectiveLoad(ex, weight, bodyWeight) * 0.9, bodyWeight)
+            weight = down(ex, weight, raw, lowest)
+            // Two more in reserve in the lighter week (below), so the reps the estimate gives with that reserve.
+            if (heldAtBody(weight, raw)) reps = repsAt(ex, known!!, weight, rir + 2, bodyWeight, reps)
         }
         // A novice's first time on an exercise: two sets, three reps short of failure. A beginner cannot tell "two left"
         // yet, and the first time is the one that makes the muscles sore; from the next session, the plan's sets.
@@ -290,7 +299,7 @@ object Progression {
         val st = ex.stepAt(raw)
         val floor = floorTo(raw, st)
         val to = if (raw - floor > 0.05 * abs(w)) min(w, roundTo(raw, st)) else floor
-        return to.coerceAtLeast(lowest)
+        return to.coerceAtLeast(min(w, lowest))
     }
 
     /** 10 % lighter in total load (for body-weight exercises the body counts too). */
@@ -644,8 +653,10 @@ object Progression {
         val step = ex.stepAt(last.weight)
         val rir = assumedRir(last, index, p)
         val e1rm = OneRm.estimate(effectiveLoad(ex, last.weight, bodyWeight), last.reps, rir)
-        // No hint of help to whoever the set shows does five and more with the body alone.
-        val lowest = lightest(ex, bodyWeight, e1rm)
+        // No hint of help to whoever the set shows does five and more with the body alone — nor, with the body alone in
+        // the plan, after a tired set of three or more: that is a set, not a reason for a band. Failing at two is.
+        val ownSet = ex.assisted && !p.calibrate && (p.weight ?: -1.0) >= 0 && last.weight >= 0 && last.reps + rir >= 3
+        val lowest = if (ownSet) 0.0 else lightest(ex, bodyWeight, e1rm)
         if (p.calibrate) {
             val raw = toWeight(ex, OneRm.loadFor(e1rm, p.reps, p.rir), bodyWeight)
             val capped = min(raw, max(last.weight + step, last.weight + abs(effectiveLoad(ex, last.weight, bodyWeight)) * 0.3))

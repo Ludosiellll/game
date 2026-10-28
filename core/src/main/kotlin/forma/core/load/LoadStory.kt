@@ -71,6 +71,8 @@ object LoadStory {
         val restDays: Int,
         /** The first day above the line again, null if still in it. */
         val recovered: LocalDate?,
+        /** [lowestPct] is today's own freshness (the one «Сегодня» shows), lower than any morning of the dip. */
+        val lowestNow: Boolean = false,
     )
 
     data class Story(
@@ -199,12 +201,17 @@ object LoadStory {
             val s = start ?: return
             val part = window.subList(s, endIdx + 1)
             val low = part.minBy { morning[it.date] ?: it.formPct }
-            val lowPct = morning[low.date] ?: low.formPct
+            var lowPct = morning[low.date] ?: low.formPct
+            var lowDay = low.date
+            // Still in it and going deeper today: the lowest is now, not a morning before.
+            val nowPct = pctOn(now)
+            val deeper = recovered == null && nowPct != null && nowPct < lowPct
+            if (deeper) { lowPct = nowPct!!; lowDay = today }
             val restTo = recovered ?: today
             val rest = window.count { !it.date.isBefore(part.first().date) && !it.date.isAfter(restTo) && it.load <= 0 }
             // A single day just under the line is noise: a dip lasts two days or goes 5 points under it.
             if (part.size >= 2 || lowPct <= personal.restBelow - 5 || recovered == null) {
-                dips += Dip(part.first().date, part.last().date, lowPct, low.date, rest, recovered)
+                dips += Dip(part.first().date, part.last().date, lowPct, lowDay, rest, recovered, lowestNow = deeper)
             }
             start = null
         }
@@ -217,6 +224,11 @@ object LoadStory {
         // Still under the line this morning, but today's freshness (the one «Сегодня» shows: the day as it ends, rest
         // included) is above it again: over, recovered today — never "below the line now" next to a value above it.
         if (start != null) close(window.lastIndex, if (pctOn(now)?.let { it >= personal.restBelow } == true) today else null)
+        // The morning still above the line, today's own freshness under it (a very hard session today): a dip begins
+        // today — never "not once below the line" next to «нужен отдых».
+        else pctOn(now)?.takeIf { it < personal.restBelow && window.isNotEmpty() && window.last().date == today }?.let {
+            dips += Dip(today, today, it, today, 0, null, lowestNow = true)
+        }
 
         val lastTraining = loads.filter { it.value > 0 && !it.key.isAfter(today) }.keys.maxOrNull()
         return Story(
