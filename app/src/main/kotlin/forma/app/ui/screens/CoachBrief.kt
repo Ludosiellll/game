@@ -165,7 +165,7 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             report.substring(from, to)
         }
         legend?.let { appendLine(it.trim()); appendLine() }
-        appendLine((if (legend != null) report.replace(legend, "") else report).take(reportChars))
+        appendLine(workoutsLast(if (legend != null) report.replace(legend, "") else report).take(reportChars))
         appendLine()
         appendLine(COACH_RULES)
         appendLine()
@@ -311,6 +311,16 @@ private suspend fun running(repo: TrainingRepository, today: LocalDate): String 
             runCatching { repo.runFor(s.kind, date) }.getOrNull()?.let { appendLine("  - ${Ru.date(date)}: ${it.title}") }
         }
     }
+}
+
+/**
+ * The report with its list of workouts (newest first) moved to the end: the cut of a long history then drops the oldest
+ * workouts, not what follows the list (the body weight over time).
+ */
+internal fun workoutsLast(report: String): String {
+    val from = report.indexOf("## Тренировки (сначала новые)").takeIf { it >= 0 } ?: return report
+    val to = report.indexOf("\n## ", from + 1).takeIf { it > 0 } ?: return report
+    return report.substring(0, from) + report.substring(to + 1).trimEnd() + "\n\n" + report.substring(from, to + 1)
 }
 
 /** The coach's own changes in force and the last ones made, so it neither repeats nor forgets them. */
