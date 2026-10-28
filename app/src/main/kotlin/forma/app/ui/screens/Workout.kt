@@ -465,6 +465,16 @@ fun WorkoutScreen(workoutId: Long) {
                             Hint(text + why, if ((last.second?.outcome?.let { Texts.tone(it) } ?: 0) < 0) F.c.warn else F.c.strength)
                         }
                     }
+                    // Help is a band or the gravitron, and not every gym has one: what to do without it.
+                    if (ex.assisted && (p.weight ?: 0.0) < 0) {
+                        val pull = ex.pattern == forma.core.model.Pattern.VERTICAL_PULL
+                        Hint(
+                            "Помощь — это гравитрон или резинка. Нет их — замени упражнение: " +
+                                (if (pull) "тяга верхнего блока тренирует" else "обратные отжимания от скамьи тренируют") + " то же. " +
+                                "Когда сможешь 5 раз сам, без помощи, план её уберёт.",
+                            F.c.accent, Ic.info,
+                        )
+                    }
                 }
 
                 // Warm-up: before the first working set, ticked off or skipped — not working sets, so not counted.

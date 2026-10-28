@@ -869,6 +869,8 @@ class TrainingRepository(
             topRir = if (ex.lowerBody && hardRunSoon(program, date)) 2 else 1,
             // A novice's gentle first time, unless the person set this exercise's sets themselves.
             novice = profile.experience == Experience.NOVICE && (restKey == null || restKey !in settings.sets),
+            // The best of the last weeks: no help on pull-ups for whoever did five and more with the body alone.
+            recentBest = if (ex.assisted) recentBest(ex.id, date.toEpochDay(), -1L) else null,
         )
         // The ramp leads to the working weight, or the first time to the weight to start the search from.
         val work = p.weight ?: p.startHint?.takeIf { p.calibrate }

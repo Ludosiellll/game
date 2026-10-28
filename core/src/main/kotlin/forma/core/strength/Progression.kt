@@ -158,6 +158,8 @@ object Progression {
     private const val FLOOR = 0.85
     /** Reps beyond the top of the range allowed while the next weight is out of reach. */
     private const val OVERFLOW = 4
+    /** Reps to failure with the body alone from which an assisted exercise gets no help: sets of three, two in reserve. */
+    private const val OWN_RTF = 5.0
 
     /** Total load in kg that the muscles move, used for e1RM (the moved share of body weight included). */
     fun effectiveLoad(ex: Exercise, weight: Double, bodyWeight: Double): Double =
@@ -169,6 +171,20 @@ object Progression {
         val extra = load - ex.bodyShare * bodyWeight
         return if (ex.assisted) max(-maxAssist(ex, bodyWeight), extra) else max(0.0, extra)
     }
+
+    /**
+     * The lightest load the plan gives. For an assisted exercise (pull-ups, dips) it is the body alone once [e1rm] says
+     * five or more reps to failure with it: help (a band, the gravitron) is for those who cannot pull themselves up yet.
+     * Not every gym has one, and whoever does five builds up with the body alone, a few reps at a time — a friend doing
+     * his sets with the body and +5 kg was given «помощь 7.5 кг» to keep two reps in reserve. Otherwise [minWeight].
+     */
+    fun lightest(ex: Exercise, bodyWeight: Double, e1rm: Double?): Double =
+        if (ex.assisted && e1rm != null && e1rm > 0 && OneRm.rtfAt(e1rm, effectiveLoad(ex, 0.0, bodyWeight)) >= OWN_RTF - 1e-6) 0.0
+        else minWeight(ex, bodyWeight)
+
+    /** Reps with [rir] in reserve at [weight] by [e1rm], at least one, at most [most]. */
+    private fun repsAt(ex: Exercise, e1rm: Double, weight: Double, rir: Int, bodyWeight: Double, most: Int): Int =
+        floor(OneRm.rtfAt(e1rm, effectiveLoad(ex, weight, bodyWeight)) - rir).toInt().coerceIn(1, max(1, most))
 
     /** Most assistance an assisted machine or band gives: about 70 % of the moved body weight. */
     fun maxAssist(ex: Exercise, bodyWeight: Double): Double = floorTo(ex.bodyShare * bodyWeight * 0.7, ex.step)
@@ -201,6 +217,7 @@ object Progression {
         daysSinceLast: Long? = null,
         topRir: Int = TOP_RIR,
         novice: Boolean = false,
+        recentBest: Double? = null,
     ): Prescription {
         val rir = (spec.rir + rirOffset).coerceIn(0, 5)
         if (ex.load == LoadKind.TIMED) {
@@ -208,26 +225,38 @@ object Progression {
         }
         // On the exercise's own steps: a step changed for this gym (5 kg plates only) applies to the stored weight too.
         var weight = state.weight?.let { floorTo(it, ex.stepAt(it)) }
+        var reps = state.reps
         var calibrate = false
+        // The best the person showed lately: whether help is needed at all ([lightest]).
+        val known = listOfNotNull(e1rm, recentBest).filter { it > 0 }.maxOrNull()
+        val lowest = lightest(ex, bodyWeight, known)
         if (weight == null) {
             if (e1rm != null && e1rm > 0) {
                 // A new rep range of a known exercise: from the estimate, lighter after a break like any weight.
                 val raw = toWeight(ex, OneRm.loadFor(e1rm, state.reps, rir) * layoffFactor(daysSinceLast), bodyWeight)
-                weight = floorTo(raw, ex.stepAt(raw)).coerceAtLeast(minWeight(ex, bodyWeight))
+                weight = floorTo(raw, ex.stepAt(raw)).coerceAtLeast(lowest)
+                // The body alone is more than the range's bottom asks for: the reps it allows, built up from there.
+                if (raw < lowest - 1e-9 && known != null) reps = repsAt(ex, known, lowest, rir, bodyWeight, state.reps)
             } else {
                 calibrate = true
             }
         } else {
+            // Help left from before (an older version, a weaker month) while the sets of the last weeks show five and
+            // more with the body alone: the body alone, at the reps that go with it.
+            if (ex.assisted && weight < lowest - 1e-9 && known != null) {
+                reps = repsAt(ex, known, lowest, rir, bodyWeight, state.reps)
+                weight = lowest
+            }
             // Back after a break: strength holds for about three weeks, then fades.
             val factor = layoffFactor(daysSinceLast)
             if (factor < 1.0) {
                 val load = effectiveLoad(ex, weight, bodyWeight)
-                weight = down(ex, weight, toWeight(ex, load * factor, bodyWeight), bodyWeight)
+                weight = down(ex, weight, toWeight(ex, load * factor, bodyWeight), lowest)
             }
         }
         val deload = phase == Phase.DELOAD
         if (deload && weight != null) {
-            weight = down(ex, weight, toWeight(ex, effectiveLoad(ex, weight, bodyWeight) * 0.9, bodyWeight), bodyWeight)
+            weight = down(ex, weight, toWeight(ex, effectiveLoad(ex, weight, bodyWeight) * 0.9, bodyWeight), lowest)
         }
         // A novice's first time on an exercise: two sets, three reps short of failure. A beginner cannot tell "two left"
         // yet, and the first time is the one that makes the muscles sore; from the next session, the plan's sets.
@@ -239,7 +268,7 @@ object Progression {
             calibrate -> CALIBRATION_RIR + if (gentle) 1 else 0
             else -> rir
         }
-        return Prescription(weight, state.reps, sets, plannedRir, calibrate, if (calibrate) hint else null, phase, top, intro = rirOffset > 0 && !calibrate, topRir = topRir)
+        return Prescription(weight, reps, sets, plannedRir, calibrate, if (calibrate) hint else null, phase, top, intro = rirOffset > 0 && !calibrate, topRir = topRir)
     }
 
     /** Lowest weight the exercise allows: the most assistance for assisted body-weight exercises, the empty bar, or 0. */
@@ -255,13 +284,13 @@ object Progression {
      * [raw] (lighter than [w]) on the exercise's steps: the step below, unless that cuts far more than meant — then the
      * nearest step, never above [w]. A coarse step keeps the weight rather than cutting it by half (10 % of a 5 kg leg
      * extension is not 5 kg); the lighter week then comes from fewer sets and more reps in reserve. Never below the
-     * lightest load.
+     * lightest load ([lowest]; with the body alone that is the body, not help).
      */
-    private fun down(ex: Exercise, w: Double, raw: Double, bodyWeight: Double): Double {
+    private fun down(ex: Exercise, w: Double, raw: Double, lowest: Double): Double {
         val st = ex.stepAt(raw)
         val floor = floorTo(raw, st)
         val to = if (raw - floor > 0.05 * abs(w)) min(w, roundTo(raw, st)) else floor
-        return to.coerceAtLeast(minWeight(ex, bodyWeight))
+        return to.coerceAtLeast(lowest)
     }
 
     /** 10 % lighter in total load (for body-weight exercises the body counts too). */
@@ -346,6 +375,8 @@ object Progression {
 
         val e1rm = e1rmOf(ex, done, p, bodyWeight)!!
         if (p.phase == Phase.DELOAD) return Evaluation(state.copy(sessions = sessions), Outcome.Deload, e1rm)
+        // The lightest load to go to: for pull-ups and dips the body alone once this or recent sets show five and more.
+        val lowest = lightest(ex, bodyWeight, listOfNotNull(e1rm, recentBest).maxOrNull())
         // The taper and the test serve the goal's day: the weight and the reps to aim for stay as they were.
         if (p.phase == Phase.TEST || p.phase == Phase.TAPER && !p.calibrate) {
             val reason = if (p.phase == Phase.TAPER) HoldReason.TAPER else HoldReason.TEST
@@ -363,13 +394,13 @@ object Progression {
             val best = fresh.minWith(compareBy<Pair<DoneSet, Int>> { (s, rir) -> s.reps + rir }.thenByDescending { it.first.weight })
             val estimate = OneRm.estimate(effectiveLoad(ex, best.first.weight, bodyWeight), best.first.reps, best.second)
             val raw = supported(estimate, spec.repMin, spec.rir)
-            val lightest = minWeight(ex, bodyWeight)
-            val w = max(lightest, floorTo(raw, ex.stepAt(raw)))
-            // The range's bottom asks for more than the lightest load allows (an empty bar too heavy for 8): the reps
-            // there with the planned reserve, built up from there — not a target missed session after session.
-            val reps = if (raw < lightest - 1e-9) {
-                floor(OneRm.rtfAt(estimate, effectiveLoad(ex, w, bodyWeight)) - spec.rir).toInt().coerceIn(1, spec.repMin)
-            } else spec.repMin
+            // Help only for whoever the trusted set says needs it (five and more with the body alone need none).
+            val low = lightest(ex, bodyWeight, listOfNotNull(estimate, recentBest).maxOrNull())
+            val w = max(low, floorTo(raw, ex.stepAt(raw)))
+            // The range's bottom asks for more than the lightest load allows (an empty bar too heavy for 8, five
+            // pull-ups with the body alone): the reps there with the planned reserve, built up from there — not a
+            // target missed session after session.
+            val reps = if (raw < low - 1e-9) repsAt(ex, estimate, w, spec.rir, bodyWeight, spec.repMin) else spec.repMin
             return Evaluation(SlotState(w, reps, 0, 0, sessions, state.linear), Outcome.Calibrated(w, reps), estimate)
         }
 
@@ -429,7 +460,7 @@ object Progression {
             // One step of this exercise is a big share of the weight (light dumbbells): progress through reps first.
             val coarse = w > 0 && step / w > 0.10
             // Below the range at the lightest load (see the short branch below): reps, not weight, come first.
-            val belowAtMin = target < spec.repMin && w <= minWeight(ex, bodyWeight) + 1e-9
+            val belowAtMin = target < spec.repMin && w <= lowest + 1e-9
             if ((spare != null && spare >= 4 || reportedEasy) && !belowAtMin) {
                 if (coarse) {
                     // A big step to the next weight: take it if the estimate says enough reps are there,
@@ -513,7 +544,7 @@ object Progression {
             val r = max(spec.repMin, min(target - 1, doneAtW.minOrNull() ?: spec.repMin))
             return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
         }
-        if (w <= minWeight(ex, bodyWeight) + 1e-9 && !(near && stalls < 2)) {
+        if (w <= lowest + 1e-9 && !(near && stalls < 2)) {
             // Already at the lightest load (own body weight, the most help, the empty bar): the weight cannot come
             // down, so the rep target goes below the range to what was done and climbs from there.
             val doneAtW = planned.filter { it.weight >= w - tol }.map { it.reps }
@@ -525,7 +556,7 @@ object Progression {
         }
         if (near) {
             if (stalls >= 3) {
-                val to = floored(max(minWeight(ex, bodyWeight), floorTo(lighter(ex, w, bodyWeight), step)))
+                val to = floored(max(lowest, floorTo(lighter(ex, w, bodyWeight), step)))
                 // Already the lightest load: it cannot step back, the target stays.
                 if (to >= w - 1e-9) {
                     return Evaluation(SlotState(w, target, stalls, 0, sessions, state.linear, cutFrom = state.cutFrom, cutReps = state.cutReps),
@@ -541,7 +572,7 @@ object Progression {
         val big = first <= target - 3
         // Half way toward what was shown on a first miss, all the way after two or when far short; −10 % at most.
         val goal = if (big || misses >= 2) shown else floorTo(w - (w - shown) / 2, step)
-        val to = floored(max(minWeight(ex, bodyWeight), min(w - step, max(goal, floorTo(lighter(ex, w, bodyWeight), step)))))
+        val to = floored(max(lowest, min(w - step, max(goal, floorTo(lighter(ex, w, bodyWeight), step)))))
         if (to >= w - 1e-9) {
             return Evaluation(SlotState(w, target, stalls, misses, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps),
                 Outcome.Hold(w, target, HoldReason.FIRST_MISS), e1rm)
@@ -613,10 +644,12 @@ object Progression {
         val step = ex.stepAt(last.weight)
         val rir = assumedRir(last, index, p)
         val e1rm = OneRm.estimate(effectiveLoad(ex, last.weight, bodyWeight), last.reps, rir)
+        // No hint of help to whoever the set shows does five and more with the body alone.
+        val lowest = lightest(ex, bodyWeight, e1rm)
         if (p.calibrate) {
             val raw = toWeight(ex, OneRm.loadFor(e1rm, p.reps, p.rir), bodyWeight)
             val capped = min(raw, max(last.weight + step, last.weight + abs(effectiveLoad(ex, last.weight, bodyWeight)) * 0.3))
-            val w = max(minWeight(ex, bodyWeight), floorTo(capped, ex.stepAt(capped)))
+            val w = max(lowest, floorTo(capped, ex.stepAt(capped)))
             return if (abs(w - last.weight) < step / 2) null else Adjustment(w, p.reps, w > last.weight)
         }
         // Reserve as actually done: missed reps count as negative reserve, extra reps as extra reserve.
@@ -638,7 +671,7 @@ object Progression {
         // Nearest weight on the step grid that stays within ±10 % of the plan; none — no hint.
         val down = floorTo(bounded, ex.stepAt(bounded))
         val up = down + ex.stepAt(down)
-        val w = listOf(down, up).filter { it in lo..hi && it >= minWeight(ex, bodyWeight) }.minByOrNull { abs(it - raw) } ?: return null
+        val w = listOf(down, up).filter { it in lo..hi && it >= min(lowest, last.weight) }.minByOrNull { abs(it - raw) } ?: return null
         return when {
             w <= last.weight - step + 1e-9 -> Adjustment(w, p.reps, false)
             w >= last.weight + step - 1e-9 -> Adjustment(w, p.reps, true)
