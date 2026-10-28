@@ -170,11 +170,13 @@ class GymRulesTest {
         // same weight (a jump keeping the reps, a step with the reps the estimate gives) may differ by one.
         val inRange = { s: SlotState -> s.reps in c.spec.repMin..c.spec.repMax }
         // Clearly less, not a step's difference between two ways of the engine (a jump and a step, a reset and a cut, a
-        // set just over or under the target at another weight): more than two steps lighter and 5 % less of the muscles.
+        // set just over or under the target at another weight, a hold and a lower target): more than two steps lighter and
+        // a tenth less of the muscles. Where two of the engine's ways meet, a few per cent either way is a seam, not a
+        // session done better asked less; 52.5 × 10 → 45 × 12 (a rep more in reserve) was 14 % — that is the rule.
         val step = c.ex.stepAt(b.weight ?: 0.0)
         val lighter = lb - la > max(2 * step, 0.05 * lb) + 1e-6
         val fewer = abs(la - lb) <= 1e-6 && a.reps < b.reps - 1 && inRange(a) && inRange(b)
-        return !(lighter || fewer) || demand(c, a) >= demand(c, b) * 0.95
+        return !(lighter || fewer) || demand(c, a) >= demand(c, b) * 0.90
     }
 
     private fun normal(c: Case) = c.p.phase == Phase.NORMAL && !c.p.calibrate && c.p.weight != null && c.ex.load != LoadKind.TIMED
@@ -232,8 +234,11 @@ class GymRulesTest {
         if (e.outcome == Outcome.NotDone) return@check null
         val s = e.state
         val est = listOfNotNull(e.e1rm, c.recentBest).maxOrNull() ?: return@check null
-        // Every set lighter than the plan, the first time: the plan stays (the next such time it comes down).
-        if ((e.outcome as? Outcome.Hold)?.reason == forma.core.strength.HoldReason.LIGHTER && c.state.misses == 0) return@check null
+        // Every set lighter than the plan, the first time: the plan stays (the next such time it comes down). The block's
+        // first week asked more in reserve: a rep or two short of it keeps the plan by design (unrated sets short of the
+        // target read as to failure there, which they were not).
+        val reason = (e.outcome as? Outcome.Hold)?.reason
+        if (reason == forma.core.strength.HoldReason.LIGHTER && c.state.misses == 0 || reason == forma.core.strength.HoldReason.INTRO) return@check null
         val w = s.weight ?: return@check null
         val l = load(c, s)
         if (l <= Progression.effectiveLoad(c.ex, Progression.minWeight(c.ex, c.bw), c.bw) + 1e-6) return@check null
@@ -242,7 +247,7 @@ class GymRulesTest {
         val shown = c.done.filter { it.reps > 0 && Progression.effectiveLoad(c.ex, it.weight, c.bw) >= l - 1e-6 }.maxOfOrNull { it.reps + (it.rir ?: 0) } ?: 0
         val there = max(OneRm.rtfAt(est, l), shown.toDouble())
         // A beginner's linear progress — a step more at the same reps — asks for the session's progress on purpose.
-        val linear = (e.outcome as? Outcome.AddWeight)?.let { c.state.linear && it.reps == c.p.reps && it.to <= c.p.weight!! + max(c.ex.stepAt(c.p.weight!!), c.spec.increment ?: 0.0) + 1e-9 } == true
+        val linear = (e.outcome as? Outcome.AddWeight)?.let { c.state.linear && it.reps == c.p.reps && it.to <= it.from + max(c.ex.stepAt(it.from), c.spec.increment ?: 0.0) + 1e-9 } == true
         if (s.reps > there + (if (linear) 2 else 1) + 1e-9) "дальше $w × ${s.reps} — а по оценке этой тренировки там ${"%.1f".format(there)} до отказа (${e.outcome})" else null
     }
 

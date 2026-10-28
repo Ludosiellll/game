@@ -459,15 +459,15 @@ object Progression {
         val regularCount = if (p.top) p.sets - 1 else p.sets
         val regular = planned.take(regularCount)
         val top = if (p.top) planned.getOrNull(regularCount) else null
-        // The reps of each set as they would be at [w] with the reserve the plan asks: a set done heavier (after a hint)
-        // and short of the target is no miss of [w] — 35 × 7 to failure is about 30 × 11 to failure, 30 × 9 with two left.
-        // Counted as a miss, the hints' own climb (30 × 8 with four to spare → 32.5 → 35 × 7) held and reset a lifter at 30
-        // again and again: he never moved on. With the set's own reserve taken off instead, a rep more in reserve came out
+        // The reps of each set as they would be at [w] with the same reserve: a set done heavier (after a hint) and short
+        // of the target is no miss of [w] — 35 × 7 to failure is about 30 × 11. Counted as a miss, the hints' own climb
+        // (30 × 8 with four to spare → 32.5 → 35 × 7) held and reset a lifter at 30 again and again: he never moved on.
+        // The best over the reserves up to the one said: the chart's steps are uneven, and a rep more in reserve came out
         // as a rep less at [w] (62.5 × 5 «ещё 2» read 52.5 × 9 where «ещё 1» read × 10, and the plan was cut to 45).
         val equiv = planned.mapIndexed { i, s ->
             if (s.weight <= w + tol) s.reps else {
-                val asked = if (p.top && i == p.sets - 1) p.topRir else p.rir
-                val atW = OneRm.rtfAt(OneRm.estimate(effectiveLoad(ex, s.weight, bodyWeight), s.reps, assumedRir(s, i, p)), effectiveLoad(ex, w, bodyWeight)) - asked
+                val load = effectiveLoad(ex, s.weight, bodyWeight)
+                val atW = (0..assumedRir(s, i, p)).maxOf { r -> OneRm.rtfAt(OneRm.estimate(load, s.reps, r), effectiveLoad(ex, w, bodyWeight)) - r }
                 max(s.reps, kotlin.math.floor(atW + 1e-9).toInt())
             }
         }
@@ -585,9 +585,11 @@ object Progression {
         val stalls = state.stalls + 1
         val near = first >= target - 1 && deficit <= max(1, p.sets - 1)
         val cutFrom = state.cutFrom
-        if (cutFrom != null && w < cutFrom - 1e-9 && first <= (state.cutReps ?: 0)) {
-            // The weight already came down and the reps did not come up: the weight is not what limits.
-            // Keep it and meet the lifter at the reps they do; progress starts again from there.
+        val doneMin = planned.indices.filter { planned[it].weight >= w - tol }.minOfOrNull { equiv[it] } ?: spec.repMin
+        if (cutFrom != null && w < cutFrom - 1e-9 && doneMin <= (state.cutReps ?: 0)) {
+            // The weight already came down and the reps did not come up — in any set: the weight is not what limits.
+            // Keep it and meet the lifter at the reps they do; progress starts again from there. Judged on the first set
+            // alone, a rep more in it (7 then 2, cut at 6) lowered the target to 2 where 6 then 2 kept it at 6.
             val r = max(1, min(target, first))
             return Evaluation(state.copy(reps = r, stalls = 0, misses = 0, sessions = sessions, linear = false, steady = 0),
                 Outcome.Hold(w, r, HoldReason.NOT_THE_WEIGHT), e1rm)
@@ -595,11 +597,10 @@ object Progression {
         // Room in the rep range: bring the rep target down to what was done before touching the weight (double
         // progression: the weight goes down only when even the bottom of the range is out of reach — a rep short of it
         // is in reach, two are not: 13 done kept the weight with 15 asked, the range's bottom).
-        val doneMin = planned.indices.filter { planned[it].weight >= w - tol }.minOfOrNull { equiv[it] } ?: spec.repMin
         if (target > spec.repMin && !(near && stalls < 2) && doneMin >= spec.repMin - 1) {
-            // Down to what the first set (the freshest) did, as when the weight already came down above: a set given up
-            // later (6 then 2 of 6) is no target — one rep more in the first set had taken the plan from × 6 to × 2.
-            val r = max(spec.repMin, min(target - 1, first))
+            // Down to what the weakest set did (to the first set's reps instead, the simulated lifter who over-rates his
+            // reserve missed 15 % of his targets, not 8 %).
+            val r = max(spec.repMin, min(target - 1, doneMin))
             return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
         }
         if (w <= lowest + 1e-9 && !(near && stalls < 2)) {
@@ -616,9 +617,10 @@ object Progression {
         // clear miss as after a near one: a clear miss had cut less than a near one (−2.5 kg for 72.5 × 3, −7.5 for × 4).
         if (stalls >= 3) {
             val to = floored(max(lowest, floorTo(lighter(ex, w, bodyWeight), step)))
-            // Below a weight already cut from, with the reps come up since (more than at the cut): the cut is working, no
-            // second one — a rep more in reserve had taken 185 × 7 to 165 × 5, where the session a rep worse held 185.
-            val working = cutFrom != null && w < cutFrom - 1e-9 && first > (state.cutReps ?: 0)
+            // Below a weight already cut from (or back at it), with the reps come up since (more than at the cut): the cut is
+            // working, no second one — a rep more in reserve had taken 185 × 7 to 165 × 5, where the session a rep worse
+            // held 185; the same sets a step heavier, back at the weight cut from, reset 45 to 35 where 42.5 was held.
+            val working = cutFrom != null && w <= cutFrom + 1e-9 && first > (state.cutReps ?: 0)
             if (to < w - 1e-9 && !working) {
                 // The range's bottom — no more than the target was (below the range, 75 × 9 went to 65 × 12) nor than the
                 // estimate (this session's or the weeks' best) gives there to failure.
@@ -641,17 +643,20 @@ object Progression {
         val goal = if (big || misses >= 2) shown else floorTo(w - (w - shown) / 2, step)
         val to = floored(max(lowest, min(w - step, max(goal, floorTo(lighter(ex, w, bodyWeight), step)))))
         if (to >= w - 1e-9) {
-            // The weight cannot come down (the floor of the weeks' best): the reps do, to what the first set did, the
+            // The weight cannot come down (the floor of the weeks' best): the reps do, to what the weakest set did, the
             // range's bottom at the least. Held instead, the session one rep better — in reach of the range's bottom —
             // lowered the reps where this one kept the target it missed by far.
             if (target > spec.repMin) {
-                val r = max(spec.repMin, min(target - 1, first))
+                val r = max(spec.repMin, min(target - 1, doneMin))
                 return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
             }
             return Evaluation(SlotState(w, target, stalls, misses, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps),
                 Outcome.Hold(w, target, HoldReason.FIRST_MISS), e1rm)
         }
-        return Evaluation(SlotState(to, target, 0, 0, sessions, false, cutFrom = w, cutReps = first), Outcome.Reduce(w, to, target), e1rm)
+        // The target, unless the estimate (this session's or the weeks' best) gives fewer there even to failure: 42.5 × 6 of
+        // 11 went to 32.5 × 11 where 9.5 were there.
+        val r = max(1, min(target, kotlin.math.floor(OneRm.rtfAt(max(e1rm, recentBest ?: 0.0), effectiveLoad(ex, to, bodyWeight)) + 1e-9).toInt()))
+        return Evaluation(SlotState(to, r, 0, 0, sessions, false, cutFrom = w, cutReps = first), Outcome.Reduce(w, to, r), e1rm)
     }
 
     /**

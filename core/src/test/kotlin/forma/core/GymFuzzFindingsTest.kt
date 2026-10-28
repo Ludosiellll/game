@@ -208,6 +208,30 @@ class GymFuzzFindingsTest {
         assertTrue(e.state.reps <= 9 && e.state.reps <= there + 1, "${e.outcome}, ${"%.1f".format(there)} there")
     }
 
+    @Test fun aReductionAsksNoMoreRepsThanTheEstimateGives() {
+        // Glute-ham raises with 42.5 kg, 11 asked, 6 done: not 32.5 × 11 where 9.5 are there to failure.
+        val ex = Catalog["glute_ham_raise"]
+        val spec = SlotSpec(ex.id, 1, 8, 9, 0, 120, SlotRole.SECONDARY)
+        val st = SlotState(42.5, 11, stalls = 1, sessions = 10)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 109.3)
+        val e = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(42.5, 6)), 109.3)
+        val there = OneRm.rtfAt(e.e1rm!!, Progression.effectiveLoad(ex, e.state.weight!!, 109.3))
+        assertTrue(e.state.reps <= there + 1, "${e.outcome}, ${"%.1f".format(there)} there")
+    }
+
+    @Test fun backAtTheWeightCutFromWithMoreRepsIsNoSecondReset() {
+        // Knee push-ups with 42.5 kg, cut from 45: 42.5 × 6 and × 3 on the third stall held 42.5; the same sets with 45 —
+        // the weight cut from — reset to 35.
+        val ex = Catalog["knee_pushup"]
+        val spec = SlotSpec(ex.id, 4, 8, 10, 2, 90, SlotRole.MAIN)
+        val st = SlotState(42.5, 6, stalls = 3, misses = 1, sessions = 39, linear = true, steady = 2, cutFrom = 45.0)
+        val p = Progression.prescribe(ex, spec, st, Phase.NORMAL, rirOffset = 1, bodyWeight = 72.2, topRir = 2)
+        fun next(w: Double) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(w, 6), DoneSet(w, 3)), 72.2)
+        val at = next(42.5)
+        val heavier = next(45.0)
+        assertTrue(atLeast(at.state, heavier.state), "${at.outcome} / ${heavier.outcome}")
+    }
+
     @Test fun aTestDayFirstTimeFindsTheWeight() {
         val ex = Catalog["incline_pushup"]
         val spec = SlotSpec(ex.id, 1, 4, 8, 2, 90, SlotRole.ACCESSORY)

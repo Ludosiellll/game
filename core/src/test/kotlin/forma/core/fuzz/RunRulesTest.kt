@@ -232,9 +232,9 @@ class RunRulesTest {
         // Faster than anybody runs (a stretch at 2:13 a km; the world's record is 2:17): at the pace the engine takes for a
         // typo, 2 % faster may fall out of what it counts — the guard, not the rule. A stretch only past belief next to the
         // form known counts, capped (it was dropped, and a faster trial gave a lower form).
-        val human = { x: RunResult -> RunPlan.held(c.w, x)?.let { it.seconds / (it.meters / 1000) >= 140.0 } != false &&
-            x.testSeconds?.let { it / (c.w.testMeters!! / 1000.0) >= 140.0 } != false }
-        if (!human(c.r) || !human(faster)) return@check null
+        val human = { x: List<RunOutcome> -> x.none { o -> o is RunOutcome.TestFromPart && o.seconds / (o.meters / 1000.0) < 140.0 ||
+            o is RunOutcome.TestTime && o.seconds / (o.meters / 1000.0) < 140.0 } }
+        if (!human(a.outcomes) || !human(b.outcomes)) return@check null
         val x = a.state.vdot ?: 0.0
         val y = b.state.vdot ?: 0.0
         // A stretch held is the best of those of half the trial and 600 m at least: faster, another one with more of the
