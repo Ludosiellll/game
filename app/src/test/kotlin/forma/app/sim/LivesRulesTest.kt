@@ -100,8 +100,10 @@ class LivesRulesTest {
      * weeks, not in a lighter week, the plan not first time) asks no lighter than the lightest of them.
      */
     private fun gymNeverLost(sim: Simulation): String? {
-        val byEx = sim.lifts.groupBy { it.exerciseId }
-        for ((ex, recs) in byEx) {
+        // By the progress the plan keeps (the exercise in its rep range): rows × 8 on one day and × 6 on another are two —
+        // compared across them, «47.5 × 8 done, 42.5 × 6 next» was the other one's plan.
+        for ((_, recs) in sim.lifts.groupBy { it.slot }) {
+            val ex = recs.first().exerciseId
             val e = Catalog[ex]
             if (e.load == LoadKind.TIMED) continue
             for ((a, b) in recs.zipWithNext()) {

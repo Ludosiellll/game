@@ -52,6 +52,9 @@ data class LiftRecord(
     val trueOneRm: Double,
     val done: List<Pair<Double, VirtualAthlete.SetResult>>,
     val outcome: Outcome?,
+    /** The progress it belongs to ([forma.core.strength.SlotSpec.key]: the exercise in its rep range — shared by the
+     *  workouts of the week that have it in that range, its own where another range has it). */
+    val slot: String = exerciseId,
 ) {
     /** Prescribed load relative to the ideal one (body weight included for body-weight lifts). */
     fun ratio(bodyWeight: Double): Double? {
@@ -160,7 +163,7 @@ class Simulation(
             athlete.adapt(ex, done, d.toEpochDay())
             records += LiftRecord(
                 d, ex.id, item.slot.role, p.calibrate, plan.deload, p.weight, p.reps, p.sets, p.rir, ideal,
-                athlete.trueOneRm(ex.id), done, null,
+                athlete.trueOneRm(ex.id), done, null, slot = item.slot.key,
             )
         }
         val avgReserve = records.flatMap { r -> r.done.map { it.second.actualRir } }.average().takeIf { !it.isNaN() } ?: 2.0

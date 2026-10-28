@@ -449,6 +449,8 @@ class GymRulesTest {
                 Progression.adjustAfterSet(l.ex, p, done.last(), l.bw, i)?.let { weight = it.weight }
             }
             val ev = Progression.evaluate(l.ex, l.spec, state, p, done, l.bw, l.novice, e1rm)
+            // FORMA_FUZZ_TRACE: the life session by session (to read a case the rule found).
+            if (System.getenv("FORMA_FUZZ_TRACE") != null) println("TRACE ${k + 1}: план ${p.weight}×${p.reps}×${p.sets} (запас ${p.rir}, «+» ${p.top}) сделано ${done.joinToString { "${it.weight}×${it.reps}/${it.rir}" }} → ${ev.outcome}, максимум ${"%.1f".format(true1)}")
             ev.e1rm?.let { e1rm = Progression.smoothE1rm(e1rm, it, l.novice) }
             val next = ev.state
             // Moved: a plan asking more of the muscles than any before it; clearly able and none such: counted — while the
@@ -458,7 +460,10 @@ class GymRulesTest {
             most = max(most, demand)
             val nextW = (next.weight ?: 0.0) + l.ex.stepAt(next.weight ?: 0.0)
             val reachable = OneRm.rtfAt(true1, Progression.effectiveLoad(l.ex, nextW, l.bw)) >= l.spec.repMin + l.spec.rir
-            easyRun = if (!p.calibrate && spare >= 3 && !moved && reachable) easyRun + 1 else 0
+            // Clearly able as the engine can see it: a set rated with two and more left, or reps past the target. Exactly the
+            // target and no rating, eight times running, is all the engine is shown (it still adds a rep each time).
+            val shown = done.any { (it.rir ?: 0) >= 2 || it.reps > p.reps }
+            easyRun = if (!p.calibrate && spare >= 3 && !moved && reachable && shown) easyRun + 1 else 0
             if (easyRun >= 8) return@check "8 тренировок подряд с запасом 3+ повтора — а план стоит на ${next.weight}×${next.reps} (тренировка ${k + 1})"
             if (k >= 6 && next.weight != null) {
                 val ideal = OneRm.loadFor(true1, next.reps, l.spec.rir)
