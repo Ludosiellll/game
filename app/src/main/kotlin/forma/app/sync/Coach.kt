@@ -61,6 +61,19 @@ class CoachException(val reason: Reason) : Exception(reason.name) {
         NOT_SET_UP("ИИ-тренер ещё не подключён: владельцу проекта нужно добавить ключ Gemini в Supabase."),
         BUSY("Сейчас слишком много вопросов — попробуй через минуту."),
         OFFLINE("Нет связи с интернетом."),
+        SLOW("Тренер не успел ответить — спроси ещё раз."),
         FAILED("Не получилось получить ответ — попробуй ещё раз."),
+    }
+
+    companion object {
+        /**
+         * Why a call to the coach failed on the way: an answer that took too long is not "no internet" (the connection was
+         * there, the model was slow), a network that is not there is.
+         */
+        fun reason(e: Throwable): Reason = when (e) {
+            is java.net.SocketTimeoutException, is io.ktor.client.plugins.HttpRequestTimeoutException -> Reason.SLOW
+            is java.io.IOException -> Reason.OFFLINE
+            else -> Reason.FAILED
+        }
     }
 }

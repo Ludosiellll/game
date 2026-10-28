@@ -131,8 +131,11 @@ Deno.serve(async (req) => {
     generationConfig: { maxOutputTokens: 2500 },
   });
   // The first key; the next one when this one fails (refused, unreachable, Google failing) or its limit is spent (429).
+  // Each try is logged (which key by its number, Google's status, how long it took): why an answer was slow or did not
+  // come is in the function's log, not guessed.
   let res: Response | null = null;
-  for (const key of keys) {
+  for (const [i, key] of keys.entries()) {
+    const started = Date.now();
     try {
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
         method: "POST",
@@ -140,9 +143,11 @@ Deno.serve(async (req) => {
         body: request,
       });
     } catch {
+      console.log(JSON.stringify({ key: i + 1, status: "unreachable", ms: Date.now() - started }));
       res = null;
       continue;
     }
+    console.log(JSON.stringify({ key: i + 1, status: res.status, ms: Date.now() - started }));
     if (res.ok) break;
   }
   if (!res) return json({ error: "provider" }, 502);

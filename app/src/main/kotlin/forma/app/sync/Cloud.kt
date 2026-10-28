@@ -78,6 +78,22 @@ data class CloudState(
 class NotSignedInException : IllegalStateException("not signed in")
 
 /**
+ * The HTTP client the coach is asked with. The model may think most of a minute before the first byte of its answer
+ * (20–46 s on a slow day, the function's log of 28.10): the socket waits as long as the whole call may take. Without it
+ * OkHttp gives up after its own 10 s of silence, and every slow answer was lost and said as "no internet".
+ */
+internal fun coachHttp() = io.ktor.client.HttpClient(OkHttp) {
+    install(io.ktor.client.plugins.HttpTimeout) {
+        requestTimeoutMillis = COACH_WAIT_MS
+        socketTimeoutMillis = COACH_WAIT_MS
+        connectTimeoutMillis = 15_000
+    }
+}
+
+/** How long an answer of the coach is waited for. */
+internal const val COACH_WAIT_MS = 90_000L
+
+/**
  * The cloud copy in Supabase: sign-in with a one-time code from email, and the sync between the phone
  * and the project's tables. Everything keeps working without it; the sync catches up when online.
  */
@@ -287,7 +303,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
     }
 
     /** Plain HTTP for the coach function: the key to the model stays on the server, the user's token goes with the call. */
-    private val http by lazy { io.ktor.client.HttpClient(OkHttp) { install(io.ktor.client.plugins.HttpTimeout) { requestTimeoutMillis = 60_000 } } }
+    private val http by lazy { coachHttp() }
 
     /**
      * The coach's answer to the last of [turns] (the person's), with [context] — the summary of the person's training and
@@ -326,7 +342,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            throw CoachException(if (e is java.io.IOException || e is HttpRequestTimeoutException) CoachException.Reason.OFFLINE else CoachException.Reason.FAILED)
+            throw CoachException(CoachException.reason(e))
         }
         return CoachReply.parse(res.status.value, res.bodyAsText())
     }
