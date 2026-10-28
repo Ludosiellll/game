@@ -615,12 +615,16 @@ object Progression {
         // The third session in a row without progress: −10 % and the range's bottom (Starting Strength's reset) — after a
         // clear miss as after a near one: a clear miss had cut less than a near one (−2.5 kg for 72.5 × 3, −7.5 for × 4).
         if (stalls >= 3) {
-            val cut = max(lowest, floorTo(lighter(ex, w, bodyWeight), step))
-            val to = floored(cut)
-            // Held up by the floor of the weeks' best to less than half the cut, it is no reset: the range's bottom at a
-            // sliver lighter asks less than the miss itself (125 × 3 of 8 reset to 122.5 × 6, where 122.5 × 3 held × 8).
-            if (to < w - 1e-9 && w - to >= (w - cut) / 2 - 1e-9) {
-                return Evaluation(SlotState(to, spec.repMin, 0, 0, sessions, false, cutFrom = w, cutReps = first), Outcome.Reset(w, to, spec.repMin), e1rm)
+            val to = floored(max(lowest, floorTo(lighter(ex, w, bodyWeight), step)))
+            // Below a weight already cut from, with the reps come up since (more than at the cut): the cut is working, no
+            // second one — a rep more in reserve had taken 185 × 7 to 165 × 5, where the session a rep worse held 185.
+            val working = cutFrom != null && w < cutFrom - 1e-9 && first > (state.cutReps ?: 0)
+            if (to < w - 1e-9 && !working) {
+                // The range's bottom — no more than the target was (below the range, 75 × 9 went to 65 × 12) nor than the
+                // estimate (this session's or the weeks' best) gives there to failure.
+                val est = max(e1rm, recentBest ?: 0.0)
+                val r = max(1, min(min(spec.repMin, target), kotlin.math.floor(OneRm.rtfAt(est, effectiveLoad(ex, to, bodyWeight)) + 1e-9).toInt()))
+                return Evaluation(SlotState(to, r, 0, 0, sessions, false, cutFrom = w, cutReps = first), Outcome.Reset(w, to, r), e1rm)
             }
             // Already the lightest load: it cannot step back, the target stays.
             if (near) return Evaluation(SlotState(w, target, stalls, 0, sessions, state.linear, cutFrom = state.cutFrom, cutReps = state.cutReps),
@@ -637,6 +641,13 @@ object Progression {
         val goal = if (big || misses >= 2) shown else floorTo(w - (w - shown) / 2, step)
         val to = floored(max(lowest, min(w - step, max(goal, floorTo(lighter(ex, w, bodyWeight), step)))))
         if (to >= w - 1e-9) {
+            // The weight cannot come down (the floor of the weeks' best): the reps do, to what the first set did, the
+            // range's bottom at the least. Held instead, the session one rep better — in reach of the range's bottom —
+            // lowered the reps where this one kept the target it missed by far.
+            if (target > spec.repMin) {
+                val r = max(spec.repMin, min(target - 1, first))
+                return Evaluation(SlotState(w, r, 0, 0, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps), Outcome.LowerReps(w, target, r), e1rm)
+            }
             return Evaluation(SlotState(w, target, stalls, misses, sessions, false, cutFrom = state.cutFrom, cutReps = state.cutReps),
                 Outcome.Hold(w, target, HoldReason.FIRST_MISS), e1rm)
         }

@@ -9,6 +9,7 @@ import forma.core.strength.Progression
 import forma.core.strength.SlotRole
 import forma.core.strength.SlotSpec
 import forma.core.strength.SlotState
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -154,6 +155,57 @@ class GymFuzzFindingsTest {
         val e = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(0.0, 7, 2)), 88.8)
         val there = OneRm.rtfAt(e.e1rm!!, Progression.effectiveLoad(ex, e.state.weight!!, 88.8))
         assertTrue(e.state.reps <= there + 1, "${e.outcome}, ${"%.1f".format(there)} there")
+    }
+
+    private fun atLeast(a: SlotState, b: SlotState) = b.weight!! > a.weight!! + 1e-9 || abs(b.weight!! - a.weight!!) < 1e-9 && b.reps >= a.reps
+
+    @Test fun aCutThatWorksIsNotCutAgain() {
+        // Leg press cut from 205 (9 reps there), 185 × 7 planned: 190 × 9 «ещё 2» then 185 × 3 held 185 (the weight is not
+        // what limits); «ещё 3» — the reps come up since the cut — reset it to 165 × 5.
+        val ex = Catalog["leg_press"]
+        val spec = SlotSpec(ex.id, 5, 5, 7, 2, 120, SlotRole.ACCESSORY)
+        val st = SlotState(185.0, 7, stalls = 2, misses = 1, sessions = 22, linear = true, steady = 1, cutFrom = 205.0, cutReps = 9)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 68.7, topRir = 2)
+        fun next(rir: Int) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(190.0, 9, rir), DoneSet(185.0, 3)), 68.7)
+        val two = next(2)
+        val three = next(3)
+        assertTrue(atLeast(two.state, three.state), "${two.outcome} / ${three.outcome}")
+    }
+
+    @Test fun aMissTheFloorHoldsUpLowersTheRepsAsAnyMiss() {
+        // Split squats 28 × 12 planned, the weeks' best holding the weight: 30 × 7 «ещё 2» then 28 × 12 kept 28 × 12; «ещё
+        // 3» on the first set — in reach of the range's bottom — lowered the reps to 10.
+        val ex = Catalog["split_squat"]
+        val spec = SlotSpec(ex.id, 4, 10, 12, 2, 90, SlotRole.ACCESSORY)
+        val st = SlotState(28.0, 12, sessions = 36, linear = true)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 110.8, topRir = 1)
+        fun next(rir: Int) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(30.0, 7, rir), DoneSet(28.0, 12)), 110.8, recentBest = 53.3)
+        val two = next(2)
+        val three = next(3)
+        assertTrue(atLeast(two.state, three.state), "${two.outcome} / ${three.outcome}")
+    }
+
+    @Test fun aHeavierSetOnTheThirdStallNeverEndsLighter() {
+        // Trap bar 125 × 7 planned, one set of 2 on the third stall, the weeks' best at 181: 125 × 2 and 127.5 × 2.
+        val ex = Catalog["trap_bar_deadlift"]
+        val spec = SlotSpec(ex.id, 1, 5, 10, 1, 180, SlotRole.MAIN)
+        val st = SlotState(125.0, 7, stalls = 2, misses = 1, sessions = 23, steady = 3)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 102.5, topRir = 1)
+        fun next(w: Double) = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(w, 2)), 102.5, recentBest = 181.2)
+        val at = next(125.0)
+        val heavier = next(127.5)
+        assertTrue(atLeast(at.state, heavier.state), "${at.outcome} / ${heavier.outcome}")
+    }
+
+    @Test fun aResetAsksNoMoreRepsThanTheTargetNorTheEstimate() {
+        // Calf raises 75 × 9 (below the range 12–19), 6 done on the third stall: not 65 × 12.
+        val ex = Catalog["calf_raise"]
+        val spec = SlotSpec(ex.id, 2, 12, 19, 3, 60, SlotRole.SECONDARY)
+        val st = SlotState(75.0, 9, stalls = 2, misses = 2, sessions = 36, steady = 2)
+        val p = Progression.prescribe(ex, spec, st, bodyWeight = 63.2, topRir = 1)
+        val e = Progression.evaluate(ex, spec, st, p, listOf(DoneSet(75.0, 6)), 63.2)
+        val there = OneRm.rtfAt(e.e1rm!!, Progression.effectiveLoad(ex, e.state.weight!!, 63.2))
+        assertTrue(e.state.reps <= 9 && e.state.reps <= there + 1, "${e.outcome}, ${"%.1f".format(there)} there")
     }
 
     @Test fun aTestDayFirstTimeFindsTheWeight() {

@@ -229,12 +229,16 @@ class RunRulesTest {
         // as it was, where one counted may rightly lower it: the rule compares two results counted.
         val notCounted = { x: List<RunOutcome> -> x.any { it is RunOutcome.TestDoubtful || it == RunOutcome.TestNotCounted || it is RunOutcome.TestStopped || it is RunOutcome.TestFromPart && it.kept } }
         if (notCounted(a.outcomes) || notCounted(b.outcomes)) return@check null
-        val known = RunPlan.withBreak(c.state, c.day).vdot
-        if (listOf(c.r, faster).any { x -> RunPlan.held(c.w, x)?.let { !RunPlan.believable(it.vdot, known) } == true }) return@check null
+        // Faster than anybody runs (a stretch at 2:13 a km; the world's record is 2:17): at the pace the engine takes for a
+        // typo, 2 % faster may fall out of what it counts — the guard, not the rule. A stretch only past belief next to the
+        // form known counts, capped (it was dropped, and a faster trial gave a lower form).
+        val human = { x: RunResult -> RunPlan.held(c.w, x)?.let { it.seconds / (it.meters / 1000) >= 140.0 } != false &&
+            x.testSeconds?.let { it / (c.w.testMeters!! / 1000.0) >= 140.0 } != false }
+        if (!human(c.r) || !human(faster)) return@check null
         val x = a.state.vdot ?: 0.0
         val y = b.state.vdot ?: 0.0
-        // A stretch held is the best of the stretches of three minutes and more: faster, the one just over three
-        // minutes may fall under them, and a longer one with the fade in it counts — up to a point lower.
+        // A stretch held is the best of those of half the trial and 600 m at least: faster, another one with more of the
+        // fade in it may be the best — up to a point lower.
         if (y < x - 1.0 - 1e-9) "контрольный на 2 % быстрее — а форма ниже больше чем на 1: $y < $x (${a.outcomes} / ${b.outcomes})" else null
     }
 
