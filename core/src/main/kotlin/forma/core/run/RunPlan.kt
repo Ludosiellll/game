@@ -77,6 +77,8 @@ data class RunState(
     val goalFails: Int = 0,
     /** The race-pace ladder is done: the next quality session is the time trial. */
     val testSoon: Boolean = false,
+    /** Hard sessions in a row run in full ahead of their paces (well quicker, or on them with effort to spare): three call a time trial. */
+    val qualityAhead: Int = 0,
     /** A test was run on this day but could not be counted (no time): the next one waits two weeks, not one. */
     val lastTrialTryDay: Long? = null,
     /** Efforts given to the last easy runs done in full (at most 8): the runner's own scale, see [rpeOffset]. */
@@ -186,6 +188,8 @@ sealed interface RunOutcome {
     @Serializable data class TestTime(val meters: Int, val seconds: Int) : RunOutcome
     /** The race-pace ladder is done: the time trial comes next. */
     @Serializable data object TestNext : RunOutcome
+    /** Hard sessions ahead of their paces, three in a row: the next hard day is a time trial. */
+    @Serializable data object AheadOfPaces : RunOutcome
     /** The time trial was as fast as the goal or faster. */
     @Serializable data object GoalReached : RunOutcome
     /** The top of the race-pace ladder went well, but the last time trial was less than three weeks ago. */
@@ -450,6 +454,9 @@ object RunPlan {
 
     /** How far above the whole time a stretch held may put a trial run to its end and faded (see [held]). */
     const val PART_OVER_WHOLE = 3.0
+
+    /** A hard session's measured pace under this share of its target is well quicker than it (see [RunState.qualityAhead]). */
+    const val FASTER = 0.97
 
     /** Tempo ladder: (repeats, work seconds, recovery seconds) at threshold pace. */
     private val TEMPO = listOf(
@@ -1180,6 +1187,25 @@ object RunPlan {
                 }
                 s = if (w.type == RunType.INTERVALS) s.copy(intervalStage = stage, intervalFails = own) else s.copy(tempoStage = stage, tempoFails = own)
                 s = s.copy(qualityCount = state.qualityCount + 1, qualityFails = fails, qualityOnPace = streak)
+                // Ahead of the paces, done in full, three hard sessions running: well quicker than them (3 % and more), or
+                // on them (within 1 %) with effort to spare. The paces lag behind the runner, and the time trial says by
+                // how much — the next hard day, from four weeks after the last one. A runner growing fast (5 points in two
+                // months) ran his reps on pace at a 6 where an 8 was asked for eight weeks, the fitness where the last
+                // trial had left it (on pace to the second is what the monthly step asks, and a second over it is noise).
+                // A session at the effort asked, or a miss, says the paces fit; one not measured or a lighter week, nothing.
+                val ahead = success && !w.cutback && target != null && r.workPace != null &&
+                    (r.workPace < target * FASTER || r.workPace <= target * 1.01 && rq <= w.targetRpe - 1)
+                val aheadRun = when {
+                    ahead -> state.qualityAhead + 1
+                    !success || r.workPace != null && !w.cutback && rq >= w.targetRpe -> 0
+                    else -> state.qualityAhead
+                }
+                if (aheadRun >= 3 && !s.testSoon && (state.lastTestDay == null || day - state.lastTestDay >= 28)) {
+                    s = s.copy(testSoon = true, qualityAhead = 0)
+                    out += RunOutcome.AheadOfPaces
+                } else {
+                    s = s.copy(qualityAhead = aheadRun)
+                }
                 // Tempo measured slow at a hard effort: this runner's threshold is below what the fitness says (a speed type,
                 // fitness from a short race) — softer by 3 s a km, up to 12; held easily on pace, firmer again.
                 if (w.type == RunType.TEMPO && r.workPace != null) {
