@@ -1267,8 +1267,11 @@ object RunPlan {
                                 out += RunOutcome.VdotChanged(state.vdot, nv)
                                 s = s.copy(vdot = nv, testSoon = false)
                                 // Judged on the unrounded fitness: 1495 m in 5:33 is faster than 1500 m in 5:35 — and on
-                                // the whole time only: a stretch at the goal's pace is not the goal run.
-                                val reached = goal != null && raw >= Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble())
+                                // the whole time only: a stretch at the goal's pace is not the goal run. The time shown
+                                // must reach it too: laps to the tenth (186,8 s) reached 800 m in 3:02 by a hair under
+                                // «820 м за 3:07», which does not — a press is not that exact, the next trial says it.
+                                val need = goal?.let { Vdot.fromRace(it.meters.toDouble(), it.seconds.toDouble()) }
+                                val reached = need != null && raw >= need && (t == null || Vdot.fromRace(tm.toDouble(), t.toDouble()) >= need)
                                 if (reached) out += RunOutcome.GoalReached
                                 // Not there yet after the whole ladder: back to the 400s to build up again — not to the
                                 // longest reps, the hardest sessions of the ladder.
