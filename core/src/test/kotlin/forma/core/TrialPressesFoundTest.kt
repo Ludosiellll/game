@@ -64,4 +64,20 @@ class TrialPressesFoundTest {
         val time = assertNotNull(t.result(0, 9).testSeconds, "${reps.map { "%.1f".format(it.seconds) }}")
         assertTrue(abs(time - real) <= 1, "time $time, run in $real")
     }
+
+    /**
+     * Seed 40730512009, case 386845 (issue #19): 1500 m on a 250 m loop, four laps at 47, one walked (89,4 s), and in the
+     * last one (61,8 s) a touch at 0,53 — 32,8 s, a quarter under the best lap of the trial. Against the usual lap (47) it
+     * passed for a lap, the line after it was 1,3 of 47 and a hair too long to be taken for the line of a touched lap, and
+     * the trial closed a lap early: 5:10 for 5:39. Nobody runs a lap a quarter under his best of the trial after walking one.
+     */
+    @Test fun aLapFarUnderTheBestIsATouch() {
+        val w = RunPlan.goalTest(RunState(walkStage = -1), RunGoal(1500, 303), 250)
+        val laps = listOf(47.0, 47.6, 46.8, 46.6, 89.4, 61.8)
+        val (t, real) = run(w, laps, strays = mapOf(6 to 0.53))
+        val reps = t.laps.filter { it.rep == 1 }
+        assertEquals(6, reps.size, "${reps.map { "%.1f".format(it.seconds) }}")
+        val time = assertNotNull(t.result(0, 9).testSeconds, "${reps.map { "%.1f".format(it.seconds) }}")
+        assertTrue(abs(time - real) <= 1, "time $time, run in $real")
+    }
 }

@@ -1134,6 +1134,10 @@ class RunTracker(
             // for them.
             val usual = if (before.isEmpty()) (plannedLap(l) ?: ref) else usual(before) * l.part
             if (l.seconds < STRAY_LAP * usual) return true
+            // Nor far under the best lap of the rep (under [STRAY_BEST] of it, with two laps or more to tell by: one may
+            // hold a wait on the line): after a lap walked the usual lap is the slow one, and a touch half way round the
+            // next lap, a quarter under the best of the trial, passed for a lap and closed it a lap early (5:10 for 5:39).
+            if (before.size >= 2 && l.seconds < STRAY_BEST * before.min() * l.part) return true
         }
         return l.seconds < SHORT_LAP * ref
     }
@@ -1426,6 +1430,9 @@ class RunTracker(
 
         /** A pressed lap of a rep under this share of the rep's own laps before it is a stray touch too (see [tooShort]). */
         const val STRAY_LAP = 0.6
+
+        /** And under this share of the best lap of the rep before it: no kick is a quarter under a runner's best lap (see [tooShort]). */
+        const val STRAY_BEST = 0.75
 
         /**
          * A rep's lap closed under this share of its laps before, and a press soon after that makes it at most
