@@ -566,7 +566,9 @@ object Progression {
                     val below = max(1, expectedNext.toInt())
                     return Evaluation(SlotState(w + inc, below, 0, 0, sessions, state.linear).keepingCut(w + inc), Outcome.AddWeight(w, w + inc, below), e1rm)
                 }
-                val cap = floorTo(w * (if (novice) 1.15 else 1.10), step)
+                // A tenth of the load moved (15 % for a novice): of the help itself (−20 × 1.1 is more help) the help came
+                // off a step a session, four sessions to where the first one had shown the lifter.
+                val cap = floorTo(toWeight(ex, effectiveLoad(ex, w, bodyWeight) * (if (novice) 1.15 else 1.10), bodyWeight), step)
                 val held = floorTo(supported(e1rm, target, p.rir), step)
                 val to = max(w + step, min(held, cap))
                 // Not even a step is there at these reps (+2.5 kg on knee raises, 7 asked where 4.8 were): no jump — the
