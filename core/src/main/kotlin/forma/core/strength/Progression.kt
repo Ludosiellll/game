@@ -533,26 +533,38 @@ object Progression {
             val linear = linearPhase(ex, spec, state, novice, w, inc)
             // One step of this exercise is a big share of the weight (light dumbbells): progress through reps first.
             val coarse = w > 0 && step / w > 0.10
+            // On such a step back to a weight already cut from, the reps done decide, a reserve said counting one at most:
+            // a rating too generous (10 × 10 «ещё 3» with one or two there) read the dumbbell fallen short at, a fifth
+            // heavier, as 12 × 7 — the lifter went up, fell short, came back and went up again, month after month. The
+            // reps are facts, the reserve a guess. The first time up the reserve said is believed (an honest «ещё 3» held
+            // back stayed a dumbbell lighter than it could for weeks). The cut is remembered while the reps climb back
+            // below it: forgotten at the first rep added, the way back was a first time up again.
+            val back = coarse && state.cutFrom != null && w + inc >= state.cutFrom - tol
+            // The cut kept on a state at [at] while [at] is still below the weight cut from (a dumbbell up on the way back,
+            // 8 → 9 after 10 fell short).
+            fun SlotState.keepingCut(at: Double) =
+                if (coarse && state.cutFrom != null && at < state.cutFrom - tol) copy(cutFrom = state.cutFrom, cutReps = state.cutReps) else this
+            val sure = if (!back) e1rm else min(e1rm, e1rmOf(ex, planned.mapIndexed { i, d -> d.copy(rir = min(assumedRir(d, i, p), TOP_RIR)) }, p, bodyWeight) ?: e1rm)
             // Below the range at the lightest load (see the short branch below): reps, not weight, come first.
             val belowAtMin = target < spec.repMin && w <= lowest + 1e-9
             if ((spare != null && spare >= 4 || reportedEasy) && !belowAtMin) {
                 if (coarse) {
                     // A big step to the next weight: take it if the estimate says enough reps are there,
                     // otherwise a few more reps with this weight.
-                    val expectedNext = OneRm.rtfAt(e1rm, effectiveLoad(ex, w + inc, bodyWeight)) - p.rir
+                    val expectedNext = OneRm.rtfAt(sure, effectiveLoad(ex, w + inc, bodyWeight)) - p.rir
                     if (expectedNext >= spec.repMin - 1) {
                         // Three reps over the target at most, as more reps go: one heavy set after a hint (8 × 4 among
                         // 5 × 4) took 5 × 4 to 6 × 10, where the same sets a step heavier went to 6 × 6.
                         val r = min(target + 3, expectedNext.toInt().coerceIn(max(1, spec.repMin - 1), max(spec.repMin, spec.repMax - 1)))
-                        return Evaluation(SlotState(w + inc, r, 0, 0, sessions, state.linear), Outcome.AddWeight(w, w + inc, r), e1rm)
+                        return Evaluation(SlotState(w + inc, r, 0, 0, sessions, state.linear).keepingCut(w + inc), Outcome.AddWeight(w, w + inc, r), e1rm)
                     }
                     val r = min(spec.repMax + OVERFLOW, target + min(3, max(2, (spare ?: 3) - 1)))
-                    if (r > target) return Evaluation(SlotState(w, r, 0, 0, sessions, state.linear), Outcome.AddReps(w, target, r), e1rm)
+                    if (r > target) return Evaluation(SlotState(w, r, 0, 0, sessions, state.linear).keepingCut(w), Outcome.AddReps(w, target, r), e1rm)
                     // The reps are at their most here and the next weight is out of the range's reach: the next weight at
                     // the reps the estimate gives there, built up from below the range — not these reps at it (5 × 23 went
                     // to 7.5 × 23, a set of 26 to failure where the estimate saw 16).
                     val below = max(1, expectedNext.toInt())
-                    return Evaluation(SlotState(w + inc, below, 0, 0, sessions, state.linear), Outcome.AddWeight(w, w + inc, below), e1rm)
+                    return Evaluation(SlotState(w + inc, below, 0, 0, sessions, state.linear).keepingCut(w + inc), Outcome.AddWeight(w, w + inc, below), e1rm)
                 }
                 val cap = floorTo(w * (if (novice) 1.15 else 1.10), step)
                 val held = floorTo(supported(e1rm, target, p.rir), step)
@@ -589,20 +601,20 @@ object Progression {
             }
             if (target < spec.repMax) {
                 val r = min(spec.repMax, target + if (plenty) 2 else 1)
-                return Evaluation(SlotState(w, r, 0, 0, sessions, state.linear), Outcome.AddReps(w, target, r), e1rm)
+                return Evaluation(SlotState(w, r, 0, 0, sessions, state.linear).keepingCut(w), Outcome.AddReps(w, target, r), e1rm)
             }
             // Top of the range: more weight, and as many reps as the estimate says are there at the new weight
             // (below the range for a coarse step: build back up from there).
             val to = w + inc
-            val expected = OneRm.rtfAt(e1rm, effectiveLoad(ex, to, bodyWeight)) - p.rir
+            val expected = OneRm.rtfAt(sure, effectiveLoad(ex, to, bodyWeight)) - p.rir
             if (expected < spec.repMin - 1 && target < spec.repMax + OVERFLOW) {
                 // The next weight is still out of reach (a big step): more reps with this one first.
-                return Evaluation(SlotState(w, target + 1, 0, 0, sessions, state.linear), Outcome.AddReps(w, target, target + 1), e1rm)
+                return Evaluation(SlotState(w, target + 1, 0, 0, sessions, state.linear).keepingCut(w), Outcome.AddReps(w, target, target + 1), e1rm)
             }
             // Not pulled up to the range's bottom: the reps at their most here, the next weight is taken at the reps the
             // estimate gives there, from below the range (2.5 × 19 went to 5 × 9 where one rep was there).
             val r = expected.toInt().coerceIn(1, max(spec.repMin, spec.repMax - 1))
-            return Evaluation(SlotState(to, r, 0, 0, sessions, state.linear), Outcome.AddWeight(w, to, r), e1rm)
+            return Evaluation(SlotState(to, r, 0, 0, sessions, state.linear).keepingCut(to), Outcome.AddWeight(w, to, r), e1rm)
         }
 
         // Short of the target — but the sets at the weight that fell short were stopped with the missing reps still in
