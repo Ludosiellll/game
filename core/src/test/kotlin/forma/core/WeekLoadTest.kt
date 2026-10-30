@@ -48,13 +48,13 @@ class WeekLoadTest {
         val load = WeekLoad.of(w, templates)
         val text = load.warnings.joinToString(" | ")
         assertTrue(load.tooMuch)
-        listOf("10 тренировок", "Ни одного дня отдыха", "тяжёлых дней из 7", "Ноги в зале в пн — накануне тяжёлого бега в вт", "Ноги в зале в пт — накануне тяжёлого бега в сб", "подряд")
+        listOf("10 тренировок", "Нет ни одного дня отдыха", "Тяжёлых дней 6 из 7", "Ноги в пн, а в вт тяжёлый бег", "Ноги в пт, а в сб тяжёлый бег", "подряд")
             .forEach { assertTrue(it in text, "«$it» in: $text") }
     }
 
     @Test fun legsAndAHardRunOnOneDayIsSaid() {
         val w = week(2 to listOf(lift(lower), hard), 5 to listOf(lift(upper)))
-        assertTrue(WeekLoad.of(w, templates).warnings.any { "в один день" in it })
+        assertTrue(WeekLoad.of(w, templates).warnings.any { "и ноги, и тяжёлый бег" in it })
         // The upper body on a hard run's eve is fine.
         val ok = week(1 to listOf(lift(upper)), 2 to listOf(hard), 5 to listOf(lift(lower)))
         assertTrue(WeekLoad.of(ok, templates).warnings.isEmpty(), "${WeekLoad.of(ok, templates).warnings}")

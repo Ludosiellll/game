@@ -25,7 +25,75 @@ data class FriendMe(
     val code: String = "",
     @SerialName("share_activity") val shareActivity: Boolean = true,
     @SerialName("share_body") val shareBody: Boolean = false,
+    /** «Показывать меня всем»: in everybody's list, the progress open to anyone signed in. */
+    val listed: Boolean = false,
 )
+
+/** Someone in the list of people open to all: who, how active, what they train for. */
+@Serializable
+data class Person(
+    @SerialName("user_id") val userId: String,
+    val name: String,
+    val friend: Boolean = false,
+    @SerialName("last_day") val lastDay: String? = null,
+    /** Workouts in the last 30 days. */
+    val month: Int = 0,
+    val aim: JsonElement? = null,
+) {
+    fun aim(): forma.core.model.Aim? = aim.decode(forma.core.model.Aim.serializer())
+}
+
+/** A set of a person's finished workout, for their strength over time. */
+@Serializable
+data class PersonSet(val day: String, @SerialName("exercise_id") val exerciseId: String, val weight: Double, val reps: Int) {
+    val date: LocalDate get() = LocalDate.parse(day.take(10))
+}
+
+/** A person's finished run, for their running over time (no track). */
+@Serializable
+data class PersonRun(
+    val day: String,
+    val type: String? = null,
+    @SerialName("distance_m") val distanceM: Double? = null,
+    @SerialName("moving_sec") val movingSec: Int? = null,
+    @SerialName("avg_pace") val avgPace: Double? = null,
+    @SerialName("work_pace") val workPace: Double? = null,
+    val vdot: Double? = null,
+) {
+    val date: LocalDate get() = LocalDate.parse(day.take(10))
+}
+
+/** A message of a conversation; [fromMe]: written by the caller. */
+@Serializable
+data class Message(
+    val id: Long,
+    @SerialName("from_me") val fromMe: Boolean,
+    val body: String,
+    @SerialName("sent_at") val sentAt: String,
+    @SerialName("read_at") val readAt: String? = null,
+)
+
+/** A conversation of the caller: the other person, the last message, how many are unread, whether one can write. */
+@Serializable
+data class Conversation(
+    @SerialName("user_id") val userId: String,
+    val name: String,
+    val last: String = "",
+    @SerialName("last_at") val lastAt: String? = null,
+    @SerialName("from_me") val fromMe: Boolean = false,
+    val unread: Int = 0,
+    @SerialName("can_write") val canWrite: Boolean = true,
+    val blocked: Boolean = false,
+)
+
+@Serializable
+data class UnreadFrom(@SerialName("user_id") val userId: String, val name: String, val count: Int, @SerialName("last_id") val lastId: Long, val last: String? = null)
+
+/** Unread messages to the caller: the badge and the notification. */
+@Serializable
+data class Unread(val count: Int = 0, val from: List<UnreadFrom> = emptyList()) {
+    val lastId: Long get() = from.maxOfOrNull { it.lastId } ?: 0
+}
 
 /** A friend or a request; [state] is friend, incoming or outgoing. */
 @Serializable
@@ -108,8 +176,20 @@ data class FriendProgress(
     val program: JsonElement? = null,
     val custom: JsonElement? = null,
     val body: List<FriendBody>? = null,
+    val listed: Boolean = false,
+    val friend: Boolean = true,
+    @SerialName("can_write") val canWrite: Boolean = false,
+    /** A year of sets and runs, for the charts (person_progress). */
+    val sets: List<PersonSet> = emptyList(),
+    val runs: List<PersonRun> = emptyList(),
+    @SerialName("run_goal") val runGoal: JsonElement? = null,
+    @SerialName("lift_goal") val liftGoal: JsonElement? = null,
 ) {
     fun program(): Program? = program.decode(Program.serializer())
+
+    fun runGoal(): forma.core.model.RunGoal? = runGoal.decode(forma.core.model.RunGoal.serializer())
+
+    fun liftGoal(): forma.core.model.LiftGoal? = liftGoal.decode(forma.core.model.LiftGoal.serializer())
 
     fun customExercises(): List<Exercise> = custom.decode(ListSerializer(Exercise.serializer())).orEmpty()
 }
@@ -129,6 +209,17 @@ interface FriendsApi {
     suspend fun list(): List<Friend>
     suspend fun feed(before: String? = null, limit: Int = 30, userId: String? = null): List<FeedItem>
     suspend fun progress(userId: String): FriendProgress
+
+    // People open to all and messages (the people migration). Defaults for fakes that do not need them.
+    suspend fun setListed(listed: Boolean): FriendMe = throw UnsupportedOperationException()
+    suspend fun people(): List<Person> = throw UnsupportedOperationException()
+    suspend fun personFeed(userId: String, before: String? = null, limit: Int = 30): List<FeedItem> = throw UnsupportedOperationException()
+    suspend fun send(userId: String, body: String): Message = throw UnsupportedOperationException()
+    suspend fun conversations(): List<Conversation> = throw UnsupportedOperationException()
+    suspend fun messages(userId: String, before: Long? = null, limit: Int = 50): List<Message> = throw UnsupportedOperationException()
+    suspend fun markRead(userId: String): Int = throw UnsupportedOperationException()
+    suspend fun unread(): Unread = throw UnsupportedOperationException()
+    suspend fun block(userId: String, block: Boolean): Unit = throw UnsupportedOperationException()
 }
 
 /** [ensureSession] makes sure a signed-in session with a fresh token is there before each call. */
@@ -170,8 +261,46 @@ class SupabaseFriendsApi(private val client: SupabaseClient, private val ensureS
         }),
     )
 
+    // A friend's or a listed person's page: person_progress checks either.
     override suspend fun progress(userId: String): FriendProgress =
-        AppJson.decodeFromString(FriendProgress.serializer(), call("friend_progress", buildJsonObject { put("p_user", userId) }))
+        AppJson.decodeFromString(FriendProgress.serializer(), call("person_progress", buildJsonObject { put("p_user", userId) }))
+
+    override suspend fun setListed(listed: Boolean): FriendMe =
+        AppJson.decodeFromString(FriendMe.serializer(), call("set_listed", buildJsonObject { put("p_listed", listed) }))
+
+    override suspend fun people(): List<Person> = AppJson.decodeFromString(ListSerializer(Person.serializer()), call("people"))
+
+    override suspend fun personFeed(userId: String, before: String?, limit: Int): List<FeedItem> = AppJson.decodeFromString(
+        ListSerializer(FeedItem.serializer()),
+        call("person_feed", buildJsonObject {
+            put("p_user", userId)
+            if (before != null) put("p_before", before)
+            put("p_limit", limit)
+        }),
+    )
+
+    override suspend fun send(userId: String, body: String): Message = AppJson.decodeFromString(
+        Message.serializer(), call("send_message", buildJsonObject { put("p_to", userId); put("p_body", body) }),
+    )
+
+    override suspend fun conversations(): List<Conversation> = AppJson.decodeFromString(ListSerializer(Conversation.serializer()), call("conversations"))
+
+    override suspend fun messages(userId: String, before: Long?, limit: Int): List<Message> = AppJson.decodeFromString(
+        ListSerializer(Message.serializer()),
+        call("messages_with", buildJsonObject {
+            put("p_user", userId)
+            if (before != null) put("p_before", before)
+            put("p_limit", limit)
+        }),
+    )
+
+    override suspend fun markRead(userId: String): Int = call("mark_read", buildJsonObject { put("p_user", userId) }).trim().toIntOrNull() ?: 0
+
+    override suspend fun unread(): Unread = AppJson.decodeFromString(Unread.serializer(), call("unread"))
+
+    override suspend fun block(userId: String, block: Boolean) {
+        call("block_user", buildJsonObject { put("p_user", userId); put("p_block", block) })
+    }
 }
 
 /** Human text for a failed friends call. */
@@ -180,6 +309,10 @@ fun describeFriends(e: Throwable): String = when {
     e is io.github.jan.supabase.exceptions.RestException && (e.statusCode == 404 || e.error.contains("PGRST202")) ->
         "Друзья ещё не включены на сервере: нужно применить миграцию friends в проекте Supabase."
     e is io.github.jan.supabase.exceptions.RestException && e.error.contains("not friends") -> "Вы больше не друзья."
+    e is io.github.jan.supabase.exceptions.RestException && e.error.contains("not visible") -> "Этот человек больше не открыт для всех."
+    e is io.github.jan.supabase.exceptions.RestException && e.error.contains("cannot write") -> "Написать нельзя: человек закрыл профиль или заблокировал переписку."
+    e is io.github.jan.supabase.exceptions.RestException && e.error.contains("too many messages") -> "Слишком много сообщений подряд. Подожди минуту."
+    e is io.github.jan.supabase.exceptions.RestException && e.error.contains("bad message") -> "Сообщение пустое или длиннее 1000 знаков."
     e is io.github.jan.supabase.exceptions.HttpRequestException || e is io.ktor.client.plugins.HttpRequestTimeoutException || e is java.io.IOException ->
         "Нет связи с сервером: ничего не изменилось. Проверь интернет и попробуй ещё раз."
     else -> Cloud.describe(e)

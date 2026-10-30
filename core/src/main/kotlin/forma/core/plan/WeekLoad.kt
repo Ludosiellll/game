@@ -33,17 +33,17 @@ object WeekLoad {
         val rest = days.count { sessionsOn(week, it).isEmpty() }
         val hardDays = days.filter { hard(week, templates, it) }
         val warnings = mutableListOf<String>()
-        if (sessions > MAX_SESSIONS) warnings += "$sessions тренировок в неделю — это много."
-        if (rest == 0 && sessions > 0) warnings += "Ни одного дня отдыха за неделю."
-        if (hardDays.size > MAX_HARD_DAYS) warnings += "${hardDays.size} тяжёлых дней из 7 — мало времени восстановиться."
+        if (sessions > MAX_SESSIONS) warnings += "$sessions тренировок в неделю, это много."
+        if (rest == 0 && sessions > 0) warnings += "Нет ни одного дня отдыха."
+        if (hardDays.size > MAX_HARD_DAYS) warnings += "Тяжёлых дней ${hardDays.size} из 7, восстановиться некогда."
         // Three hard days in a row, the week around (Sunday then Monday).
         val row = days.firstOrNull { d -> (0..2).all { hard(week, templates, (d - 1 + it) % 7 + 1) } }
         if (row != null && hardDays.size < 7) warnings += "Три тяжёлых дня подряд: ${(0..2).joinToString(", ") { NAMES[(row - 1 + it) % 7] }}."
         for (d in days) {
             val next = d % 7 + 1
             val legsToday = sessionsOn(week, d).any { legs(it, templates) }
-            if (legsToday && sessionsOn(week, d).any { it.isHardRun }) warnings += "В ${NAMES[d - 1]} ноги в зале и тяжёлый бег в один день."
-            if (legsToday && sessionsOn(week, next).any { it.isHardRun }) warnings += "Ноги в зале в ${NAMES[d - 1]} — накануне тяжёлого бега в ${NAMES[next - 1]}."
+            if (legsToday && sessionsOn(week, d).any { it.isHardRun }) warnings += "В ${NAMES[d - 1]} и ноги, и тяжёлый бег."
+            if (legsToday && sessionsOn(week, next).any { it.isHardRun }) warnings += "Ноги в ${NAMES[d - 1]}, а в ${NAMES[next - 1]} тяжёлый бег."
         }
         return Load(sessions, rest, hardDays.size, warnings)
     }

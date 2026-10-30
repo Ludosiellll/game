@@ -2,6 +2,7 @@ package forma.app.ui.screens
 
 import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import forma.app.ui.components.Chip
@@ -70,6 +71,9 @@ data class FriendsUi(
     val friends: List<Friend> = emptyList(),
     val feed: List<FeedItem> = emptyList(),
     val fresh: Boolean = false,
+    /** Everybody open to all (the caller aside). */
+    val people: List<forma.app.sync.Person> = emptyList(),
+    val conversations: List<forma.app.sync.Conversation> = emptyList(),
 )
 
 /**
@@ -83,7 +87,12 @@ suspend fun loadFriends(api: FriendsApi, localName: String?, message: String? = 
     val blank = me.name.isBlank()
     val name = localName?.trim().orEmpty()
     if (blank && name.isNotEmpty()) me = api.me(name)
-    return FriendsUi(signedIn = true, me = me, friends = api.list(), feed = api.feed(limit = 30), message = message, fresh = blank && !explained)
+    // People and messages from the people migration: a server without it still shows friends.
+    return FriendsUi(
+        signedIn = true, me = me, friends = api.list(), feed = api.feed(limit = 30), message = message, fresh = blank && !explained,
+        people = runCatching { api.people() }.getOrDefault(emptyList()),
+        conversations = runCatching { api.conversations() }.getOrDefault(emptyList()),
+    )
 }
 
 @Composable
@@ -97,6 +106,11 @@ fun FriendsScreen() {
     val context = LocalContext.current
     var ui by remember { mutableStateOf(FriendsUi(signedIn = cloudState?.email != null, loading = true)) }
     var ask by remember { mutableStateOf<Pair<FeedItem, List<String>>?>(null) }
+    // Opened from a notification about messages: the conversations.
+    var section by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(if (forma.app.ui.Opens.pending.value == forma.app.sync.MessageNotice.OPEN_MESSAGES) 2 else 0)
+    }
+    LaunchedEffect(Unit) { forma.app.ui.Opens.pending.value = null }
 
     suspend fun reload() {
         if (api == null || cloudState?.email == null) {
@@ -148,6 +162,13 @@ fun FriendsScreen() {
         onOpen = { f -> nav.push(Screen.Friend(f.userId, f.name)) },
         onCopy = { item -> scope.launch { copyAsked(api, repo, nav, item, { ask = item to it }) { m -> ui = ui.copy(message = m) } } },
         onBack = { nav.back() },
+        section = section,
+        onSection = { section = it },
+        onListed = { on ->
+            scope.launch { runCatching { api?.setListed(on) }.onSuccess { m -> ui = ui.copy(me = m ?: ui.me, error = null) }.onFailure { ui = ui.copy(error = describeFriends(it)) } }
+        },
+        onPerson = { p -> nav.push(Screen.Friend(p.userId, p.name)) },
+        onChat = { c -> nav.push(Screen.Chat(c.userId, c.name)) },
     )
     ask?.let { (item, names) ->
         LeftOutDialog(names, onCancel = { ask = null }) {
@@ -225,20 +246,35 @@ fun FriendsContent(
     onOpen: (Friend) -> Unit,
     onCopy: (FeedItem) -> Unit,
     onBack: () -> Unit,
+    section: Int = 0,
+    onSection: (Int) -> Unit = {},
+    onListed: (Boolean) -> Unit = {},
+    onPerson: (forma.app.sync.Person) -> Unit = {},
+    onChat: (forma.app.sync.Conversation) -> Unit = {},
 ) {
     var code by remember { mutableStateOf("") }
     ScrollScreen {
-        TopBar("Друзья", "Прогресс и тренировки друзей", onBack = onBack)
+        TopBar("Люди", "Открытые профили, друзья и сообщения", onBack = onBack)
         if (!ui.signedIn) {
             FCard(gap = 10.dp) {
-                Text("Друзья работают через облако", style = T.title(20.sp))
-                Text("Войди или создай аккаунт. Тогда друзья смогут добавить тебя по коду, а ты увидишь их тренировки и прогресс.", style = T.secondary(14.sp))
+                Text("Люди и друзья работают через облако", style = T.title(20.sp))
+                Text("Войди или создай аккаунт. Тогда ты увидишь тех, кто открыл профиль, сможешь добавить друзей по коду и писать им.", style = T.secondary(14.sp))
                 PrimaryButton("Войти в облако", onSignIn, Modifier.fillMaxWidth())
             }
             return@ScrollScreen
         }
         ui.error?.let { Banner(it, F.c.warn) }
         ui.message?.let { Text(it, style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.accent)) }
+        val unread = ui.conversations.sumOf { it.unread }
+        forma.app.ui.components.Segmented(listOf("Люди", "Друзья", if (unread > 0) "Сообщения · $unread" else "Сообщения"), section, onSection)
+        if (section == 0) {
+            PeopleSection(ui, onListed, onPerson)
+            return@ScrollScreen
+        }
+        if (section == 2) {
+            MessagesSection(ui, onChat)
+            return@ScrollScreen
+        }
 
         val me = ui.me
         if (me != null && ui.fresh && me.shareActivity) {
@@ -328,6 +364,58 @@ fun FriendsContent(
     }
 }
 
+/** Everybody open to all, and the switch to be one of them. */
+@Composable
+private fun PeopleSection(ui: FriendsUi, onListed: (Boolean) -> Unit, onPerson: (forma.app.sync.Person) -> Unit) {
+    val me = ui.me
+    if (me != null) {
+        FCard(gap = 6.dp) {
+            Toggle(
+                "Показывать меня всем",
+                if (me.listed) "Тебя видят все: тренировки, прогресс, программа. Могут написать"
+                else "Сейчас тебя видят только друзья",
+                me.listed,
+            ) { onListed(it) }
+            Text("Маршруты, возраст, рост, пульс и заметки не видит никто. Вес тела виден, только если включён «Вес тела» для друзей.", style = T.secondary(12.sp))
+        }
+    }
+    if (ui.people.isEmpty()) {
+        if (!ui.loading) Text("Пока в списке никого нет.", style = T.secondary(14.sp))
+        return
+    }
+    FCard(gap = 0.dp) {
+        ui.people.forEachIndexed { i, p ->
+            if (i > 0) Hairline()
+            val line = listOfNotNull(
+                p.aim()?.let { aimTitle(it) },
+                p.lastDay?.let { "тренировка ${relativeDay(LocalDate.parse(it.take(10)))}" },
+                p.month.takeIf { it > 0 }?.let { "$it за месяц" },
+            ).joinToString(" · ").ifEmpty { "Пока без тренировок" }
+            forma.app.ui.components.ListRow(p.name + if (p.friend) " · друг" else "", line, icon = Ic.user, iconTint = F.c.accent) { onPerson(p) }
+        }
+    }
+}
+
+/** The conversations, latest first, with how many are unread. */
+@Composable
+private fun MessagesSection(ui: FriendsUi, onChat: (forma.app.sync.Conversation) -> Unit) {
+    if (ui.conversations.isEmpty()) {
+        if (!ui.loading) Text("Сообщений пока нет. Написать можно со страницы человека.", style = T.secondary(14.sp))
+        return
+    }
+    FCard(gap = 0.dp) {
+        ui.conversations.forEachIndexed { i, c ->
+            if (i > 0) Hairline()
+            forma.app.ui.components.ListRow(
+                c.name + if (c.blocked) " · заблокирован" else "",
+                (if (c.fromMe) "Ты: " else "") + c.last.lineSequence().firstOrNull().orEmpty().take(80),
+                trailing = if (c.unread > 0) "${c.unread} новых" else c.lastAt?.let { messageTime(it) },
+                icon = Ic.chat, iconTint = if (c.unread > 0) F.c.accent else F.c.text2,
+            ) { onChat(c) }
+        }
+    }
+}
+
 /** "сегодня", "вчера", "3 дня назад", "12 октября". */
 fun relativeDay(d: LocalDate, today: LocalDate = LocalDate.now()): String {
     val days = today.toEpochDay() - d.toEpochDay()
@@ -395,16 +483,16 @@ fun FriendScreen(userId: String, name: String) {
     var ask by remember { mutableStateOf<Pair<FeedItem, List<String>>?>(null) }
     LaunchedEffect(userId) {
         if (api == null) return@LaunchedEffect
-        runCatching { progress = api.progress(userId); items = api.feed(limit = 20, userId = userId) }.onFailure { error = describeFriends(it) }
+        runCatching { progress = api.progress(userId); items = api.personFeed(userId, limit = 20) }.onFailure { error = describeFriends(it) }
     }
     FriendContent(
         name, progress, items, error, message,
-        onCopyProgram = { p, part ->
+        onCopyProgram = { p, part, ease ->
             scope.launch {
                 val program = p.program()
                 when {
-                    program == null -> message = "Не получается открыть программу друга. Пусть друг обновит приложение."
-                    !repo.copyProgram(program, p.name, p.customExercises(), part) ->
+                    program == null -> message = "Не получается открыть программу. Пусть ${p.name} обновит приложение."
+                    !repo.copyProgram(program, p.name, p.customExercises(), part, ease) ->
                         message = "Эту программу не получилось взять: в ней нет упражнений, которые есть на этом телефоне."
                     else -> nav.tab(Screen.Plan)
                 }
@@ -419,6 +507,8 @@ fun FriendScreen(userId: String, name: String) {
             }
         },
         onBack = { nav.back() },
+        preview = { program, part, ease -> repo.copyPreview(program, part, ease) },
+        onWrite = { nav.push(Screen.Chat(userId, progress?.name ?: name)) },
     )
     ask?.let { (item, names) ->
         LeftOutDialog(names, onCancel = { ask = null }) {
@@ -435,19 +525,23 @@ fun FriendContent(
     items: List<FeedItem>,
     error: String?,
     message: String?,
-    onCopyProgram: (FriendProgress, forma.app.data.CopyPart) -> Unit,
+    onCopyProgram: (FriendProgress, forma.app.data.CopyPart, Set<forma.app.data.Ease>) -> Unit,
     onCopy: (FeedItem) -> Unit,
     onRemove: () -> Unit,
     onBack: () -> Unit,
+    preview: suspend (forma.core.plan.Program, forma.app.data.CopyPart, Set<forma.app.data.Ease>) -> forma.core.plan.Program? = { _, _, _ -> null },
+    onWrite: () -> Unit = {},
 ) {
     var confirmProgram by remember { mutableStateOf(false) }
     var part by remember { mutableStateOf(forma.app.data.CopyPart.ALL) }
+    var ease by remember { mutableStateOf(emptySet<forma.app.data.Ease>()) }
     var confirmRemove by remember { mutableStateOf(false) }
     ScrollScreen {
-        TopBar(progress?.name ?: name, "Друг", onBack = onBack)
+        TopBar(progress?.name ?: name, if (progress?.friend != false) "Друг" else "Открытый профиль", onBack = onBack)
         error?.let { Banner(it, F.c.warn) }
         message?.let { Text(it, style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.accent)) }
         val p = progress
+        if (p?.canWrite == true) PrimaryButton("Написать", onWrite, Modifier.fillMaxWidth())
         if (p != null && !p.shared) Text("${p.name} пока не делится тренировками.", style = T.secondary(15.sp))
         if (p != null && p.shared) {
             // Sessions per week over the last eight weeks.
@@ -479,6 +573,7 @@ fun FriendContent(
                     )
                 }
             }
+            PersonStats(p)
             val program = p.program()
             if (program != null) {
                 FCard(gap = 8.dp) {
@@ -498,25 +593,32 @@ fun FriendContent(
             SectionLabel("Последние тренировки")
             items.forEach { FeedCard(it, showName = false, onCopy = { onCopy(it) }) }
         }
-        GhostButton("Удалить из друзей", { confirmRemove = true }, Modifier.fillMaxWidth())
+        if (progress?.friend != false) GhostButton("Удалить из друзей", { confirmRemove = true }, Modifier.fillMaxWidth())
     }
     if (confirmProgram && progress != null) {
-        // What of it to take: with the gym and running both in it, all, the gym alone or running alone.
+        // What of it to take: all of it, their gym with one's own running, or one's own gym with their running.
         val friend = progress.program()
         val lifts = friend?.week?.days?.any { d -> d.sessions.any { it.kind == SessionKind.LIFT } } == true
         val runs = friend?.week?.days?.any { d -> d.sessions.any { it.isRun } } == true
         val parts = buildList {
-            if (lifts && runs) add(forma.app.data.CopyPart.ALL to "Зал и бег")
-            if (lifts) add(forma.app.data.CopyPart.GYM to "Только зал")
-            if (runs) add(forma.app.data.CopyPart.RUN to "Только бег")
+            if (lifts && runs) add(forma.app.data.CopyPart.ALL to "Всё")
+            if (lifts) add(forma.app.data.CopyPart.GYM to "Зал")
+            if (runs) add(forma.app.data.CopyPart.RUN to "Бег")
         }
         val chosen = parts.firstOrNull { it.first == part }?.first ?: parts.firstOrNull()?.first ?: forma.app.data.CopyPart.ALL
+        // The week it makes, and what it asks: said before «Скопировать», lighter if wanted.
+        var made by remember { mutableStateOf<forma.core.plan.Program?>(null) }
+        LaunchedEffect(chosen, ease, friend) { made = friend?.let { preview(it, chosen, ease) } }
+        val load = made?.let { forma.core.plan.WeekLoad.of(it.week, it.templates) }
         AlertDialog(
             onDismissRequest = { confirmProgram = false },
             containerColor = F.c.surface,
             title = { Text("Тренироваться по программе ${progress.name}?", style = T.title(20.sp)) },
             text = {
-                androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                androidx.compose.foundation.layout.Column(
+                    Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     if (parts.size > 1) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             parts.forEach { (p, label) -> Chip(label, chosen == p, { part = p }, Modifier.weight(1f), minWidth = 0.dp) }
@@ -524,16 +626,36 @@ fun FriendContent(
                     }
                     Text(
                         when (chosen) {
-                            forma.app.data.CopyPart.ALL -> "Твоя программа сменится на программу друга: те же дни, тренировки и упражнения, зал и бег."
-                            forma.app.data.CopyPart.GYM -> "Возьмёшь только зал: дни, тренировки и упражнения ${progress.name}. Бега в неделе не будет."
-                            forma.app.data.CopyPart.RUN -> "Возьмёшь только бег: дни и виды пробежек ${progress.name}. Темпы будут по твоей форме. Зала в неделе не будет."
-                        } + (if (chosen != forma.app.data.CopyPart.RUN) " Веса останутся твои. Для новых упражнений вес подберём на первой тренировке." else "") +
-                            " Свою программу можно вернуть в «Цель, дни и данные» кнопкой «Вернуть мою программу».",
+                            forma.app.data.CopyPart.ALL -> "Возьмёшь всю программу ${progress.name}: дни, зал и бег."
+                            forma.app.data.CopyPart.GYM -> "Возьмёшь зал ${progress.name}. Твой бег останется."
+                            forma.app.data.CopyPart.RUN -> "Возьмёшь бег ${progress.name}, темп будет под тебя. Твой зал останется."
+                        } + (if (chosen != forma.app.data.CopyPart.RUN) " Веса останутся твои." else ""),
                         style = T.secondary(14.sp),
                     )
+                    made?.let { w ->
+                        Text(
+                            "Неделя: " + (1..7).filter { w.week.on(it).isNotEmpty() }.joinToString(" · ") { d ->
+                                DAY_SHORT[d - 1] + " " + w.week.on(d).joinToString("+") { sessionTitle(it, w) }
+                            },
+                            style = T.body(13.sp),
+                        )
+                    }
+                    if (load != null && load.tooMuch) {
+                        Text("Нагрузка большая:", style = T.body(14.sp, FontWeight.Bold).copy(color = F.c.warn))
+                        load.warnings.forEach { Text("• $it", style = T.body(13.sp).copy(color = F.c.warn)) }
+                    }
+                    if (load != null && (load.tooMuch || ease.isNotEmpty())) {
+                        Toggle("Одну тяжёлую пробежку сделать лёгкой", "Ту, что после ног, или последнюю", forma.app.data.Ease.RUN in ease) {
+                            ease = if (it) ease + forma.app.data.Ease.RUN else ease - forma.app.data.Ease.RUN
+                        }
+                        Toggle("Убрать один день зала", "День ног перед тяжёлым бегом или последний", forma.app.data.Ease.LIFT in ease) {
+                            ease = if (it) ease + forma.app.data.Ease.LIFT else ease - forma.app.data.Ease.LIFT
+                        }
+                    }
+                    Text("Свою программу можно вернуть: «Цель, дни и данные», «Вернуть мою программу».", style = T.secondary(13.sp))
                 }
             },
-            confirmButton = { TextButton({ confirmProgram = false; onCopyProgram(progress, chosen) }) { Text("Скопировать", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
+            confirmButton = { TextButton({ confirmProgram = false; onCopyProgram(progress, chosen, ease) }) { Text("Скопировать", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
             dismissButton = { TextButton({ confirmProgram = false }) { Text("Отмена", style = T.body(15.sp)) } },
         )
     }
@@ -546,5 +668,62 @@ fun FriendContent(
             confirmButton = { TextButton({ confirmRemove = false; onRemove() }) { Text("Удалить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.bad)) } },
             dismissButton = { TextButton({ confirmRemove = false }) { Text("Отмена", style = T.body(15.sp)) } },
         )
+    }
+}
+
+/**
+ * A person's progress over the year from their sets and runs: strength by exercise (the estimated max, best of each
+ * day), running fitness and kilometres by week, their goals.
+ */
+@Composable
+fun PersonStats(p: FriendProgress, today: LocalDate = LocalDate.now()) {
+    val strength = p.sets.filter { it.weight > 0 && it.reps in 1..15 }.groupBy { it.exerciseId }
+        .mapValues { (_, sets) -> sets.groupBy { it.date }.toSortedMap().values.map { day -> day.maxOf { forma.core.strength.OneRm.estimate(it.weight, it.reps) } } }
+        .filterValues { it.isNotEmpty() }
+        .entries.sortedByDescending { it.value.size }.take(5)
+    if (strength.isNotEmpty()) {
+        FCard(gap = 6.dp) {
+            SectionLabel("Сила за год")
+            Text("Сколько поднимет на 1 раз", style = T.secondary(12.sp))
+            strength.forEach { (id, values) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(Catalog.find(id)?.name ?: id, style = T.body(14.sp), modifier = Modifier.weight(1f).padding(end = 8.dp), maxLines = 2)
+                    forma.app.ui.components.Sparkline(values, F.c.strength)
+                    val change = values.last() - values.first()
+                    NumText(
+                        "${Ru.kg((values.last() * 2).roundToInt() / 2.0)} кг" + if (values.size >= 2 && kotlin.math.abs(change) >= 0.5) " (${if (change > 0) "+" else "−"}${Ru.kg((kotlin.math.abs(change) * 2).roundToInt() / 2.0)})" else "",
+                        style = T.number(14.sp, FontWeight.Bold), modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+        }
+    }
+    val runs = p.runs
+    if (runs.isNotEmpty()) {
+        val monday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val weeks = (11 downTo 0).map { monday.minusWeeks(it.toLong()) }
+        val km = weeks.map { w -> runs.filter { r -> !r.date.isBefore(w) && r.date.isBefore(w.plusWeeks(1)) }.sumOf { (it.distanceM ?: 0.0) / 1000 } }
+        val vdots = runs.mapNotNull { it.vdot }
+        FCard(gap = 6.dp) {
+            SectionLabel("Бег")
+            Text("${Ru.one(km.sum())} км за 12 недель · ${Ru.one(km.last())} км на этой неделе", style = T.title(18.sp))
+            BarChart(km, F.c.endurance.copy(alpha = 0.5f), highlight = F.c.endurance, description = "Километры бега по неделям")
+            if (vdots.size >= 2) {
+                Text("Форма бега", style = T.body(14.sp, FontWeight.SemiBold))
+                forma.app.ui.components.LineChart(listOf(forma.app.ui.components.Series(vdots, F.c.endurance, fill = true)), height = 110.dp, description = "Форма бега по пробежкам")
+            }
+        }
+    }
+    val runGoal = p.runGoal()
+    val liftGoal = p.liftGoal()
+    if (runGoal != null || liftGoal != null) {
+        FCard(gap = 4.dp) {
+            SectionLabel("Цели")
+            runGoal?.let { g ->
+                val now = p.vdot?.let { v -> " · сейчас ≈ ${Ru.clock(Vdot.predictSeconds(v, g.meters.toDouble()).roundToInt())}" }.orEmpty()
+                Text("Бег: ${g.meters} м за ${Ru.clock(g.seconds)}$now", style = T.body(14.sp))
+            }
+            liftGoal?.let { g -> Text("Зал: ${Catalog.find(g.exerciseId)?.name ?: g.exerciseId} ${Ru.kg(g.kg)} кг" + if (g.reps > 1) " на ${g.reps}" else "", style = T.body(14.sp)) }
+        }
     }
 }

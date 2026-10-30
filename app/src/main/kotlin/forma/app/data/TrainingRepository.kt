@@ -1692,51 +1692,62 @@ class TrainingRepository(
      * and progress per exercise. The profile follows (aim and days). The own program before it is put aside with its
      * edits: [restoreOwnProgram] brings it back. Of the friend's own exercises only those in the program are taken over.
      */
-    suspend fun copyProgram(program: Program, from: String, exercises: List<Exercise> = emptyList(), part: CopyPart = CopyPart.ALL): Boolean {
+    /** One's own program as it was before any copy (a copy puts it aside): the own side of a mixed copy. */
+    private suspend fun ownProgramNow(): Program? = store.settingsNow().ownPlan?.program ?: store.programNow()?.takeIf { it.copiedFrom == null }
+
+    /**
+     * What a copy of [program] would make of the week (see [ProgramMix]), before it is made: the week and its workouts,
+     * for the load to be said ([forma.core.plan.WeekLoad]). Null without a program of one's own.
+     */
+    suspend fun copyPreview(program: Program, part: CopyPart, ease: Set<Ease> = emptySet()): Program? =
+        ownProgramNow()?.let { ProgramMix.mix(it, program, part, ease) }
+
+    suspend fun copyProgram(
+        program: Program, from: String, exercises: List<Exercise> = emptyList(), part: CopyPart = CopyPart.ALL, ease: Set<Ease> = emptySet(),
+    ): Boolean {
         val profile = store.profileNow() ?: return false
-        // As the friend does it (their swaps, sets... put in on their phone) when their phone sent that; whatever it stored,
-        // only a program that works here is taken.
-        val whole = program.copy(templates = program.shared ?: program.templates, shared = null)
-        // Only the gym or only running: the other side is gone from the week and from the aim — not one's own kept.
-        val asDone = when (part) {
-            CopyPart.ALL -> whole
-            CopyPart.GYM -> whole.copy(
-                week = whole.week.copy(days = whole.week.days.map { d -> d.copy(sessions = d.sessions.filter { it.kind == SessionKind.LIFT }) }),
-                aim = forma.core.model.Aim(whole.aim.lift.takeIf { it != forma.core.model.LiftFocus.NONE } ?: forma.core.model.LiftFocus.GENERAL, forma.core.model.RunFocus.NONE, forma.core.model.Emphasis.GYM),
-            )
-            CopyPart.RUN -> whole.copy(
-                week = whole.week.copy(days = whole.week.days.map { d -> d.copy(sessions = d.sessions.filter { it.isRun }) }),
-                aim = forma.core.model.Aim(forma.core.model.LiftFocus.NONE, whole.aim.run.takeIf { it != forma.core.model.RunFocus.NONE } ?: forma.core.model.RunFocus.HEALTH, forma.core.model.Emphasis.RUN),
-                templates = emptyList(),
-            )
-        }.let { if (part == CopyPart.ALL) it else it.copy(goal = it.aim.nearestGoal()) }
+        val before = store.programNow()
+        val settings = store.settingsNow()
+        // As the person does it (their swaps, sets... put in on their phone) when their phone sent that; one's own side of a
+        // mixed copy as it was before any copy. Whatever it stored, only a program that works here is taken.
+        val ownBefore = ownProgramNow() ?: ProgramGenerator.generate(profile, today())
+        val asDone = ProgramMix.mix(ownBefore, program, part, ease)
         if (asDone.week.days.none { it.sessions.isNotEmpty() }) return false
         val used = asDone.templates.flatMap { t -> t.slots.map { it.exerciseId } }.toSet()
         importExercises(exercises.filter { it.id in used })
         val safe = asDone.checked { id -> Catalog.find(id)?.archived == false }
             ?.let { p -> p.copy(templates = p.templates.map { t -> t.copy(title = oneLine(t.title).ifBlank { "Тренировка" }) }) } ?: return false
         val days = safe.week.days.filter { it.sessions.isNotEmpty() }.map { it.day }.toSet().ifEmpty { profile.trainingDays }
-        // The friend's week is the week now: the own days chosen before are not (the plan line and the grid show these).
+        val liftDays = safe.week.days.filter { d -> d.sessions.any { it.kind == SessionKind.LIFT } }.map { it.day }.toSet()
+        val runDays = safe.week.days.filter { d -> d.sessions.any { it.isRun } }.map { it.day }.toSet()
+        // All of theirs: their week is the week now (the own days chosen before are not). Mixed: each side on its days.
+        val split = part != CopyPart.ALL && liftDays.isNotEmpty() && runDays.isNotEmpty()
         val updated = profile.copy(
-            aim = safe.aim, goal = safe.aim.nearestGoal(), trainingDays = days, gymDays = null, runDays = null,
-            doubleDays = profile.doubleDays && part == CopyPart.ALL,
+            aim = safe.aim, goal = safe.aim.nearestGoal(), trainingDays = days,
+            gymDays = liftDays.takeIf { split }, runDays = runDays.takeIf { split },
+            doubleDays = if (split) (liftDays intersect runDays).isNotEmpty() else profile.doubleDays && part == CopyPart.ALL,
         )
-        val own = ProgramGenerator.generate(updated, today())
-        val before = store.programNow()
-        val settings = store.settingsNow()
-        // One's own program is put aside once: copying from a second friend keeps the own one, not the first friend's.
+        val gen = ProgramGenerator.generate(updated, today())
+        // One's own program is put aside once: copying from a second person keeps the own one, not the first copy.
         val keep = settings.ownPlan ?: before?.takeIf { it.copiedFrom == null }?.let { OwnPlan.of(profile, it, settings) }
         store.setProfile(updated)
         store.setProgram(
             safe.copy(
-                experience = profile.experience, blockWeeks = own.blockWeeks, startEpochDay = own.startEpochDay,
-                createdEpochDay = today().toEpochDay(), copiedFrom = from.take(40), runCaps = own.runCaps,
-                // The friend's notes are about their whole week: with one side taken, the notes of a week like this one.
-                week = if (part == CopyPart.ALL) safe.week else safe.week.copy(notes = own.week.notes),
+                experience = profile.experience, createdEpochDay = today().toEpochDay(), copiedFrom = from.take(40),
+                // One's own gym kept: its block goes on as it was; else the block starts with the copy.
+                blockWeeks = if (part == CopyPart.RUN) ownBefore.blockWeeks else gen.blockWeeks,
+                startEpochDay = if (part == CopyPart.RUN) ownBefore.startEpochDay else gen.startEpochDay,
+                runCaps = if (part == CopyPart.ALL) gen.runCaps else safe.runCaps,
+                // The person's notes are about their whole week: with one side taken, the notes of a week like this one.
+                week = if (part == CopyPart.ALL) safe.week else safe.week.copy(notes = gen.week.notes),
             ),
         )
-        // The own edits of the plan before belong to that plan (kept with it): the friend's exercises are taken as they are.
-        updateSettings { it.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap(), demoted = emptySet(), pickSwaps = emptySet(), ownPlan = keep) }
+        // The own edits of the plan belong to the own gym: kept with one's own gym, put aside with it otherwise.
+        updateSettings { s ->
+            val edits = if (part == CopyPart.RUN) settings.ownPlan?.editsInto(s) ?: s
+            else s.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap(), demoted = emptySet(), pickSwaps = emptySet())
+            edits.copy(ownPlan = keep)
+        }
         onChange()
         return true
     }

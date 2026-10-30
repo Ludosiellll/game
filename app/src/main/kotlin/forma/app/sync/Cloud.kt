@@ -207,6 +207,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
             WorkManager.getInstance(context).run {
                 cancelUniqueWork(WORK_SOON)
                 cancelUniqueWork(WORK_PERIODIC)
+                cancelUniqueWork(WORK_MESSAGES)
             }
         }
     }
@@ -375,11 +376,16 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         runCatching { WorkManager.getInstance(context).enqueueUniqueWork(WORK_SOON, ExistingWorkPolicy.APPEND_OR_REPLACE, request) }
     }
 
-    /** A sync twice a day in the background, so other phones' changes arrive and the project stays awake. */
+    /**
+     * A sync twice a day in the background, so other phones' changes arrive and the project stays awake; and new
+     * messages checked every 15 minutes ([MessagesWorker]).
+     */
     fun schedulePeriodic() {
         if (!configured || !signedIn) return
         val request = PeriodicWorkRequestBuilder<SyncWorker>(12, TimeUnit.HOURS).setConstraints(online()).build()
         runCatching { WorkManager.getInstance(context).enqueueUniquePeriodicWork(WORK_PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request) }
+        val messages = PeriodicWorkRequestBuilder<MessagesWorker>(15, TimeUnit.MINUTES).setConstraints(online()).build()
+        runCatching { WorkManager.getInstance(context).enqueueUniquePeriodicWork(WORK_MESSAGES, ExistingPeriodicWorkPolicy.KEEP, messages) }
     }
 
     private fun online() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
@@ -393,6 +399,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         private const val KEY_FRIENDS_EXPLAINED = "friends_explained"
         private const val WORK_SOON = "forma-sync-soon"
         private const val WORK_PERIODIC = "forma-sync-periodic"
+        private const val WORK_MESSAGES = "forma-messages"
 
         /** Human text for a failed sync. */
         fun describe(e: Throwable): String = when (e) {

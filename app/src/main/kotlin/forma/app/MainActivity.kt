@@ -26,9 +26,20 @@ class MainActivity : ComponentActivity() {
         // The rest between sets saved before the app was closed comes back; one of a session finished or deleted since,
         // or one that ended long ago, goes with its notification.
         lifecycleScope.launch { RestTimer.restore(this@MainActivity) { id -> repo.db.workouts().get(id)?.status == Status.ACTIVE } }
+        opened(intent)
         setContent {
             CompositionLocalProvider(LocalRepo provides repo, LocalCloud provides cloud) { AppRoot() }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        opened(intent)
+    }
+
+    /** Opened from a notification about messages: the app goes to them. */
+    private fun opened(intent: android.content.Intent?) {
+        intent?.getStringExtra(forma.app.sync.MessageNotice.EXTRA_OPEN)?.let { forma.app.ui.Opens.pending.value = it }
     }
 
     /**

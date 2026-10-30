@@ -38,7 +38,7 @@ fun MoreScreen() {
             Hairline()
             ListRow("Упражнения", "Найти упражнение, замену или добавить своё", icon = Ic.dumbbell, iconTint = F.c.accent) { nav.push(Screen.Library()) }
             Hairline()
-            ListRow("Друзья", "Прогресс друзей, их тренировки и программы", icon = Ic.user, iconTint = F.c.accent) { nav.push(Screen.Friends) }
+            ListRow("Люди и друзья", "Чужие тренировки, программы, сообщения", icon = Ic.user, iconTint = F.c.accent) { nav.push(Screen.Friends) }
             Hairline()
             ListRow("Вес тела", "Записать и посмотреть график", icon = Ic.scale, iconTint = F.c.accent) { nav.push(Screen.Body) }
         }

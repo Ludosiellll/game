@@ -71,7 +71,10 @@ data class RunSummary(
 /** How the person feels today: decides between the planned session, a lighter one and rest. */
 enum class Feel { UNSET, GOOD, LOW, SICK }
 
-/** What of a friend's program is taken: all of it, the gym alone (no running) or running alone (no gym). */
+/**
+ * What of someone's program is taken: all of it ([ALL]), their gym with one's own running ([GYM]), or one's own gym with
+ * their running ([RUN]) — see [ProgramMix].
+ */
 enum class CopyPart { ALL, GYM, RUN }
 
 /**

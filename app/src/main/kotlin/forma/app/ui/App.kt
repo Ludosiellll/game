@@ -108,6 +108,11 @@ fun AppRoot() {
     val scope = rememberCoroutineScope()
     // Saved with the instance state: rotation, a theme or font change, split screen keep the screen and the stack.
     val nav = rememberSaveable(saver = Navigator.Saver) { Navigator(if (ready) Screen.Today else Screen.Onboarding) }
+    // A notification about messages: «Люди» on its conversations (the screen reads which part and clears it).
+    val open by Opens.pending.collectAsState()
+    LaunchedEffect(open, ready) {
+        if (ready && open == forma.app.sync.MessageNotice.OPEN_MESSAGES && nav.current != Screen.Friends) nav.push(Screen.Friends)
+    }
     // Each screen in the stack keeps its own state (search text, typed weights, the open tab) while others are on top.
     val holder = rememberSaveableStateHolder()
     val ids = nav.stack.map { it.id }.toSet()
@@ -188,6 +193,7 @@ private fun ScreenFor(screen: Screen) {
         is Screen.Library -> forma.app.ui.screens.LibraryScreen(screen.mode)
         Screen.Friends -> forma.app.ui.screens.FriendsScreen()
         is Screen.Friend -> forma.app.ui.screens.FriendScreen(screen.userId, screen.name)
+        is Screen.Chat -> forma.app.ui.screens.ChatScreen(screen.userId, screen.name)
         Screen.IdealPlan -> forma.app.ui.screens.IdealPlanScreen()
         Screen.MyExercises -> forma.app.ui.screens.MyExercisesScreen()
         Screen.GymGoal -> forma.app.ui.screens.GymGoalScreen()

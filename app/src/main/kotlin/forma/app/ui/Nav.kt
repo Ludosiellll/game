@@ -38,6 +38,7 @@ sealed interface Screen {
     @Serializable data class Library(val mode: LibraryMode = LibraryMode.Browse) : Screen
     @Serializable data object Friends : Screen
     @Serializable data class Friend(val userId: String, val name: String) : Screen
+    @Serializable data class Chat(val userId: String, val name: String) : Screen
     /** «Идеальный план»: the gym plan as it is and as it could be, changes on choice. */
     @Serializable data object IdealPlan : Screen
     @Serializable data object MyExercises : Screen
@@ -97,4 +98,12 @@ class Navigator private constructor(entries: List<NavEntry>, private var nextId:
             },
         )
     }
+}
+
+/**
+ * A place to open asked from outside the app's screens (a notification): the root opens it, the screen it names reads
+ * and clears it. "messages" — the conversations of «Люди».
+ */
+object Opens {
+    val pending = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 }
