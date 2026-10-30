@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
@@ -62,6 +63,18 @@ fun FCard(
     gap: Dp = 12.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // Minimal: a section under a hairline, on the page itself, unless it is meant to stand out (an outline).
+    if (F.shape.flat && outline == null) {
+        var m = modifier.fillMaxWidth()
+        if (fill != null && fill != F.c.surface) m = m.clip(RoundedCornerShape(F.shape.radiusSmall)).background(fill)
+        if (onClick != null) m = m.clickable(onClick = onClick)
+        Column(m) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(F.c.line))
+            val inner = if (fill != null && fill != F.c.surface) padding else PaddingValues(top = 14.dp, bottom = 6.dp)
+            Column(Modifier.padding(inner), verticalArrangement = Arrangement.spacedBy(gap), content = content)
+        }
+        return
+    }
     val shape = RoundedCornerShape(F.shape.radius)
     val border = when {
         outline != null -> BorderStroke(if (F.shape.border > 0.dp) F.shape.border else 1.dp, outline)
@@ -96,6 +109,15 @@ fun PrimaryButton(
         if (icon != null) {
             Icon(icon, null, tint = if (enabled) textColor else F.c.text3, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
+        }
+        if (F.type.mega) {
+            // Minimal: small letter-spaced capitals on the black pill.
+            Text(
+                text.uppercase(),
+                style = T.body(15.sp, FontWeight.ExtraBold).copy(color = if (enabled) textColor else F.c.text3, letterSpacing = 0.1.em),
+                maxLines = 1,
+            )
+            return@Row
         }
         Text(
             if (F.type.capsTitles) text.uppercase() else text,
@@ -173,6 +195,18 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier, color: Color = F.c
 
 @Composable
 fun StatTile(label: String, value: String, sub: String?, color: Color, modifier: Modifier = Modifier) {
+    if (F.shape.flat) {
+        // Minimal: a figure under a heavy rule, no box.
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Box(Modifier.fillMaxWidth().height(3.dp).background(F.c.text))
+            Spacer(Modifier.height(6.dp))
+            Text(labelText(label), style = T.label(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val st = T.number(26.sp).copy(color = color)
+            BasicText(numText(value, st), style = st, maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = 26.sp, stepSize = 1.sp))
+            if (sub != null) Text(sub, style = T.secondary(11.sp).copy(color = F.c.text3), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        return
+    }
     FCard(modifier, padding = PaddingValues(12.dp), gap = 2.dp, fill = F.c.surface) {
         Text(label, style = T.secondary(12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         val st = T.number(24.sp).copy(color = color)
@@ -260,7 +294,7 @@ private fun ValueBox(value: String, unit: String, modifier: Modifier, onLong: ((
 private fun StepButton(icon: ImageVector, label: String, onClick: () -> Unit) {
     val shape = if (F.shape.pill) RoundedCornerShape(12.dp) else RoundedCornerShape(F.shape.radiusSmall)
     Box(
-        Modifier.size(width = 44.dp, height = 48.dp).clip(shape).background(if (F.c.dark) F.c.line else F.c.surface)
+        Modifier.size(width = 44.dp, height = 48.dp).clip(shape).background(if (F.c.dark) F.c.line else if (F.shape.flat) F.c.surface2 else F.c.surface)
             .clickable(role = Role.Button, onClickLabel = label, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, label, tint = F.c.text, modifier = Modifier.size(20.dp)) }
@@ -274,7 +308,10 @@ fun TopBar(title: String, subtitle: String? = null, onBack: (() -> Unit)? = null
     ) {
         if (onBack != null) RoundIcon(Ic.back, "Назад", onBack, size = 42.dp)
         Column(Modifier.weight(1f)) {
-            Text(title, style = T.body(17.sp, FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                if (F.type.mega) title.uppercase() else title,
+                style = if (F.type.mega) T.title(22.sp) else T.body(17.sp, FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
             if (subtitle != null) Text(subtitle, style = T.secondary(13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         actions()

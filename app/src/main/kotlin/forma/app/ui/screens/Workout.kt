@@ -83,6 +83,7 @@ import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
 import forma.app.ui.theme.labelText
+import forma.app.ui.theme.titleText
 import forma.core.model.Catalog
 import forma.core.model.Equipment
 import forma.core.model.LoadKind
@@ -381,7 +382,7 @@ fun WorkoutScreen(workoutId: Long) {
                 // Header.
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.Top) {
-                        Text(item.name, style = T.title(if (F.type.capsTitles) 34.sp else 24.sp), modifier = Modifier.weight(1f))
+                        Text(titleText(item.name), style = T.title(if (F.type.capsTitles || F.type.mega) 34.sp else 24.sp), modifier = Modifier.weight(1f))
                         // Another exercise in its place, or none: only before its first set (the sets belong to the exercise).
                         if (mine.isEmpty()) {
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -402,7 +403,9 @@ fun WorkoutScreen(workoutId: Long) {
                         )
                     }
                     val p = item.prescription
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Minimal: the prescription said in one plain line, in place of the pills.
+                    if (F.type.mega) Text(prescriptionLine(ex, p), style = T.secondary(15.sp))
+                    else FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (ex.load != LoadKind.TIMED) {
                             Pill(if (p.weight != null) Texts.weight(ex, p.weight!!) else "вес подбираем", filled = true)
                             Pill(if (p.calibrate) "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" else "${p.sets} × ${p.reps}")
@@ -524,9 +527,11 @@ fun WorkoutScreen(workoutId: Long) {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 NumText("${i + 1}", style = T.number(16.sp).copy(color = F.c.text2), modifier = Modifier.width(32.dp))
-                                NumText(Texts.weightReps(ex, s.weight, s.reps), style = T.number(18.sp), modifier = Modifier.weight(1f))
+                                NumText(Texts.weightReps(ex, s.weight, s.reps), style = T.number(18.sp).copy(color = if (F.type.mega) F.c.text2 else F.c.text), modifier = Modifier.weight(1f))
                                 if (s.rir != null) Text("запас ${if (s.rir >= 5) "5+" else s.rir}", style = T.secondary(13.sp), modifier = Modifier.padding(end = 10.dp))
-                                Box(Modifier.size(24.dp).clip(CircleShape).background(F.c.strength), contentAlignment = Alignment.Center) {
+                                // Minimal: a done set is a grey line with a plain tick.
+                                if (F.type.mega) Icon(Ic.check, null, tint = F.c.text3, modifier = Modifier.size(18.dp))
+                                else Box(Modifier.size(24.dp).clip(CircleShape).background(F.c.strength), contentAlignment = Alignment.Center) {
                                     Icon(Ic.check, null, tint = F.c.onData, modifier = Modifier.size(14.dp))
                                 }
                             }
@@ -603,7 +608,7 @@ fun WorkoutScreen(workoutId: Long) {
                     )
                     val timed = ex.load == LoadKind.TIMED
                     val repsText = inp.reps.toString()
-                    val repsUnit = if (timed) "сек" else "повт"
+                    val repsUnit = if (timed) "сек" else "раз"
                     val repsSlot = StepperSlot(maxOf(repsText, "00", compareBy { it.length }), repsUnit) { m ->
                         Stepper(
                             repsText, repsUnit,
@@ -708,7 +713,7 @@ fun WorkoutScreen(workoutId: Long) {
                         )
                         if (nx != null) current = nx.position
                     }
-                }, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData, icon = Ic.check)
+                }, Modifier.fillMaxWidth(), color = if (F.type.mega) F.c.accent else F.c.strength, textColor = if (F.type.mega) F.c.onAccent else F.c.onData, icon = Ic.check)
             }
         }
     }
@@ -902,14 +907,31 @@ private fun RestBar(leftMs: Long, fraction: Float, next: String?, onMinus: () ->
     var m = modifier.fillMaxWidth().clip(shape).background(F.c.surface2)
     if (F.shape.border > 0.dp || F.c.dark) m = m.border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
     val over = leftMs <= 0
+    val clock = if (over) "+" + Ru.clock((-leftMs / 1000).toInt()) else Ru.clock(((leftMs + 999) / 1000).toInt())
+    if (F.type.mega) {
+        // Minimal: the word, the time large, a thin bar running down; the buttons on the right.
+        Row(modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(labelText(if (over) "Отдых окончен" else "Отдых"), style = T.label().copy(color = F.c.text))
+                    NumText(clock, style = T.number(26.sp).copy(color = if (over) F.c.warn else F.c.text))
+                }
+                Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(F.c.line)) {
+                    Box(Modifier.fillMaxWidth(if (over) 1f else fraction).height(4.dp).background(if (over) F.c.warn else F.c.strength))
+                }
+                if (next != null) Text("дальше: $next", style = T.secondary(12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (!over) SmallButton("−15", onMinus)
+            SmallButton("+15", onPlus)
+            SmallButton("›", onSkip, "Пропустить отдых")
+        }
+        return
+    }
     Row(m.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Ring(if (over) 1f else fraction, if (over) F.c.warn else F.c.strength, Modifier.size(40.dp), stroke = 4.dp)
         Column(Modifier.weight(1f)) {
             Text(labelText(if (over) "Отдых окончен" else "Отдых"), style = T.label())
-            NumText(
-                if (over) "+" + Ru.clock((-leftMs / 1000).toInt()) else Ru.clock(((leftMs + 999) / 1000).toInt()),
-                style = T.number(22.sp).copy(color = if (over) F.c.warn else F.c.text),
-            )
+            NumText(clock, style = T.number(22.sp).copy(color = if (over) F.c.warn else F.c.text))
             if (next != null) Text("далее: $next", style = T.secondary(11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (!over) SmallButton("−15", onMinus)
@@ -922,7 +944,7 @@ private fun RestBar(leftMs: Long, fraction: Float, next: String?, onMinus: () ->
 private fun SmallButton(text: String, onClick: () -> Unit, label: String = text) {
     val shape = RoundedCornerShape(12.dp)
     Box(
-        Modifier.size(width = 44.dp, height = 40.dp).clip(shape).background(if (F.c.dark) F.c.line else F.c.surface)
+        Modifier.size(width = 44.dp, height = 40.dp).clip(shape).background(if (F.c.dark) F.c.line else if (F.shape.flat) F.c.surface2 else F.c.surface)
             .clickable(onClickLabel = label, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { NumText(text, style = T.number(13.sp, FontWeight.Bold)) }
@@ -1129,4 +1151,21 @@ private fun NoteDialog(value: String, name: String, onDismiss: () -> Unit, onSav
         confirmButton = { TextButton({ onSave(text) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) } },
         dismissButton = { TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
     )
+}
+
+/**
+ * The prescription in one plain line: «72,5 кг, 3 подхода по 8, в последнем сколько сможешь. Заканчивай подход, когда
+ * можешь ещё 1 раз.»
+ */
+fun prescriptionLine(ex: forma.core.model.Exercise, p: forma.core.strength.Prescription): String {
+    if (ex.load == LoadKind.TIMED) return "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")} по ${p.reps} с."
+    val weight = p.weight?.let { Texts.weight(ex, it) } ?: "Вес подберём"
+    val sets = "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" + if (p.calibrate) "" else " по ${p.reps}"
+    val top = if (p.top && !p.calibrate) ", в последнем сколько сможешь" else ""
+    val reserve = when {
+        p.calibrate -> ""
+        p.rir <= 0 -> " До отказа."
+        else -> " Заканчивай подход, когда можешь ещё ${p.rir} ${Ru.plural(p.rir, "раз", "раза", "раз")}."
+    }
+    return "$weight, $sets$top.$reserve"
 }

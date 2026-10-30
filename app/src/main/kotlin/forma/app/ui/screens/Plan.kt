@@ -36,6 +36,7 @@ import forma.app.ui.components.NumText
 import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
+import forma.app.ui.theme.titleText
 import forma.core.model.Experience
 import forma.core.plan.ProgramGenerator
 import forma.core.plan.SessionKind
@@ -55,7 +56,7 @@ fun PlanScreen() {
     val weekNo = ProgramGenerator.programWeek(p, today)
     val lifting by repo.store.liftState.collectAsState(initial = forma.app.data.LiftState())
     ScrollScreen {
-        Text(if (F.type.capsTitles) "ПЛАН" else "План", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
+        Text(titleText("План"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         val goal = aimTitle(p.aim) + (p.copiedFrom?.let { " · программа друга ($it)" } ?: "")
         Text("$goal · ${when (p.experience) { Experience.NOVICE -> "новичок"; Experience.INTERMEDIATE -> "средний уровень"; Experience.ADVANCED -> "опытный" }}", style = T.secondary(15.sp))
         ScreenHint(Hints.PLAN, Hints.PLAN_TEXT)
@@ -187,6 +188,11 @@ fun PlanScreen() {
                 }
             }
         }
+        // Said once above the sessions, not under each of them.
+        if (p.templates.isNotEmpty()) Text(
+            "Нажми на упражнение, чтобы поменять подходы, повторы и отдых, заменить его или убрать. «Запас 2» значит: заканчивай подход, когда можешь ещё 2 раза.",
+            style = T.secondary(12.sp),
+        )
         p.templates.forEach { t -> TemplateCard(t) }
 
         PauseControl()
@@ -217,8 +223,7 @@ private fun TemplateCard(t: Template) {
     var editing by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(-1) }
     val added = repo.addedTo(t.id, settings)
     FCard(gap = 0.dp) {
-        Text(t.title, style = T.title(20.sp))
-        Text("Нажми на упражнение, чтобы поменять подходы, повторы и отдых, заменить его или убрать.", style = T.secondary(12.sp), modifier = Modifier.padding(bottom = 8.dp))
+        Text(titleText(t.title), style = T.title(20.sp), modifier = Modifier.padding(bottom = 8.dp))
         t.slots.forEachIndexed { i, s ->
             Hairline()
             val item = plan?.items?.firstOrNull { it.position == i && !it.addedForGood }

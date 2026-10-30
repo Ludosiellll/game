@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -53,6 +54,7 @@ import forma.app.ui.components.NumText
 import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
+import forma.app.ui.theme.titleText
 import forma.app.ui.theme.labelText
 import forma.core.analytics.Stats
 import forma.core.load.TrainingLoad
@@ -125,12 +127,36 @@ fun TodayScreen() {
     val todayItem = week.firstOrNull { it.date == today }
 
     ScrollScreen {
+        // The same window as on Progress → Нагрузка, so "Свежесть" reads the same number on both screens.
+        val loadSeries = remember(loads, today) {
+            TrainingLoad.series(loads, today.minusDays(120), today)
+        }
+        val history = TrainingLoad.hasHistory(loads, today)
+        val form = loadSeries.lastOrNull()?.takeIf { history }?.formPct
+        // The rest line is the person's own once their sessions show where things stop going well.
+        val story by remember(today) { repo.loadStory(today) }.collectAsState(initial = null)
+        val restLine = story?.personal?.restBelow ?: forma.core.load.LoadStory.COMMON_REST
         Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(dateLine(today), style = T.secondary(13.sp))
-                Text(if (F.type.capsTitles) "СЕГОДНЯ" else "Сегодня", style = T.screenTitle())
+                Text(if (F.type.mega) labelText(dateLine(today)) else dateLine(today), style = if (F.type.mega) T.label().copy(color = F.c.text) else T.secondary(13.sp))
+                Text(titleText("Сегодня"), style = T.screenTitle())
             }
             Text(labelText("Неделя $weekNo"), style = T.label())
+        }
+        if (F.type.mega) {
+            // Minimal: how the day looks in plain words under a heavy rule, in place of the three figures.
+            val planned = week.sumOf { it.planned.size }
+            val doneCount = week.sumOf { d -> d.planned.count { d.isDone(it) } }
+            val zone = form?.let { forma.core.load.LoadStory.zone(it, restLine) }
+            Column(
+                Modifier.fillMaxWidth().clickable(onClickLabel = "Нагрузка и свежесть") { progressTabRequest = 2; nav.tab(Screen.Progress) },
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Box(Modifier.fillMaxWidth().height(3.dp).background(F.c.text))
+                Spacer(Modifier.height(8.dp))
+                Text(moodWords(zone), style = T.body(20.sp, FontWeight.ExtraBold))
+                if (planned > 0) Text("$doneCount из $planned ${Ru.plural(planned, "тренировки", "тренировок", "тренировок")} на этой неделе", style = T.secondary(13.sp))
+            }
         }
         ScreenHint(Hints.TODAY, Hints.TODAY_TEXT)
 
@@ -157,15 +183,6 @@ fun TodayScreen() {
             RaceCard(g, today, raceDone, runToday) { scope.launch { nav.push(Screen.RunSetup(repo.runFor(SessionKind.RUN_QUALITY, today), SessionKind.RUN_QUALITY)) } }
         }
 
-        // The same window as on Progress → Нагрузка, so "Свежесть" reads the same number on both screens.
-        val loadSeries = remember(loads, today) {
-            TrainingLoad.series(loads, today.minusDays(120), today)
-        }
-        val history = TrainingLoad.hasHistory(loads, today)
-        val form = loadSeries.lastOrNull()?.takeIf { history }?.formPct
-        // The rest line is the person's own once their sessions show where things stop going well.
-        val story by remember(today) { repo.loadStory(today) }.collectAsState(initial = null)
-        val restLine = story?.personal?.restBelow ?: forma.core.load.LoadStory.COMMON_REST
         val todays = todayItem?.planned.orEmpty()
         val extra = todayItem?.offPlan.orEmpty()
         // The goal in the gym's day: the test of the max, whatever else the day holds.
@@ -231,7 +248,7 @@ fun TodayScreen() {
             progressTabRequest = tab
             nav.tab(Screen.Progress)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (!F.type.mega) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val zone = form?.let { forma.core.load.LoadStory.zone(it, restLine) }
             StatTile(
                 "Свежесть", form?.let { forma.core.text.Ru.pct(it) } ?: "—",
@@ -415,6 +432,8 @@ private fun WeekStrip(week: List<DayItem>, today: LocalDate, since: Long?) {
                 var m = Modifier.fillMaxWidth().height(56.dp).clip(shape)
                 m = when {
                     isToday -> m.background(F.c.accent)
+                    // Minimal: no boxes, the day's figure and marks alone.
+                    F.shape.flat -> m
                     trained -> m.background(F.c.surface).border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
                     else -> m.border(if (F.shape.border > 0.dp) F.shape.border else 1.dp, F.c.line, shape)
                 }
@@ -476,7 +495,7 @@ private fun LiftCard(
             Text(labelText("  Силовая"), style = T.label().copy(color = F.c.strength), modifier = Modifier.weight(1f))
             if (minutes != null) NumText(if (done) "$minutes мин" else "~$minutes мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
         }
-        Text(t?.title ?: "Силовая", style = T.title(26.sp))
+        Text(titleText(t?.title ?: "Силовая"), style = T.title(if (F.type.mega) 34.sp else 26.sp))
         if (doneAs != null) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))
@@ -520,7 +539,10 @@ private fun LiftCard(
             else "Некоторые упражнения здесь у тебя впервые. Начни с подсказанного веса, а после первого подхода приложение подберёт рабочий.",
             style = T.secondary(13.sp),
         )
-        PrimaryButton(if (light) "Начать лёгкую тренировку" else "Начать тренировку", onStart, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
+        PrimaryButton(
+            if (light) "Начать лёгкую тренировку" else "Начать тренировку", onStart, Modifier.fillMaxWidth(),
+            color = if (F.type.mega) F.c.accent else F.c.strength, textColor = if (F.type.mega) F.c.onAccent else F.c.onData,
+        )
     }
 }
 
@@ -821,4 +843,15 @@ private fun LoopCard() {
             GhostButton("Оставить ${seen.set}\u00A0м", { scope.launch { repo.keepLapLength() } }, Modifier.weight(1f))
         }
     }
+}
+
+/** The day in plain words by freshness (the minimal look); without a freshness yet, the first weeks. */
+fun moodWords(zone: forma.core.load.LoadStory.Zone?): String = when (zone) {
+    // The first weeks: too few sessions to say how fresh.
+    null -> "Только начинаем, первые недели спокойно"
+    forma.core.load.LoadStory.Zone.FRESH -> "Силы есть, можно в полную"
+    forma.core.load.LoadStory.Zone.BALANCE -> "Обычный день, всё по плану"
+    forma.core.load.LoadStory.Zone.BUILDING -> "Идёт нагрузка, держи план"
+    forma.core.load.LoadStory.Zone.REST -> "Устал, сегодня полегче"
+    forma.core.load.LoadStory.Zone.DETRAINING -> "Был перерыв, начни спокойно"
 }

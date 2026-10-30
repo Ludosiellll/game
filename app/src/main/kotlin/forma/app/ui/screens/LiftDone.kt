@@ -32,6 +32,7 @@ import forma.app.ui.components.StatTile
 import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
+import forma.app.ui.theme.titleText
 import forma.core.model.Catalog
 import forma.core.text.Ru
 import kotlin.math.roundToInt
@@ -47,7 +48,7 @@ fun LiftDoneScreen(workoutId: Long) {
     } ?: return
     ScrollScreen(bottomInset = true) {
         Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Тренировка сохранена", style = T.screenTitle())
+            Text(titleText("Тренировка сохранена"), style = T.screenTitle())
             Text(workout.title, style = T.secondary(15.sp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

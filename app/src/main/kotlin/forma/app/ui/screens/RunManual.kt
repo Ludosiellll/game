@@ -31,6 +31,7 @@ import forma.app.ui.components.Stepper
 import forma.app.ui.components.TopBar
 import forma.app.ui.theme.F
 import forma.app.ui.theme.T
+import forma.app.ui.theme.titleText
 import forma.core.run.ManualLaps
 import forma.core.run.ManualRun
 import forma.core.run.RunPlan
@@ -114,7 +115,7 @@ fun RunManualScreen(workout: RunWorkout) {
         TopBar("Внести пробежку", if (workout.isOpenEnded) "Свободный бег" else workout.title, onBack = { leave() })
         val s = saved
         if (s != null) {
-            Text("Сохранено", style = T.screenTitle(), modifier = Modifier.padding(top = 4.dp))
+            Text(titleText("Сохранено"), style = T.screenTitle(), modifier = Modifier.padding(top = 4.dp))
             SectionLabel("Что дальше")
             FCard(gap = 0.dp) {
                 s.second.outcomes.forEachIndexed { i, o ->

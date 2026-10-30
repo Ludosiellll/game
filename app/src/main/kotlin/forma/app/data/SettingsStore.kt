@@ -29,6 +29,8 @@ val AppJson = Json {
 data class Settings(
     /** Design direction id from the design board: carbon, light, poster, tone. */
     val look: String = "carbon",
+    /** The look the app last moved everyone to (1 — «Минимализм», 30.10); the person can choose another after. */
+    val designVersion: Int = 0,
     val voice: Boolean = true,
     val beeps: Boolean = true,
     val vibration: Boolean = true,

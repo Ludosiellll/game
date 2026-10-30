@@ -91,6 +91,7 @@ import forma.app.ui.components.NumText
 import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
+import forma.app.ui.theme.titleText
 import forma.app.ui.theme.labelText
 import forma.core.plan.SessionKind
 import forma.core.run.Lap
@@ -640,7 +641,7 @@ fun RunActiveScreen() {
                 RoundIcon(Ic.lock, if (locked) "Разблокировать экран" else "Заблокировать экран", { locked = !locked }, fill = if (locked) F.c.accent else null, tint = if (locked) F.c.onAccent else F.c.text)
             }
 
-            Column(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalAlignment = if (F.type.mega) Alignment.Start else Alignment.CenterHorizontally) {
                 Text(
                     labelText(
                         when {
@@ -673,7 +674,7 @@ fun RunActiveScreen() {
                 } else {
                     // "25:04" or "1:05:09" must fit a narrow phone: the timer shrinks instead of being cut.
                     NumText(
-                        Ru.clock(big), style = T.number(size.sp).copy(lineHeight = (size * 1.07f).sp, textAlign = TextAlign.Center),
+                        Ru.clock(big), style = T.number(size.sp).copy(lineHeight = (size * 1.07f).sp, textAlign = if (F.type.mega) TextAlign.Start else TextAlign.Center),
                         modifier = Modifier.fillMaxWidth(), maxLines = 1,
                         autoSize = TextAutoSize.StepBased(minFontSize = 32.sp, maxFontSize = size.sp, stepSize = 4.sp),
                     )
@@ -688,7 +689,7 @@ fun RunActiveScreen() {
                         race -> "время забега · финиш — последнее нажатие «Круг»"
                         else -> "осталось в отрезке"
                     },
-                    style = T.secondary(13.sp), textAlign = TextAlign.Center,
+                    style = T.secondary(13.sp), textAlign = if (F.type.mega) TextAlign.Start else TextAlign.Center,
                 )
             }
             // The warm-up's strides: which one and how long to go, or how long until the next.
@@ -745,6 +746,8 @@ fun RunActiveScreen() {
                         l?.let { lapColor(it) } ?: F.c.text, Modifier.weight(1f),
                     )
                 }
+                // Minimal: the last laps as bars, the latest in orange.
+                if (F.type.mega && u.recentLaps.size >= 2) LapBars(u.recentLaps)
             } else if (u.gps && (target != null || u.pace != null)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (target != null) StatTile("Цель", "${Ru.pace(target.fast.toDouble())}–${Ru.pace(target.slow.toDouble())}", "мин/км", F.c.text, Modifier.weight(1f))
@@ -986,6 +989,27 @@ fun LapsCard(laps: List<Lap>, test: Boolean) {
     }
 }
 
+/** The last laps as bars: height by the time, the latest in orange, its seconds under each. */
+@Composable
+private fun LapBars(laps: List<Lap>) {
+    val top = laps.maxOf { it.seconds }
+    val low = laps.minOf { it.seconds }
+    Row(Modifier.fillMaxWidth().semantics { contentDescription = "Последние круги: " + laps.joinToString(", ") { Ru.lap(it.seconds) } }, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
+        laps.forEachIndexed { i, l ->
+            // Slower is taller; the quickest still shows as a bar.
+            val share = if (top - low < 0.5) 1f else (0.45 + 0.55 * (l.seconds - low) / (top - low)).toFloat()
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box(Modifier.fillMaxWidth().height((64 * share).dp).background(if (i == laps.lastIndex) F.c.strength else F.c.text))
+                NumText(Ru.lap(l.seconds).removeSuffix(" с"), style = T.number(11.sp, FontWeight.Bold), maxLines = 1)
+            }
+        }
+        repeat(RECENT_LAPS_SHOWN - laps.size) { Box(Modifier.weight(1f)) }
+    }
+}
+
+/** Bars of laps the run screen leaves room for, so a bar keeps its width from the second lap on. */
+private const val RECENT_LAPS_SHOWN = forma.app.run.RECENT_LAPS
+
 /** "52 · 51 · 53" with each lap in the colour of its verdict. */
 @Composable
 private fun LapLine(laps: List<Lap>) {
@@ -1085,7 +1109,7 @@ fun RunDoneScreen(workoutId: Long) {
         val s = saved
         if (s == null && tracker != null) {
             val result = tracker.result(nowMs, rpe)
-            Text("Пробежка закончена", style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
+            Text(titleText("Пробежка закончена"), style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatTile("Время", Ru.clock(result.durationSec), if (tracker.workout.isOpenEnded) "" else "${(result.completed * 100).roundToInt()}% плана", F.c.text, Modifier.weight(1f))
                 val lapM = tracker.workout.lapMeters
@@ -1238,7 +1262,7 @@ fun RunDoneScreen(workoutId: Long) {
                 contentAlignment = Alignment.Center,
             ) { Text("Не сохранять", style = T.secondary(14.sp)) }
         } else if (s != null) {
-            Text("Сохранено", style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
+            Text(titleText("Сохранено"), style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
             LapLengthCard(lapSet, measuredLap)
             // How it went and why, from what was saved.
             val w by remember(s.first) { repo.db.workouts().observe(s.first) }.collectAsState(initial = null)

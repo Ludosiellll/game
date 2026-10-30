@@ -89,7 +89,8 @@ class GymGoalUiTest {
         compose.onAllNodesWithText("тяжёлый день", substring = true).fetchSemanticsNodes().let { assert(it.isNotEmpty()) }
         compose.onRoot().captureRoboImage("build/shots/carbon-gym-goal.png")
         compose.onNodeWithText("Поставить цель и подстроить план").performScrollTo().performClick()
-        compose.waitUntil(10_000) { settle(); runBlocking { repo.store.profileNow()?.liftGoal } != null }
+        // The goal is saved first and the plan's change right after it: both, not just the first.
+        compose.waitUntil(10_000) { settle(); runBlocking { repo.store.profileNow()?.liftGoal != null && repo.store.settingsNow().goalPlan != null } }
         val goal = assertNotNull(runBlocking { repo.store.profileNow()?.liftGoal })
         assertEquals("bench", goal.exerciseId)
         assertEquals(100.0, goal.kg, 1e-9)

@@ -38,7 +38,12 @@ data class RunUi(
     val autoPaused: Boolean = false,
     /** Steps a minute right now, from the step counter. */
     val cadence: Int? = null,
+    /** The last laps pressed, oldest first (at most [RECENT_LAPS]): the bars on the run screen. */
+    val recentLaps: List<forma.core.run.Lap> = emptyList(),
 )
+
+/** How many of the last laps the run screen draws. */
+const val RECENT_LAPS = 8
 
 /** A run on disk, enough to carry on after the process was killed. */
 @Serializable
@@ -222,6 +227,7 @@ object RunSession {
             t.waiting(nowMs),
             autoPaused && t.state == RunTracker.State.PAUSED,
             t.cadence(),
+            t.laps.takeLast(RECENT_LAPS),
         )
     }
 

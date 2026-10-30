@@ -33,6 +33,7 @@ import forma.app.ui.components.PrimaryButton
 import forma.app.ui.components.SectionLabel
 import forma.app.ui.theme.F
 import forma.app.ui.theme.T
+import forma.app.ui.theme.titleText
 import forma.core.model.Aim
 import forma.core.model.Experience
 import forma.core.model.LiftFocus
@@ -325,7 +326,7 @@ fun OnboardingScreen() {
 @Composable
 private fun StepTitle(title: String, text: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, style = T.screenTitle())
+        Text(titleText(title), style = T.screenTitle())
         Text(text, style = T.secondary(15.sp))
     }
 }

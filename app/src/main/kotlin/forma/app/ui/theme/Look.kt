@@ -38,6 +38,8 @@ data class Shape(
     /** Card outline; 0 — no outline. */
     val border: Dp,
     val pill: Boolean,
+    /** Sections divided by hairlines instead of cards (minimal). */
+    val flat: Boolean = false,
 )
 
 @Immutable
@@ -56,6 +58,8 @@ data class Typo(
     val capsTitles: Boolean,
     /** Multiplier for the huge timer digits. */
     val bigNumberScale: Float,
+    /** Huge uppercase titles in a heavy wide face, plain small-caps buttons (minimal). */
+    val mega: Boolean = false,
 )
 
 /** One design direction from the design board: palette, shapes and type. */
@@ -119,7 +123,38 @@ object Looks {
         Typo(Fonts.rubik, FontWeight.SemiBold, Fonts.rubik, Fonts.rubik, FontWeight.SemiBold, capsLabels = false, capsTitles = false, bigNumberScale = 0.85f),
     )
 
-    val all = listOf(carbon, light, poster, tone)
+    /**
+     * Д · Минимализм (Denis, 30.10): white, black ink, one orange, huge uppercase titles, hairlines instead of cards,
+     * black pill buttons (docs/design/minimal).
+     */
+    val minimal = Look(
+        "minimal", "Минимализм", "Белый, крупные заголовки, линии вместо карточек",
+        Palette(
+            bg = Color(0xFFFFFFFF), surface = Color(0xFFFFFFFF), surface2 = Color(0xFFF1F1EF), line = Color(0xFFE3E3E1),
+            text = Color(0xFF111111), text2 = Color(0xFF6F6F6F), text3 = Color(0xFF9B9B9B),
+            accent = Color(0xFF111111), onAccent = Color(0xFFFFFFFF),
+            strength = Color(0xFFFF4D12), endurance = Color(0xFF111111), load = Color(0xFF9B9B9B), onData = Color(0xFFFFFFFF),
+            good = Color(0xFF1F8A4C), warn = Color(0xFFC46A00), bad = Color(0xFFD7372B), dark = false,
+        ),
+        Shape(radius = 14.dp, radiusSmall = 10.dp, border = 0.dp, pill = true, flat = true),
+        Typo(Fonts.interDisplay, FontWeight.Black, Fonts.inter, Fonts.inter, FontWeight.ExtraBold, capsLabels = true, capsTitles = false, bigNumberScale = 1.1f, mega = true),
+    )
+
+    /** Минимализм, тёмный: the same on black. */
+    val minimalDark = Look(
+        "minimal_dark", "Минимализм тёмный", "Чёрный, крупные заголовки, линии вместо карточек",
+        Palette(
+            bg = Color(0xFF0D0D0D), surface = Color(0xFF0D0D0D), surface2 = Color(0xFF1C1C1C), line = Color(0xFF2B2B2B),
+            text = Color(0xFFF4F4F2), text2 = Color(0xFF9E9E9E), text3 = Color(0xFF6C6C6C),
+            accent = Color(0xFFF4F4F2), onAccent = Color(0xFF0D0D0D),
+            strength = Color(0xFFFF5A1F), endurance = Color(0xFFF4F4F2), load = Color(0xFF8C8C8C), onData = Color(0xFF0D0D0D),
+            good = Color(0xFF4CD787), warn = Color(0xFFF2B84B), bad = Color(0xFFFF5C5C), dark = true,
+        ),
+        Shape(radius = 14.dp, radiusSmall = 10.dp, border = 0.dp, pill = true, flat = true),
+        Typo(Fonts.interDisplay, FontWeight.Black, Fonts.inter, Fonts.inter, FontWeight.ExtraBold, capsLabels = true, capsTitles = false, bigNumberScale = 1.1f, mega = true),
+    )
+
+    val all = listOf(minimal, minimalDark, carbon, light, poster, tone)
     fun byId(id: String?) = all.firstOrNull { it.id == id } ?: carbon
 }
 

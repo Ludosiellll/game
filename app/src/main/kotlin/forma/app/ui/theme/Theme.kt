@@ -49,15 +49,17 @@ object F {
 object T {
     @Composable @ReadOnlyComposable
     fun screenTitle(): TextStyle = TextStyle(
-        fontFamily = F.type.display, fontWeight = F.type.displayWeight, fontSize = if (F.type.capsTitles) 52.sp else 32.sp,
-        lineHeight = if (F.type.capsTitles) 48.sp else 38.sp, letterSpacing = (-0.02).em, color = F.c.text,
+        fontFamily = F.type.display, fontWeight = F.type.displayWeight,
+        fontSize = if (F.type.mega) 46.sp else if (F.type.capsTitles) 52.sp else 32.sp,
+        lineHeight = if (F.type.mega) 46.sp else if (F.type.capsTitles) 48.sp else 38.sp,
+        letterSpacing = if (F.type.mega) (-0.045).em else (-0.02).em, color = F.c.text,
     )
 
     @Composable @ReadOnlyComposable
     fun title(size: TextUnit = 24.sp): TextStyle = TextStyle(
         fontFamily = F.type.display, fontWeight = F.type.displayWeight,
         fontSize = if (F.type.capsTitles) size * 1.35 else size, lineHeight = if (F.type.capsTitles) size * 1.3 else size * 1.15,
-        letterSpacing = (-0.01).em, color = F.c.text,
+        letterSpacing = if (F.type.mega) (-0.035).em else (-0.01).em, color = F.c.text,
     )
 
     @Composable @ReadOnlyComposable
@@ -88,7 +90,7 @@ fun labelText(s: String): String = if (F.type.capsLabels) s.uppercase() else s
 
 /** Screen and card titles: uppercase in the poster look. */
 @Composable @ReadOnlyComposable
-fun titleText(s: String): String = if (F.type.capsTitles) s.uppercase() else s
+fun titleText(s: String): String = if (F.type.capsTitles || F.type.mega) s.uppercase() else s
 
 /**
  * Digits in the numbers face; letters, units and "×" in the text face at a smaller size, so "80 кг × 7"

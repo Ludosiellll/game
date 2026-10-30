@@ -17,4 +17,14 @@ object Fonts {
     val rubik = family(R.font.rubik, 400, 500, 600, 700)
     val mono = family(R.font.jetbrains_mono, 500, 600, 700, 800)
     val condensed = family(R.font.sofia_sans_extra_condensed, 500, 600, 700, 800, 900)
+
+    /** Inter (static, cut to Latin and Cyrillic): the text of «Минимализм». */
+    val inter = FontFamily(
+        Font(R.font.inter_medium, FontWeight.Medium), Font(R.font.inter_semibold, FontWeight.SemiBold),
+        Font(R.font.inter_bold, FontWeight.Bold), Font(R.font.inter_extrabold, FontWeight.ExtraBold),
+        Font(R.font.inter_display_black, FontWeight.Black),
+    )
+
+    /** Inter Display Black: the huge titles of «Минимализм». */
+    val interDisplay = FontFamily(Font(R.font.inter_display_black, FontWeight.Black), Font(R.font.inter_extrabold, FontWeight.ExtraBold))
 }

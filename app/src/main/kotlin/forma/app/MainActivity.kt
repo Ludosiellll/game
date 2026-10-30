@@ -27,6 +27,8 @@ class MainActivity : ComponentActivity() {
         // or one that ended long ago, goes with its notification.
         lifecycleScope.launch { RestTimer.restore(this@MainActivity) { id -> repo.db.workouts().get(id)?.status == Status.ACTIVE } }
         opened(intent)
+        // The new look, once for everyone (Denis's choice, 30.10): another can be chosen in «Оформление и звук».
+        lifecycleScope.launch { repo.updateSettings { if (it.designVersion < 1) it.copy(look = forma.app.ui.theme.Looks.minimal.id, designVersion = 1) else it } }
         setContent {
             CompositionLocalProvider(LocalRepo provides repo, LocalCloud provides cloud) { AppRoot() }
         }

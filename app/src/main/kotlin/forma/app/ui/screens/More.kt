@@ -17,6 +17,7 @@ import forma.app.ui.components.ListRow
 import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
+import forma.app.ui.theme.titleText
 import kotlinx.coroutines.launch
 
 @Composable
@@ -26,7 +27,7 @@ fun MoreScreen() {
     val repo = forma.app.ui.LocalRepo.current
     val waiting by androidx.compose.runtime.remember { repo.db.sync().observeNotUploaded() }.collectAsState(initial = 0)
     ScrollScreen {
-        Text(if (F.type.capsTitles) "ЕЩЁ" else "Ещё", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
+        Text(titleText("Ещё"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         FCard(gap = 0.dp) {
             ListRow("Спросить тренера", "ИИ ответит по твоим тренировкам: почему так, что значат цифры, что делать", icon = Ic.user, iconTint = F.c.accent) { nav.tab(Screen.Coach()) }
             Hairline()

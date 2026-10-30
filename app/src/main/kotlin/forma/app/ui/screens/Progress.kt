@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -39,6 +40,8 @@ import forma.app.ui.components.StatTile
 import forma.app.ui.components.NumText
 import forma.app.ui.theme.F
 import forma.app.ui.theme.T
+import forma.app.ui.theme.labelText
+import forma.app.ui.theme.titleText
 import forma.core.analytics.Point
 import forma.core.analytics.SetRow
 import forma.core.analytics.Stats
@@ -71,7 +74,7 @@ internal var progressTabRequest: Int? = null
 fun ProgressScreen(initialTab: Int = 0) {
     var tab by rememberSaveable { mutableIntStateOf(progressTabRequest?.also { progressTabRequest = null } ?: initialTab) }
     ScrollScreen {
-        Text(if (F.type.capsTitles) "ПРОГРЕСС" else "Прогресс", style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
+        Text(titleText("Прогресс"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         ScreenHint(Hints.PROGRESS, Hints.PROGRESS_TEXT)
         Segmented(listOf("Сила", "Бег", "Нагрузка", "Тело"), tab, { tab = it })
         when (tab) {
@@ -80,7 +83,10 @@ fun ProgressScreen(initialTab: Int = 0) {
             2 -> LoadTab()
             else -> BodyTab()
         }
-        ReportCard()
+        // Nothing done yet: nothing to export.
+        val repo = LocalRepo.current
+        val done by remember { repo.db.workouts().observeDoneCount() }.collectAsState(initial = 0)
+        if (done > 0) ReportCard()
     }
 }
 
@@ -103,14 +109,14 @@ private fun StrengthTab() {
         return
     }
     FCard(gap = 4.dp) {
-        Text("Индекс силы · все упражнения", style = T.secondary(13.sp))
+        Text(if (F.type.mega) labelText("Сила") else "Сила, все упражнения", style = if (F.type.mega) T.label().copy(color = F.c.text) else T.secondary(13.sp))
         val ch = Stats.changePct(index)
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             NumText(ch?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "старт", style = T.number(44.sp).copy(color = F.c.strength))
             if (index.size >= 2) Text("с ${shortDate(LocalDate.ofEpochDay(index.first().epochDay))}", style = T.secondary(13.sp), modifier = Modifier.padding(bottom = 8.dp))
         }
-        if (index.size >= 2) LineChart(listOf(Series(index.map { it.value }, F.c.strength, fill = true)), xLabels = monthLabels(index), reference = 100.0, description = "Индекс силы по неделям")
-        Text("100 — твой старт. Считается по весу на 1 раз в каждом упражнении.", style = T.secondary(12.sp))
+        if (index.size >= 2) LineChart(listOf(Series(index.map { it.value }, if (F.type.mega) F.c.text else F.c.strength, fill = !F.type.mega)), xLabels = monthLabels(index), reference = 100.0, description = "Сила по неделям")
+        Text("Насколько ты сильнее, чем в начале, по всем упражнениям вместе.", style = T.secondary(12.sp))
     }
     val outgrew by androidx.compose.runtime.produceState(false, rows) { value = repo.outgrewNovice() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -134,6 +140,7 @@ private fun StrengthTab() {
         }
     }
     SectionLabel("Упражнения")
+    Text("Вес, который ты поднял бы на 1 раз. Считаем по твоим подходам, рост видно, даже если вес на штанге тот же.", style = T.secondary(12.sp))
     FCard(gap = 0.dp) {
         val exercises = rows.map { it.exerciseId }.distinct().mapNotNull { Catalog.find(it) }
         exercises.forEachIndexed { i, ex ->
@@ -152,13 +159,11 @@ private fun StrengthTab() {
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(ex.name, style = T.body(15.sp, FontWeight.SemiBold))
-                    Text(
-                        when {
-                            ex.load == forma.core.model.LoadKind.TIMED -> "время удержания"
-                            ex.perHand && ex.load == forma.core.model.LoadKind.EXTERNAL -> "вес на 1 раз по расчёту, на гантель"
-                            else -> "вес на 1 раз по расчёту"
-                        }, style = T.secondary(12.sp),
-                    )
+                    when {
+                        ex.load == forma.core.model.LoadKind.TIMED -> "сколько продержался"
+                        ex.perHand && ex.load == forma.core.model.LoadKind.EXTERNAL -> "на одну гантель"
+                        else -> null
+                    }?.let { Text(it, style = T.secondary(12.sp)) }
                 }
                 Sparkline(series.map { it.value }, F.c.strength, Modifier.size(64.dp, 24.dp).padding(end = 8.dp))
                 Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(80.dp)) {
@@ -348,13 +353,12 @@ private fun RunTab() {
     }
     if (vdot != null) {
         FCard(gap = 6.dp) {
-            Text("Форма бега (VDOT)", style = T.secondary(13.sp))
+            Text(if (F.type.mega) labelText("Форма бега") else "Форма бега", style = if (F.type.mega) T.label().copy(color = F.c.text) else T.secondary(13.sp))
             NumText(Ru.one(vdot), style = T.number(44.sp).copy(color = F.c.endurance))
             val middle = profile?.runGoal?.middleDistance == true
             Text(
-                if (middle) "Чем выше, тем быстрее ты бегаешь. Меняется после контрольных забегов на дистанцию цели. Считается по формулам Дэниелса."
-                else "Чем выше, тем быстрее ты бегаешь. Меняется после контрольных забегов и когда ты с запасом держишь темп в тяжёлых пробежках. " +
-                    "Считается по формулам Дэниелса.",
+                if (middle) "Чем выше, тем быстрее ты бегаешь. Меняется после контрольных забегов на дистанцию цели."
+                else "Чем выше, тем быстрее ты бегаешь. Меняется после контрольных забегов и когда ты с запасом держишь темп в тяжёлых пробежках.",
                 style = T.secondary(12.sp),
             )
         }
@@ -481,10 +485,22 @@ private fun LoadTab() {
             listOf(Series(last.map { it.fitness }, F.c.endurance), Series(last.map { it.fatigue }, F.c.load, width = 2.dp)),
             xLabels = listOf(shortDate(last.first().date), shortDate(last.last().date)), description = "Тренированность и усталость за 8 недель",
         )
-        Text("Синяя линия — тренированность, оранжевая — усталость. Если усталость выше, ты нагружаешься больше привычного.", style = T.secondary(12.sp))
-        Explained("Тренированность", LoadExplain.fitness(st))
-        Explained("Усталость", LoadExplain.fatigue(st))
-        Explained("Свежесть", LoadExplain.freshness(st))
+        Text(
+            (if (F.type.mega) "Толстая линия — тренированность, тонкая серая — усталость." else "Синяя линия — тренированность, оранжевая — усталость.") +
+                " Если усталость выше, ты нагружаешься больше привычного.",
+            style = T.secondary(12.sp),
+        )
+        // The three words explained a tap away: on the screen they were three long paragraphs.
+        var explain by rememberSaveable { mutableStateOf(false) }
+        Text(
+            if (explain) "Скрыть объяснения" else "Что значат эти числа ›", style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.accent),
+            modifier = Modifier.clickable(onClickLabel = if (explain) "Скрыть" else "Показать объяснения") { explain = !explain }.padding(vertical = 4.dp),
+        )
+        if (explain) {
+            Explained("Тренированность", LoadExplain.fitness(st))
+            Explained("Усталость", LoadExplain.fatigue(st))
+            Explained("Свежесть", LoadExplain.freshness(st))
+        }
     }
     if (st.history) {
         SectionLabel("Свежесть и твоя линия отдыха")
@@ -518,7 +534,10 @@ private fun LoadTab() {
             xLabels = st.weeks.indices.map { if (it == 0 || it == st.weeks.lastIndex) shortDate(st.weeks[it].monday) else "" },
         )
         LoadExplain.usual(st)?.let { Text(it, style = T.secondary(12.sp)) }
-        st.weeks.reversed().forEach { w ->
+        // The last three weeks; the rest a tap away.
+        var allWeeks by rememberSaveable { mutableStateOf(false) }
+        val shownWeeks = st.weeks.reversed().let { if (allWeeks) it else it.take(3) }
+        shownWeeks.forEach { w ->
             Hairline()
             Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -538,6 +557,10 @@ private fun LoadTab() {
                 LoadExplain.levelNote(w)?.let { Text(it, style = T.secondary(12.sp)) }
             }
         }
+        if (st.weeks.size > 3) Text(
+            if (allWeeks) "Скрыть" else "Все недели ›", style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.accent),
+            modifier = Modifier.clickable(onClickLabel = if (allWeeks) "Скрыть недели" else "Показать все недели") { allWeeks = !allWeeks }.padding(vertical = 4.dp),
+        )
     }
     FCard(gap = 4.dp) {
         Text("Откуда числа", style = T.secondary(13.sp))
@@ -580,7 +603,11 @@ private fun Explained(term: String, text: String) {
 private fun Metric3(label: String, value: String, color: androidx.compose.ui.graphics.Color, modifier: Modifier) {
     Column(modifier) {
         NumText(value, style = T.number(24.sp).copy(color = color))
-        Text(label, style = T.secondary(12.sp))
+        // «Тренированность» in a third of a narrow phone: smaller, never broken in the middle of the word.
+        androidx.compose.foundation.text.BasicText(
+            label, style = T.secondary(12.sp), maxLines = 1,
+            autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 12.sp, stepSize = 0.5.sp),
+        )
     }
 }
 
