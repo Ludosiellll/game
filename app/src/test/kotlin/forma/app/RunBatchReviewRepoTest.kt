@@ -88,24 +88,21 @@ class RunBatchReviewRepoTest {
     private suspend fun summaryOf(id: Long) = AppJson.decodeFromString(RunSummary.serializer(), db.workouts().get(id)!!.summaryJson!!)
     private suspend fun planOf(id: Long) = AppJson.decodeFromString(RunWorkout.serializer(), db.runs().get(id)!!.planJson)
 
-    /** 29.10: the trial «6,5 кругов (1495 м)», run on the loop GPS measures at 204,6 m: 1332 m in 300 s. */
+    /** The trial «7 кругов (1610 м)» on the 230 m setting, run on the loop GPS measures at 204,6 m: 1432 m in 322 s. */
     private suspend fun trialOnTheLoop(): Long {
         repo.store.setRunState(after26)
         val d = LocalDate.of(2026, 10, 29)
         at(d, 14)
         val w = repo.runFor(SessionKind.RUN_QUALITY, d)
         assertEquals(RunType.TEST, w.type, w.title)
-        assertEquals(1495, w.testMeters)
+        assertEquals(1610, w.testMeters)
         val work = w.segments.first { it.kind == SegmentKind.WORK }
-        val secs = 300.0
-        val laps = (0 until 7).map { i ->
-            val part = if (i == 0) 0.5 else 1.0
-            Lap(secs / 6.5 * part, work.lapSec!! * part, work.lapSec!! * part, i + 1, 7, 1, part)
-        }
-        val result = RunResult(1.0, 9, 1700, distanceM = 6.5 * 230 + 2000, laps = laps, testSeconds = secs.toInt(), loopM = 204.6)
+        val secs = 322.0
+        val laps = (0 until 7).map { i -> Lap(secs / 7, work.lapSec!!, work.lapSec!!, i + 1, 7, 1) }
+        val result = RunResult(1.0, 9, 1700, distanceM = 7.0 * 230 + 2000, laps = laps, testSeconds = secs.toInt(), loopM = 204.6)
         val (id, summary) = repo.saveRun(w, result, clock - 1700_000L, emptyList(), d)
         assertTrue(summary.outcomes.any { it is RunOutcome.LoopShorter }, "${summary.outcomes}")
-        assertTrue(summary.outcomes.any { it is RunOutcome.TestTime && it.meters in 1320..1340 }, "${summary.outcomes}")
+        assertTrue(summary.outcomes.any { it is RunOutcome.TestTime && it.meters in 1420..1445 }, "${summary.outcomes}")
         return id
     }
 
@@ -138,8 +135,8 @@ class RunBatchReviewRepoTest {
     }
 
     /**
-     * Finding: the recount that card offers undoes the loop reading in the history — the trial's distance back to 1495 m,
-     * its plan back on 230 — while the decision (VDOT) stays the one from 1332 m and the debrief still says the laps were
+     * Finding: the recount that card offers undoes the loop reading in the history — the trial's distance back to 1610 m,
+     * its plan back on 230 — while the decision (VDOT) stays the one from 1432 m and the debrief still says the laps were
      * counted on 205 m. History and progress no longer agree.
      */
     @Test fun recountingOntoTheSettingKeepsTheHistoryConsistentWithTheDecision() = runBlocking<Unit> {
@@ -153,7 +150,7 @@ class RunBatchReviewRepoTest {
         assertEquals(
             vdotAfter, fromTrial, 0.6,
             "after the recount the history says «${tt.meters} м за ${tt.seconds} с» (VDOT $fromTrial) and the plan is on ${planOf(id).lapMeters} m, " +
-                "but the progress was decided on 1332 m (VDOT $vdotAfter); outcomes still ${s.outcomes.filterIsInstance<RunOutcome.LoopShorter>()}",
+                "but the progress was decided on 1432 m (VDOT $vdotAfter); outcomes still ${s.outcomes.filterIsInstance<RunOutcome.LoopShorter>()}",
         )
     }
 
@@ -177,8 +174,8 @@ class RunBatchReviewRepoTest {
     }
 
     /**
-     * Finding: the trial read on the loop (TestTime 1332 m) is left off «Путь к цели»: the goal path keeps only trials
-     * within 3 % of the goal distance, which 1495 m was and 1332 m is not. The runner's trial — the one event of the goal
+     * Finding: the trial read on the loop (TestTime 1332 m then, 1432 m now) is left off «Путь к цели»: the goal path kept
+     * only trials within 3 % of the goal distance. The runner's trial — the one event of the goal
      * path — is missing from the progress screen and the report («Контрольного забега на 1500 м ещё не было»).
      */
     @Test fun theTrialReadOnTheLoopStaysOnTheWayToTheGoal() = runBlocking<Unit> {
@@ -215,13 +212,13 @@ class RunBatchReviewRepoTest {
         val before = db.runs().get(id)!!
         assertTrue(repo.setRating(id, 8))
         val s = summaryOf(id)
-        assertTrue(s.outcomes.any { it is RunOutcome.LoopShorter } && s.outcomes.any { it is RunOutcome.TestTime && it.meters in 1320..1340 }, "${s.outcomes}")
+        assertTrue(s.outcomes.any { it is RunOutcome.LoopShorter } && s.outcomes.any { it is RunOutcome.TestTime && it.meters in 1420..1445 }, "${s.outcomes}")
         repo.setLapMeters(measured)
         val after = db.runs().get(id)!!
         assertEquals(before.distanceM!!, after.distanceM!!, 1.0)
         assertEquals(before.vdotAfter!!, after.vdotAfter!!, 1e-9)
         assertEquals(measured, planOf(id).lapMeters)
-        assertTrue(summaryOf(id).outcomes.any { it is RunOutcome.TestTime && it.meters in 1320..1340 }, "${summaryOf(id).outcomes}")
+        assertTrue(summaryOf(id).outcomes.any { it is RunOutcome.TestTime && it.meters in 1420..1445 }, "${summaryOf(id).outcomes}")
         assertNull(repo.runsOnOtherLap()?.takeIf { it.second == measured }, "${repo.runsOnOtherLap()}")
         assertTrue(abs(after.distanceM!! - before.distanceM!!) < 1.0)
     }

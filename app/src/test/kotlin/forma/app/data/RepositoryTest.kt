@@ -249,13 +249,13 @@ class RepositoryTest {
         assertEquals(36 * 60, easy.workSeconds)
         clock += 1000
         repo.saveRun(easy, RunResult(1.0, 4, easy.totalSeconds + 6 * 60), clock, emptyList(), thu)
-        // Two runs done and no fitness known yet: the 1500 m time trial, 6.5 laps — not on Saturday, two days after
+        // Two runs done and no fitness known yet: the 1500 m time trial, 7 laps from the line — not on Saturday, two days after
         // Thursday's legs, but on the next Tuesday with fresh legs.
         val sat = tue.plusDays(7)
         assertEquals(sat, repo.trialDay(tue.plusDays(4)))
         val trial = repo.runFor(SessionKind.RUN_QUALITY, sat)
         assertEquals(RunType.TEST, trial.type)
-        assertEquals(1495, trial.testMeters)
+        assertEquals(1610, trial.testMeters)
         clock += 1000
         val (_, result) = repo.saveRun(trial, RunResult(1.0, 9, 25 * 60, testSeconds = 370), clock, emptyList(), sat)
         assertTrue(result.outcomes.any { it is forma.core.run.RunOutcome.TestTime })

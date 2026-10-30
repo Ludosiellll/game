@@ -8,7 +8,7 @@ import forma.core.run.Vdot
 /** The way to a race goal on a stadium: the trials over its distance and the sessions of reps at its pace. */
 object GoalProgress {
     /**
-     * A counted trial over the goal distance, as run ([meters], [seconds]: on a 230 m track 1500 m is 6.5 laps, 1495 m)
+     * A counted trial over the goal distance, as run ([meters], [seconds]: on a 230 m track 1500 m is 7 laps, 1610 m)
      * and its time over the goal distance itself ([goalSeconds], by the same fitness).
      */
     data class Trial(val epochDay: Long, val meters: Int, val seconds: Int, val goalSeconds: Double)
@@ -22,9 +22,10 @@ object GoalProgress {
     data class Result(val trials: List<Trial>, val sessions: List<Session>)
 
     /**
-     * From the finished [workouts] and their [runs], oldest first; trials only over [meters] — within 15 %: run in whole
-     * laps, on a loop that may be shorter than the lap length set (read on the loop GPS measured, 6,5 laps of 205 m are
-     * 1332 m for 1500), the time then put on the goal's distance by the fitness.
+     * From the finished [workouts] and their [runs], oldest first; trials only over [meters] — under a quarter off: run in
+     * whole laps from the line (an 800 m goal on a 320 m loop is 3 laps, 960 m), on a loop that may be shorter than the
+     * lap length set (read on the loop GPS measured, 7 laps of 230 m are
+     * 1432 m on a 204,6 m loop), the time then put on the goal's distance by the fitness.
      */
     fun of(workouts: List<WorkoutEntity>, runs: List<RunEntity>, meters: Int): Result {
         val lapOf = runs.associate { r ->
@@ -35,13 +36,13 @@ object GoalProgress {
         val sessions = mutableListOf<Session>()
         workouts.filter { it.kind == Kind.RUN && it.status == Status.DONE }.sortedBy { it.startedAt }.forEach { w ->
             val s = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() } ?: return@forEach
-            s.outcomes.filterIsInstance<RunOutcome.TestTime>().firstOrNull { kotlin.math.abs(it.meters - meters) <= meters * 0.15 }?.let {
+            s.outcomes.filterIsInstance<RunOutcome.TestTime>().firstOrNull { kotlin.math.abs(it.meters - meters) < meters * 0.25 }?.let {
                 val same = if (it.meters == meters) it.seconds.toDouble()
                 else Vdot.predictSeconds(Vdot.fromRace(it.meters.toDouble(), it.seconds.toDouble()), meters.toDouble())
                 trials += Trial(w.epochDay, it.meters, it.seconds, same)
             }
             if (w.templateId != RunType.GOAL_PACE.name) return@forEach
-            // The laps of the reps (a rep of 6.5 laps starts with a half: counted as half a lap).
+            // The laps of the reps (a rep planned before 30.10 could start with a half: counted as half a lap).
             val reps = s.laps.filter { it.rep != null && it.part > 0 }
             val parts = reps.sumOf { it.part }
             val lapM = lapOf[w.id]

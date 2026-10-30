@@ -18,8 +18,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Denis before his first trial (1500 m in 5:30 as the goal, a 205 m loop, no fitness known yet: the beeps at 48.7 s a
- * lap): «он начнет в нужном темпе но просто не факт что добежит с нужной скоростью». A trial whose second half is slower,
+ * Denis before his first trial (1500 m in 5:30 as the goal, a 205 m loop: 7 laps from the line, 1435 m; no fitness
+ * known yet: the beeps at 48.7 s a lap): «он начнет в нужном темпе но просто не факт что добежит с нужной скоростью». A trial whose second half is slower,
  * or that ends in a walk or a stop, still says what the runner held from the start (at least half the trial and three
  * minutes), never thrown away: stopped, the fitness is that stretch's; run to the end slower, the whole time's, raised
  * toward the stretch's by 3 at most (a runner who died after half lacks some of what the stretch alone would credit).
@@ -30,7 +30,7 @@ class TrialHeldTest {
     private val caps = RunCaps(45, 90)
     private val fresh = RunState(walkStage = -1)
 
-    /** The trial run lap by lap (seconds each, the first the half lap), then stopped. */
+    /** The trial run lap by lap (seconds each), then stopped. */
     private fun run(st: RunState, laps: List<Double>): Pair<RunWorkout, RunResult> {
         val w = RunPlan.goalTest(st, goal, lap)
         val t = RunTracker(w)
@@ -46,27 +46,27 @@ class TrialHeldTest {
         return w to t.result(at + 2_000, 9)
     }
 
-    private val held = listOf(24.35) + List(4) { 48.7 }
+    private val held = List(4) { 48.7 }
 
     @Test fun theBeepsAreAtTheGoalPlusEightPercent() {
         val w = RunPlan.goalTest(fresh, goal, lap)
-        assertEquals(1538, w.testMeters)
+        assertEquals(1435, w.testMeters)
         val seg = w.segments.first { it.laps != null }
-        assertEquals(7.5, seg.laps)
+        assertEquals(7.0, seg.laps)
         assertEquals(48.7, seg.lapSec!!, 0.1)
     }
 
     @Test fun slowerAfterHalfTheFitnessIsWhatWasHeld() {
         val (w, r) = run(fresh, held + listOf(56.0, 62.0, 66.0))
-        assertEquals(403, r.testSeconds)
+        assertEquals(379, r.testSeconds)
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)
-        // The whole time alone: VDOT 40.3. The first 922 m in 3:39: 42.6.
-        assertEquals(42.5, after.state.vdot)
+        // The whole time alone: VDOT 39.7. The first 820 m in 3:15: 42.1.
+        assertEquals(42.0, after.state.vdot)
         val part = after.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single()
-        assertEquals(923, part.meters)
-        assertEquals(219, part.seconds)
+        assertEquals(820, part.meters)
+        assertEquals(195, part.seconds)
         assertTrue(part.finished)
-        assertTrue(after.outcomes.any { it is RunOutcome.TestTime && it.seconds == 403 }, "the time run is kept")
+        assertTrue(after.outcomes.any { it is RunOutcome.TestTime && it.seconds == 379 }, "the time run is kept")
         assertTrue(RunOutcome.GoalReached !in after.outcomes)
         assertTrue(!after.state.testSoon)
     }
@@ -76,9 +76,9 @@ class TrialHeldTest {
         val (w, r) = run(fresh, held + listOf(65.0, 90.0, 80.0))
         assertNull(r.testSeconds)
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)
-        // The stretch gives 42.6; the trial walked to its end in 7:34 gives 35.6: 3 above that, as a slower end would.
-        assertEquals(((Vdot.fromRace(1537.5, 454.15) + RunPlan.PART_OVER_WHOLE) * 2).roundToInt() / 2.0, after.state.vdot)
-        assertEquals(38.5, after.state.vdot)
+        // The stretch gives 42.1; the trial walked to its end in 7:10 gives 34.4: 3 above that, as a slower end would.
+        assertEquals(((Vdot.fromRace(1435.0, 429.8) + RunPlan.PART_OVER_WHOLE) * 2).roundToInt() / 2.0, after.state.vdot)
+        assertEquals(37.5, after.state.vdot)
         val part = assertNotNull(after.outcomes.filterIsInstance<RunOutcome.TestFromPart>().singleOrNull())
         assertTrue(!part.finished && part.capped)
         assertTrue(RunOutcome.TestNotCounted !in after.outcomes)
@@ -99,7 +99,7 @@ class TrialHeldTest {
         val (w, r) = run(fresh, held)
         assertNull(r.testSeconds)
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)
-        assertEquals(42.5, after.state.vdot)
+        assertEquals(42.0, after.state.vdot)
         val part = after.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single()
         assertTrue(!part.finished)
         assertTrue(after.outcomes.any { it is RunOutcome.VdotChanged })
@@ -107,17 +107,18 @@ class TrialHeldTest {
     }
 
     @Test fun stoppedBeforeHalfIsNotCountedAndSaysWhy() {
-        val (w, r) = run(fresh, listOf(24.35) + List(3) { 48.7 })
+        // 615 m: under half the trial (718 m).
+        val (w, r) = run(fresh, List(3) { 48.7 })
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)
         assertNull(after.state.vdot)
         val stop = after.outcomes.filterIsInstance<RunOutcome.TestStopped>().single()
-        assertEquals(718, stop.meters)
+        assertEquals(615, stop.meters)
         assertTrue(RunOutcome.TestNotCounted !in after.outcomes)
     }
 
     @Test fun aPartNeverLowersAKnownFitnessButRaisesALowerOne() {
         val known = fresh.copy(vdot = 45.0)
-        // 922 m in 3:39 give 42.6: a stop may have had more in it, the 45 stays.
+        // 820 m in 3:15 give 42.1: a stop may have had more in it, the 45 stays.
         val (w, r) = run(known, held)
         val kept = RunPlan.after(known, w, r, caps, day = 20, goal = goal)
         assertEquals(45.0, kept.state.vdot)
@@ -128,13 +129,13 @@ class TrialHeldTest {
         val low = fresh.copy(vdot = 40.0)
         val (w2, r2) = run(low, held)
         val raised = RunPlan.after(low, w2, r2, caps, day = 20, goal = goal)
-        assertEquals(42.5, raised.state.vdot)
+        assertEquals(42.0, raised.state.vdot)
     }
 
     @Test fun aStretchFarBelowAKnownFitnessKeepsItAndIsNoTypo() {
-        // 52 known (a few years back, say); stopped after 922 m at the beeps: 42.6 — kept, not "a typo".
+        // 52 known (a few years back, say); stopped after 820 m at the beeps: 42.1 — kept, not "a typo".
         val known = fresh.copy(vdot = 52.0)
-        val (w, r) = run(known, List(1) { 24.35 } + List(4) { 48.7 })
+        val (w, r) = run(known, held)
         val after = RunPlan.after(known, w, r, caps, day = 20, goal = goal)
         assertEquals(52.0, after.state.vdot)
         assertTrue(after.outcomes.none { it is RunOutcome.TestDoubtful }, "${after.outcomes}")
@@ -142,16 +143,17 @@ class TrialHeldTest {
     }
 
     @Test fun anEvenTrialIsItsTime() {
-        val (w, r) = run(fresh, listOf(26.0) + List(7) { 52.0 })
+        val (w, r) = run(fresh, List(7) { 52.0 })
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)
-        assertEquals((Vdot.fromRace(1537.5, 390.0) * 2).roundToInt() / 2.0, after.state.vdot)
+        assertEquals((Vdot.fromRace(1435.0, 364.0) * 2).roundToInt() / 2.0, after.state.vdot)
+        assertEquals(41.5, after.state.vdot)
         assertTrue(after.outcomes.none { it is RunOutcome.TestFromPart })
     }
 
     @Test fun theGoalIsReachedOnlyByTheWholeTime() {
         // Away fast and faded: the first stretch is at the goal's fitness, the whole time far from it — 3 above the whole
         // time's, and no goal.
-        val (w, r) = run(fresh, listOf(21.0) + List(4) { 42.0 } + listOf(60.0, 66.0, 70.0))
+        val (w, r) = run(fresh, List(4) { 42.0 } + listOf(60.0, 66.0, 70.0))
         val part = assertNotNull(RunPlan.held(w, r))
         assertTrue(part.vdot >= Vdot.fromRace(1500.0, 330.0) - 0.5)
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)

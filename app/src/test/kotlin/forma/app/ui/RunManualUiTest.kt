@@ -219,6 +219,6 @@ class RunManualUiTest {
         settle()
         compose.onNodeWithText("Сохранить").performScrollTo().performClick()
         val summary = AppJson.decodeFromString(RunSummary.serializer(), saved(repo).summaryJson!!)
-        assertTrue(summary.outcomes.contains(RunOutcome.TestTime(1495, 338)), summary.outcomes.toString())
+        assertTrue(summary.outcomes.contains(RunOutcome.TestTime(1610, 338)), summary.outcomes.toString())
     }
 }

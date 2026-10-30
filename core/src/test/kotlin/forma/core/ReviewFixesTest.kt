@@ -30,19 +30,19 @@ class ReviewFixesTest {
     private val warm = 12 * 60 * 1000L
 
     @Test fun aLateStartOfTheTimeTrialStillTimesItFromThePress() {
-        // Started 15 s after the warm-up ended, pressed on the way: half a lap and six laps, 344.5 s really run.
+        // Started 15 s after the warm-up ended, pressed on the way: seven laps from the line, 371 s really run.
         val st = RunState(walkStage = -1, vdot = 46.0, runs = 10)
         val w = RunPlan.goalTest(st, goal, 230)
         val t = RunTracker(w)
         t.start(0)
         assertEquals(Press.Start, t.press(warm + 15_000))
-        var at = warm + 15_000 + 26_500
+        var at = warm + 15_000 + 53_000
         repeat(7) {
             t.press(at)
             at += 53_000
         }
         val r = t.result(at, 9)
-        assertEquals(345, r.testSeconds!!, "${r.laps}")
+        assertEquals(371, r.testSeconds!!, "${r.laps}")
         val a = RunPlan.after(st, w, r, caps, day = 100, goal = goal)
         assertTrue(a.outcomes.none { it == RunOutcome.GoalReached }, a.outcomes.toString())
     }

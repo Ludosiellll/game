@@ -93,18 +93,21 @@ class RaceGoalTest {
     // ---------- race pace ----------
 
     @Test fun theRacePaceLadderNeverGetsEasierOnAnyTrack() {
-        // Steps 3, 5 and 7 lengthen the reps (400, 600, 800 m for 1500): on the track too, never the same lap count.
-        for (track in listOf(200, 230, 250, 300, 333, 400)) {
+        // Steps 3, 5 and 7 lengthen the reps (400, 600, 800 m for 1500): on the track too, never the same length — whole
+        // laps, or the metres by time where no whole lap count fits.
+        for (track in listOf(200, 230, 250, 300, 333, 400, 450)) {
             val reps = (0 until RunPlan.goalLadderSize - 1).map { stage ->
-                RunPlan.goalPace(RunState(walkStage = -1, goalStage = stage), goal, track).segments.first { it.kind == SegmentKind.WORK }.laps!!
+                val s = RunPlan.goalPace(RunState(walkStage = -1, goalStage = stage), goal, track).segments.first { it.kind == SegmentKind.WORK }
+                s.laps?.let { it * track } ?: (s.seconds * 1000.0 / s.pace!!.let { (it.fast + it.slow) / 2.0 })
             }
-            assertTrue(reps.zipWithNext().all { (a, b) -> b >= a }, "$track m: $reps")
-            for (longer in listOf(3, 5, 7)) assertTrue(reps[longer] > reps[longer - 1], "$track m: $reps")
+            assertTrue(reps.zipWithNext().all { (a, b) -> b >= a - 2 }, "$track m: $reps")
+            for (longer in listOf(3, 5, 7)) assertTrue(reps[longer] > reps[longer - 1] + 2, "$track m: $reps")
+            assertTrue(reps.withIndex().all { (i, m) -> m <= listOf(200, 200, 200, 400, 400, 600, 600, 800)[i] * 1.25 + 1 }, "$track m: $reps")
         }
-        // On 230 m: 600 m is 3 laps, 800 m is 3,5 (805 m), not 3 again.
+        // On 230 m: 600 m is 3 laps, 800 m is 4 (920 m), not 3 again — from the line, not half a lap before it.
         val two = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 7), goal, lap)
-        assertEquals("Темп цели · 2 × 3,5 круга", two.title)
-        assertTrue(two.note.contains("начни с середины круга"), two.note)
+        assertEquals("Темп цели · 2 × 4 круга", two.title)
+        assertTrue("середины" !in two.note, two.note)
     }
 
     @Test fun racePaceIsInWholeLapsWithTheGoalLapTime() {
@@ -126,8 +129,8 @@ class RaceGoalTest {
         val marks = RunTimeline.allCues(two).filterIsInstance<Cue.LapMark>()
         assertEquals(4, marks.size)
         val top = RunPlan.goalPace(RunState(walkStage = -1, goalStage = RunPlan.goalLadderSize - 1), goal, lap)
-        assertEquals(listOf(4.0, 2.5), top.segments.filter { it.kind == SegmentKind.WORK }.map { it.laps })
-        assertEquals("Темп цели · 4 круга + 2,5 круга", top.title)
+        assertEquals(listOf(4.0, 3.0), top.segments.filter { it.kind == SegmentKind.WORK }.map { it.laps })
+        assertEquals("Темп цели · 4 круга + 3 круга", top.title)
         // Outside, without laps: metres.
         assertEquals("Темп цели · 6 × 200 м", RunPlan.goalPace(RunState(walkStage = -1), goal, null).title)
     }
@@ -170,28 +173,29 @@ class RaceGoalTest {
 
         val t = RunPlan.goalTest(done.state, goal, lap)
         assertEquals(RunType.TEST, t.type)
-        assertEquals(1495, t.testMeters)
-        assertEquals(6.5, t.segments.first { it.kind == SegmentKind.WORK }.laps)
-        assertTrue(t.note.contains("с середины круга"), t.note)
-        // 1495 m in 5:52: fitness from the time; not the goal yet.
-        val trial = RunPlan.after(done.state, t, RunResult(1.0, 9, 1700, testSeconds = 352), caps, day = 20, goal = goal)
-        val v = Vdot.fromRace(1495.0, 352.0)
+        // 7 laps from the line: 1610 m.
+        assertEquals(1610, t.testMeters)
+        assertEquals(7.0, t.segments.first { it.kind == SegmentKind.WORK }.laps)
+        assertTrue("середины" !in t.note, t.note)
+        // 1610 m in 6:18: fitness from the time; not the goal yet.
+        val trial = RunPlan.after(done.state, t, RunResult(1.0, 9, 1700, testSeconds = 378), caps, day = 20, goal = goal)
+        val v = Vdot.fromRace(1610.0, 378.0)
         assertEquals((v * 2).toInt() / 2.0, trial.state.vdot!!, 0.51)
         assertTrue(!trial.state.testSoon)
-        assertTrue(trial.outcomes.contains(RunOutcome.TestTime(1495, 352)))
+        assertTrue(trial.outcomes.contains(RunOutcome.TestTime(1610, 378)))
         assertTrue(RunOutcome.GoalReached !in trial.outcomes)
-        // 5:30: the goal is reached.
-        val fast = RunPlan.after(done.state, t, RunResult(1.0, 9, 1700, testSeconds = 330), caps, day = 20, goal = goal)
+        // 5:55 for 1610 m (1500 m in about 5:29): the goal is reached.
+        val fast = RunPlan.after(done.state, t, RunResult(1.0, 9, 1700, testSeconds = 355), caps, day = 20, goal = goal)
         assertTrue(RunOutcome.GoalReached in fast.outcomes)
         // Before anything is known the trial starts at the goal pace plus 8 %.
         val first = RunPlan.goalTest(RunState(walkStage = -1), goal, lap)
         val race = first.segments.first { it.kind == SegmentKind.WORK }
         assertEquals(51.4 * 1.08, race.lapSec!!, 0.1)
         // Room for a slower finish; the beeps still mark the planned laps and the planned finish.
-        assertTrue(race.seconds > 6.5 * race.lapSec!! * 1.1)
+        assertTrue(race.seconds > 7 * race.lapSec!! * 1.1)
         val marks = RunTimeline.allCues(first).filterIsInstance<Cue.LapMark>()
         assertEquals(7, marks.size)
-        assertEquals(12 * 60 + (6.5 * race.lapSec!!).roundToInt(), marks.last().at)
+        assertEquals(12 * 60 + (7 * race.lapSec!!).roundToInt(), marks.last().at)
     }
 
     @Test fun anEasyRunKeptGoingGrowsByHalfTheExtra() {
@@ -302,15 +306,15 @@ class RaceGoalTest {
         t.start(0)
         val start = 12 * 60 * 1000L
         assertEquals(Press.Start, t.press(start))
-        // Half a lap, then six laps of 54 s: 7 presses.
-        var at = start + 27_000L
+        // Seven laps of 54 s from the line: 7 presses.
+        var at = start + 54_000L
         assertEquals(1, t.lap(at)!!.number)
         repeat(6) {
             at += 54_000
             t.lap(at)
         }
         val r = t.result(at + 1000, 9)
-        assertEquals(27 + 6 * 54, r.testSeconds)
+        assertEquals(7 * 54, r.testSeconds)
         // The first half is judged against the planned lap; in the second half faster is fine.
         val laps = r.laps!!
         assertTrue(laps.take(3).all { it.fast != null })
@@ -486,15 +490,15 @@ class RaceGoalTest {
         val t = RunTracker(w)
         t.start(0)
         val warm = 12 * 60 * 1000L
-        // 45 s to walk to the start half a lap before the line.
+        // 45 s to walk to the line.
         assertEquals(Press.Start, t.press(warm + 45_000))
-        var at = warm + 45_000 + 27_000L
+        var at = warm + 45_000 + 54_000L
         assertEquals(1, t.lap(at)!!.number)
         repeat(6) {
             at += 54_000
             t.lap(at)
         }
-        assertEquals(27 + 6 * 54, t.result(at + 1000, 9).testSeconds)
+        assertEquals(7 * 54, t.result(at + 1000, 9).testSeconds)
     }
 
     @Test fun waitingCanBeSkippedAndSurvivesARestore() {
@@ -536,11 +540,11 @@ class RaceGoalTest {
     @Test fun theGoalIsJudgedOnTheExactTime() {
         val st = RunState(walkStage = -1, vdot = 46.0)
         val t = RunPlan.goalTest(st, goal, lap)
-        // 1495 m in 5:33 is faster than 1500 m in 5:35.
-        val r = RunPlan.after(st, t, RunResult(1.0, 9, 1700, testSeconds = 333), caps, day = 20, goal = goal)
+        // 1610 m in 6:01 is as good as 1500 m in 5:34.
+        val r = RunPlan.after(st, t, RunResult(1.0, 9, 1700, testSeconds = 361), caps, day = 20, goal = goal)
         assertTrue(RunOutcome.GoalReached in r.outcomes)
-        // 5:36 is not.
-        val slower = RunPlan.after(st, t, RunResult(1.0, 9, 1700, testSeconds = 336), caps, day = 20, goal = goal)
+        // 6:03 is not (1500 m in 5:36).
+        val slower = RunPlan.after(st, t, RunResult(1.0, 9, 1700, testSeconds = 363), caps, day = 20, goal = goal)
         assertTrue(RunOutcome.GoalReached !in slower.outcomes)
     }
 
@@ -569,7 +573,7 @@ class RaceGoalTest {
         assertTrue(RunPlan.after(top, w, ok, caps, day = 121, goal = goal).state.testSoon)
         // A trial short of the goal after the whole ladder: back to the 400s (not the longest reps) to build up again.
         val trial = RunPlan.goalTest(top.copy(testSoon = true), goal, lap)
-        val after = RunPlan.after(top.copy(testSoon = true), trial, RunResult(1.0, 9, 1700, testSeconds = 352), caps, day = 125, goal = goal)
+        val after = RunPlan.after(top.copy(testSoon = true), trial, RunResult(1.0, 9, 1700, testSeconds = 378), caps, day = 125, goal = goal)
         assertEquals(RunPlan.goalLadderSize - 6, after.state.goalStage)
         assertTrue(!after.state.testSoon)
     }
@@ -590,22 +594,22 @@ class RaceGoalTest {
         assertTrue(!r.state.testSoon)
     }
 
-    @Test fun onA400MetreTrackShortRepsAreHalfLapsAndTheTrialIsTheRaceDistance() {
+    @Test fun onA400MetreTrackShortRepsAreTimedAndTheTrialIsWholeLaps() {
         val w = RunPlan.goalPace(RunState(walkStage = -1), goal, 400)
-        // 200 m reps are half laps, not whole 400 m laps.
-        assertEquals(List(6) { 0.5 }, w.segments.filter { it.kind == SegmentKind.WORK }.map { it.laps })
+        // 200 m reps: no whole lap fits (a lap is twice as long), so they stay timed — never half a lap from a mid-lap start.
+        assertTrue(w.segments.filter { it.kind == SegmentKind.WORK }.all { it.laps == null && it.seconds in 40..50 }, w.title)
         val top = RunPlan.goalPace(RunState(walkStage = -1, goalStage = RunPlan.goalLadderSize - 1), goal, 400)
-        assertEquals(listOf(2.5, 1.25), top.segments.filter { it.kind == SegmentKind.WORK }.map { it.laps })
+        assertEquals(listOf(3.0, 1.0), top.segments.filter { it.kind == SegmentKind.WORK }.map { it.laps })
         val trial = RunPlan.goalTest(RunState(walkStage = -1), goal, 400)
-        assertEquals(1500, trial.testMeters)
-        assertEquals(3.75, trial.segments.first { it.kind == SegmentKind.WORK }.laps)
-        assertTrue(trial.note.contains("три четверти круга"), trial.note)
+        assertEquals(1600, trial.testMeters)
+        assertEquals(4.0, trial.segments.first { it.kind == SegmentKind.WORK }.laps)
+        assertTrue("четверти" !in trial.note, trial.note)
         // A long loop: a 200 m rep no lap count fits stays timed.
         val loop = RunPlan.goalPace(RunState(walkStage = -1), goal, 1000)
         assertTrue(loop.segments.filter { it.kind == SegmentKind.WORK }.all { it.laps == null && it.seconds in 40..50 })
         // An 800 m goal on a 640 m loop: the top step is the race in one go, never a rep of no laps.
         val short = RunPlan.goalPace(RunState(walkStage = -1, goalStage = RunPlan.goalLadderSize - 1), RunGoal(800, 150), 640)
-        assertTrue(short.segments.filter { it.kind == SegmentKind.WORK }.all { (it.laps ?: 1.0) >= 0.5 && it.seconds > 0 })
+        assertTrue(short.segments.filter { it.kind == SegmentKind.WORK }.all { (it.laps ?: 1.0) >= 1.0 && it.seconds > 0 })
     }
 
     @Test fun sharedDaysKeepThePrioritysWeek() {

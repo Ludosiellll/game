@@ -114,8 +114,9 @@ class RunLoopReviewTest {
     private fun cross(a: Double, b: Double, at: Double, p: Double) = Math.floor((a - at) / p) != Math.floor((b - at) / p)
 
     /**
-     * Finding: the trial due on 29.10 is «6,5 кругов (1495 м)» on the 230 m setting. Run on the loop GPS measures at 204 m
-     * — in the very same run, the tracker's own fit says so — it is 1329 m, yet its time is scored as 1495 m: the VDOT
+     * Finding: the trial due on 29.10 was «6,5 кругов (1495 м)» on the 230 m setting (7 laps, 1610 m, since 30.10). Run on
+     * the loop GPS measures at 204 m — in the very same run, the tracker's own fit says so — it is 1329 m, yet its time was
+     * scored as 1495 m: the VDOT
      * comes out 7 points too high and the 5:30 goal is declared reached by a runner who ran 1329 m at 3:45/km. Every
      * pace after that (easy limit, tempo, intervals, the race-pace step) is then set from a fitness he does not have.
      */
@@ -126,13 +127,13 @@ class RunLoopReviewTest {
         val p = oval.perimeter
         val w = RunPlan.goalTest(denis, goal, set)
         val work = w.segments.first { it.kind == SegmentKind.WORK }
-        assertEquals(6.5, work.laps)
-        assertEquals(1495, w.testMeters)
+        assertEquals(7.0, work.laps)
+        assertEquals(1610, w.testMeters)
         val t = RunTracker(w)
         val gps = Gps(3)
         t.start(0)
         var now = 0L
-        // The line is at arc 0 of the loop; the trial starts half a lap before it.
+        // The line is at arc 0 of the loop; the trial starts on it.
         var arc = p * 0.3
         var phase = "warm"
         var pressed = 0
@@ -148,7 +149,7 @@ class RunLoopReviewTest {
                 "warm" -> {
                     v = 2.8
                     arc += v * 0.25
-                    if (t.waiting(now) && cross(before, arc, p / 2, p)) {
+                    if (t.waiting(now) && cross(before, arc, 0.0, p)) {
                         assertEquals(Press.Start, t.press(now))
                         phase = "race"
                         raceStart = now
@@ -185,14 +186,14 @@ class RunLoopReviewTest {
         assertEquals(p, loop, 3.0)
         val after = RunPlan.after(denis, w, result, caps, day = 20755, goal = goal)
         val scored = after.outcomes.filterIsInstance<RunOutcome.VdotChanged>().single().to
-        val ran = 6.5 * loop
+        val ran = 7 * loop
         val real = Vdot.fromRace(ran, time.toDouble())
         val goalVdot = Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble())
         val easyAfter = RunPlan.paces(after.state)!!.easy
         assertFalse(
             RunOutcome.GoalReached in after.outcomes,
             "the trial was scored as ${w.testMeters} m in $time s: VDOT $scored, outcomes ${after.outcomes}. The tracker's own GPS fit measured the loop at " +
-                "${loop.toInt()} m in this run, so 6,5 laps were ${ran.toInt()} m at ${pace(time / (ran / 1000))}/km: VDOT ${"%.1f".format(real)}, " +
+                "${loop.toInt()} m in this run, so 7 laps were ${ran.toInt()} m at ${pace(time / (ran / 1000))}/km: VDOT ${"%.1f".format(real)}, " +
                 "against the goal's ${"%.1f".format(goalVdot)} — not reached. From now on his easy limit is ${pace(easyAfter.fast.toDouble())}/km " +
                 "(${Ru.lap(Track.lapSec(easyAfter.fast.toDouble(), set))} a lap, which on his loop is ${pace(easyAfter.fast * set.toDouble() / loop)}/km).",
         )

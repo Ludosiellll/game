@@ -116,10 +116,10 @@ class RunLoopReviewRepoTest {
     }
 
     /**
-     * His trial, due Thursday 29.10, is «Контрольный забег · 6,5 кругов (1495 м)» on the 230 m setting. On the loop as GPS
-     * measures it, 6,5 laps are 1332 m. Run flat out at 3:45/km (300 s), it was scored as 1495 m in 300 s: VDOT ≈ 54 and
-     * the 5:30 goal reached, for a runner whose real VDOT from that run is ≈ 47 (the goal is 49). Now it is read on the
-     * loop the tracker fitted in it — or, without GPS in it, on the loop an earlier run measured.
+     * His trial on the 230 m setting is «Контрольный забег · 7 кругов (1610 м)» (6,5 laps, 1495 m, before 30.10). On the
+     * loop as GPS measures it, 7 laps are 1432 m. Run flat out at 3:45/km (322 s), it would be scored as 1610 m in 322 s:
+     * VDOT ≈ 55 and the 5:30 goal reached, for a runner whose real VDOT from that run is ≈ 47,5 (the goal is 49). It is
+     * read on the loop the tracker fitted in it — or, without GPS in it, on the loop an earlier run measured.
      */
     @Test fun theTrialOn29_10IsScoredOnTheLoopGpsMeasured() = runBlocking<Unit> {
         trial(loopInRun = true)
@@ -136,21 +136,18 @@ class RunLoopReviewRepoTest {
         at(d, 14)
         val w = repo.runFor(SessionKind.RUN_QUALITY, d)
         assertEquals(RunType.TEST, w.type, w.title)
-        assertEquals(1495, w.testMeters)
+        assertEquals(1610, w.testMeters)
         val work = w.segments.first { it.kind == SegmentKind.WORK }
-        assertEquals(6.5, work.laps)
-        // 6,5 laps of the loop at 3:45/km: 1332 m in 300 s. The laps as pressed: a half lap, then six.
-        val secs = 300.0
-        val laps = (0 until 7).map { i ->
-            val part = if (i == 0) 0.5 else 1.0
-            Lap(secs / 6.5 * part, work.lapSec!! * part, work.lapSec!! * part, i + 1, 7, 1, part)
-        }
-        val result = RunResult(1.0, 9, 1700, distanceM = 6.5 * 230 + 2000, laps = laps, testSeconds = secs.toInt(), loopM = if (loopInRun) 204.6 else null)
+        assertEquals(7.0, work.laps)
+        // 7 laps of the loop at 3:45/km: 1432 m in 322 s, pressed on the line.
+        val secs = 322.0
+        val laps = (0 until 7).map { i -> Lap(secs / 7, work.lapSec!!, work.lapSec!!, i + 1, 7, 1) }
+        val result = RunResult(1.0, 9, 1700, distanceM = 7.0 * 230 + 2000, laps = laps, testSeconds = secs.toInt(), loopM = if (loopInRun) 204.6 else null)
         val (id, summary) = repo.saveRun(w, result, clock - 1700_000L, emptyList(), d)
         assertTrue(summary.outcomes.any { it is RunOutcome.LoopShorter }, "${summary.outcomes}")
-        assertTrue(summary.outcomes.any { it is RunOutcome.TestTime && it.meters in 1320..1340 }, "${summary.outcomes}")
+        assertTrue(summary.outcomes.any { it is RunOutcome.TestTime && it.meters in 1420..1445 }, "${summary.outcomes}")
         val st = repo.store.runStateNow()
-        val real = Vdot.fromRace(6.5 * measured, secs)
+        val real = Vdot.fromRace(7.0 * measured, secs)
         val goalVdot = Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble())
         // Saturday's easy run after it, on a leg day.
         val sat = LocalDate.of(2026, 10, 31)
@@ -159,8 +156,8 @@ class RunLoopReviewRepoTest {
         val limit = easy.segments.first { it.kind == SegmentKind.RUN }.pace!!.fast
         assertFalse(
             RunOutcome.GoalReached in summary.outcomes,
-            "the trial (${w.title}) scored ${summary.outcomes}: VDOT ${st.vdot}, runs.vdot_after ${db.runs().get(id)!!.vdotAfter}. On the $measured m loop 6,5 laps are " +
-                "${(6.5 * measured).toInt()} m in ${secs.toInt()} s = ${Ru.pace(secs / (6.5 * measured / 1000))}/km, VDOT ${"%.1f".format(real)} against the goal's " +
+            "the trial (${w.title}) scored ${summary.outcomes}: VDOT ${st.vdot}, runs.vdot_after ${db.runs().get(id)!!.vdotAfter}. On the $measured m loop 7 laps are " +
+                "${(7.0 * measured).toInt()} m in ${secs.toInt()} s = ${Ru.pace(secs / (7.0 * measured / 1000))}/km, VDOT ${"%.1f".format(real)} against the goal's " +
                 "${"%.1f".format(goalVdot)}: not reached. Saturday's easy run is now «${easy.title}» with the limit ${Ru.pace(limit.toDouble())}/km = " +
                 "${Ru.lap(Track.lapSec(limit.toDouble(), 230))} a lap, which on his loop is ${Ru.pace(limit * 230.0 / measured)}/km — on 22.10 he ran easy at " +
                 "${Ru.pace(1517.0 / (18 * measured / 1000.0))}/km (84 s a lap).",

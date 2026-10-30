@@ -327,13 +327,14 @@ object RunPlan {
     /**
      * A race-pace rep of [meters] in laps of [lapMeters], always longer than a shorter rep of the ladder gets there: on a
      * 230 m lap 600 m and 800 m both round to 3 laps, and "2 × 800" would be easier than "3 × 600" before it — the
-     * longer one takes the next half lap (3,5 laps = 805 m). Null: the rep stays timed.
+     * longer one takes the next lap (4 laps = 920 m). Null: the rep stays timed.
      */
     private fun goalRepLaps(meters: Double, scale: Double, lapMeters: Int): Double? {
         var prev = 0.0
         for (d in GOAL.dropLast(1).flatMap { it.reps }.distinct().sorted()) {
             val m = d * scale
-            val laps = Track.repLaps(m, lapMeters)?.let { if (it <= prev) prev + 0.5 else it }
+            // The next lap too far from the rep (a long loop): the rep stays timed rather than half as long again.
+            val laps = Track.repLaps(m, lapMeters)?.let { if (it <= prev) prev + 1.0 else it }?.takeIf { abs(it * lapMeters - m) <= 0.25 * m }
             if (abs(m - meters) < 0.5) return laps
             if (laps != null) prev = laps
         }
@@ -623,7 +624,7 @@ object RunPlan {
 
     /**
      * Reps at the goal race pace (a lap of 230 m at 51–52 s for 1500 m in 5:35). On a track the reps are whole laps with a
-     * beep at every lap time; the last step runs the race in two parts, the second one from the middle of a lap.
+     * beep at every lap time; the last step runs the race in two parts, both from the line.
      */
     fun goalPace(state: RunState, goal: RunGoal, lapMeters: Int?, cutback: Boolean = false): RunWorkout {
         val stage = state.goalStage.coerceIn(0, GOAL.lastIndex)
@@ -638,9 +639,8 @@ object RunPlan {
         val lapSec = lapMeters?.let { Track.lapSec(pace, it) }
         val p = paces(state)
         val segs = mutableListOf(Segment(SegmentKind.WARMUP, 12 * 60, p?.easy))
-        // On a track: whole laps where they fit, else half laps (started half a lap before the line); a rep no lap count
-        // fits stays timed. The race in two parts: the rest of the race distance after the first part — or the race in
-        // one go when the rest would be under half a lap.
+        // On a track: whole laps, from the line to the line; a rep no lap count fits stays timed. The race in two parts:
+        // the rest of the race laps after the first part — or the race in one go when nothing is left.
         var laps: List<Double?> = reps.map { m -> lapMeters?.let { goalRepLaps(m, scale, it) } }
         var rest = step.rest
         if (!last && lapMeters != null) {

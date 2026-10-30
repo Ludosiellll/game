@@ -22,10 +22,10 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Denis's first trial on 29.10 as it may go, pressed lap by lap on the real tracker (no GPS): 1500 m in 5:30 as the goal,
- * a 205 m loop (7,5 laps, the beeps at 48,7 s), no fitness known. Even to the end; away at the beeps and faded after
- * 900 m to a jog; a lap walked; stopped; a press missed; a press doubled mid-lap; the time typed by hand after; the laps
- * counted again on the loop GPS measured. Each gives a fitness that is his, words that are true, and paces for the week
+ * Denis's trial as it may go, pressed lap by lap on the real tracker (no GPS): 1500 m in 5:30 as the goal, a 205 m loop
+ * (7 laps from his line to his line, 1435 m, the beeps at 48,7 s — since 30.10; it was 7,5 laps started half a lap
+ * back), no fitness known. Even to the end; away at the beeps and faded after 800 m to a jog; a lap walked; stopped; a
+ * press missed; a press doubled mid-lap; the time typed by hand after; the laps counted again on the loop GPS measured. Each gives a fitness that is his, words that are true, and paces for the week
  * after that follow from them.
  */
 class TrialTomorrowTest {
@@ -40,12 +40,12 @@ class TrialTomorrowTest {
     private val w: RunWorkout = RunPlan.goalTest(denis, goal, lap)
     private val lapSec = w.segments.first { it.laps != null }.lapSec!!
 
-    /** The beeps' laps: the half first, then whole ones. */
-    private val beeps = listOf(lapSec / 2) + List(7) { lapSec }
+    /** The beeps' laps: seven whole ones. */
+    private val beeps = List(7) { lapSec }
 
     /**
      * The trial pressed on the tracker: the start on the line after the warm-up, then a press at every line crossing
-     * ([laps], seconds each, the first the half lap) — the laps in [missed] not pressed, and a press [strays] of the way
+     * ([laps], seconds each) — the laps in [missed] not pressed, and a press [strays] of the way
      * into a lap (a thumb on the screen) besides. The result as the finish screen would save it: the lap button's time
      * in the field, unless [typed] is given instead.
      */
@@ -76,26 +76,37 @@ class TrialTomorrowTest {
 
     private fun vdot(meters: Double, sec: Double) = (Vdot.fromRace(meters, sec) * 2).roundToInt() / 2.0
 
-    @Test fun thePlanIsSevenAndAHalfLapsAtTheGoalPlusEightPercent() {
-        assertEquals(1538, w.testMeters)
-        assertEquals(7.5, w.segments.first { it.laps != null }.laps)
+    private companion object {
+        /** Daniels' VDOT, worked out by hand: 1435 m in 5:41. */
+        const val EVEN = 44.5
+        /** 1435 m in 7:00 is 35,4: the stretch of 820 m (42,1) gives 3 above it. */
+        const val AWAY = 38.5
+        /** 820 m held (42,1), held back by 1435 m in 7:10 (34,4) plus 3. */
+        const val WALKED = 37.5
+        /** 1025 m in 4:03,5. */
+        const val STOPPED = 43.0
+    }
+
+    @Test fun thePlanIsSevenLapsFromTheLineAtTheGoalPlusEightPercent() {
+        assertEquals(1435, w.testMeters)
+        assertEquals(7.0, w.segments.first { it.laps != null }.laps)
         assertEquals(48.7, lapSec, 0.05)
-        assertTrue("с середины круга" in w.note, w.note)
+        assertTrue("середины" !in w.note && "Старт —" !in w.note, w.note)
         assertTrue("по 49 с" in w.note, w.note)
     }
 
     @Test fun evenAtTheBeepsToTheEndIsItsTime() {
         val r = run(beeps)
-        assertEquals(365, r.testSeconds)
+        assertEquals(341, r.testSeconds)
         val a = after(r)
-        assertEquals(vdot(1538.0, 365.0), a.state.vdot)
-        assertEquals(45.0, a.state.vdot)
-        assertTrue(a.outcomes.any { it is RunOutcome.TestTime && it.seconds == 365 }, "${a.outcomes}")
+        assertEquals(vdot(1435.0, 341.0), a.state.vdot)
+        assertEquals(EVEN, a.state.vdot)
+        assertTrue(a.outcomes.any { it is RunOutcome.TestTime && it.seconds == 341 }, "${a.outcomes}")
         assertTrue(a.outcomes.none { it is RunOutcome.TestFromPart }, "${a.outcomes}")
         assertTrue(RunOutcome.GoalReached !in a.outcomes)
         assertTrue(!a.state.testSoon)
         val text = review(r, a)
-        assertTrue("1538 м за 6:05" in text && "До цели 5:30" in text && "Круги ровные" in text, text)
+        assertTrue("1435 м за 5:41" in text && "До цели 5:30" in text && "Круги ровные" in text, text)
         // The week after: easy runs with a limit, race-pace reps a step toward the goal, at 47–48 s a lap.
         val easy = RunPlan.easy(a.state, day = day + 2)
         assertNotNull(easy.segments.first().pace)
@@ -105,26 +116,27 @@ class TrialTomorrowTest {
         assertTrue(RunPlan.stepPace(a.state, goal) >= goal.pace)
     }
 
-    @Test fun awayAtTheBeepsAndJoggedAfterNineHundredMetres() {
-        val r = run(beeps.take(5) + List(3) { 75.0 })
-        assertEquals(444, r.testSeconds)
+    @Test fun awayAtTheBeepsAndJoggedAfterEightHundredMetres() {
+        val r = run(beeps.take(4) + List(3) { 75.0 })
+        assertEquals(420, r.testSeconds)
         val a = after(r)
-        val raw = Vdot.fromRace(1538.0, 444.0)
-        // The stretch (923 m in 3:39, 42,6) is far above the whole time (36,2): 3 above it, said so.
+        val raw = Vdot.fromRace(1435.0, 420.0)
+        // The stretch (820 m in 3:15) is far above the whole time: 3 above it, said so.
+        assertTrue(Vdot.fromRace(820.0, 194.8) > raw + RunPlan.PART_OVER_WHOLE)
         assertEquals(((raw + RunPlan.PART_OVER_WHOLE) * 2).roundToInt() / 2.0, a.state.vdot)
-        assertEquals(39.0, a.state.vdot)
+        assertEquals(AWAY, a.state.vdot)
         val part = a.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single()
-        assertTrue(part.finished && part.capped && part.meters == 923 && part.seconds == 219, "$part")
+        assertTrue(part.finished && part.capped && part.meters == 820 && part.seconds == 195, "$part")
         assertTrue(!a.state.testSoon)
         val text = review(r, a)
-        assertTrue("Первые 923 м" in text && "Вторая половина медленнее" in text, text)
+        assertTrue("Первые 820 м" in text && "Вторая половина медленнее" in text, text)
     }
 
     @Test fun aLapWalkedIsNoTimeAndTheStretchCountsHeldBackByTheTimeToTheEnd() {
-        val r = run(beeps.take(5) + listOf(65.0, 90.0, 80.0))
+        val r = run(beeps.take(4) + listOf(65.0, 90.0, 80.0))
         assertNull(r.testSeconds, "90 s for a lap of 48,7 is no lap: the time is not trusted")
         val a = after(r)
-        assertEquals(38.5, a.state.vdot)
+        assertEquals(WALKED, a.state.vdot)
         val part = a.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single()
         assertTrue(!part.finished && part.capped, "$part")
         assertTrue(a.state.testSoon, "a full trial again")
@@ -135,15 +147,17 @@ class TrialTomorrowTest {
         val r = run(beeps.take(5))
         assertNull(r.testSeconds)
         val a = after(r)
-        assertEquals(42.5, a.state.vdot)
+        assertEquals(vdot(1025.0, 5 * lapSec), a.state.vdot)
+        assertEquals(STOPPED, a.state.vdot)
         assertTrue(a.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single().let { !it.finished && !it.capped })
         assertTrue(a.state.testSoon)
     }
 
     @Test fun stoppedAfterThreeLapsNothingIsCountedAndItSaysHowFar() {
-        val a = after(run(beeps.take(4)))
+        // 615 m: under half the trial (718 m).
+        val a = after(run(beeps.take(3)))
         assertNull(a.state.vdot)
-        assertEquals(718, a.outcomes.filterIsInstance<RunOutcome.TestStopped>().single().meters)
+        assertEquals(615, a.outcomes.filterIsInstance<RunOutcome.TestStopped>().single().meters)
     }
 
     /**
@@ -154,43 +168,43 @@ class TrialTomorrowTest {
     @Test fun aPressMissedGivesNoTimeUntilItIsTyped() {
         val r = run(beeps, missed = setOf(6))
         assertNull(r.testSeconds)
-        assertEquals(7, r.laps!!.count { it.rep == 1 })
+        assertEquals(6, r.laps!!.count { it.rep == 1 })
         val a = after(r)
         assertTrue(a.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single().let { !it.finished }, "${a.outcomes}")
-        assertTrue(a.state.vdot!! < 45.0, "${a.state.vdot}")
+        assertTrue(a.state.vdot!! < EVEN, "${a.state.vdot}")
         assertTrue(a.state.testSoon)
-        // Typed: 6:05 — the whole time, the laps brought to it.
-        val typed = after(run(beeps, missed = setOf(6), typed = 365))
-        assertEquals(45.0, typed.state.vdot)
-        assertTrue(typed.outcomes.any { it is RunOutcome.TestTime && it.seconds == 365 }, "${typed.outcomes}")
+        // Typed: 5:41 — the whole time, the laps brought to it.
+        val typed = after(run(beeps, missed = setOf(6), typed = 341))
+        assertEquals(EVEN, typed.state.vdot)
+        assertTrue(typed.outcomes.any { it is RunOutcome.TestTime && it.seconds == 341 }, "${typed.outcomes}")
         assertTrue(typed.outcomes.none { it is RunOutcome.TestFromPart }, "${typed.outcomes}")
         assertTrue(!typed.state.testSoon)
     }
 
     /**
      * A press doubled mid-lap while fading (60 s laps, a thumb on the screen half way round the fifth): both halves pass
-     * for laps (30 s is over half the beeps' 48,7), the eighth press closes the trial a lap early, and its time is a lap
-     * short — 6:24 for 7:24, a fitness seven points too high. A lap far quicker than the laps before it in the same rep
+     * for laps (30 s is over half the beeps' 48,7), the seventh press closes the trial a lap early, and its time is a lap
+     * short — 6:00 for 7:00, a fitness far too high. A lap far quicker than the laps before it in the same rep
      * is no lap.
      */
     @Test fun aPressDoubledMidLapNeverClosesTheTrialALapEarly() {
-        val laps = listOf(30.0) + List(7) { 60.0 }
+        val laps = List(7) { 60.0 }
         val real = laps.sum().roundToInt()
         val r = run(laps, strays = mapOf(5 to 0.5))
         val t = assertNotNull(r.testSeconds)
         assertTrue(abs(t - real) <= 1, "the trial's time $t, run in $real: ${r.laps}")
-        assertEquals(8, r.laps!!.count { it.rep == 1 }, "${r.laps}")
+        assertEquals(7, r.laps!!.count { it.rep == 1 }, "${r.laps}")
         val a = after(r)
-        assertEquals(vdot(1538.0, real.toDouble()), a.state.vdot)
+        assertEquals(vdot(1435.0, real.toDouble()), a.state.vdot)
     }
 
     /** A thumb on the screen late in a lap (two thirds round): the lap it makes is no lap either, and the time is right. */
     @Test fun aStrayPressLateInALapNeitherClosesTheTrialEarlyNorMovesItsTime() {
         for (f in listOf(0.3, 0.5, 0.65, 0.8)) {
-            val laps = listOf(26.0) + List(7) { 52.0 }
+            val laps = List(7) { 52.0 }
             val r = run(laps, strays = mapOf(4 to f))
             val t = assertNotNull(r.testSeconds, "stray at $f")
-            assertTrue(abs(t - 390) <= 1, "stray at $f: time $t, laps ${r.laps}")
+            assertTrue(abs(t - 364) <= 1, "stray at $f: time $t, laps ${r.laps}")
         }
     }
 
@@ -201,10 +215,10 @@ class TrialTomorrowTest {
      */
     @Test fun aStrayPressInTheLastLapIsPutRightByTheLine() {
         for (f in listOf(0.62, 0.68, 0.8)) {
-            val even = run(beeps, strays = mapOf(8 to f))
-            assertTrue(abs(assertNotNull(even.testSeconds, "stray at $f") - 365) <= 1, "stray at $f: ${even.testSeconds}, laps ${even.laps}")
-            val faded = listOf(24.35) + List(4) { 48.7 } + listOf(54.0, 58.0, 62.0)
-            val slow = run(faded, strays = mapOf(8 to f))
+            val even = run(beeps, strays = mapOf(7 to f))
+            assertTrue(abs(assertNotNull(even.testSeconds, "stray at $f") - 341) <= 1, "stray at $f: ${even.testSeconds}, laps ${even.laps}")
+            val faded = List(4) { 48.7 } + listOf(54.0, 58.0, 62.0)
+            val slow = run(faded, strays = mapOf(7 to f))
             assertTrue(abs(assertNotNull(slow.testSeconds, "faded, stray at $f") - faded.sum().roundToInt()) <= 1, "faded, stray at $f: ${slow.testSeconds}, laps ${slow.laps}")
         }
         val t = RunTracker(w)
@@ -216,14 +230,14 @@ class TrialTomorrowTest {
         // A touch 12 s after the finish: a lap of the cool-down at most, the trial's time as it was.
         t.press(at + 12_000)
         t.finish(at + 20_000)
-        assertEquals(365, t.result(at + 20_000, 9).testSeconds)
+        assertEquals(341, t.result(at + 20_000, 9).testSeconds)
     }
 
     /** The time typed differs from the laps' by a few seconds (his watch): the typed one is the trial, the laps follow it. */
     @Test fun aTimeTypedOverTheLapsIsTheTrial() {
-        val a = after(run(beeps, typed = 360))
-        assertEquals(vdot(1538.0, 360.0), a.state.vdot)
-        assertTrue(a.outcomes.any { it is RunOutcome.TestTime && it.seconds == 360 }, "${a.outcomes}")
+        val a = after(run(beeps, typed = 336))
+        assertEquals(vdot(1435.0, 336.0), a.state.vdot)
+        assertTrue(a.outcomes.any { it is RunOutcome.TestTime && it.seconds == 336 }, "${a.outcomes}")
         assertTrue(a.outcomes.none { it is RunOutcome.TestFromPart }, "${a.outcomes}")
     }
 
@@ -233,14 +247,15 @@ class TrialTomorrowTest {
         val a = after(r)
         val loop = a.outcomes.filterIsInstance<RunOutcome.LoopShorter>().single()
         assertEquals(195, loop.loop)
-        assertEquals(1463, a.outcomes.filterIsInstance<RunOutcome.TestTime>().single().meters)
-        assertEquals(vdot(1463.0, 365.0), a.state.vdot)
-        assertTrue(a.state.vdot!! < 45.0)
+        assertEquals(1365, a.outcomes.filterIsInstance<RunOutcome.TestTime>().single().meters)
+        assertEquals(vdot(1365.0, 341.0), a.state.vdot)
+        assertTrue(a.state.vdot!! < EVEN)
         assertTrue(RunOutcome.GoalReached !in a.outcomes)
         val (plan, read) = RunPlan.onLoop(w, r, 195)
-        assertTrue("1463 м за 6:05" in review(read, a, plan), review(read, a, plan))
-        // 5:35 for the 7,5 laps reaches the goal on 205 m (1500 m in 5:27) and not on 195 (5:44): read on the loop as run.
-        val near = listOf(22.3) + List(7) { 44.67 }
+        assertTrue("1365 м за 5:41" in review(read, a, plan), review(read, a, plan))
+        // 5:13 for the 7 laps reaches the goal on 205 m (1500 m in about 5:28) and not on 195 (about 5:44): read on the
+        // loop as run.
+        val near = List(7) { 44.67 }
         assertTrue(RunOutcome.GoalReached in after(run(near)).outcomes)
         val short = after(run(near).copy(loopM = 195.0))
         assertTrue(RunOutcome.GoalReached !in short.outcomes, "${short.outcomes}")
@@ -248,8 +263,8 @@ class TrialTomorrowTest {
 
     /** At the goal to the end: the goal reached, said so, and no stretch talked about. */
     @Test fun theGoalRunToTheEndIsReached() {
-        val r = run(listOf(22.0) + List(7) { 44.0 })
-        assertEquals(330, r.testSeconds)
+        val r = run(List(7) { 44.0 })
+        assertEquals(308, r.testSeconds)
         val a = after(r)
         assertTrue(RunOutcome.GoalReached in a.outcomes, "${a.outcomes}")
         assertTrue("Это цель" in review(r, a))
@@ -258,9 +273,9 @@ class TrialTomorrowTest {
     /** Every word of every outcome of every scenario above has a number in it, never «null» or «NaN». */
     @Test fun noScenarioSaysNothingBroken() {
         val runs = listOf(
-            run(beeps), run(beeps.take(5) + List(3) { 75.0 }), run(beeps.take(5) + listOf(65.0, 90.0, 80.0)), run(beeps.take(5)),
-            run(beeps.take(4)), run(beeps, missed = setOf(6)), run(beeps, missed = setOf(3)), run(beeps, strays = mapOf(5 to 0.5)),
-            run(beeps, typed = 360), run(beeps).copy(loopM = 195.0), run(listOf(22.0) + List(7) { 44.0 }),
+            run(beeps), run(beeps.take(4) + List(3) { 75.0 }), run(beeps.take(4) + listOf(65.0, 90.0, 80.0)), run(beeps.take(5)),
+            run(beeps.take(3)), run(beeps, missed = setOf(6)), run(beeps, missed = setOf(3)), run(beeps, strays = mapOf(5 to 0.5)),
+            run(beeps, typed = 336), run(beeps).copy(loopM = 195.0), run(List(7) { 44.0 }),
         )
         for (r in runs) {
             val a = after(r)
@@ -269,13 +284,12 @@ class TrialTomorrowTest {
         }
     }
 
-    /** The laps as the plan reads them never lose a lap pressed on the line: eight presses are eight laps. */
-    @Test fun eightPressesOnTheLineAreEightLaps() {
+    /** The laps as the plan reads them never lose a lap pressed on the line: seven presses are seven whole laps. */
+    @Test fun sevenPressesOnTheLineAreSevenLaps() {
         val r = run(beeps)
         val laps = r.laps!!.filter { it.rep == 1 }
-        assertEquals((1..8).toList(), laps.map { it.number })
-        assertEquals(0.5, laps.first().part)
-        assertTrue(laps.all { l -> l.of == 8 })
+        assertEquals((1..7).toList(), laps.map { it.number })
+        assertTrue(laps.all { l -> l.part == 1.0 && l.of == 7 })
         assertEquals(Lap::class, laps.first()::class)
     }
 }

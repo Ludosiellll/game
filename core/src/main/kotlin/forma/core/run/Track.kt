@@ -9,37 +9,23 @@ object Track {
     /** Seconds per lap of [lapMeters] at [secPerKm]. */
     fun lapSec(secPerKm: Double, lapMeters: Int): Double = secPerKm * lapMeters / 1000.0
 
-    /** [meters] in laps at a step of [step] laps (1, 0.5, 0.25), at least one step. */
-    private fun round(meters: Double, lapMeters: Int, step: Double): Double =
-        max(step, (meters / lapMeters / step).roundToInt() * step)
+    /** [meters] in whole laps, at least one. */
+    private fun whole(meters: Double, lapMeters: Int): Double = max(1, (meters / lapMeters).roundToInt()).toDouble()
 
     private fun off(laps: Double, lapMeters: Int, meters: Double) = abs(laps * lapMeters - meters) / meters
 
     /**
-     * A rep of about [meters] in laps: whole laps (start and finish on the line) when that is less than a fifth off, else
-     * half laps (the rep starts half a lap before the line) when that is within a quarter; null when no lap count fits
-     * (a long loop for a short rep: the rep stays timed).
+     * A rep of about [meters] in whole laps: it starts and ends on the runner's line, where the runner presses «Круг».
+     * Null when no whole lap count is within a quarter (a long loop for a short rep: the rep stays timed).
      */
     fun repLaps(meters: Double, lapMeters: Int): Double? {
-        val whole = round(meters, lapMeters, 1.0)
-        if (off(whole, lapMeters, meters) < 0.2) return whole
-        val half = round(meters, lapMeters, 0.5)
-        return when {
-            off(half, lapMeters, meters) <= 0.25 -> half
-            off(whole, lapMeters, meters) <= 0.25 -> whole
-            else -> null
-        }
+        return whole(meters, lapMeters).takeIf { off(it, lapMeters, meters) <= 0.25 }
     }
 
     /**
-     * A race of [meters] in laps, as close as the line allows: whole or half laps when within 3 %, else quarter laps
-     * (1500 m on a 400 m track is 3¾ laps: the start is three quarters of a lap before the line).
+     * A race of [meters] in whole laps, the nearest count: started and finished on the runner's line (1500 m on a 205 m
+     * loop is 7 laps, 1435 m; its time gives the fitness all the same). A start part of a lap before the line was lost
+     * on a loop with no marks (Denis, 29.10: he started on the line, and his first lap was taken for the half).
      */
-    fun raceLaps(meters: Double, lapMeters: Int): Double {
-        for (step in listOf(1.0, 0.5)) {
-            val laps = round(meters, lapMeters, step)
-            if (off(laps, lapMeters, meters) <= 0.03) return laps
-        }
-        return round(meters, lapMeters, 0.25)
-    }
+    fun raceLaps(meters: Double, lapMeters: Int): Double = whole(meters, lapMeters)
 }

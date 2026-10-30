@@ -73,7 +73,8 @@ class DenisWeekTest {
     @Test fun aMissedTrialStartsTheLadderAgainFromTheFourHundreds() {
         val top = RunState(walkStage = -1, vdot = 47.0, goalStage = RunPlan.goalLadderSize - 1, testSoon = true, runs = 30)
         val trial = RunPlan.goalTest(top, goal, lap)
-        val a = RunPlan.after(top, trial, RunResult(1.0, 9, 1700, testSeconds = 352), caps, day = 125, goal = goal)
+        // 7 laps (1610 m) in 6:20: 1500 m in about 5:52, short of 5:30.
+        val a = RunPlan.after(top, trial, RunResult(1.0, 9, 1700, testSeconds = 380), caps, day = 125, goal = goal)
         assertEquals(3, a.state.goalStage)
         assertEquals("Темп цели · 4 × 2 круга", RunPlan.goalPace(a.state, goal, lap).title)
     }

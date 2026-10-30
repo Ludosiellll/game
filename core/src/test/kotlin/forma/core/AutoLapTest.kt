@@ -155,14 +155,14 @@ class AutoLapTest {
     private fun cross(a: Double, b: Double, at: Double) = Math.floorDiv((a - at).toLong(), lapM.toLong()) != Math.floorDiv((b - at).toLong(), lapM.toLong())
 
     /**
-     * The first trial on a stadium with no line known yet: 6.5 laps start half a lap before the line, here in the middle of
-     * the back straight (44 m across the field). The start press must not teach the line: laps end on the line only.
+     * The first trial on a stadium with no line known yet: 7 laps from the line, here in the middle of the back straight.
+     * The start press is on the line too (since 30.10 no trial starts part of a lap before it), and every lap ends there.
      */
-    @Test fun aTrialStartedHalfALapBackKeepsItsLaps() {
+    @Test fun aTrialStartedOnTheLineKeepsItsLaps() {
         val lineAt = straight / 2
         val w = RunPlan.goalTest(RunState(walkStage = -1, vdot = 46.0), goal, lapM)
         val work = w.segments.first { it.kind == SegmentKind.WORK }
-        assertEquals(6.5, work.laps)
+        assertEquals(7.0, work.laps)
         repeat(30) { seed ->
             val rnd = Random(seed)
             val t = RunTracker(w)
@@ -179,8 +179,8 @@ class AutoLapTest {
                 when (phase) {
                     "warm" -> {
                         s += 2.9 * 0.25
-                        // The plan waits: on to the start, half a lap before the line, and go.
-                        if (t.waiting(now) && cross(before, s, lineAt + lapM / 2.0)) {
+                        // The plan waits: on to the line, and go.
+                        if (t.waiting(now) && cross(before, s, lineAt)) {
                             assertEquals(Press.Start, t.press(now))
                             phase = "race"
                             raceStart = now
@@ -210,7 +210,7 @@ class AutoLapTest {
             val laps = t.laps.filter { it.rep == 1 }
             assertEquals(7, laps.size, "seed $seed: ${t.laps}")
             assertTrue(laps.none { it.auto }, "seed $seed: ${t.laps}")
-            assertEquals(0.5, laps.first().part)
+            assertTrue(laps.all { it.part == 1.0 })
             val time = assertNotNull(t.repTimes().first())
             assertEquals((raceEnd - raceStart) / 1000.0, time, 0.6, "seed $seed")
             assertEquals(time.roundToInt(), t.result(now, 9).testSeconds, "seed $seed")

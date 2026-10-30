@@ -42,7 +42,21 @@ class GoalProgressTest {
         assertEquals(listOf(GoalProgress.Trial(10, 1500, 341, 341.0), GoalProgress.Trial(40, 1500, 333, 333.0)), p.trials)
     }
 
-    /** On a 230 m track the trial is 6.5 laps — 1495 m: it is a 1500 m trial, its time carried over to 1500 m. */
+    /**
+     * The trial is whole laps from the line (since 30.10): on a 320 m loop an 800 m goal is tried over 3 laps, 960 m — a
+     * fifth longer, still the trial of that goal. A trial of another goal (1100 m for 800, 3000 m for 1500) stays out.
+     */
+    @Test fun aTrialOfWholeLapsOnALongLoopIsOnTheWay() {
+        val runs = listOf(
+            run(12, RunType.TEST, listOf(RunOutcome.TestTime(960, 200)), lapM = 320),
+            run(20, RunType.TEST, listOf(RunOutcome.TestTime(1100, 230)), lapM = 320),
+        )
+        val t = GoalProgress.of(runs.map { it.first }, runs.map { it.second }, 800).trials.single()
+        assertEquals(960, t.meters)
+        assertTrue(t.goalSeconds < 200, "${t.goalSeconds}")
+    }
+
+    /** On a 230 m track the trial was 6.5 laps — 1495 m: it is a 1500 m trial, its time carried over to 1500 m. */
     @Test fun theStadiumTrialOfWholeLapsCounts() {
         val p = of(run(12, RunType.TEST, listOf(RunOutcome.TestTime(1495, 338))))
         val t = p.trials.single()

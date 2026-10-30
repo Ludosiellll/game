@@ -44,14 +44,14 @@ class TrialHeldEdgeTest {
     }
 
     /**
-     * Fitness 40 known. Away far too fast (923 m at 3:25/km, a fitness of 50 for that stretch — not believable next to
-     * 40) and then jogging to the line: the whole time (7:09, a fitness of 37,6) is a trial like any other and counts,
+     * Fitness 40 known. Away far too fast (820 m at 3:25/km, a fitness of 49,9 for that stretch — not believable next to
+     * 40) and then jogging to the line: the whole time (6:48, a fitness of 36,5) is a trial like any other and counts,
      * and the stretch adds to it what any faded trial's does, 3 at most — capped, not dropped: dropped at the edge of
      * belief, a trial run faster gave a lower fitness.
      */
     @Test fun aStretchTooGoodToBelieveAddsAtMostThreeToTheWholeTime() {
         val known = RunState(walkStage = -1, vdot = 40.0)
-        val (w, r) = run(known, listOf(21.0) + List(4) { 42.0 } + List(3) { 80.0 })
+        val (w, r) = run(known, List(4) { 42.0 } + List(3) { 80.0 })
         val t = assertNotNull(r.testSeconds)
         val raw = Vdot.fromRace(w.testMeters!!.toDouble(), t.toDouble())
         val part = assertNotNull(RunPlan.held(w, r))
@@ -85,15 +85,16 @@ class TrialHeldEdgeTest {
     }
 
     /**
-     * Stopped after a lap slowed to 60.7 s (6.5 of 7.5 laps): no better than running the last lap at 60.7 too — the stop
-     * counted the stretch whole (48), the trial run to its end 3 above its time (47.5).
+     * Stopped after a lap slowed to 60.7 s (7 of 8 laps): no better than running the last lap at 60.7 too — the stop
+     * once counted the stretch whole (48), the trial run to its end 3 above its time (47.5).
      */
     @Test fun aStopIsNoBetterThanRunningOnAtThePaceComeDownTo() {
         val fresh = RunState(walkStage = -1)
         val g = RunGoal(1500, 337)
         val w = RunPlan.goalTest(fresh, g, 200)
-        val laps = listOf(22.2, 43.6, 42.8, 43.0, 43.9, 44.4, 60.7)
-        val ls = laps.mapIndexed { i, s -> Lap(s, number = i + 1, of = 8, rep = 1, part = if (i == 0) 0.5 else 1.0) }
+        assertEquals(8.0, w.segments.first { it.laps != null }.laps)
+        val laps = listOf(43.6, 42.8, 43.0, 43.9, 44.4, 44.0, 60.7)
+        val ls = laps.mapIndexed { i, s -> Lap(s, number = i + 1, of = 8, rep = 1) }
         fun after(l: List<Lap>) = RunPlan.after(fresh, w, RunResult(1.0, 9, 1354, laps = l), caps, day = 20, goal = g).state.vdot!!
         val stopped = after(ls)
         val ran = after(ls + Lap(60.7, number = 8, of = 8, rep = 1))
@@ -101,8 +102,8 @@ class TrialHeldEdgeTest {
     }
 
     /**
-     * Laps far from the time typed (13 min of laps on 400 m for a 1500 m typed as 7:07) are no record of that trial: the
-     * whole time counts alone. Brought to it, the second lap fell under half its time for the trial 2 % faster — "a press
+     * Laps far from the time typed (13 min of laps on 400 m for a trial of 4 laps typed as 7:37) are no record of that
+     * trial: the whole time counts alone. Brought to it, the second lap fell under half its time for the trial 2 % faster — "a press
      * doubled" — and the fitness came out 2 lower.
      */
     @Test fun lapsFarFromTheTimeTypedAreNoRecordOfIt() {
@@ -111,8 +112,8 @@ class TrialHeldEdgeTest {
         val w = RunPlan.goalTest(known, g, 400)
         val laps = listOf(89.1, 117.7, 239.2, 331.6)
         fun after(scale: Double): Double {
-            val ls = laps.mapIndexed { i, s -> Lap(s * scale, number = i + 1, of = 4, rep = 1, part = if (i == 0) 0.75 else 1.0) }
-            return RunPlan.after(known, w, RunResult(1.0, 10, 1222, laps = ls, testSeconds = (427 * scale).roundToInt()), caps, day = 20, goal = g).state.vdot!!
+            val ls = laps.mapIndexed { i, s -> Lap(s * scale, number = i + 1, of = 4, rep = 1) }
+            return RunPlan.after(known, w, RunResult(1.0, 10, 1222, laps = ls, testSeconds = (457 * scale).roundToInt()), caps, day = 20, goal = g).state.vdot!!
         }
         val slower = after(1.0)
         val faster = after(0.98)
@@ -127,8 +128,9 @@ class TrialHeldEdgeTest {
         val fresh = RunState(walkStage = -1)
         val g = RunGoal(1500, 325)
         val w = RunPlan.goalTest(fresh, g, 230)
-        val laps = listOf(26.2, 52.1, 51.2, 50.7, 52.0, 75.2)
-        val ls = laps.mapIndexed { i, s -> Lap(s, number = i + 1, of = 7, rep = 1, part = if (i == 0) 0.5 else 1.0) }
+        assertEquals(7.0, w.segments.first { it.laps != null }.laps)
+        val laps = listOf(52.4, 52.1, 51.2, 50.7, 52.0, 75.2)
+        val ls = laps.mapIndexed { i, s -> Lap(s, number = i + 1, of = 7, rep = 1) }
         fun after(l: List<Lap>) = RunPlan.after(fresh, w, RunResult(1.0, 6, 1235, laps = l), caps, day = 20, goal = g).state.vdot!!
         val stopped = after(ls)
         val ran = after(ls + Lap(75.2, number = 7, of = 7, rep = 1))
@@ -136,14 +138,14 @@ class TrialHeldEdgeTest {
     }
 
     /**
-     * A trial 2 % faster never gives a lower fitness: a stretch just past belief next to the fitness known (36: 922 m in
-     * 3:34 a 43.8, 2 % faster a 44.8) once dropped and the whole time alone counted — 38.5 for the faster trial, 44 for
+     * A trial 2 % faster never gives a lower fitness: a stretch just past belief next to the fitness known (36: 820 m in
+     * 3:08 a 43.9, 2 % faster a 44.9) once dropped and the whole time alone counted — 38.5 for the faster trial, 44 for
      * the slower one (found on random runners: run_trial_faster).
      */
     @Test fun aFasterTrialNeverGivesALowerFitnessAtTheEdgeOfBelief() {
         val known = RunState(walkStage = -1, vdot = 36.0)
         fun after(scale: Double): Double {
-            val (w, r) = run(known, (listOf(23.0) + List(4) { 47.75 } + List(3) { 72.0 }).map { it * scale })
+            val (w, r) = run(known, (List(4) { 47.0 } + List(3) { 72.0 }).map { it * scale })
             return RunPlan.after(known, w, r, caps, day = 20, goal = goal).state.vdot!!
         }
         val slower = after(1.0)
@@ -165,18 +167,19 @@ class TrialHeldEdgeTest {
     }
 
     /**
-     * A trial without the phone, typed in as its laps (all 7,5 of them, each a lap) and no time: it was run to the end,
+     * A trial without the phone, typed in as its laps (all 7 of them) and no time: it was run to the end,
      * and its time is the laps' — not "not run to the end, a full trial again in two weeks".
      */
     @Test fun aTrialTypedAsAllItsLapsIsRunToTheEnd() {
         val fresh = RunState(walkStage = -1)
         val w = RunPlan.goalTest(fresh, goal, lap)
-        val laps = ManualLaps.assign(w, listOf(26.0) + List(7) { 52.0 })
+        val laps = ManualLaps.assign(w, List(7) { 52.0 })
         val r = RunPlan.manual(w, ManualRun(null, null, rpe = 9)).copy(laps = laps)
         val after = RunPlan.after(fresh, w, r, caps, day = 20, goal = goal)
-        assertTrue(after.outcomes.any { it is RunOutcome.TestTime && it.seconds == 390 }, "${after.outcomes}")
+        assertTrue(after.outcomes.any { it is RunOutcome.TestTime && it.seconds == 364 }, "${after.outcomes}")
         assertTrue(after.outcomes.none { it is RunOutcome.TestFromPart && !it.finished }, "${after.outcomes}")
         assertTrue(!after.state.testSoon)
-        assertEquals((Vdot.fromRace(1537.5, 390.0) * 2).roundToInt() / 2.0, after.state.vdot)
+        assertEquals((Vdot.fromRace(1435.0, 364.0) * 2).roundToInt() / 2.0, after.state.vdot)
+        assertEquals(41.5, after.state.vdot)
     }
 }

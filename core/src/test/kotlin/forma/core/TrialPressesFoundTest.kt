@@ -32,16 +32,17 @@ class TrialPressesFoundTest {
     }
 
     /**
-     * Seed 21, case 8546: a 200 m loop at 38,4-s beeps, a touch at 0,74 of the half lap (4,7 s before the line, so the
-     * line press is a double tap and goes), then one slow lap (64 s after 41) and the usual pace again. That one lap
-     * stood for the next, the two laps after it (36,6 and 41,0) passed for a touch and its line and were made one lap of
-     * 77,6 s, past belief for a lap: no time for a trial run to the end. A single slow lap is no fade: it does not say
-     * what the next lap is.
+     * Seed 21, case 8546: a 200 m loop at 38,4-s beeps, a touch 4,7 s before the line in the first lap (so the line press
+     * is a double tap and goes), then one slow lap (64 s after 36) and the usual pace again. That one lap stood for the
+     * next, the two laps after it (36,6 and 41,0) passed for a touch and its line and were made one lap of 77,6 s, past
+     * belief for a lap: no time for a trial run to the end. A single slow lap is no fade: it does not say what the next
+     * lap is. (Found on the 7,5-lap trial; since 30.10 the trial is 8 whole laps, the first lap whole too.)
      */
     @Test fun oneSlowLapDoesNotStandForTheNext() {
         val w = RunPlan.goalTest(RunState(walkStage = -1, vdot = 57.0), RunGoal(1500, 361), 200)
-        val laps = listOf(18.2, 36.1, 64.2, 36.6, 41.0, 46.5, 49.0, 54.1)
-        val (t, real) = run(w, laps, strays = mapOf(1 to 0.74))
+        assertEquals(8.0, w.segments.first { it.laps != null }.laps)
+        val laps = listOf(36.4, 36.1, 64.2, 36.6, 41.0, 46.5, 49.0, 54.1)
+        val (t, real) = run(w, laps, strays = mapOf(1 to (36.4 - 4.7) / 36.4))
         val reps = t.laps.filter { it.rep == 1 }
         assertEquals(8, reps.size, "${reps.map { "%.1f".format(it.seconds) }}")
         val time = assertNotNull(t.result(0, 9).testSeconds, "${reps.map { "%.1f".format(it.seconds) }}")

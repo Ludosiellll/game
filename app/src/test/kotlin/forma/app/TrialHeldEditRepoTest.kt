@@ -39,7 +39,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Denis's trial stopped after half of it (205 m loop, 7,5 laps, no fitness yet), then put right after the fact: a lap's
+ * Denis's trial stopped after half of it (205 m loop, 7 laps from the line, no fitness yet), then put right after the fact: a lap's
  * time corrected, the lap length set anew. What was held stays what was held — never the whole trial in half its time.
  */
 @RunWith(AndroidJUnit4::class)
@@ -81,33 +81,30 @@ class TrialHeldEditRepoTest {
 
     private suspend fun trial(): RunWorkout = repo.runFor(SessionKind.RUN_QUALITY, day).also {
         assertEquals(RunType.TEST, it.type, it.title)
-        assertEquals(1538, it.testMeters)
+        assertEquals(1435, it.testMeters)
     }
 
     private fun laps(w: RunWorkout, secs: List<Double>): List<Lap> {
         val lap = w.segments.first { it.kind == SegmentKind.WORK }.lapSec!!
-        return secs.mapIndexed { i, s ->
-            val part = if (i == 0) 0.5 else 1.0
-            Lap(s, lap * part, lap * part, i + 1, 8, 1, part)
-        }
+        return secs.mapIndexed { i, s -> Lap(s, lap, lap, i + 1, 7, 1) }
     }
 
-    private val held = listOf(24.35) + List(4) { 48.7 }
+    private val held = List(4) { 48.7 }
 
     private suspend fun summaryOf(id: Long): RunSummary = AppJson.decodeFromString(RunSummary.serializer(), db.workouts().get(id)!!.summaryJson!!)
 
-    /** Stopped after five laps (923 m in 3:39), then lap 3 put right by a third of a second: still a trial stopped at half. */
+    /** Stopped after four laps (820 m in 3:15), then lap 3 put right by a third of a second: still a trial stopped at half. */
     @Test fun aLapPutRightOnAStoppedTrialDoesNotMakeItAFullOne() = runBlocking<Unit> {
         val w = trial()
         val (id, summary) = repo.saveRun(w, RunResult(0.6, 9, 1400, distanceM = 2900.0, laps = laps(w, held)), clock - 1400_000L, emptyList(), day)
         assertTrue(summary.outcomes.any { it is RunOutcome.TestFromPart && !it.finished }, "${summary.outcomes}")
-        assertEquals(42.5, repo.store.runStateNow().vdot)
+        assertEquals(42.0, repo.store.runStateNow().vdot)
         repo.editRunLaps(id, LapEdit.setTime(summary.laps, 2, 49.0))
         val after = summaryOf(id)
         assertTrue(after.outcomes.none { it is RunOutcome.TestTime || it == RunOutcome.GoalReached }, "${after.outcomes}")
         assertTrue(after.outcomes.any { it is RunOutcome.TestFromPart && !it.finished }, "${after.outcomes}")
         val st = repo.store.runStateNow()
-        assertEquals(42.5, st.vdot)
+        assertEquals(42.0, st.vdot)
         assertNull(st.lastTestDay)
         assertEquals(day.toEpochDay(), st.lastTrialTryDay)
     }
@@ -122,6 +119,6 @@ class TrialHeldEditRepoTest {
         repo.store.setProfile(denis.copy(lapMeters = 200))
         repo.recountLaps(205)
         val part = summaryOf(id).outcomes.filterIsInstance<RunOutcome.TestFromPart>().single()
-        assertEquals(900, part.meters, "$part")
+        assertEquals(800, part.meters, "$part")
     }
 }

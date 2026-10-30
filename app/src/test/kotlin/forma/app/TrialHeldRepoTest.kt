@@ -38,7 +38,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Denis's first trial on 29.10 (205 m loop, 7,5 laps, no fitness yet) through the real repository, as he expects it: the
+ * Denis's trial (205 m loop, 7 laps from the line since 30.10, no fitness yet) through the real repository, as he expects it: the
  * beeps' pace for half of it, then slower — or a stop. What he held counts; a trial not run to the end comes again in two
  * weeks; a faded one run to the end is a trial like any.
  */
@@ -82,27 +82,24 @@ class TrialHeldRepoTest {
 
     private suspend fun trial(): RunWorkout = repo.runFor(SessionKind.RUN_QUALITY, day).also {
         assertEquals(RunType.TEST, it.type, it.title)
-        assertEquals(1538, it.testMeters)
+        assertEquals(1435, it.testMeters)
     }
 
-    /** The trial's laps as run (seconds, the first the half lap). */
+    /** The trial's laps as run (seconds). */
     private fun laps(w: RunWorkout, secs: List<Double>): List<Lap> {
         val lap = w.segments.first { it.kind == SegmentKind.WORK }.lapSec!!
-        return secs.mapIndexed { i, s ->
-            val part = if (i == 0) 0.5 else 1.0
-            Lap(s, lap * part, lap * part, i + 1, 8, 1, part)
-        }
+        return secs.mapIndexed { i, s -> Lap(s, lap, lap, i + 1, 7, 1) }
     }
 
-    private val held = listOf(24.35) + List(4) { 48.7 }
+    private val held = List(4) { 48.7 }
 
     @Test fun stoppedAfterHalfHisFitnessIsSetAndTheFullTrialComesInTwoWeeks() = runBlocking<Unit> {
         val w = trial()
         val (_, summary) = repo.saveRun(w, RunResult(0.6, 9, 1400, distanceM = 2900.0, laps = laps(w, held)), clock - 1400_000L, emptyList(), day)
         val part = summary.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single()
-        assertTrue(!part.finished && part.meters == 923 && part.seconds == 219, "${summary.outcomes}")
+        assertTrue(!part.finished && part.meters == 820 && part.seconds == 195, "${summary.outcomes}")
         val st = repo.store.runStateNow()
-        assertEquals(42.5, st.vdot)
+        assertEquals(42.0, st.vdot)
         assertNull(st.lastTestDay)
         assertEquals(day.toEpochDay(), st.lastTrialTryDay)
         // No trial before two weeks are out; then on his next hard day.
@@ -120,21 +117,21 @@ class TrialHeldRepoTest {
         val (_, summary) = repo.saveRun(
             w, RunResult(1.0, 9, 1700, distanceM = 3500.0, laps = laps(w, secs), testSeconds = secs.sum().toInt()), clock - 1700_000L, emptyList(), day,
         )
-        assertTrue(summary.outcomes.any { it is RunOutcome.TestTime && it.seconds == 403 }, "${summary.outcomes}")
+        assertTrue(summary.outcomes.any { it is RunOutcome.TestTime && it.seconds == 378 }, "${summary.outcomes}")
         assertTrue(summary.outcomes.filterIsInstance<RunOutcome.TestFromPart>().single().finished)
         val st = repo.store.runStateNow()
-        assertEquals(42.5, st.vdot)
+        assertEquals(42.0, st.vdot)
         assertEquals(day.toEpochDay(), st.lastTestDay)
         // The debrief says what was held and what the paces come from.
         val review = RunReview.of(
-            RunReview.Run(w, summary.laps.orEmpty(), 9, 1700, null, null, 1538 to 403, 1.0, false, 923 to 219), denis.runGoal,
+            RunReview.Run(w, summary.laps.orEmpty(), 9, 1700, null, null, 1435 to 378, 1.0, false, 820 to 195), denis.runGoal,
         ).joinToString(" ") { it.text }
-        assertTrue("Первые 923 м" in review && "темпы посчитаны с учётом этого" in review, review)
+        assertTrue("Первые 820 м" in review && "темпы посчитаны с учётом этого" in review, review)
     }
 
     @Test fun theWarmUpStridesAreKeptWithTheRun() = runBlocking<Unit> {
         val w = trial()
-        val secs = listOf(26.0) + List(7) { 52.0 }
+        val secs = List(7) { 52.0 }
         val (_, summary) = repo.saveRun(
             w, RunResult(1.0, 9, 1700, distanceM = 3500.0, laps = laps(w, secs), testSeconds = secs.sum().toInt(), strideSpeeds = listOf(5.4, 5.6, null, 5.5), jogSpeed = 2.9),
             clock - 1700_000L, emptyList(), day,
@@ -142,7 +139,7 @@ class TrialHeldRepoTest {
         assertEquals(listOf(5.4, 5.6, null, 5.5), summary.strides)
         assertEquals(2.9, summary.jog)
         val items = RunReview.of(
-            RunReview.Run(w, summary.laps, 9, 1700, null, null, 1538 to 390, 1.0, false, null, summary.strides, summary.jog), denis.runGoal,
+            RunReview.Run(w, summary.laps, 9, 1700, null, null, 1435 to 364, 1.0, false, null, summary.strides, summary.jog), denis.runGoal,
         )
         // The trial leads its debrief; the strides come after it.
         assertEquals("Как пробежал", items.first().title)
@@ -153,7 +150,7 @@ class TrialHeldRepoTest {
     @Test fun stoppedEarlyItSaysWhyNotThatLapsWereMissed() = runBlocking<Unit> {
         val w = trial()
         val (_, summary) = repo.saveRun(
-            w, RunResult(0.4, 9, 1300, distanceM = 2700.0, laps = laps(w, listOf(24.35) + List(3) { 48.7 })), clock - 1300_000L, emptyList(), day,
+            w, RunResult(0.4, 9, 1300, distanceM = 2700.0, laps = laps(w, List(3) { 48.7 })), clock - 1300_000L, emptyList(), day,
         )
         val stop = summary.outcomes.filterIsInstance<RunOutcome.TestStopped>().single()
         assertTrue("меньше половины" in Texts.run(stop), Texts.run(stop))
