@@ -7,16 +7,19 @@ import forma.core.model.Emphasis
 import forma.core.model.Exercise
 import forma.core.model.ExerciseSearch
 import forma.core.model.Experience
+import forma.core.model.Gear
 import forma.core.model.LiftFocus
 import forma.core.model.LiftGoal
 import forma.core.model.LoadKind
 import forma.core.model.Profile
 import forma.core.model.RunFocus
 import forma.core.model.RunGoal
+import forma.core.model.RunLevel
 import forma.core.model.Sex
 import forma.core.plan.GoalRisk
 import forma.core.plan.ProgramGenerator
 import forma.core.plan.SessionKind
+import forma.core.run.RunState
 import forma.core.strength.GymGoal
 import forma.core.strength.OneRm
 import forma.core.strength.Progression
@@ -95,6 +98,7 @@ object CoachActions {
     const val NOW_SETS = "workout_sets"
     const val PICKS = "set_exercise_picks"
     const val LAPS = "fix_run_laps"
+    const val PROFILE = "set_profile"
 
     private const val MAX_SICK_PAUSE = 14
     private const val MAX_PAUSE = 21
@@ -179,6 +183,24 @@ object CoachActions {
             Param("sides", "string", "both — зал и бег, gym — только зал, run — только бег; если не меняется — не указывай", required = false, values = listOf("both", "gym", "run")),
             Param("gym_days", "string", "дни зала через запятую: пн, вт, ср, чт, пт, сб, вс; если не меняются — не указывай", required = false),
             Param("run_days", "string", "дни бега так же; если не меняются — не указывай", required = false))
+        fn(PROFILE, "Анкета, по которой приложение само строит план (раздел «Анкета»): для чего зал и бег и что главнее, дни, длина тренировки, где занимается, опыт, как бегает сейчас, вес тела, рост, год рождения, пол, лучший забег, дистанция без остановки. «Составь план», «хочу 4 дня», «я вешу 82» — сначала спроси, чего не хватает, ответов не придумывай; потом вызови с тем, что сказано, остального не указывай. План пересчитается по правилам приложения, прогресс в упражнениях и форма бега останутся; человек подтверждает. Цели — set_run_goal и set_gym_goal, дни зала и бега по отдельности — set_week.",
+            Param("lift_focus", "string", "зал: strength — сила, powerbuilding — сила и масса, muscle — мышцы, general — тонус, none — без зала", required = false, values = LIFT_KEYS.keys.toList()),
+            Param("run_focus", "string", "бег: health — для здоровья, endurance — выносливость, speed — скорость, none — без бега", required = false, values = RUN_KEYS.keys.toList()),
+            Param("priority", "string", "что главнее, когда есть и зал, и бег: gym, balanced (поровну) или run", required = false, values = PRIORITY_KEYS.keys.toList()),
+            Param("days", "string", "дни тренировок через запятую: пн, вт, ср, чт, пт, сб, вс — зал и бег по ним разложит приложение", required = false),
+            Param("double_days", "boolean", "зал и бег в один день можно", required = false),
+            Param("session_minutes", "integer", "сколько минут на тренировку, 30–120", required = false),
+            Param("gear", "string", "где занимается: gym — зал, dumbbells — дома с гантелями и скамьёй, body — дома без снарядов", required = false, values = GEAR_KEYS.keys.toList()),
+            Param("pullup_bar", "boolean", "дома есть турник", required = false),
+            Param("experience", "string", "опыт в зале: novice — меньше полугода, intermediate — полгода–два года, advanced — больше двух лет", required = false, values = EXPERIENCE_KEYS.keys.toList()),
+            Param("run_level", "string", "бег сейчас: none — не пробежит 20 мин подряд, base — пробежит 20–30 мин, trained — бегает регулярно, с быстрыми отрезками", required = false, values = LEVEL_KEYS.keys.toList()),
+            Param("body_weight", "number", "вес тела, кг", required = false),
+            Param("height", "integer", "рост, см", required = false),
+            Param("birth_year", "integer", "год рождения", required = false),
+            Param("sex", "string", "male или female", required = false, values = SEX_KEYS.keys.toList()),
+            Param("race_meters", "integer", "лучший недавний забег или контрольный: дистанция, м (0 — убрать)", required = false),
+            Param("race_time", "string", "его время, как 6:05 или 24:30", required = false),
+            Param("finish_meters", "integer", "пробежать без остановки, без времени: дистанция, м (0 — убрать)", required = false))
         fn(GYM_GOAL, "Цель в зале: упражнение из плана на несколько мышц с весом (жим, присед, тяга), вес на один раз или на reps раз, дата — если есть (человек подтверждает). С plan по умолчанию план подстроится: тяжёлый день 3–5 повторов, второй день 6–10. Вес 0 — снять цель. Насколько цель реальна, приложение скажет в карточке; нереальную к дате — предложи ближнюю.",
             Param("exercise", "string", "id или название упражнения из плана (для снятия цели не нужно)", required = false), Param("kg", "number", "кг на один раз (или на reps раз); 0 — снять цель"),
             Param("reps", "integer", "на сколько повторов, 1–12; по умолчанию 1", required = false), Param("date", "string", "ГГГГ-ММ-ДД, если есть дата", required = false),
@@ -225,6 +247,79 @@ object CoachActions {
     private fun lapsOf(e: JsonElement?): List<forma.core.run.Lap> = e?.let { AppJson.decodeFromJsonElement(lapList, it) }.orEmpty()
 
     private fun days(n: Int) = "$n ${Ru.plural(n, "день", "дня", "дней")}"
+
+    // The words of [PROFILE] as the model sends them. Getters: [declarations] is built before stored values here would be.
+    private val LIFT_KEYS get() = mapOf("strength" to LiftFocus.STRENGTH, "powerbuilding" to LiftFocus.POWERBUILDING, "muscle" to LiftFocus.MUSCLE, "general" to LiftFocus.GENERAL, "none" to LiftFocus.NONE)
+    private val RUN_KEYS get() = mapOf("health" to RunFocus.HEALTH, "endurance" to RunFocus.ENDURANCE, "speed" to RunFocus.SPEED, "none" to RunFocus.NONE)
+    private val PRIORITY_KEYS get() = mapOf("gym" to Emphasis.GYM, "balanced" to Emphasis.BALANCED, "run" to Emphasis.RUN)
+    private val GEAR_KEYS get() = mapOf("gym" to Gear.GYM, "dumbbells" to Gear.DUMBBELLS, "body" to Gear.BODY)
+    private val EXPERIENCE_KEYS get() = mapOf("novice" to Experience.NOVICE, "intermediate" to Experience.INTERMEDIATE, "advanced" to Experience.ADVANCED)
+    private val LEVEL_KEYS get() = mapOf("none" to RunLevel.NONE, "base" to RunLevel.BASE, "trained" to RunLevel.TRAINED)
+    private val SEX_KEYS get() = mapOf("male" to Sex.MALE, "female" to Sex.FEMALE)
+
+    /** The aim in the app's words (the chips of «Цель, дни и данные»). */
+    private fun aimWords(aim: Aim): String {
+        val a = aim.normalized()
+        val lift = when (a.lift) {
+            LiftFocus.STRENGTH -> "сила"; LiftFocus.POWERBUILDING -> "сила и масса"; LiftFocus.MUSCLE -> "мышцы"; LiftFocus.GENERAL -> "тонус"; LiftFocus.NONE -> "без зала"
+        }
+        val run = when (a.run) { RunFocus.HEALTH -> "для здоровья"; RunFocus.ENDURANCE -> "выносливость"; RunFocus.SPEED -> "скорость"; RunFocus.NONE -> "без бега" }
+        val first = when (a.emphasis) { Emphasis.GYM -> "главное — зал"; Emphasis.BALANCED -> "зал и бег поровну"; Emphasis.RUN -> "главное — бег" }
+        return "зал — $lift, бег — $run" + if (a.lifts && a.runs) ", $first" else ""
+    }
+
+    /**
+     * A field of the profile the coach may set ([PROFILE]): what it is called, its value in words (the card says
+     * «было → станет», the brief shows it, and a way back checks it has not moved since) and how it is put on a profile.
+     */
+    private class Field(val key: String, val label: String, val words: (Profile) -> String, val put: (Profile, Profile) -> Profile)
+
+    private val FIELDS: List<Field> get() = listOf(
+        Field("aim", "для чего", { aimWords(it.aim) }) { p, f -> p.copy(aim = f.aim, goal = f.goal, keptAim = f.keptAim) },
+        Field("days", "дни", { p -> if (p.ownWeek) "зал — ${dayList(p.gymDays!!)}, бег — ${dayList(p.runDays!!)}" else dayList(p.trainingDays) }) { p, f ->
+            p.copy(trainingDays = f.trainingDays, gymDays = f.gymDays, runDays = f.runDays)
+        },
+        Field("double", "зал и бег в один день", { if (it.doubleDays) "можно" else "нет" }) { p, f -> p.copy(doubleDays = f.doubleDays) },
+        Field("minutes", "тренировка", { "до ${it.sessionMinutes} мин" }) { p, f -> p.copy(sessionMinutes = f.sessionMinutes) },
+        Field("gear", "где занимается", { p -> p.gear.ru + if (p.gear == Gear.GYM) "" else if (p.pullupBar) ", есть турник" else ", без турника" }) { p, f ->
+            p.copy(gear = f.gear, pullupBar = f.pullupBar)
+        },
+        Field("experience", "опыт в зале", { p ->
+            when (p.experience) { Experience.NOVICE -> "новичок"; Experience.INTERMEDIATE -> "средний"; Experience.ADVANCED -> "опытный" }
+        }) { p, f -> p.copy(experience = f.experience) },
+        Field("level", "бег сейчас", { p ->
+            when (p.runLevel) { RunLevel.NONE -> "пока не пробегает 20 минут подряд"; RunLevel.BASE -> "пробегает 20–30 минут"; RunLevel.TRAINED -> "бегает регулярно, с быстрыми отрезками" }
+        }) { p, f -> p.copy(runLevel = f.runLevel) },
+        Field("weight", "вес тела", { "${Ru.kg(it.bodyWeightKg)} кг" }) { p, f -> p.copy(bodyWeightKg = f.bodyWeightKg) },
+        Field("height", "рост", { p -> p.heightCm?.let { "$it см" } ?: "не указан" }) { p, f -> p.copy(heightCm = f.heightCm) },
+        Field("born", "год рождения", { "${it.birthYear}" }) { p, f -> p.copy(birthYear = f.birthYear) },
+        Field("sex", "пол", { if (it.sex == Sex.FEMALE) "женский" else "мужской" }) { p, f -> p.copy(sex = f.sex) },
+        Field("race", "лучший забег", { p ->
+            val m = p.raceMeters
+            val t = p.raceSeconds
+            if (m == null || t == null) "нет" else "${dist(m.roundToInt())} за ${Ru.clock(t.roundToInt())}"
+        }) { p, f -> p.copy(raceMeters = f.raceMeters, raceSeconds = f.raceSeconds) },
+        Field("finish", "пробежать без остановки", { p -> p.finishMeters?.let { dist(it) } ?: "нет" }) { p, f -> p.copy(finishMeters = f.finishMeters) },
+    )
+
+    /** What the week is laid out by: a change of any of these builds the plan anew. */
+    private val SHAPE = setOf("aim", "days", "double", "minutes", "gear", "experience")
+
+    /** The person's own numbers: a friend's program takes them as they are (its shape is the friend's). */
+    private val BODY = setOf("weight", "height", "born", "sex")
+
+    /** The profile as the coach sees it (the brief's «Анкета»), a line a field. */
+    fun profileLines(p: Profile): List<String> = FIELDS.map { "${it.label.replaceFirstChar(Char::titlecase)}: ${it.words(p)}" }
+
+    /** [next] saved: the plan built anew from it — on a friend's program only the profile (its body's numbers). */
+    private suspend fun saveProfile(repo: TrainingRepository, next: Profile, was: Profile) {
+        if (repo.store.programNow()?.copiedFrom != null) {
+            repo.store.setProfile(next)
+            if (next.bodyWeightKg != was.bodyWeightKg) repo.logBodyWeight(next.bodyWeightKg) else repo.changed()
+        } else {
+            repo.updateProfile(next)
+        }
+    }
 
     private val DAY_NAMES = listOf("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 
@@ -332,6 +427,28 @@ object CoachActions {
         fun confirm(text: String, make: suspend () -> CoachCall?) = Ready(call, Mode.CONFIRM, text, make)
         fun either(sure: Boolean, text: String, make: suspend () -> CoachCall?) = if (sure) auto(text, make) else confirm(text, make)
         val s = repo.store.settingsNow()
+
+        /** The week [next] lays out, in words, and what it costs the goals of [profile] (null: nothing). */
+        fun weekOf(profile: Profile, next: Profile): Pair<String, String?> {
+            val week = ProgramGenerator.generate(next, today)
+            val liftDays = week.week.days.filter { d -> d.sessions.any { it.kind == SessionKind.LIFT } }.map { it.day }
+            val runDays = week.week.days.filter { d -> d.sessions.any { it.isRun } }.map { it.day }
+            val goal = profile.liftGoal
+            val goalDays = goal?.let { g ->
+                week.week.days.count { d ->
+                    d.sessions.any { ps ->
+                        val t = week.templates.firstOrNull { it.id == ps.templateId } ?: return@any false
+                        t.slots.any { TrainingRepository.tuned(it, s).exerciseId == g.exerciseId } || g.exerciseId in s.added[t.id].orEmpty()
+                    }
+                }
+            }
+            val risk = GoalRisk.week(profile.runGoal, goal, goal?.let { name(it.exerciseId) }, runDays.size, liftDays.size, goalDays)
+            val text = "Неделя: " + listOf(
+                if (liftDays.isNotEmpty()) "зал — ${dayList(liftDays)}" else "без зала",
+                if (runDays.isNotEmpty()) "бег — ${dayList(runDays)}" else "без бега",
+            ).joinToString("; ") + ". План пересчитается, прогресс в упражнениях и форма бега останутся."
+            return text to risk
+        }
 
         /** What a pause or «Болею» changes besides itself, to put back exactly: the pauses, the day's mark, the block, a lighter week. */
         suspend fun before(): JsonObject {
@@ -931,28 +1048,93 @@ object CoachActions {
                     )
                 }
                 if (next == profile) return no("Неделя и так такая.")
-                // The week as it will be laid out: its days, and what it costs the goals.
-                val week = ProgramGenerator.generate(next, today)
-                val liftDays = week.week.days.filter { d -> d.sessions.any { it.kind == SessionKind.LIFT } }.map { it.day }
-                val runDays = week.week.days.filter { d -> d.sessions.any { it.isRun } }.map { it.day }
-                val goal = profile.liftGoal
-                val goalDays = goal?.let { g ->
-                    week.week.days.count { d ->
-                        d.sessions.any { ps ->
-                            val t = week.templates.firstOrNull { it.id == ps.templateId } ?: return@any false
-                            t.slots.any { TrainingRepository.tuned(it, s).exerciseId == g.exerciseId } || g.exerciseId in s.added[t.id].orEmpty()
-                        }
-                    }
-                }
-                val risk = GoalRisk.week(profile.runGoal, goal, goal?.let { name(it.exerciseId) }, runDays.size, liftDays.size, goalDays)
-                val text = "Неделя: " + listOf(
-                    if (liftDays.isNotEmpty()) "зал — ${dayList(liftDays)}" else "без зала",
-                    if (runDays.isNotEmpty()) "бег — ${dayList(runDays)}" else "без бега",
-                ).joinToString("; ") + ". План пересчитается, прогресс в упражнениях и форма бега останутся."
+                val (text, risk) = weekOf(profile, next)
                 confirm(withRisk(text, risk)) {
                     val old = repo.store.profileNow()!!
                     repo.updateProfile(next)
                     CoachCall("undo_week", args("profile" to AppJson.encodeToJsonElement(Profile.serializer(), old), "expect" to AppJson.encodeToJsonElement(Profile.serializer(), next)))
+                }
+            }
+            PROFILE -> {
+                val profile = repo.store.profileNow() ?: return no("Нет анкеты.")
+                val program = repo.store.programNow() ?: return no("Нет плана.")
+                val unclear = mutableListOf<String>()
+                fun <E> choice(key: String, of: Map<String, E>): E? = a.str(key)?.lowercase()?.let { v -> of[v] ?: null.also { unclear += key } }
+                fun flag(key: String): Boolean? = a[key]?.let { (it as? JsonPrimitive)?.takeIf { p -> p !is JsonNull }?.content?.lowercase() }?.let { v ->
+                    when (v) { "true", "да" -> true; "false", "нет" -> false; else -> null.also { unclear += key } }
+                }
+                val lift = choice("lift_focus", LIFT_KEYS)
+                val run = choice("run_focus", RUN_KEYS)
+                val priority = choice("priority", PRIORITY_KEYS)
+                val gear = choice("gear", GEAR_KEYS)
+                val experience = choice("experience", EXPERIENCE_KEYS)
+                val level = choice("run_level", LEVEL_KEYS)
+                val sex = choice("sex", SEX_KEYS)
+                val double = flag("double_days")
+                val bar = flag("pullup_bar")
+                if (unclear.isNotEmpty()) return no("Не понял, что значит ${unclear.joinToString(", ")}: возьми слово из списка функции.")
+                // An empty text or a zero is "not said": a model fills optional fields so (a weight of 0 is no weight).
+                val days = a.str("days")?.let { t -> weekDays(t)?.takeIf { it.isNotEmpty() } ?: return no("Дни — как «пн, ср, пт», хотя бы один.") }
+                val minutes = a.int("session_minutes")?.takeIf { it != 0 }?.also { if (it !in 30..120) return no("Тренировка — от 30 до 120 минут.") }
+                val weight = a.num("body_weight")?.takeIf { it != 0.0 }?.also { if (it !in 30.0..250.0) return no("Вес тела — от 30 до 250 кг.") }
+                val height = a.int("height")?.takeIf { it != 0 }?.also { if (it !in 120..230) return no("Рост — от 120 до 230 см.") }
+                val born = a.int("birth_year")?.takeIf { it != 0 }?.also { if (it !in today.year - 90..today.year - 12) return no("Год рождения — от ${today.year - 90} до ${today.year - 12}.") }
+                val raceM = a.int("race_meters")?.also { if (it != 0 && it !in 400..42195) return no("Забег — от 400 м до марафона (0 — убрать).") }
+                val raceSec = if (raceM == null || raceM == 0) null else {
+                    val t = a.str("race_time")?.let(::seconds) ?: return no("Время забега — как 6:05 или 24:30.")
+                    if (t / (raceM / 1000.0) !in 150.0..600.0) return no("Это темп ${Ru.clock((t / (raceM / 1000.0)).roundToInt())} на км — так не бывает. Проверь время.")
+                    t
+                }
+                val finish = a.int("finish_meters")?.also { if (it != 0 && it !in 400..42195) return no("Без остановки — от 400 м до марафона (0 — убрать).") }
+
+                val aim0 = profile.aim.normalized()
+                val liftF = lift ?: aim0.lift
+                val runF = run ?: aim0.run
+                if (liftF == LiftFocus.NONE && runF == RunFocus.NONE) return no("В неделе должно остаться хоть что-то: зал или бег.")
+                val aim = Aim(liftF, runF, priority ?: aim0.emphasis).normalized()
+                var next = profile.copy(aim = aim, goal = aim.nearestGoal())
+                // Days said: the app lays the week out over them. A side added or dropped with the person's own week: over
+                // the days that week had, laid out anew (each side's own days — set_week).
+                val sides = aim.lifts != aim0.lifts || aim.runs != aim0.runs
+                if (days != null) next = next.copy(trainingDays = days, gymDays = null, runDays = null)
+                else if (sides && profile.ownWeek) next = next.copy(trainingDays = profile.gymDays!! + profile.runDays!!, gymDays = null, runDays = null)
+                double?.let { next = next.copy(doubleDays = it) }
+                minutes?.let { next = next.copy(sessionMinutes = it) }
+                gear?.let { next = next.copy(gear = it) }
+                bar?.let { next = next.copy(pullupBar = it) }
+                experience?.let { next = next.copy(experience = it) }
+                level?.let { next = next.copy(runLevel = it) }
+                weight?.let { next = next.copy(bodyWeightKg = it) }
+                height?.let { next = next.copy(heightCm = it) }
+                born?.let { next = next.copy(birthYear = it) }
+                sex?.let { next = next.copy(sex = it) }
+                raceM?.let { next = next.copy(raceMeters = raceSec?.let { _ -> it.toDouble() }, raceSeconds = raceSec?.toDouble()) }
+                finish?.let { next = next.copy(finishMeters = it.takeIf { m -> m > 0 }) }
+
+                val changed = FIELDS.filter { it.words(profile) != it.words(next) }
+                if (changed.isEmpty()) return no("Анкета и так такая.")
+                if (program.copiedFrom != null && changed.any { it.key !in BODY }) {
+                    return no("Сейчас программа друга: для чего, дни, длина тренировки, опыт и бег меняются в «Ещё → Цель, дни и данные». Вес, рост, год рождения и пол — можно.")
+                }
+                val shape = changed.any { it.key in SHAPE }
+                val (week, risk) = if (shape) weekOf(profile, next) else null to null
+                val paces = if (!shape && changed.any { it.key == "race" || it.key == "level" }) " Темпы бега пересчитаются." else ""
+                val text = changed.joinToString(" ") { "${it.label.replaceFirstChar(Char::titlecase)}: ${it.words(profile)} → ${it.words(next)}." } +
+                    (week?.let { " $it" } ?: paces)
+                confirm(withRisk(text, risk)) {
+                    val old = repo.store.profileNow()!!
+                    val st = repo.store.runStateNow()
+                    // Only the fields said, on the profile as it is now: what else moved since stays.
+                    saveProfile(repo, changed.fold(old) { p, f -> f.put(p, next) }, old)
+                    CoachCall(
+                        "undo_profile",
+                        args(
+                            "profile" to AppJson.encodeToJsonElement(Profile.serializer(), old),
+                            "expect" to AppJson.encodeToJsonElement(Profile.serializer(), repo.store.profileNow()!!),
+                            "fields" to JsonArray(changed.map { JsonPrimitive(it.key) }),
+                            "run" to AppJson.encodeToJsonElement(RunState.serializer(), st), "runs" to repo.store.runStateNow().runs,
+                        ),
+                    )
                 }
             }
             GYM_GOAL -> {
@@ -1234,6 +1416,23 @@ object CoachActions {
                 if (shape(now) != shape(expect)) false
                 else {
                     repo.updateProfile(now.copy(aim = old.aim, goal = old.goal, gymDays = old.gymDays, runDays = old.runDays, trainingDays = old.trainingDays, doubleDays = old.doubleDays))
+                    true
+                }
+            }
+            "undo_profile" -> {
+                val old = AppJson.decodeFromJsonElement(Profile.serializer(), a["profile"]!!)
+                val expect = AppJson.decodeFromJsonElement(Profile.serializer(), a["expect"]!!)
+                val keys = (a["fields"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
+                val fields = FIELDS.filter { it.key in keys }
+                val now = repo.store.profileNow() ?: return false
+                // Only while what it set is as it left it; what else changed in the profile since stays.
+                if (fields.isEmpty() || fields.any { it.words(now) != it.words(expect) }) false
+                else {
+                    saveProfile(repo, fields.fold(now) { p, f -> f.put(p, old) }, now)
+                    // The running as it was, when the race or the level moved it and nothing was run since.
+                    if (keys.any { it == "race" || it == "level" } && repo.store.runStateNow().runs == a.int("runs")) {
+                        (a["run"] as? JsonObject)?.let { repo.store.setRunState(AppJson.decodeFromJsonElement(RunState.serializer(), it)) }
+                    }
                     true
                 }
             }

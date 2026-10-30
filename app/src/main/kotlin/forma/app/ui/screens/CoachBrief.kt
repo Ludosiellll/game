@@ -141,6 +141,12 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             ?: profile?.finish?.let { "пробежать $it м без остановки, время не задано" } ?: "цели нет") + ".")
         appendLine("- Зал: " + (forma.app.data.GymGoals.words(repo) ?: "цели нет (поставить — функция set_gym_goal)."))
         appendLine()
+        // What the plan is built from: the coach asks about what is missing here and records it (set_profile).
+        if (profile != null) {
+            appendLine("## Анкета — по ней приложение строит план (поменять — функция set_profile, человек подтверждает)")
+            forma.app.data.CoachActions.profileLines(profile).forEach { appendLine("- $it") }
+            appendLine()
+        }
         // «Мои упражнения» and where the gym is: the plan is made of them, the coach proposes within them (set_exercise_picks).
         if (profile?.aim?.lifts == true) {
             appendLine("## Мои упражнения")
