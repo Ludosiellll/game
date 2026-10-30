@@ -94,6 +94,7 @@ object CoachActions {
     const val NOW_ADD = "workout_add"
     const val NOW_SETS = "workout_sets"
     const val PICKS = "set_exercise_picks"
+    const val LAPS = "fix_run_laps"
 
     private const val MAX_SICK_PAUSE = 14
     private const val MAX_PAUSE = 21
@@ -140,6 +141,12 @@ object CoachActions {
         fn(RESUME, "Закончить паузу и вернуться к плану сегодня.")
         fn(RATE, "Исправить оценку тяжести последней законченной пробежки или силовой (1–10, как в приложении) — только когда человек говорит об оценке той тренировки. Не для подходов идущей сейчас тренировки. Оценка последней пробежки решает её заново: лёгкий бег длиннее или короче, шаг лестницы.",
             Param("which", "string", "last_run — последняя пробежка, last_gym — последняя силовая", values = listOf("last_run", "last_gym")), Param("rpe", "integer", "1–10"))
+        fn(LAPS, "Исправить круги прошлой пробежки на стадионе, когда человек говорит, что с «Круг» вышло не так: забыл нажать — один круг на самом деле был несколькими («пробежал 3 круга, а нажал один раз» — split на 3); нажал лишний раз — два круга были одним (merge); круга не было (случайное нажатие вне отрезков — remove); круг шёл другое время (time). Номер круга — по порядку в строке «Круги» этой пробежки в данных, с 1. В отрезке круг делится, только пока в нём меньше кругов, чем по плану. Человек подтверждает кнопкой; последняя пробежка по исправленным кругам отрезков решится заново.",
+            Param("action", "string", "split — разделить круг на parts кругов, merge — склеить круг со следующим, remove — убрать круг, time — время круга seconds", values = listOf("split", "merge", "remove", "time")),
+            Param("lap", "integer", "номер круга по порядку в строке «Круги» пробежки, с 1"),
+            Param("parts", "integer", "для split: сколько кругов это было на самом деле, 2–6", required = false),
+            Param("seconds", "number", "для time: время круга, секунды", required = false),
+            Param("day", "string", "дата пробежки ГГГГ-ММ-ДД; не указывай — последняя пробежка", required = false))
         fn(EASY, "Длина лёгкого бега с этого дня (минуты); дальше она меняется по правилам приложения. Не больше потолка под цель, не больше 110 % самой длинной пробежки за 30 дней и не больше +15 % (минимум +5 мин) за неделю. Второе изменение за неделю и сокращение больше чем на 10 % за две недели человек подтверждает.",
             Param("minutes", "integer", "минуты"))
         fn(STRIDES, "Сколько ускорений после лёгкого бега в дни, когда они есть в плане, на weeks недель (0 — без ускорений).",
@@ -213,6 +220,9 @@ object CoachActions {
     private fun JsonObject.pauses(key: String): List<List<Long>> =
         (this[key] as? JsonArray).orEmpty().map { r -> (r as JsonArray).mapNotNull { (it as? JsonPrimitive)?.content?.toLongOrNull() } }
     private fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content?.toLongOrNull()
+    private val lapList = kotlinx.serialization.builtins.ListSerializer(forma.core.run.Lap.serializer())
+    private fun lapsJson(laps: List<forma.core.run.Lap>): JsonElement = AppJson.encodeToJsonElement(lapList, laps)
+    private fun lapsOf(e: JsonElement?): List<forma.core.run.Lap> = e?.let { AppJson.decodeFromJsonElement(lapList, it) }.orEmpty()
 
     private fun days(n: Int) = "$n ${Ru.plural(n, "день", "дня", "дней")}"
 
@@ -413,6 +423,43 @@ object CoachActions {
                 either(going == null && !old, "Оценка «${w.title}» за ${Ru.date(LocalDate.ofEpochDay(w.epochDay))}: ${w.rpe ?: "—"} → $rpe.$about") {
                     repo.setRating(w.id, rpe)
                     w.rpe?.let { CoachCall("undo_rate", args("workout" to w.id, "rpe" to it, "expect" to rpe)) }
+                }
+            }
+            LAPS -> {
+                val day = a.str("day")?.let { runCatching { LocalDate.parse(it) }.getOrNull() ?: return no("Дата пробежки — в виде ГГГГ-ММ-ДД.") }
+                val runs = repo.db.workouts().allDone().filter { it.kind == Kind.RUN && (day == null || it.epochDay == day.toEpochDay()) }
+                val w = runs.maxByOrNull { it.finishedAt ?: it.startedAt } ?: return no(if (day != null) "Пробежки ${Ru.date(day)} нет." else "Пробежек ещё нет.")
+                val laps = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }?.laps.orEmpty()
+                if (laps.isEmpty()) return no("В пробежке «${w.title}» нет кругов.")
+                val n = a.int("lap") ?: return no("Не сказано, какой круг.")
+                val l = laps.getOrNull(n - 1) ?: return no("В пробежке ${laps.size} ${Ru.plural(laps.size, "круг", "круга", "кругов")}, круга $n нет.")
+                val sec = { x: Double -> "${Ru.one(x)} с" }
+                val (fixed, what) = when (a.str("action")) {
+                    "split" -> {
+                        val parts = a.int("parts") ?: 2
+                        if (parts !in 2..6) return no("Разделить можно на 2–6 кругов.")
+                        forma.core.run.LapEdit.split(laps, n - 1, parts) to "круг $n (${sec(l.seconds)}) — это $parts ${Ru.plural(parts, "круг", "круга", "кругов")} по ${sec(l.seconds / parts)}."
+                    }
+                    "merge" -> forma.core.run.LapEdit.merge(laps, n - 1) to
+                        "круги $n и ${n + 1} (${sec(l.seconds)} и ${laps.getOrNull(n)?.let { sec(it.seconds) } ?: "—"}) — один круг, ${sec(l.seconds + (laps.getOrNull(n)?.seconds ?: 0.0))}."
+                    "remove" -> forma.core.run.LapEdit.remove(laps, n - 1) to "круг $n (${sec(l.seconds)}) — не круг, убрать."
+                    "time" -> {
+                        val t = a.num("seconds") ?: return no("Не сказано время круга.")
+                        forma.core.run.LapEdit.setTime(laps, n - 1, t) to "круг $n: ${sec(l.seconds)} → ${sec(t)}."
+                    }
+                    else -> return no("Непонятно, что сделать с кругом: разделить, склеить, убрать или поставить время.")
+                }
+                if (fixed == laps) return no(when (a.str("action")) {
+                    "split" -> if (l.rep != null) "В отрезке уже столько кругов, сколько по плану (или это половина круга на старте): делить нечего." else "Этот круг не разделить."
+                    "merge" -> "Склеить можно только с соседним кругом того же отрезка (или оба вне отрезков)."
+                    "remove" -> "Круг отрезка не убрать — его время пропадёт. Можно склеить с соседним или поставить время."
+                    else -> "Время круга — от 5 секунд до часа."
+                })
+                val reps = laps.any { it.rep != null } && fixed.filter { it.rep != null } != laps.filter { it.rep != null }
+                confirm("Пробежка «${w.title}» ${Ru.date(LocalDate.ofEpochDay(w.epochDay))}: $what" +
+                    if (reps) " Если после неё ещё не было пробежек, она решится заново по этим кругам." else "") {
+                    repo.editRunLaps(w.id, fixed)
+                    CoachCall("undo_laps", args("workout" to w.id, "laps" to lapsJson(laps), "expect" to lapsJson(fixed)))
                 }
             }
             EASY -> {
@@ -1360,6 +1407,13 @@ object CoachActions {
                     repo.changed()
                     true
                 }
+            }
+            "undo_laps" -> {
+                val id = a.long("workout") ?: return false
+                val w = repo.db.workouts().get(id) ?: return false
+                val now = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }?.laps
+                // The laps as the coach left them, or put right since by hand: then they stay.
+                if (now != lapsOf(a["expect"])) false else { repo.editRunLaps(id, lapsOf(a["laps"])); true }
             }
             "undo_lap" -> {
                 val profile = repo.store.profileNow() ?: return false

@@ -418,7 +418,10 @@ object TrainingReport {
         )
         appendLine("- Факт: ${facts.joinToString(", ")}.")
         summary?.laps?.takeIf { it.isNotEmpty() }?.let { laps ->
-            appendLine("- Круги: " + laps.joinToString(", ") { l -> Ru.one(l.seconds) + (l.rep?.let { " (отр. $it)" } ?: "") })
+            // In order (the coach puts a lap right by its place here); a rep's first half lap said as such.
+            appendLine("- Круги: " + laps.joinToString(", ") { l ->
+                Ru.one(l.seconds) + (l.rep?.let { " (отр. $it" + (if (l.part < 1.0) ", полкруга" else "") + ")" } ?: "")
+            })
         }
         summary?.kmSplits?.takeIf { it.isNotEmpty() }?.let { appendLine("- По километрам: " + it.joinToString(", ") { s -> Ru.clock(s) }) }
         r.vdotAfter?.let { appendLine("- VDOT после: ${Ru.one(it)}") }
