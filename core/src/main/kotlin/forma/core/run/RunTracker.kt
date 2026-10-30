@@ -442,6 +442,8 @@ class RunTracker(
      * pressed then; a start from standing on the line also places the line there. True when a start was made (to say it).
      */
     fun autoStart(nowMs: Long): Boolean {
+        // Only a press starts a rep (Denis, 30.10: the runner presses, always). Kept for the day it is asked back.
+        if (!GPS_DECIDES) return false
         val lp = loop ?: return false
         val lapM = workout.lapMeters ?: return false
         if (state != State.RUNNING || !lp.following()) return false
@@ -1081,8 +1083,9 @@ class RunTracker(
             val start = when {
                 visit == null && t < MIN_LAP_MS -> true
                 visit == null && ref != null && t < WALK_TO_LINE * ref * 1000 -> true
-                sinceVisit != null && lapM != null && sinceVisit < 0.5 * lapM -> true
-                visit == null && startedOff -> true
+                // Where GPS had him at the start says nothing now (laps are the presses): the first lap from «Старт».
+                GPS_DECIDES && sinceVisit != null && lapM != null && sinceVisit < 0.5 * lapM -> true
+                GPS_DECIDES && visit == null && startedOff -> true
                 else -> false
             }
             if (start) {
@@ -1191,6 +1194,8 @@ class RunTracker(
      * mid-lap: no lap (see [strayAgrees]). Without the loop, the line on it or a good fix, nothing is known: false.
      */
     private fun farFromLine(active: Long): Boolean {
+        // A press is a lap wherever GPS has the runner: «Круг не засчитан: ты не на линии» took laps that were run.
+        if (!GPS_DECIDES) return false
         val lp = loop ?: return false
         val f = lastRaw ?: return false
         if (!lp.ready() || active - lastRawActive > 3_000 || f.accuracy > LINE_ACCURACY) return false
@@ -1298,6 +1303,12 @@ class RunTracker(
 
     /** The crossings waiting whose wait is over ([all]: every one, at the finish). Returns the last lap made. */
     private fun resolve(now: Long, all: Boolean): Lap? {
+        // A lap is a press, never a crossing GPS saw: a trial of 29.10 had three laps GPS made, one of 34 s in a gap of the
+        // fixes, and the presses next to them gone. The crossings still go: distance comes from GPS, the loop's length too.
+        if (!GPS_DECIDES) {
+            pending.clear()
+            return null
+        }
         var made: Lap? = null
         while (pending.isNotEmpty() && (all || now - pending.first().at >= if (pending.first().exact) EXACT_WAIT_MS else AUTO_WAIT_MS)) {
             val c = pending.removeFirst()
@@ -1424,6 +1435,12 @@ class RunTracker(
     companion object {
         /** Presses closer than this are one press (a double tap): no lap on a stadium is this short. */
         const val MIN_LAP_MS = 5_000L
+
+        /**
+         * GPS times laps, starts reps and turns down presses off the line: off. Laps and starts are the runner's presses
+         * (Denis, 30.10, after a trial GPS spoilt); GPS measures the distance, the pace and the loop.
+         */
+        const val GPS_DECIDES = false
 
         /** A pressed lap under this share of its target is a stray touch, not a lap (see [tooShort]). */
         const val SHORT_LAP = 0.45

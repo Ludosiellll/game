@@ -253,54 +253,6 @@ class RunFieldTest {
         assertTrue(Geo.haversine(53.9, 27.56, line.first, line.second) < 3.0, "$line")
     }
 
-    @Test fun aPressThatTimesAGpsLapTeachesNoLine() {
-        val t = RunTracker(RunWorkout(RunType.FREE, "Свободный бег", emptyList(), lapMeters = lapM))
-        t.setLine(53.9, 27.56)
-        t.start(0)
-        // Out 115 m and back over the line at 3.07 m/s, a fix a second; the crossing is not pressed.
-        for (sec in 1..83) {
-            val m = if (sec <= 37) 3.07 * sec else 230 - 3.07 * sec
-            t.onFix(Fix(sec * 1000L, 53.9 + m / 111_195.0, 27.56, 5f, 3.07f), sec * 1000L)
-            t.autoLap(sec * 1000L)
-        }
-        assertTrue(t.laps.single().auto, "${t.laps}")
-        // The press 9 s late, 28 m past the line, times that lap; where it happened is not the line.
-        val late = assertIs<Press.Done>(pressNear(t, 84_000, 230 - 3.07 * 84)).lap
-        assertFalse(late.auto)
-        assertEquals(53.9 to 27.56, t.line)
-    }
-
-    /**
-     * The kept line is 28 m before where he presses: every lap GPS closes there and his press comes 9 s later. Once is a
-     * late press; twice at the same spot is the line, and it moves there.
-     */
-    @Test fun latePressesAtTheSameSpotMoveAWrongLine() {
-        val r = lapM / (2 * Math.PI)
-        val v = 3.07
-        fun at(sec: Double): Pair<Double, Double> {
-            val a = v * sec / r
-            return (53.9 + r * (1 - Math.cos(a)) / 111_195.0) to (27.56 + r * Math.sin(a) / (111_195.0 * Math.cos(Math.toRadians(53.9))))
-        }
-        val t = RunTracker(RunWorkout(RunType.FREE, "Свободный бег", emptyList(), lapMeters = lapM))
-        t.setLine(53.9, 27.56)
-        t.start(0)
-        val lap = lapM / v
-        val presses = mutableListOf<Pair<Double, Double>>()
-        for (sec in 1..170) {
-            val (la, lo) = at(sec.toDouble())
-            t.onFix(Fix(sec * 1000L, la, lo, 5f, v.toFloat()), sec * 1000L)
-            t.autoLap(sec * 1000L)
-            if (sec == (lap + 9).toInt() || sec == (2 * lap + 9).toInt()) {
-                // Each times a lap GPS has timed and said already: nothing new to say, yet it says where the line is.
-                assertIs<Press.Timed>(t.press(sec * 1000L))
-                presses += la to lo
-                if (presses.size == 1) assertEquals(53.9 to 27.56, t.line, "one late press moves nothing")
-            }
-        }
-        val line = assertNotNull(t.line)
-        assertTrue(Geo.haversine(line.first, line.second, presses.last().first, presses.last().second) < 5.0, "line $line, presses $presses")
-    }
-
     @Test fun stepsGiveTheDistanceOnlyWithAKnownStride() {
         assertTrue(easyRun().stepsGiveDistance())
         val t = RunTracker(RunWorkout(RunType.EASY, "Лёгкий бег", listOf(Segment(SegmentKind.RUN, 1800, PaceRange(330, 360)))))

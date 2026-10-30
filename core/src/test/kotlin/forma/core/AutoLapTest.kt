@@ -142,20 +142,6 @@ class AutoLapTest {
 
     private val goal = RunGoal(1500, 335)
 
-    @Test fun aForgottenPressIsFilledByGpsWithinTwoSeconds() {
-        val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 2), goal, lapM)
-        repeat(20) { seed ->
-            val run = session(w, forget = setOf(2, 5), seed = seed, line = true)
-            val repLaps = run.tracker.laps.filter { it.rep != null }
-            assertEquals(7, repLaps.size, "seed $seed: ${run.tracker.laps}")
-            val autos = repLaps.withIndex().filter { it.value.auto }
-            assertEquals(listOf(2, 5), autos.map { it.index }, "seed $seed: ${run.tracker.laps}")
-            for ((i, l) in autos) assertTrue(abs(l.seconds - run.trueLaps[i]) <= 2.5, "seed $seed lap $i: ${l.seconds} vs ${run.trueLaps[i]}")
-            // Pressed laps stay exactly what was pressed.
-            for ((i, l) in repLaps.withIndex()) if (!l.auto) assertTrue(abs(l.seconds - run.trueLaps[i]) < 0.6, "seed $seed lap $i")
-        }
-    }
-
     @Test fun standingAtTheLineAndPressingEveryLapAddNothing() {
         val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 2), goal, lapM)
         repeat(20) { seed ->
@@ -163,20 +149,6 @@ class AutoLapTest {
             assertTrue(run.tracker.laps.none { it.auto }, "seed $seed: ${run.tracker.laps}")
             assertEquals(7, run.tracker.laps.count { it.rep != null })
         }
-    }
-
-    @Test fun theLineIsLearntFromThePressesAndKeptOnARestore() {
-        val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 2), goal, lapM)
-        // No line known before: the start press sets it, then forgotten presses are filled as before.
-        val run = session(w, forget = setOf(4), seed = 7, line = false)
-        val line = assertNotNull(run.tracker.line)
-        val (x, y) = at(0.0)
-        val dLat = (line.first - lat0) * 111_195.0 - y
-        val dLon = (line.second - lon0) * 111_195.0 * cos(Math.toRadians(lat0)) - x
-        assertTrue(dLat * dLat + dLon * dLon < 10.0 * 10.0, "line off by ${Math.sqrt(dLat * dLat + dLon * dLon)} m")
-        assertTrue(run.tracker.laps.any { it.auto })
-        val back = RunTracker.restore(run.tracker.snapshot(0), 0)
-        assertEquals(run.tracker.line, back.line)
     }
 
     /** Crossing a point [at] (metres along the loop) between positions [a] and [b]. */
@@ -248,32 +220,6 @@ class AutoLapTest {
             val dLat = (line.first - lat0) * 111_195.0 - y
             val dLon = (line.second - lon0) * 111_195.0 * cos(Math.toRadians(lat0)) - x
             assertTrue(dLat * dLat + dLon * dLon < 10.0 * 10.0, "seed $seed: line off by ${Math.sqrt(dLat * dLat + dLon * dLon)} m")
-        }
-    }
-
-    /** In the warm-up a jog 50 m along the track and back over the line is no lap; a whole lap is one. */
-    @Test fun aJogOffTheLineAndBackIsNoLap() {
-        val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 2), goal, lapM)
-        repeat(10) { seed ->
-            val rnd = Random(seed)
-            val t = RunTracker(w)
-            val (x, y) = at(0.0)
-            t.setLine(lat0 + y / 111_195.0, lon0 + x / (111_195.0 * cos(Math.toRadians(lat0))))
-            t.start(0)
-            val path = mutableListOf<Double>()
-            repeat(2) {
-                (1..20).forEach { path += it * 2.5 }
-                (19 downTo 0).forEach { path += it * 2.5 }
-            }
-            (1..80).forEach { path += it * 2.9 }
-            var now = 0L
-            for (p in path + List(12) { path.last() }) {
-                now += 1000
-                // Doppler speed as a phone gives it, so the way counts as run.
-                t.onFix(fix(p, now, rnd).copy(speed = 2.6f), now)
-                t.autoLap(now)
-            }
-            assertEquals(1.0, t.lapDistanceM() / lapM, 1e-9, "seed $seed")
         }
     }
 
@@ -356,38 +302,4 @@ class AutoLapTest {
         return t to (now / 1000.0)
     }
 
-    @Test fun aFreeRunCountsItsLapsWithoutPresses() {
-        repeat(10) { seed ->
-            val (t, _) = freeRun(seed, 72.0, 10)
-            val laps = t.laps
-            assertTrue(laps.size in 9..10, "seed $seed: ${laps.size} laps ${laps.map { it.seconds }}")
-            assertTrue(laps.all { it.auto }, "seed $seed")
-            // Every lap is a lap of 72 s give or take GPS's two or three seconds, and the errors do not add up: the laps
-            // together are the time run.
-            assertTrue(laps.all { abs(it.seconds - 72.0) <= 3.5 }, "seed $seed: ${laps.map { it.seconds }}")
-            assertEquals(laps.size * 72.0, laps.sumOf { it.seconds }, 3.5, "seed $seed")
-            assertEquals(laps.size * lapM.toDouble(), t.lapDistanceM(), 1e-9)
-        }
-    }
-
-    @Test fun aFreeRunWithATargetJudgesEachLap() {
-        // Target 75 s a lap (±1 s), run at 66: every lap is "fast" (a GPS lap only when clearly off: 2.5 s past the bound).
-        val target = forma.core.run.PaceRange((74.0 / lapM * 1000).toInt(), (76.0 / lapM * 1000).toInt())
-        val (t, _) = freeRun(3, 66.0, 6, target)
-        assertTrue(t.laps.isNotEmpty())
-        assertTrue(t.laps.all { it.verdict == -1 }, t.laps.toString())
-        val (on, _) = freeRun(4, 75.0, 6, target)
-        assertTrue(on.laps.count { it.verdict == 0 } >= on.laps.size - 1, on.laps.toString())
-    }
-
-    @Test fun onAStadiumTheDistanceIsTheLaps() {
-        val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 2), goal, lapM)
-        val run = session(w, forget = emptySet(), seed = 3, line = true)
-        val t = run.tracker
-        // Seven reps of a lap and the nine warm-up laps GPS saw (12 min at 2.9 m/s): whole laps, not GPS that cuts the bends.
-        val laps = t.lapDistanceM() / lapM
-        assertEquals(16.0, laps, 1e-9)
-        assertTrue(t.shownDistanceM() >= t.lapDistanceM())
-        assertEquals(t.shownDistanceM(), t.result(3_600_000, 7).distanceM)
-    }
 }

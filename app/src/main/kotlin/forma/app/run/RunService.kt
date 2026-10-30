@@ -175,12 +175,8 @@ class RunService : Service() {
         val t = RunSession.tracker ?: return
         when (val p = t.press(now())) {
             Press.Ignored -> return
-            // GPS has him far from the line: a thumb on the screen mid-lap, most likely. Said, so a press that was meant
-            // is not lost without a word.
-            Press.OffLine -> {
-                coach?.speak("Круг не засчитан: ты не на линии.", now = true)
-                return
-            }
+            // Not made any more (a press is a lap wherever GPS has him); kept for the press's own types.
+            Press.OffLine -> return
             // A rep's start (or a free run's); in a warm-up or a jog only the laps count from here.
             Press.Start -> coach?.speak(
                 if (t.workout.isOpenEnded || t.timeline(now()).segment?.kind == SegmentKind.WORK) "Старт." else "Круги — отсюда.", now = true,
@@ -266,17 +262,7 @@ class RunService : Service() {
                     lapsSaid = true
                     CoachText.lapsSummary(tr.workout, tr.laps)?.let { coach?.speak(it) }
                 }
-                // The start of a rep from GPS: the runner ran off the line with no press. Timed from the run-up itself.
-                if (tr.autoStart(now())) {
-                    coach?.speak("Старт засчитан.", now = true)
-                    RunSession.save(now())
-                }
-                // A lap nobody pressed, seen by GPS crossing the line: in a rep, or any lap of a run without reps, it is
-                // said and judged when there is a target — as a pressed one when timed on the loop, else as rough.
-                tr.autoLap(now())?.let { l ->
-                    coach?.speak(if (l.exact) CoachText.lap(tr.workout, l, l.rep?.let { tr.repTimes().getOrNull(it - 1) }) else CoachText.autoLap(l), now = true)
-                    RunSession.save(now())
-                }
+                // Laps and starts are the presses only: GPS makes neither (see RunTracker.GPS_DECIDES).
                 checkPace(tr)
                 checkGps(tr)
                 if (events.any { (it as? RunEvent.Timeline)?.cue is Cue.ToLine }) waitSaidAt = now()

@@ -23,6 +23,7 @@ import kotlin.math.sqrt
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -179,13 +180,17 @@ class PhoneInHandTest {
         val presses = mutableListOf<Press>()
     }
 
-    @Test fun aThumbMidLapIsNoLapWhileGpsHasHimOnTheLoop() {
+    /**
+     * A press is a lap wherever GPS has the runner (Denis, 30.10: «нажимаешь, а он не засчитывает — решил, что ты не
+     * добежал»). The line kept from another day lies 70 m on; he starts and presses on his own line after a lap: once
+     * «Круг не засчитан: ты не на линии», now the lap.
+     */
+    @Test fun aPressFarFromTheKeptLineIsALapAllTheSame() {
         for (seed in 0 until 3) {
             val t = RunTracker(oneLaps)
-            t.setLine(lineAt(0.0).first, lineAt(0.0).second)
+            t.setLine(lineAt(70.0).first, lineAt(70.0).second)
             t.setLoop(oval.toGround(plane))
             val repSpeed = p / 51.0
-            // A lap of warm-up onto the line, 8 s standing, the rep from standing; a touch 25 s into it (100 m from the line).
             val pieces = listOf(
                 Piece(60.0, p / 60.0, p / 60.0),
                 Piece(8.0, 0.0, 0.0),
@@ -194,73 +199,36 @@ class PhoneInHandTest {
                 Piece(3.0, repSpeed, 0.0),
                 Piece(20.0, 0.0, 0.0),
             )
-            var touched = false
+            var started = false
+            var done = false
             val run = drive(t, pieces, seed) { time, _ ->
-                (!touched && time >= 68.0 + 25.0).also { if (it) touched = true }
+                (!started && time >= 68.0).also { if (it) started = true } ||
+                    (!done && time >= 68.0 + 51.75).also { if (it) done = true }
             }
-            assertEquals(listOf<Press>(Press.OffLine), run.presses, "seed $seed")
-            // The lap is GPS's at the line, whole: from the onset, the ramp's 1.5 s and the rest at the rep's speed (51.75 s).
-            val lap = t.laps.single { it.rep == 1 }
-            assertTrue(lap.exact && abs(lap.seconds - 51.75) < 0.8, "seed $seed: ${t.laps}")
+            assertEquals(Press.Start, run.presses.first(), "seed $seed")
+            val lap = assertIs<Press.Done>(run.presses.drop(1).single(), "seed $seed: ${run.presses}").lap
+            assertTrue(!lap.auto && abs(lap.seconds - 51.75) < 0.3, "seed $seed: ${t.laps}")
         }
     }
 
-    @Test fun twoPressesAtOneSpotOffTheKeptLineMoveTheLine() {
-        // A free run; the line kept from another day lies 70 m on (on the loop, the wrong place). He presses where he
-        // starts and finishes his laps: the first press there is not taken, the second is — the line is there now.
-        val t = RunTracker(RunWorkout(RunType.FREE, "Свободный бег", emptyList(), lapMeters = 204))
-        t.setLine(lineAt(70.0).first, lineAt(70.0).second)
-        t.setLoop(oval.toGround(plane))
-        val v = p / 60.0
-        var lastLap = 0
-        val run = drive(t, listOf(Piece(6 * 60.0 + 10.0, v, v)), seed = 4) { _, arc ->
-            val lap = (arc / p).toInt()
-            // On his own line (arc 0) each lap from the second.
-            (lap >= 2 && lap > lastLap).also { if (it) lastLap = lap }
-        }
-        println("presses ${run.presses} line ${t.line} laps ${t.laps.map { "%.1f%s".format(it.seconds, if (it.auto) "a" else "p") }}")
-        assertEquals(Press.OffLine, run.presses.first())
-        assertTrue(run.presses.drop(1).all { it is Press.Done }, run.presses.toString())
-        val line = assertNotNull(t.line)
-        val (lx, ly) = plane.x(line.second) to plane.y(line.first)
-        val (x0, y0) = oval.point(0.0)
-        assertTrue(kotlin.math.hypot(lx - x0, ly - y0) < 8.0, "line ${kotlin.math.hypot(lx - x0, ly - y0)} m off his")
-    }
-
-    @Test fun aPickupFromTheJogOnTheLineStartsTheNextRep() {
+    /** A rep starts on a press only: a pickup from the jog on the line is no start without one (Denis, 30.10). */
+    @Test fun aPickupFromTheJogOnTheLineIsNoStartWithoutAPress() {
         for (seed in 0 until 3) {
             val t = RunTracker(oneLaps)
             t.setLine(lineAt(0.0).first, lineAt(0.0).second)
             t.setLoop(oval.toGround(plane))
             val repSpeed = p / 51.0
-            // Rep 1 from standing (onset 68 s, done ≈ 119.75 s); 3 s easing off; then the jog round the loop, onto the line
-            // a second after the recovery's end, and on through it into rep 2 — no stop, no press.
-            val finish1 = 68.0 + 0.75 + 51.0
-            val jogTo = finish1 + 90.0 + 1.0
-            val eased = repSpeed * 1.5
-            val jog = (p - eased) / (jogTo - finish1 - 3.0)
             val pieces = listOf(
                 Piece(60.0, p / 60.0, p / 60.0),
                 Piece(8.0, 0.0, 0.0),
                 Piece(1.5, 0.0, repSpeed),
                 Piece(51.0 - 0.75, repSpeed, repSpeed),
-                Piece(3.0, repSpeed, 0.0),
-                Piece(jogTo - finish1 - 3.0, jog, jog),
-                Piece(1.5, jog, repSpeed),
-                Piece(51.0 - 1.5 * (jog / repSpeed + 1) / 2, repSpeed, repSpeed),
                 Piece(3.0, repSpeed, 0.0),
                 Piece(20.0, 0.0, 0.0),
             )
             val run = drive(t, pieces, seed)
-            println("seed $seed starts ${run.starts} reps ${t.repTimes()} laps ${t.laps}")
-            assertEquals(2, run.starts.size, "seed $seed: both reps started by GPS, ${run.starts}")
-            // Said a few seconds after he went (GPS sees the speed held first); the rep counts from the pickup itself.
-            assertTrue(run.starts[1] - jogTo in 0.0..6.0, "seed $seed: rep 2's start said at ${run.starts[1]}, he went at $jogTo")
-            // From his pickup to the line: the ramp, then the rest of the lap at the rep's speed.
-            val truth = 1.5 + 51.0 - 1.5 * (jog / repSpeed + 1) / 2
-            val rep2 = assertNotNull(t.repTimes()[1], "seed $seed: ${t.laps}")
-            assertTrue(abs(rep2 - truth) < 0.8, "seed $seed: rep 2 $rep2, ran $truth")
-            assertNull(t.repTimes()[2])
+            assertTrue(run.starts.isEmpty(), "seed $seed: started by GPS, ${run.starts}")
+            assertTrue(t.laps.isEmpty(), "seed $seed: laps GPS made ${t.laps}")
         }
     }
 }

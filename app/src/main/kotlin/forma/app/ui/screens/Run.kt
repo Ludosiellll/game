@@ -350,25 +350,18 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         if (track) {
             Banner(
                 "Стадион, круг ${workout.lapMeters} м. " +
-                    if (gps) {
-                        // The loop is fitted after the first lap (or known from the last session): then laps are timed to tenths.
-                        "Круги GPS засчитает сам, с точностью до нескольких десятых: после первого круга он запомнит стадион " +
-                            (if (settings.trackLoop != null) "(этот уже знает). " else "и дальше будет знать его сразу. ") +
-                            (if (workout.reps > 0) "Отрезок стартует сам, когда побежишь с линии; писк — момент, когда ты должен быть на ней. " else
-                                if (settings.trackLine == null) "Круги считаются от места старта. " else "Круги считаются от линии. ") +
-                            "Кнопка «Круг» остаётся — нажатие тоже засчитается."
-                    } else {
-                        "Жми «Круг», когда пересекаешь линию: приложение скажет время круга и в темпе ли ты. " +
-                            // The pacer beeps only in reps of laps (RunTimeline: Cue.LapMark).
-                            (if (workout.reps > 0) "Писк — момент, когда ты должен быть на линии. " else "") + "Кнопка «Круг» есть и в уведомлении."
-                    },
+                    // Laps and starts are the presses (GPS gives the distance, the pace and the loop's length).
+                    "Жми «Круг», когда пересекаешь линию, и на старте каждого отрезка: круг засчитывается только по нажатию. " +
+                        "Приложение скажет время круга и в темпе ли ты. " +
+                        // The pacer beeps only in reps of laps (RunTimeline: Cue.LapMark).
+                        (if (workout.reps > 0) "Писк — момент, когда ты должен быть на линии. " else "") + "Кнопка «Круг» есть и в уведомлении.",
                 F.c.endurance, icon = Ic.info,
             )
         }
         FCard(gap = 4.dp) {
             ToggleRow(
                 "GPS: дистанция и темп",
-                if (track) "На стадионе GPS сам считает круги и старт" else "На беговой дорожке выключи", gps,
+                if (track) "Круги — по нажатию «Круг», GPS меряет темп и длину круга" else "На беговой дорожке выключи", gps,
             ) { gps = it }
             Hairline()
             ToggleRow("Голосовые подсказки", if (track) "Начало отрезков, время каждого круга, финиш" else "Начало отрезков, километры, финиш", voice) { voice = it }
@@ -744,7 +737,7 @@ fun RunActiveScreen() {
                     StatTile(
                         "Последний круг", l?.let { Ru.lap(it.seconds) } ?: "—",
                         when {
-                            l == null -> if (u.gps) "засчитает GPS" else "жми «Круг» на линии"
+                            l == null -> "жми «Круг» на линии"
                             l.verdict != null -> lapVerdict(l)
                             l.rep == null && w.reps > 0 -> "между отрезками"
                             else -> "круг ${u.laps}"
@@ -815,8 +808,8 @@ fun RunActiveScreen() {
                         Text(
                             when {
                                 !running -> "на паузе"
-                                waiting -> if (u.gps) "или просто беги" else "жми, когда побежишь"
-                                else -> if (u.gps) "GPS считает сам" else "жми на линии"
+                                waiting -> "жми, когда побежишь"
+                                else -> "жми на линии"
                             },
                             style = T.body(12.sp, FontWeight.SemiBold).copy(color = if (on) F.c.onAccent else F.c.text3),
                         )

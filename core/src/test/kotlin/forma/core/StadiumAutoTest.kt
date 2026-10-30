@@ -53,125 +53,8 @@ class StadiumAutoTest {
         }
     }
 
-    @Test fun repsWithNoPressStartedTimedAndEnded() = reps(swing = 0.0, tolerance = 0.8)
-
-    /**
-     * The same with the phone in the hand: the arm's swing in the satellites' speed. The laps stay to tenths; the start
-     * from the speeds alone wanders (the swing begins with the run-up), so a rep with no press at all is within 2 s — a
-     * press on the start takes that away.
-     */
-    @Test fun repsTimedWithThePhoneInTheHand() = reps(swing = 1.5, tolerance = 2.0)
-
-    private fun reps(swing: Double, tolerance: Double) {
-        for (seed in 0 until 4) {
-            val rnd = Random(seed)
-            val w = RunPlan.goalPace(RunState(walkStage = -1, goalStage = 3), RunGoal(1500, 330), 207)
-            val work = w.segments.indices.filter { w.segments[it].kind == SegmentKind.WORK }
-            val lapsPerRep = w.segments[work[0]].laps!!.toInt()
-            val p = oval.perimeter
-            val t = RunTracker(w)
-            val gps = Gps(seed, swing)
-            t.start(0)
-            var arc = 0.0
-            var v = 0.0
-            var phase = "warm"
-            var rep = 0
-            var target = 0.0
-            var standUntil = 0.0
-            var repSpeed = 0.0
-            val onsets = mutableListOf<Double>()
-            val finishes = mutableListOf<Double>()
-            val dt = 0.05
-            var time = 0.0
-            var nextFix = rnd.nextDouble()
-            while (time < 3600 && phase != "done") {
-                time += dt
-                when (phase) {
-                    "warm" -> {
-                        v = 2.8
-                        // The plan waits on the line: on to it, and stop there.
-                        if (t.waiting((time * 1000).toLong()) && Math.floor((arc + v * dt) / p) > Math.floor(arc / p)) {
-                            arc = Math.ceil(arc / p) * p
-                            v = 0.0
-                            phase = "stand"
-                            standUntil = time + 6 + rnd.nextDouble() * 4
-                        }
-                    }
-                    "stand" -> {
-                        v = 0.0
-                        // Each rep waits for him on the line: he goes a moment after the wait begins (the countdown's end).
-                        val go = if (rep == 0) time >= standUntil else standUntil > 0.0 && time >= standUntil
-                        if (go) {
-                            phase = "rep"
-                            onsets += time
-                            repSpeed = p / 45.54 * (1 + rnd.nextDouble(-0.03, 0.03))
-                            target = arc + lapsPerRep * p
-                        }
-                    }
-                    "rep" -> {
-                        v = minOf(repSpeed, v + 3.0 * dt)
-                        if (arc + v * dt >= target) {
-                            finishes += time + (target - arc) / v
-                            phase = "slow"
-                            rep++
-                        }
-                    }
-                    "slow" -> {
-                        // Easing off past the line, then walking back to it, then standing till the next rep's beep.
-                        v = maxOf(0.0, v - 2.0 * dt)
-                        if (v == 0.0) phase = "back"
-                    }
-                    "back" -> {
-                        v = -1.0
-                        if (arc + v * dt <= target) {
-                            arc = target
-                            v = 0.0
-                            if (rep >= work.size) phase = "done" else {
-                                phase = "stand"
-                                // The beep, then a moment to react.
-                                standUntil = 0.0
-                            }
-                        }
-                    }
-                }
-                if (phase == "stand" && rep > 0 && standUntil == 0.0 && t.waiting((time * 1000).toLong())) {
-                    standUntil = time + 0.4 + rnd.nextDouble() * 1.2
-                }
-                arc += v * dt
-                if (time >= nextFix) {
-                    nextFix += 1.0
-                    val (x, y) = oval.point(arc)
-                    val ms = (time * 1000).toLong()
-                    t.onFix(gps.fix(ms, x, y, v, plane), ms)
-                }
-                val ms = (time * 1000).toLong()
-                if (ms % 250 < 50) {
-                    t.autoStart(ms)
-                    t.autoLap(ms)
-                }
-            }
-            repeat(10) {
-                time += 1.0
-                val (x, y) = oval.point(arc)
-                val ms = (time * 1000).toLong()
-                t.onFix(gps.fix(ms, x, y, 0.0, plane), ms)
-                t.autoLap(ms)
-            }
-            assertEquals(work.size, finishes.size, "seed $seed: all reps run")
-            val times = t.repTimes()
-            val truth = onsets.zip(finishes) { a, b -> b - a }
-            println("swing $swing seed $seed reps: " + times.zip(truth).joinToString { (a, b) -> "%.2f/%.2f".format(a ?: -1.0, b) })
-            times.zip(truth).forEachIndexed { i, (got, real) ->
-                assertNotNull(got, "seed $seed rep ${i + 1} timed")
-                assertTrue(abs(got - real) < tolerance, "seed $seed rep ${i + 1}: $got vs $real")
-            }
-            val repLaps = t.laps.filter { it.rep != null }
-            assertEquals(work.size * lapsPerRep, repLaps.size, "seed $seed: ${t.laps}")
-            assertTrue(repLaps.all { it.auto && it.exact }, "seed $seed: every lap GPS's, to tenths")
-        }
-    }
-
-    @Test fun aFreeRunsLapsAndTheLoopsRealLength() {
+    /** The loop's real length from GPS on a free run (set as 230 m, run on 204): laps are the presses, the length is GPS's. */
+    @Test fun aFreeRunsLoopHasItsRealLengthMeasured() {
         val rnd = Random(7)
         // Set as 230 m; the loop run is 204 m.
         val t = RunTracker(RunWorkout(RunType.FREE, "Свободный бег", emptyList(), lapMeters = 230))
@@ -204,14 +87,8 @@ class StadiumAutoTest {
             arc += 3.0
             t.autoLap((time * 1000).toLong())
         }
-        val laps = t.laps
-        val trueLaps = truth.zipWithNext { a, b -> b - a }
-        println("free laps: " + laps.joinToString { "%.2f".format(it.seconds) } + " truth " + trueLaps.joinToString { "%.2f".format(it) })
-        assertTrue(laps.size >= truth.size - 1, "${laps.size} of ${truth.size}")
-        assertTrue(laps.all { it.auto && it.exact })
-        // Lap by lap against the true ones from the second on (the first counts from the start).
-        val diffs = laps.drop(1).map { l -> trueLaps.minBy { abs(it - l.seconds) } - l.seconds }
-        assertTrue(diffs.all { abs(it) < 0.8 }, diffs.toString())
+        // GPS makes no laps: those are the presses.
+        assertTrue(t.laps.isEmpty(), "${t.laps}")
         val lap = assertNotNull(t.lapLength())
         assertTrue(abs(lap - p) < 2.5, "measured $lap, ran $p")
     }

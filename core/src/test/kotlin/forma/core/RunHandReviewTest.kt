@@ -158,20 +158,6 @@ class RunHandReviewTest {
         return said to t
     }
 
-    @Test fun aPressThatOnlyTimesAGpsLapIsNotSaidASecondTime() {
-        val (said, t) = saidLaps(seed = 3, react = 7.0)
-        val laps = t.laps.filter { it.rep != null }
-        assertEquals(5, laps.size, "${t.laps}")
-        assertTrue(laps.all { it.auto && it.exact }, "every lap was GPS's: ${t.laps}")
-        assertEquals(laps.size, said, "each lap is said once (GPS's or the press), not twice")
-    }
-
-    @Test fun pressingAtTheLineSaysEachLapOnce() {
-        val (said, t) = saidLaps(seed = 1, react = 0.4)
-        assertEquals(5, t.laps.count { it.rep != null })
-        assertEquals(5, said)
-    }
-
     /** The warm-up with an easy lap to judge by (the plan's own has none on some days). */
     private fun paced() = denis().let { w -> w.copy(segments = w.segments.mapIndexed { i, s -> if (i == 0) s.copy(pace = PaceRange(330, 360), lapSec = Track.lapSec(345.0, lapSet)) else s }) }
 
