@@ -92,6 +92,8 @@ fun ChatContent(userId: String, name: String, api: FriendsApi?, onBack: () -> Un
     var blocked by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
     var askBlock by remember { mutableStateOf(false) }
+    var askReport by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
 
     suspend fun refresh(a: FriendsApi) {
         runCatching { a.messages(userId).reversed() }
@@ -128,8 +130,21 @@ fun ChatContent(userId: String, name: String, api: FriendsApi?, onBack: () -> Un
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding()) {
         Box(Modifier.padding(horizontal = 20.dp)) {
             TopBar(name, if (blocked) "Заблокирован" else "Сообщения", onBack = onBack) {
-                TextButton({ askBlock = true }) {
-                    Text(if (blocked) "Разблокировать" else "Заблокировать", style = T.body(13.sp).copy(color = F.c.text2))
+                // Block and complain in a menu: two buttons beside a long name squeezed it to nothing on a narrow phone.
+                var menu by remember { mutableStateOf(false) }
+                Box {
+                    Box(
+                        Modifier.size(44.dp).clip(CircleShape).clickable(role = Role.Button, onClickLabel = "Ещё") { menu = true },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Ic.more, "Ещё", tint = F.c.text2, modifier = Modifier.size(22.dp)) }
+                    androidx.compose.material3.DropdownMenu(menu, { menu = false }, containerColor = F.c.surface) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            { Text("Пожаловаться", style = T.body(15.sp)) }, { menu = false; askReport = true },
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            { Text(if (blocked) "Разблокировать" else "Заблокировать", style = T.body(15.sp)) }, { menu = false; askBlock = true },
+                        )
+                    }
                 }
             }
         }
@@ -142,12 +157,26 @@ fun ChatContent(userId: String, name: String, api: FriendsApi?, onBack: () -> Un
                 item(key = "empty") { Text("Сообщений пока нет. Напиши первым.", style = T.secondary(14.sp), modifier = Modifier.padding(8.dp)) }
             }
             items(messages, key = { it.id }) { m -> ChatBubble(m) }
+            notice?.let { n -> item(key = "notice") { Text(n, style = T.body(14.sp).copy(color = F.c.good), modifier = Modifier.padding(horizontal = 8.dp)) } }
             error?.let { e -> item(key = "error") { Text(e, style = T.body(14.sp).copy(color = F.c.warn), modifier = Modifier.padding(horizontal = 8.dp)) } }
         }
         when {
-            blocked -> Text("Переписка заблокирована. Разблокировать можно сверху.", style = T.secondary(13.sp), modifier = Modifier.padding(16.dp))
+            blocked -> Text("Переписка заблокирована. Разблокировать можно в меню «⋯» сверху.", style = T.secondary(13.sp), modifier = Modifier.padding(16.dp))
             !canWrite -> Text("Сейчас написать нельзя: профиль закрыт или переписка заблокирована.", style = T.secondary(13.sp), modifier = Modifier.padding(16.dp))
             else -> MessageInput(typed, { typed = it }, enabled = !sending && api != null, onSend = ::send)
+        }
+    }
+    if (askReport) ReportDialog(name, onDismiss = { askReport = false }) { reason, alsoBlock ->
+        askReport = false
+        val a = api ?: return@ReportDialog
+        scope.launch {
+            runCatching {
+                a.report(userId, reason)
+                if (alsoBlock && !blocked) a.block(userId, true)
+            }.onSuccess {
+                notice = "Жалоба отправлена." + if (alsoBlock && !blocked) " Переписка заблокирована." else ""
+                if (alsoBlock) { blocked = true; canWrite = false }
+            }.onFailure { error = describeFriends(it) }
         }
     }
     if (askBlock) {
@@ -224,4 +253,52 @@ private fun MessageInput(value: String, onChange: (String) -> Unit, enabled: Boo
             contentAlignment = Alignment.Center,
         ) { Icon(Ic.send, "Отправить", tint = if (can) F.c.onAccent else F.c.text3, modifier = Modifier.size(24.dp)) }
     }
+}
+
+/** What a complaint can be about: a tap, no typing. */
+val REPORT_REASONS = listOf("Спам", "Оскорбления", "Неприличное", "Другое")
+
+/**
+ * «Пожаловаться»: what was wrong (one of [REPORT_REASONS]), and whether to block the person too. [onSend] gets the reason
+ * and the choice; nothing is sent from here.
+ */
+@Composable
+fun ReportDialog(name: String, onDismiss: () -> Unit, onSend: (String, Boolean) -> Unit) {
+    var reason by remember { mutableStateOf<String?>(null) }
+    var alsoBlock by remember { mutableStateOf(true) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = F.c.surface,
+        title = { Text("Пожаловаться на $name", style = T.title(20.sp)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Что не так? Жалобу прочитает автор приложения.", style = T.secondary(14.sp))
+                REPORT_REASONS.forEach { r ->
+                    val on = reason == r
+                    val shape = RoundedCornerShape(12.dp)
+                    Box(
+                        Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(shape).background(if (on) F.c.accent else F.c.surface2)
+                            .clickable(role = Role.RadioButton) { reason = r }.padding(horizontal = 14.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) { Text(r, style = T.body(15.sp, FontWeight.SemiBold).copy(color = if (on) F.c.onAccent else F.c.text)) }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("И заблокировать", style = T.body(15.sp), modifier = Modifier.weight(1f))
+                    androidx.compose.material3.Switch(
+                        alsoBlock, { alsoBlock = it },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedTrackColor = F.c.accent, checkedThumbColor = F.c.onAccent, uncheckedTrackColor = F.c.surface2, uncheckedBorderColor = F.c.line,
+                        ),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            val r = reason
+            TextButton({ if (r != null) onSend(r, alsoBlock) }, enabled = r != null) {
+                Text("Отправить", style = T.body(15.sp, FontWeight.Bold).copy(color = if (r != null) F.c.bad else F.c.text3))
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
+    )
 }

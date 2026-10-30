@@ -1,5 +1,7 @@
 package forma.app
 
+import forma.app.ui.screens.Hints
+
 import android.os.Looper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -234,6 +236,44 @@ class ScreensShotTest {
                 settle()
                 compose.onRoot().captureRoboImage("build/shots/${l.id}-$name.png")
             }
+        }
+    }
+
+    /** Google Play's phone screenshots, 1080 × 1920, in the default look (copied to docs/play/store). */
+    @Config(qualifiers = "w360dp-h640dp-xxhdpi")
+    @Test fun store() {
+        val (repo, active) = seed()
+        val intervals = runBlocking { RunPlan.intervals(repo.store.runStateNow().copy(intervalStage = 2)) }
+        val tracker = RunTracker(intervals)
+        tracker.start(0)
+        var dist = 0.0
+        for (s in 0..1296) {
+            val seg = tracker.timeline(s * 1000L).segment
+            dist += if (seg?.kind == SegmentKind.WORK) 1000.0 / 272 else 1000.0 / 352
+            tracker.onFix(Fix(s * 1000L, 53.9 + dist / 111_195.0, 27.56, 4f), s * 1000L)
+        }
+        RunSession.tracker = tracker
+        RunSession.gpsEnabled = true
+        RunSession.publish(1_296_000)
+        // The first-run hints are for a new person, not for the store's pictures.
+        runBlocking {
+            repo.updateSettings {
+                it.copy(look = Looks.minimal.id, hintsSeen = it.hintsSeen + listOf(Hints.TODAY, Hints.PLAN, Hints.PROGRESS, Hints.WORKOUT, Hints.RUN))
+            }
+        }
+        var screen by mutableStateOf<@Composable () -> Unit>({ TodayScreen() })
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings(look = Looks.minimal.id)) {
+                FormaTheme(Looks.minimal) { Box(Modifier.fillMaxSize().background(F.c.bg)) { screen() } }
+            }
+        }
+        listOf<Pair<String, @Composable () -> Unit>>(
+            "1-today" to { TodayScreen() }, "2-workout" to { WorkoutScreen(active) }, "3-run" to { RunActiveScreen() },
+            "4-progress" to { ProgressScreen() }, "5-plan" to { PlanScreen() },
+        ).forEach { (name, s) ->
+            screen = s
+            settle()
+            compose.onRoot().captureRoboImage("build/shots/store-$name.png")
         }
     }
 

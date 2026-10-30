@@ -218,6 +218,44 @@ class PeopleUiTest {
         compose.onRoot().captureRoboImage("build/shots/carbon-chat.png")
     }
 
+    /**
+     * «Пожаловаться» (Google Play wants complaints and blocks wherever people write to each other): from the chat's menu,
+     * a reason by a tap, sent with the block when ticked; the chat then says so and closes the input.
+     */
+    @Test fun aComplaintIsSentWithTheBlock() {
+        val api = object : FriendsApi {
+            val reports = mutableListOf<Pair<String, String>>()
+            val blocks = mutableListOf<Pair<String, Boolean>>()
+            override suspend fun me(name: String?) = FriendMe()
+            override suspend fun setSharing(activity: Boolean, body: Boolean) = FriendMe()
+            override suspend fun add(code: String) = forma.app.sync.AddResult.NOT_FOUND
+            override suspend fun answer(userId: String, accept: Boolean) {}
+            override suspend fun remove(userId: String) {}
+            override suspend fun list() = emptyList<forma.app.sync.Friend>()
+            override suspend fun feed(before: String?, limit: Int, userId: String?) = emptyList<forma.app.sync.FeedItem>()
+            override suspend fun progress(userId: String) = FriendProgress("Спамер", true)
+            override suspend fun conversations() = listOf(Conversation("u9", "Спамер", "Купи", unread = 0))
+            override suspend fun messages(userId: String, before: Long?, limit: Int) =
+                listOf(Message(1, fromMe = false, body = "Купи курс", sentAt = "2026-10-30T15:05:00Z", readAt = "2026-10-30T15:06:00Z"))
+            override suspend fun report(userId: String, reason: String) { reports += userId to reason }
+            override suspend fun block(userId: String, block: Boolean) { blocks += userId to block }
+        }
+        compose.setContent { FormaTheme(Looks.byId("carbon")) { ChatContent("u9", "Спамер", api, onBack = {}, pollMs = 60_000) } }
+        settle()
+        compose.onNodeWithContentDescription("Ещё").performClick()
+        settle()
+        compose.onNodeWithText("Пожаловаться").performClick()
+        settle()
+        compose.onNodeWithText("Спам").performClick()
+        settle()
+        compose.onNodeWithText("Отправить").performClick()
+        settle()
+        assertEquals(listOf("u9" to "Спам"), api.reports)
+        assertEquals(listOf("u9" to true), api.blocks)
+        compose.onNodeWithText("Жалоба отправлена. Переписка заблокирована.").assertExists()
+        compose.onNodeWithText("Переписка заблокирована. Разблокировать можно в меню «⋯» сверху.").assertExists()
+    }
+
     /** Server answers decode as the people migration writes them. */
     @Test fun serverAnswersDecode() {
         val people = AppJson.decodeFromString(

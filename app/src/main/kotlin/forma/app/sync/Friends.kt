@@ -220,6 +220,8 @@ interface FriendsApi {
     suspend fun markRead(userId: String): Int = throw UnsupportedOperationException()
     suspend fun unread(): Unread = throw UnsupportedOperationException()
     suspend fun block(userId: String, block: Boolean): Unit = throw UnsupportedOperationException()
+    /** A complaint about [userId] in a few words: read by the app's owner, never shown back. */
+    suspend fun report(userId: String, reason: String): Unit = throw UnsupportedOperationException()
 }
 
 /** [ensureSession] makes sure a signed-in session with a fresh token is there before each call. */
@@ -301,6 +303,10 @@ class SupabaseFriendsApi(private val client: SupabaseClient, private val ensureS
     override suspend fun block(userId: String, block: Boolean) {
         call("block_user", buildJsonObject { put("p_user", userId); put("p_block", block) })
     }
+
+    override suspend fun report(userId: String, reason: String) {
+        call("report_user", buildJsonObject { put("p_user", userId); put("p_reason", reason) })
+    }
 }
 
 /** Human text for a failed friends call. */
@@ -313,6 +319,8 @@ fun describeFriends(e: Throwable): String = when {
     e is io.github.jan.supabase.exceptions.RestException && e.error.contains("cannot write") -> "Написать нельзя: человек закрыл профиль или заблокировал переписку."
     e is io.github.jan.supabase.exceptions.RestException && e.error.contains("too many messages") -> "Слишком много сообщений подряд. Подожди минуту."
     e is io.github.jan.supabase.exceptions.RestException && e.error.contains("bad message") -> "Сообщение пустое или длиннее 1000 знаков."
+    e is io.github.jan.supabase.exceptions.RestException && e.error.contains("too many reports") -> "Сегодня жалоб уже много. Если нужно, заблокируй человека."
+    e is io.github.jan.supabase.exceptions.RestException && e.error.contains("bad reason") -> "Напиши коротко, что случилось (до 500 знаков)."
     e is io.github.jan.supabase.exceptions.HttpRequestException || e is io.ktor.client.plugins.HttpRequestTimeoutException || e is java.io.IOException ->
         "Нет связи с сервером: ничего не изменилось. Проверь интернет и попробуй ещё раз."
     else -> Cloud.describe(e)

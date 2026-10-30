@@ -126,6 +126,8 @@ object Updater {
      * No network, a limit hit, an odd answer: nothing is said, it is asked again next time.
      */
     suspend fun check(force: Boolean = false, fetch: suspend () -> String? = { get(LATEST) }) {
+        // From Google Play: Play updates the app, nothing is fetched from GitHub.
+        if (!forma.app.BuildConfig.SELF_UPDATE) return
         if (checked && !force) return
         checked = true
         if (state.value !is State.Idle && state.value !is State.Available) return

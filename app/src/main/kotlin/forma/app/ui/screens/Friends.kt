@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import forma.app.ui.components.Chip
 import forma.core.plan.SessionKind
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
@@ -509,6 +510,16 @@ fun FriendScreen(userId: String, name: String) {
         onBack = { nav.back() },
         preview = { program, part, ease -> repo.copyPreview(program, part, ease) },
         onWrite = { nav.push(Screen.Chat(userId, progress?.name ?: name)) },
+        onReport = { reason, alsoBlock ->
+            scope.launch {
+                runCatching {
+                    val a = api ?: throw NotSignedInException()
+                    a.report(userId, reason)
+                    if (alsoBlock) a.block(userId, true)
+                }.onSuccess { message = "Жалоба отправлена." + if (alsoBlock) " Человек заблокирован." else "" }
+                    .onFailure { error = describeFriends(it) }
+            }
+        },
     )
     ask?.let { (item, names) ->
         LeftOutDialog(names, onCancel = { ask = null }) {
@@ -531,8 +542,10 @@ fun FriendContent(
     onBack: () -> Unit,
     preview: suspend (forma.core.plan.Program, forma.app.data.CopyPart, Set<forma.app.data.Ease>) -> forma.core.plan.Program? = { _, _, _ -> null },
     onWrite: () -> Unit = {},
+    onReport: ((String, Boolean) -> Unit)? = null,
 ) {
     var confirmProgram by remember { mutableStateOf(false) }
+    var reporting by remember { mutableStateOf(false) }
     var part by remember { mutableStateOf(forma.app.data.CopyPart.ALL) }
     var ease by remember { mutableStateOf(emptySet<forma.app.data.Ease>()) }
     var confirmRemove by remember { mutableStateOf(false) }
@@ -542,6 +555,15 @@ fun FriendContent(
         message?.let { Text(it, style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.accent)) }
         val p = progress
         if (p?.canWrite == true) PrimaryButton("Написать", onWrite, Modifier.fillMaxWidth())
+        // Someone open to all is not only a friend: a complaint is a tap away.
+        if (p != null && onReport != null) Text(
+            "Пожаловаться", style = T.body(14.sp).copy(color = F.c.text2),
+            modifier = Modifier.clickable(onClickLabel = "Пожаловаться на ${p.name}") { reporting = true }.padding(vertical = 4.dp),
+        )
+        if (reporting) ReportDialog(p?.name ?: name, onDismiss = { reporting = false }) { reason, alsoBlock ->
+            reporting = false
+            onReport?.invoke(reason, alsoBlock)
+        }
         if (p != null && !p.shared) Text("${p.name} пока не делится тренировками.", style = T.secondary(15.sp))
         if (p != null && p.shared) {
             // Sessions per week over the last eight weeks.

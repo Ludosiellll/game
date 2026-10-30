@@ -63,12 +63,14 @@ fun MoreScreen() {
             // The version and «Проверить обновления»: a newer one opens the update window (also after «Позже»).
             val scope = androidx.compose.runtime.rememberCoroutineScope()
             val update by forma.app.update.Updater.state.collectAsState()
-            ListRow(
+            if (forma.app.BuildConfig.SELF_UPDATE) ListRow(
                 "Обновления",
                 if (update is forma.app.update.Updater.State.Available) "Есть новая версия — нажми, чтобы обновить"
                 else "Сборка ${forma.app.BuildConfig.VERSION_CODE} · нажми, чтобы проверить",
                 icon = Ic.up, iconTint = F.c.text2,
             ) { scope.launch { forma.app.update.Updater.check(force = true) } }
+            // From Google Play: the build, updates come from Play.
+            else ListRow("Версия", "Сборка ${forma.app.BuildConfig.VERSION_CODE} · обновляется через Google Play", icon = Ic.up, iconTint = F.c.text2) {}
         }
         Text(
             if (cloud?.email != null) "Данные хранятся на телефоне, копия — в облаке."

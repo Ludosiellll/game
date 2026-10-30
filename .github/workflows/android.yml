@@ -8,6 +8,10 @@ on:
         description: Publish this build as the app's update («Обновить» in the app takes it)
         type: boolean
         default: false
+      play:
+        description: Also build the Google Play bundle (.aab, signed with the upload key) — artifact forma-play-aab
+        type: boolean
+        default: false
 
 # Creating the release (the update everybody's app offers) needs to write the repository's releases.
 permissions:
@@ -50,6 +54,29 @@ jobs:
 
       - name: Build APK
         run: ./gradlew :app:assembleRelease
+
+      # Google Play: the «play» build (no self-update, no installing packages) as a bundle signed with the upload key;
+      # Play signs what it hands out with its own key. Only on the manual run with «play» on.
+      - name: Google Play bundle
+        if: ${{ inputs.play }}
+        env:
+          UPLOAD_BASE64: ${{ secrets.FORMA_UPLOAD_KEYSTORE }}
+          UPLOAD_PASSWORD: ${{ secrets.FORMA_UPLOAD_PASSWORD }}
+        run: |
+          if [ -z "$UPLOAD_BASE64" ] || [ -z "$UPLOAD_PASSWORD" ]; then
+            echo "::error::No FORMA_UPLOAD_KEYSTORE / FORMA_UPLOAD_PASSWORD secrets: Google Play takes only a bundle signed with the upload key."
+            exit 1
+          fi
+          echo "$UPLOAD_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+          FORMA_UPLOAD_KEYSTORE="$RUNNER_TEMP/upload.jks" FORMA_UPLOAD_PASSWORD="$UPLOAD_PASSWORD" ./gradlew :app:bundlePlay
+          echo "Google Play bundle built: artifact forma-play-aab." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v6
+        if: ${{ inputs.play }}
+        with:
+          name: forma-play-aab
+          path: app/build/outputs/bundle/play/app-play.aab
+          retention-days: 30
 
       # A checked build for everybody: the app offers the latest release on start and installs it on «Обновить». Only
       # when asked — «[release]» in the commit message, or the manual run with «release» on — after every test above,

@@ -26,12 +26,24 @@ android {
         // Cloud copy (Supabase). The publishable key is public by design: row level security protects the data.
         buildConfigField("String", "SUPABASE_URL", "\"${providers.gradleProperty("forma.supabase.url").getOrElse("")}\"")
         buildConfigField("String", "SUPABASE_KEY", "\"${providers.gradleProperty("forma.supabase.key").getOrElse("")}\"")
+        // The GitHub build updates itself from the repository's releases; the Google Play build is updated by Play.
+        buildConfigField("boolean", "SELF_UPDATE", "true")
     }
 
     // A stable release key keeps updates installable over the previous version (and the phone's data).
     // CI passes it from repository secrets; without them the build falls back to the debug key.
     val keystore = providers.environmentVariable("FORMA_KEYSTORE").orNull
+    // Google Play's upload key (RSA): Play signs the app it hands out with its own key.
+    val uploadKeystore = providers.environmentVariable("FORMA_UPLOAD_KEYSTORE").orNull
     signingConfigs {
+        if (uploadKeystore != null) {
+            create("upload") {
+                storeFile = file(uploadKeystore)
+                storePassword = providers.environmentVariable("FORMA_UPLOAD_PASSWORD").get()
+                keyAlias = "upload"
+                keyPassword = providers.environmentVariable("FORMA_UPLOAD_PASSWORD").get()
+            }
+        }
         if (keystore != null) {
             create("release") {
                 storeFile = file(keystore)
@@ -48,6 +60,13 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+        }
+        // Google Play (bundlePlay → app-play.aab): no self-update, no installing packages, no battery exemption asked
+        // (src/play/AndroidManifest.xml drops those permissions) — Play's rules.
+        create("play") {
+            initWith(getByName("release"))
+            buildConfigField("boolean", "SELF_UPDATE", "false")
+            signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("debug")
         }
     }
 

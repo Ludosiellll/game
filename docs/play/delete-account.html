@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Форма — удалить аккаунт</title>
+<style>
+  :root { --bg: #fff; --text: #111; --text2: #6f6f6f; --line: #e3e3e1; --bad: #d7372b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0d0d0d; --text: #f4f4f2; --text2: #9b9b9b; --line: #2a2a2a; } }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 560px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 34px; line-height: 1.05; letter-spacing: -0.03em; text-transform: uppercase; margin: 0 0 16px; }
+  p, li { color: var(--text2); }
+  hr { border: 0; border-top: 3px solid var(--text); margin: 24px 0; }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  input { width: 100%; box-sizing: border-box; padding: 12px 14px; font: inherit; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 10px; }
+  button { margin-top: 20px; width: 100%; padding: 14px; font: 700 15px/1 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: #fff; background: var(--bad); border: 0; border-radius: 999px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #msg { margin-top: 16px; color: var(--text); min-height: 1.5em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Удалить аккаунт «Формы»</h1>
+  <p>Удалятся аккаунт и всё, что лежит в облаке: тренировки, подходы, пробежки с GPS-треками, вес тела, программа, профиль, друзья и сообщения. Вернуть это будет нельзя. Данные на твоём телефоне останутся, пока ты сам не удалишь приложение.</p>
+  <p>То же самое можно сделать в приложении: «Ещё → Облако и резервная копия → Удалить аккаунт и данные в облаке».</p>
+  <hr>
+  <form id="f">
+    <label for="email">Почта аккаунта</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="password">Пароль</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <button id="go" type="submit">Удалить аккаунт навсегда</button>
+  </form>
+  <div id="msg" role="status"></div>
+  <p>Не помнишь пароль — восстанови его в приложении на экране входа, потом вернись сюда.</p>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+  // The project's public (publishable) key: the database's row level security protects the data, and
+  // delete_my_account() deletes only the signed-in caller.
+  const client = supabase.createClient("https://ftlnsroydkjbfrwyvamw.supabase.co", "sb_publishable_YPQ0q2oKEMdSf7ymgFU5pg_9oRNAaoR", { auth: { persistSession: false } });
+  const msg = document.getElementById("msg");
+  const go = document.getElementById("go");
+  document.getElementById("f").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!confirm("Удалить аккаунт и все данные в облаке? Вернуть их будет нельзя.")) return;
+    go.disabled = true;
+    msg.textContent = "Удаляю…";
+    try {
+      const { error: inErr } = await client.auth.signInWithPassword({
+        email: document.getElementById("email").value.trim(),
+        password: document.getElementById("password").value,
+      });
+      if (inErr) { msg.textContent = "Не получилось войти: проверь почту и пароль."; return; }
+      const { error } = await client.rpc("delete_my_account");
+      if (error) { msg.textContent = "Не получилось удалить: " + error.message; return; }
+      await client.auth.signOut().catch(() => {});
+      msg.textContent = "Готово: аккаунт и данные в облаке удалены.";
+      document.getElementById("f").reset();
+    } catch (err) {
+      msg.textContent = "Нет связи. Попробуй ещё раз.";
+    } finally {
+      go.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

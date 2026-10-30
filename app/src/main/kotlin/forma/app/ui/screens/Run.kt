@@ -477,10 +477,11 @@ private fun BatteryCard() {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GhostButton("Без ограничений", {
-                open(
+                // The Google Play build may not ask for the exemption itself: the list of apps, where «Форма» is switched.
+                if (forma.app.BuildConfig.SELF_UPDATE) open(
                     android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, ("package:" + context.packageName).toUri()),
                     android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
-                )
+                ) else open(android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             }, Modifier.weight(1f))
             GhostButton(if (xiaomi) "Автозапуск" else "Настройки", { open(autostartIntent()) }, Modifier.weight(1f))
         }
