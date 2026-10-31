@@ -12,6 +12,11 @@ import forma.core.strength.SlotSpec
 object Templates {
     private data class Scheme(val sets: Int, val min: Int, val max: Int, val rir: Int, val rest: Int)
 
+    /**
+     * Rest (31.10, Denis: «3–5 минут на многосуставных, 1–3 на изоляции»): the main lifts 3 min (heavy sets and sets to
+     * failure get more after each set, up to 5), the others 2–2:30, isolation 1:30 — rests past about 90 s add no
+     * growth (Singer et al. 2024), shorter ones cost reps; general fitness a step less.
+     */
     private fun base(focus: LiftFocus, role: SlotRole): Scheme = when (focus) {
         LiftFocus.STRENGTH -> when (role) {
             SlotRole.MAIN -> Scheme(4, 4, 6, 2, 180)
@@ -19,21 +24,44 @@ object Templates {
             SlotRole.ACCESSORY -> Scheme(3, 8, 12, 2, 90)
         }
         LiftFocus.POWERBUILDING -> when (role) {
-            SlotRole.MAIN -> Scheme(3, 5, 8, 2, 150)
+            SlotRole.MAIN -> Scheme(3, 5, 8, 2, 180)
             SlotRole.SECONDARY -> Scheme(3, 8, 10, 2, 120)
-            SlotRole.ACCESSORY -> Scheme(3, 10, 15, 2, 75)
+            SlotRole.ACCESSORY -> Scheme(3, 10, 15, 2, 90)
         }
         LiftFocus.MUSCLE -> when (role) {
-            SlotRole.MAIN -> Scheme(3, 6, 10, 2, 150)
+            SlotRole.MAIN -> Scheme(3, 6, 10, 2, 180)
             SlotRole.SECONDARY -> Scheme(3, 8, 12, 1, 120)
-            SlotRole.ACCESSORY -> Scheme(3, 10, 15, 1, 75)
+            SlotRole.ACCESSORY -> Scheme(3, 10, 15, 1, 90)
         }
         LiftFocus.GENERAL, LiftFocus.NONE -> when (role) {
-            SlotRole.MAIN -> Scheme(3, 8, 12, 2, 120)
-            SlotRole.SECONDARY -> Scheme(3, 10, 12, 2, 90)
-            SlotRole.ACCESSORY -> Scheme(2, 12, 15, 2, 60)
+            SlotRole.MAIN -> Scheme(3, 8, 12, 2, 150)
+            SlotRole.SECONDARY -> Scheme(3, 10, 12, 2, 120)
+            SlotRole.ACCESSORY -> Scheme(2, 12, 15, 2, 75)
         }
     }
+
+    /** The base rests before 31.10, by focus and role: what [restMoved] looks for in a plan made then. */
+    private fun restBefore(focus: LiftFocus, role: SlotRole): Int = when (focus) {
+        LiftFocus.STRENGTH -> when (role) { SlotRole.MAIN -> 180; SlotRole.SECONDARY -> 150; SlotRole.ACCESSORY -> 90 }
+        LiftFocus.POWERBUILDING, LiftFocus.MUSCLE -> when (role) { SlotRole.MAIN -> 150; SlotRole.SECONDARY -> 120; SlotRole.ACCESSORY -> 75 }
+        LiftFocus.GENERAL, LiftFocus.NONE -> when (role) { SlotRole.MAIN -> 120; SlotRole.SECONDARY -> 90; SlotRole.ACCESSORY -> 60 }
+    }
+
+    /** Bumped when the base rests change: a plan made before takes the new ones once ([restMoved]). */
+    const val REST_VERSION = 1
+
+    /**
+     * A plan made before the rests of 31.10 with them: every exercise still on the old base rest of its focus and role
+     * takes the new one. Anything else stays — the plank's hold, rests the plan's advisor or a friend's copy set; a rest
+     * the person chose is kept apart in their settings and is not touched at all.
+     */
+    fun restMoved(p: Program): Program = p.copy(
+        templates = p.templates.map { t ->
+            t.copy(slots = t.slots.map { s ->
+                if (s.exerciseId != "plank" && s.restSec == restBefore(p.aim.lift, s.role)) s.copy(restSec = base(p.aim.lift, s.role).rest) else s
+            })
+        },
+    )
 
     /**
      * Rep scheme for the gym focus. Serious running takes recovery, so the volume that costs most and adds least goes:

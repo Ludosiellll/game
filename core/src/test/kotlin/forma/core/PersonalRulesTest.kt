@@ -37,8 +37,8 @@ class PersonalRulesTest {
         // Heavy and to failure: longer still; reps to spare: shorter.
         assertEquals(210, RestAdvice.after(150, 4, 0, 2, compound = true, deload = false, personal = 0).sec)
         assertEquals(135, RestAdvice.after(150, 8, 4, 2, compound = true, deload = false, personal = 0).sec)
-        // A single-joint exercise with many reps and reps to spare goes short, but not under 45 s.
-        assertEquals(45, RestAdvice.after(60, 15, 4, 1, compound = false, deload = false, personal = 0).sec)
+        // A single-joint exercise with many reps and reps to spare goes short, but not under a minute (31.10).
+        assertEquals(60, RestAdvice.after(60, 15, 4, 1, compound = false, deload = false, personal = 0).sec)
         // A multi-joint one never under 1:30, never over 5 min.
         assertEquals(90, RestAdvice.after(90, 15, 4, 1, compound = true, deload = true, personal = 0).sec)
         assertEquals(300, RestAdvice.after(240, 3, 0, 2, compound = true, deload = false, personal = 60).sec)

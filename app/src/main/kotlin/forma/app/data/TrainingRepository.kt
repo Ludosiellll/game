@@ -762,7 +762,7 @@ class TrainingRepository(
             return when {
                 ex.load == LoadKind.TIMED -> SlotSpec(ex.id, 3, 20, 60, 1, 60, SlotRole.ACCESSORY)
                 ex.compound -> SlotSpec(ex.id, 3, 6, 10, 2, 120, SlotRole.SECONDARY)
-                else -> SlotSpec(ex.id, 3, 10, 15, 2, 75, SlotRole.ACCESSORY)
+                else -> SlotSpec(ex.id, 3, 10, 15, 2, 90, SlotRole.ACCESSORY)
             }
         }
 
@@ -1270,6 +1270,16 @@ class TrainingRepository(
 
     /** Replaces [planId] by [newId] in every session from now on; the same id (or null) brings the original back. */
     /** Settings changed on their screen; they travel to other phones with the next sync. */
+    /**
+     * Once per change of the base rests (Denis, 31.10: longer on the main lifts and isolation): the plan's exercises still
+     * on the old defaults take the new ones; rests the person set stay. A new plan is made with the new ones already.
+     */
+    suspend fun moveRest() {
+        if (store.settingsNow().restVersion >= forma.core.plan.Templates.REST_VERSION) return
+        store.programNow()?.let { store.setProgram(forma.core.plan.Templates.restMoved(it)) }
+        updateSettings { it.copy(restVersion = forma.core.plan.Templates.REST_VERSION) }
+    }
+
     suspend fun updateSettings(f: (Settings) -> Settings) {
         store.editSettings(f)
         onChange()

@@ -46,7 +46,7 @@ object GymGoal {
     fun heavy(exp: Experience): Scheme = if (exp == Experience.NOVICE) Scheme(3, 4, 6, 180) else Scheme(4, 3, 5, 180)
 
     /** The second day of the lift: quality volume at 6–10. */
-    val VOLUME = Scheme(3, 6, 10, 150)
+    val VOLUME = Scheme(3, 6, 10, 180)
 
     /** Days before the goal's date that are lighter (the taper). */
     const val TAPER_DAYS = 9L

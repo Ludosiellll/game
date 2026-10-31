@@ -30,6 +30,8 @@ class MainActivity : ComponentActivity() {
         // The new look, once for everyone (Denis's choice: «Минимализм» 30.10, dark 31.10); another can be chosen in
         // «Оформление и звук».
         lifecycleScope.launch { repo.updateSettings(forma.app.ui.theme.Looks::moved) }
+        // The longer base rests of 31.10 in a plan made before them, once (rests the person set stay).
+        lifecycleScope.launch { repo.moveRest() }
         setContent {
             CompositionLocalProvider(LocalRepo provides repo, LocalCloud provides cloud) { AppRoot() }
         }

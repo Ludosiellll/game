@@ -31,6 +31,8 @@ data class Settings(
     val look: String = "carbon",
     /** The look the app last moved everyone to (Looks.DESIGN_VERSION); the person can choose another after. */
     val designVersion: Int = 0,
+    /** The base rests the plan was last moved to (Templates.REST_VERSION). */
+    val restVersion: Int = 0,
     val voice: Boolean = true,
     val beeps: Boolean = true,
     val vibration: Boolean = true,

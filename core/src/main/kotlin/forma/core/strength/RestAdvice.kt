@@ -73,7 +73,8 @@ object RestAdvice {
         if (deload) { s -= 30; why += "разгрузка" }
         if (personal > 0) { s += personal; why += "ты восстанавливаешься дольше" }
         if (personal < 0) { s += personal; why += "ты восстанавливаешься быстро" }
-        val min = if (compound) 90 else 45
+        // Isolation never under a minute: shorter rests cost reps and growth (Singer et al. 2024).
+        val min = if (compound) 90 else 60
         val max = if (compound) 300 else 180
         val sec = ((s.coerceIn(min, max) / 15.0).roundToInt() * 15)
         return Rest(sec, why)

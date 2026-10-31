@@ -183,7 +183,8 @@ class PlanAdvisorTest {
         assertTrue(a.changes.any { it.id.startsWith("time:") }, a.changes.map { it.id }.toString())
         assertTrue(a.changes.first { it.id.startsWith("time:") }.why.contains(" мин. Главное останется."))
         // A day that fits as it is is not cut for what the advisor itself adds: the addition says how long the day gets.
-        val fits = PlanAdvisor.advise(input(days).copy(sessionMinutes = 44))
+        // 48 min since the longer rests of 31.10 (it was 44).
+        val fits = PlanAdvisor.advise(input(days).copy(sessionMinutes = 48))
         assertTrue(fits.changes.none { it.id.startsWith("time:lower_a") }, fits.changes.map { it.id }.toString())
         assertTrue(fits.fine.any { "По времени укладываешься" in it }, fits.fine.toString())
         assertTrue(fits.changes.first { it.id == "add:seated_calf" }.why.contains("С ним «Низ» займёт около"), fits.changes.first { it.id == "add:seated_calf" }.why)

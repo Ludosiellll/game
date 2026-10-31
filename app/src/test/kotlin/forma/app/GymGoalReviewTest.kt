@@ -137,8 +137,9 @@ class GymGoalReviewTest {
         assertTrue("chest_press" in GymGoals.candidates(repo))
         repo.setLiftGoal(LiftGoal("chest_press", 150.0), adjust = true)
         val s = repo.store.settingsNow()
-        assertEquals(4, s.sets["bench"]); assertEquals(listOf(3, 5), s.reps["bench"]); assertEquals(180, s.rest["bench"])
-        assertEquals(listOf(6, 10), s.reps["db_incline"]); assertEquals(150, s.rest["db_incline"])
+        // The heavy day's 3 min is the main lift's own rest since 31.10: nothing to write. The volume day 3 min too.
+        assertEquals(4, s.sets["bench"]); assertEquals(listOf(3, 5), s.reps["bench"]); assertNull(s.rest["bench"])
+        assertEquals(listOf(6, 10), s.reps["db_incline"]); assertEquals(180, s.rest["db_incline"])
         assertNull(s.goalPlan!!.addedTo)
         val a = repo.liftPlan("upper_a", day(1)).items.first()
         assertEquals("chest_press" to 4, a.exerciseId to a.prescription.sets)
