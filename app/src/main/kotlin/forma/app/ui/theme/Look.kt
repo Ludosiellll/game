@@ -154,8 +154,21 @@ object Looks {
         Typo(Fonts.interDisplay, FontWeight.Black, Fonts.inter, Fonts.inter, FontWeight.ExtraBold, capsLabels = true, capsTitles = false, bigNumberScale = 1.1f, mega = true),
     )
 
-    val all = listOf(minimal, minimalDark, carbon, light, poster, tone)
+    val all = listOf(minimalDark, minimal, carbon, light, poster, tone)
     fun byId(id: String?) = all.firstOrNull { it.id == id } ?: carbon
+
+    /** The newest of the looks the app has moved everyone to: 1 — «Минимализм» (30.10), 2 — its dark one (Denis, 31.10). */
+    const val DESIGN_VERSION = 2
+
+    /**
+     * The look an install starts this version with, once: the dark «Минимализм». The white one, given by the move before,
+     * turns dark too; another look picked by hand after that stays.
+     */
+    fun moved(s: forma.app.data.Settings): forma.app.data.Settings = when {
+        s.designVersion >= DESIGN_VERSION -> s
+        s.designVersion < 1 || s.look == minimal.id -> s.copy(look = minimalDark.id, designVersion = DESIGN_VERSION)
+        else -> s.copy(designVersion = DESIGN_VERSION)
+    }
 }
 
 val LocalLook = staticCompositionLocalOf { Looks.carbon }

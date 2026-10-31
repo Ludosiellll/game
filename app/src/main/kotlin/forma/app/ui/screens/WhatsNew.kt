@@ -151,6 +151,12 @@ val RELEASES = listOf(
             NewThing(Ic.chat, false, "Тренер исправит круги", "Напиши, например: «пробежал 3 круга, а нажал один раз» или «нажал лишний раз» — тренер разделит или склеит круги, после твоего «Принять». Вернуть можно одной кнопкой."),
         ),
     ),
+    Release(
+        13, "31 октября",
+        listOf(
+            NewThing(Ic.chart, false, "Тёмный вид", "Приложение теперь тёмное. Вернуть белый или другой вид можно в «Ещё → Оформление и звук»."),
+        ),
+    ),
 )
 
 /** The releases after [seen] (the last one shown), newest first; at most three, an old phone's long gap stays short. */
