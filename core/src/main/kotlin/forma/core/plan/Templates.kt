@@ -93,6 +93,9 @@ object Templates {
         return SlotSpec(id, sets, s.min, s.max, rir, s.rest, role)
     }
 
+    /** An isolation exercise's slot as this aim and experience have it (the accents add them). */
+    fun accessory(aim: Aim, exp: Experience, id: String): SlotSpec = slot(aim, exp, id, SlotRole.ACCESSORY)
+
     private fun build(aim: Aim, exp: Experience, id: String, title: String, focus: Focus, vararg parts: Pair<String, SlotRole>) =
         Template(id, title, focus, parts.map { (ex, role) -> slot(aim, exp, ex, role) })
 
@@ -108,7 +111,7 @@ object Templates {
      * [shared]: runs go after the gym on the same days, so hard runs need upper-body days — two lifts are full body and
      * upper, three are upper / lower / upper (legs once a week, heavy; the running trains them too).
      */
-    fun forWeek(aim: Aim, exp: Experience, lifts: Int, shared: Boolean = false): List<Template> {
+    fun forWeek(aim: Aim, exp: Experience, lifts: Int, shared: Boolean = false, split: forma.core.model.Split = forma.core.model.Split.AUTO): List<Template> {
         @Suppress("NAME_SHADOWING") val aim = aim.normalized()
         val novice = exp == Experience.NOVICE
         val M = SlotRole.MAIN
@@ -141,6 +144,49 @@ object Templates {
             (if (novice) "leg_press" else "deadlift") to M, (if (novice) "goblet_squat" else "front_squat") to S, "hip_thrust" to S,
             "leg_ext" to A, "calf_raise" to A, "leg_raise" to A)
 
+        if (split != forma.core.model.Split.AUTO && lifts > 0) {
+            val fullD = build(aim, exp, "full_d", "Всё тело · Г", Focus.FULL,
+                (if (novice) "goblet_squat" else "front_squat") to M, "db_bench" to M, "cable_row" to S,
+                "leg_curl" to A, "face_pull" to A)
+            val fullE = build(aim, exp, "full_e", "Всё тело · Д", Focus.FULL,
+                (if (novice) "db_rdl" else "rdl") to M, "db_shoulder" to M, (if (novice) "lat_pulldown" else "pullup") to S,
+                "leg_ext" to A, "hammer_curl" to A)
+            val pushA = build(aim, exp, "push_a", "Толкай · А", Focus.UPPER,
+                "bench" to M, "db_shoulder" to S, "db_incline" to S, "lateral_raise" to A, "pushdown" to A)
+            val pullA = build(aim, exp, "pull_a", "Тяни · А", Focus.UPPER,
+                (if (novice) "cable_row" else "row") to M, (if (novice) "lat_pulldown" else "pullup") to S, "db_row" to S,
+                "face_pull" to A, "db_curl" to A)
+            val legsA = build(aim, exp, "legs_a", "Ноги · А", Focus.LOWER,
+                "squat" to M, "rdl" to S, (if (runner) oneLeg else "leg_press") to S, "leg_curl" to A, "calf_raise" to A, "plank" to A)
+            val pushB = build(aim, exp, "push_b", "Толкай · Б", Focus.UPPER,
+                "ohp" to M, "db_bench" to S, "cable_fly" to A, "lateral_raise" to A, "pushdown" to A)
+            // The deadlift pulls with the legs too: a full-body day for the week's load, not an upper one.
+            val pullB = build(aim, exp, "pull_b", "Тяни · Б", Focus.FULL,
+                (if (novice) "rdl" else "deadlift") to M, "lat_pulldown" to S, "cable_row" to S, "reverse_fly" to A, "hammer_curl" to A)
+            val legsB = build(aim, exp, "legs_b", "Ноги · Б", Focus.LOWER,
+                (if (novice) "leg_press" else "front_squat") to M, "hip_thrust" to S, (if (runner) oneLeg else "db_lunge") to S,
+                "leg_ext" to A, "calf_raise" to A, "leg_raise" to A)
+            val chosen = when (split) {
+                forma.core.model.Split.FULL -> listOf(fullA, fullB, fullC, fullD, fullE).take(lifts)
+                forma.core.model.Split.UPPER_LOWER -> when (lifts) {
+                    1 -> listOf(fullA)
+                    2 -> listOf(upperA.copy(title = "Верх"), lowerA.copy(title = "Низ"))
+                    3 -> listOf(upperA, lowerA.copy(title = "Низ"), upperB)
+                    4 -> listOf(upperA, lowerA, upperB, lowerB)
+                    else -> listOf(upperA, lowerA, upperB, lowerB, fullC)
+                }
+                forma.core.model.Split.PPL -> when (lifts) {
+                    1 -> listOf(fullA)
+                    2 -> listOf(upperA.copy(title = "Верх"), lowerA.copy(title = "Низ"))
+                    3 -> listOf(pushA.copy(title = "Толкай"), pullA.copy(title = "Тяни"), legsA.copy(title = "Ноги"))
+                    4 -> listOf(pushA, pullA, legsA, fullC)
+                    5 -> listOf(pushA, pullA, legsA, pushB, pullB)
+                    else -> listOf(pushA, pullA, legsA, pushB, pullB, legsB)
+                }
+                forma.core.model.Split.AUTO -> emptyList()
+            }
+            return chosen
+        }
         if (shared && aim.runs && aim.lifts) {
             when (lifts) {
                 2 -> return listOf(fullA, upperA.copy(title = "Верх"))

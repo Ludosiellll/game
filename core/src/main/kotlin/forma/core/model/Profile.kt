@@ -129,6 +129,18 @@ data class LiftGoal(
     val setDay: Long? = null,
 )
 
+/**
+ * How the gym week is divided (the program wizard, 31.10): the app's own choice by the days and the running, or the
+ * person's — every session the whole body, upper and lower body days, or push, pull and legs days.
+ */
+@Serializable
+enum class Split(val ru: String, val note: String) {
+    AUTO("Подберём сами", "По числу дней и по бегу. Советую, если не знаешь, что выбрать"),
+    FULL("Всё тело", "Каждая тренировка — всё тело. Хорошо при 2–3 днях"),
+    UPPER_LOWER("Верх / низ", "День верха, день низа. Хорошо при 4 днях"),
+    PPL("Тяни / толкай / ноги", "Жимы, тяги и ноги в разные дни. Хорошо при 3, 5 и 6 днях"),
+}
+
 /** Running background: NONE — can't run 20 minutes in a row yet; BASE — can; TRAINED — runs regularly. */
 @Serializable
 enum class RunLevel { NONE, BASE, TRAINED }
@@ -181,6 +193,10 @@ data class Profile(
      * which came first, to come back with it. Null while both are in the week.
      */
     val keptAim: Aim? = null,
+    /** How the gym week is divided; [Split.AUTO] — by the app. */
+    val split: Split = Split.AUTO,
+    /** Up to two muscle groups worked more than evenly (the program wizard's «акценты»). */
+    val accents: Set<Muscle> = emptySet(),
 ) {
     /** The person chose the gym and running days themselves. */
     val ownWeek: Boolean get() = gymDays != null && runDays != null

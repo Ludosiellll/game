@@ -42,7 +42,8 @@ object ProgramGenerator {
         val shared = if (own) (gym!! intersect run!!).isNotEmpty() else profile.doubleDays
         // Upper / lower / upper only when there are hard runs to put after the upper body; with easy runs alone the
         // full-body sessions (legs three times a week) stay.
-        val templates = Templates.forWeek(plan, profile.experience, mix.lifts, shared = shared && mix.quality + mix.long > 0)
+        val templates = Templates.forWeek(plan, profile.experience, mix.lifts, shared = shared && mix.quality + mix.long > 0, split = profile.split)
+            .let { Accents.apply(it, profile.accents, plan, profile.experience) }
             .map { Templates.fit(it, profile.sessionMinutes) }
         return Layout(plan, days, gym, run, own, mix, middleGoal, templates)
     }

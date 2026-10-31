@@ -118,6 +118,9 @@ private fun StrengthTab() {
         if (index.size >= 2) LineChart(listOf(Series(index.map { it.value }, if (F.type.mega) F.c.text else F.c.strength, fill = !F.type.mega)), xLabels = monthLabels(index), reference = 100.0, description = "Сила по неделям")
         Text("Насколько ты сильнее, чем в начале, по всем упражнениям вместе.", style = T.secondary(12.sp))
     }
+    // The week's work on the body: what the gym trained these 7 days.
+    val week = remember(rows) { Stats.setsLast7Days(rows, LocalDate.now()) }
+    if (week.values.any { it > 0 }) MuscleWeek(week, setsTarget(repo.store.profile.collectAsState(initial = null).value?.aim?.lift))
     val outgrew by androidx.compose.runtime.produceState(false, rows) { value = repo.outgrewNovice() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     if (outgrew) FCard(gap = 6.dp) {
@@ -566,20 +569,29 @@ private fun LoadTab() {
         Text("Откуда числа", style = T.secondary(13.sp))
         Text(LoadExplain.UNITS, style = T.body(13.sp))
     }
-    val sets = remember(rows, today) { Stats.setsLast7Days(rows, today) }
-    // Weekly hard sets per muscle that suit the gym focus (more for hypertrophy, fewer heavy ones for strength).
-    val target = when (profile?.aim?.lift) {
-        LiftFocus.MUSCLE -> 10.0 to 20.0
-        LiftFocus.POWERBUILDING -> 8.0 to 16.0
-        LiftFocus.STRENGTH -> 6.0 to 12.0
-        else -> 6.0 to 14.0
-    }
-    // Nothing lifted lately: no table of zeros.
-    if (sets.values.none { it > 0 }) return
-    SectionLabel("Подходы на мышцу за 7 дней")
+}
+
+/** Weekly hard sets per muscle that suit the gym focus (more for hypertrophy, fewer heavy ones for strength). */
+fun setsTarget(lift: LiftFocus?): Pair<Double, Double> = when (lift) {
+    LiftFocus.MUSCLE -> 10.0 to 20.0
+    LiftFocus.POWERBUILDING -> 8.0 to 16.0
+    LiftFocus.STRENGTH -> 6.0 to 12.0
+    else -> 6.0 to 14.0
+}
+
+/**
+ * The week's work on the body: the person lit where it was trained (full at the top of the range for the gym focus), and
+ * each group's sets against that range, the most worked first.
+ */
+@Composable
+fun MuscleWeek(sets: Map<Muscle, Double>, target: Pair<Double, Double>, title: String = "Мышцы за неделю", note: String? = null) {
+    SectionLabel(title)
     FCard(gap = 10.dp) {
-        Text("Считаются последние 7 дней вместе с сегодня. Полоса — сколько подходов в неделю хорошо для твоей цели: ${target.first.roundToInt()}–${target.second.roundToInt()}. Если мышца в упражнении только помогает, подход идёт за половину.", style = T.secondary(12.sp))
-        Muscle.entries.forEach { m ->
+        forma.app.ui.components.BodyMap(
+            sets.mapValues { (_, v) -> (v / target.second).toFloat() }, Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            description = "Нагрузка на мышцы: " + sets.entries.sortedByDescending { it.value }.filter { it.value > 0 }.joinToString(", ") { "${it.key.ru} ${Ru.one(it.value)}" },
+        )
+        Muscle.entries.sortedByDescending { sets[it] ?: 0.0 }.forEach { m ->
             val v = sets[m] ?: 0.0
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(m.ru, style = T.body(13.sp), modifier = Modifier.width(110.dp))
@@ -587,6 +599,11 @@ private fun LoadTab() {
                 NumText(Ru.one(v), style = T.number(13.sp, FontWeight.Bold), modifier = Modifier.width(36.dp))
             }
         }
+        Text(
+            note ?: ("Подходы за 7 дней. Полоса — сколько в неделю хорошо для твоей цели: ${target.first.roundToInt()}–${target.second.roundToInt()}. " +
+                "Если мышца в упражнении только помогает, подход идёт за половину."),
+            style = T.secondary(12.sp),
+        )
     }
 }
 
