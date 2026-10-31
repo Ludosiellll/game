@@ -669,7 +669,7 @@ fun RunActiveScreen() {
                     // After the warm-up the plan waits for the runner on the line: the rep starts with the press.
                     BasicText(
                         "На старт", Modifier.fillMaxWidth().padding(vertical = 18.dp),
-                        style = T.body((56 / fontScale).sp, FontWeight.ExtraBold).copy(color = F.c.text, textAlign = TextAlign.Center),
+                        style = T.body((56 / fontScale).sp, FontWeight.ExtraBold).copy(color = F.c.text, textAlign = if (F.type.mega) TextAlign.Start else TextAlign.Center),
                         maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = (56 / fontScale).sp, stepSize = 2.sp),
                     )
                 } else {

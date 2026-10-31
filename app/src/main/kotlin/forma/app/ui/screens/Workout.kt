@@ -864,7 +864,8 @@ private fun RirChips(value: Int?, onChange: (Int?) -> Unit) {
 private fun Hint(text: String, color: Color, icon: androidx.compose.ui.graphics.vector.ImageVector = Ic.up) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(icon, null, tint = color, modifier = Modifier.size(16.dp).padding(top = 2.dp))
-        Text(text, style = T.body(13.sp, FontWeight.SemiBold).copy(color = if (F.c.dark) color else F.c.text))
+        // Coloured words on a dark ground, except the minimal looks: there the colour is the icon's, the words stay plain.
+        Text(text, style = T.body(13.sp, FontWeight.SemiBold).copy(color = if (F.c.dark && !F.type.mega) color else F.c.text))
     }
 }
 

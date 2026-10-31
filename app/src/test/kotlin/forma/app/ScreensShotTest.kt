@@ -231,7 +231,8 @@ class ScreensShotTest {
         for (l in Looks.all) {
             look = l.id
             for ((name, s) in screens) {
-                if (l.id != "carbon" && name in setOf("runsetup", "exercise", "calc", "onboarding", "liftdone", "more", "cloudoff", "library", "libswap")) continue
+                // Every screen in the old default and in the default look; the main ones in the others.
+                if (l.id != "carbon" && l.id != Looks.minimalDark.id && name in setOf("runsetup", "exercise", "calc", "onboarding", "liftdone", "more", "cloudoff", "library", "libswap")) continue
                 screen = s
                 settle()
                 compose.onRoot().captureRoboImage("build/shots/${l.id}-$name.png")
@@ -318,7 +319,7 @@ class ScreensShotTest {
         var screen by mutableStateOf<@Composable () -> Unit>({})
         compose.setContent {
             CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
-                FormaTheme(Looks.byId("carbon")) {
+                FormaTheme(Looks.minimalDark) {
                     Box(Modifier.fillMaxSize().background(F.c.bg)) { screen() }
                 }
             }
@@ -326,7 +327,7 @@ class ScreensShotTest {
         fun shot(name: String, s: @Composable () -> Unit) {
             screen = s
             settle()
-            compose.onRoot().captureRoboImage("build/shots/carbon-stadium-$name.png")
+            compose.onRoot().captureRoboImage("build/shots/minimal_dark-stadium-$name.png")
         }
         shot("setup") { RunSetupScreen(pace, SessionKind.RUN_QUALITY) }
         shot("run") { RunActiveScreen() }
