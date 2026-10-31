@@ -131,7 +131,9 @@ class GymGoalAndWeekTest {
         val heavy = GymGoal.heavy(Experience.INTERMEDIATE)
         assertEquals(heavy.sets, s.sets["bench"])
         assertEquals(listOf(heavy.repMin, heavy.repMax), s.reps["bench"])
-        assertEquals(heavy.restSec, s.rest["bench"])
+        // The rest the heavy day has: written for the bench, or the plan's own when it is the same (3 min since 31.10).
+        val benchRest = repo.store.programNow()!!.templates.flatMap { it.slots }.first { it.exerciseId == "bench" }.restSec
+        assertEquals(heavy.restSec, s.rest["bench"] ?: benchRest)
         // Bench is on one day of the plan: it is added to the other upper day as its second, lighter day.
         val second = repo.store.programNow()!!.templates.first { t -> t.id != "upper_a" && "bench" in s.added[t.id].orEmpty() }
         val added = CoachActions.places(repo).first { it.templateId == second.id && it.exerciseId == "bench" }
