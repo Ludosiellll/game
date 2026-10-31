@@ -197,6 +197,8 @@ fun PlanScreen() {
 
         PauseControl()
 
+        // The wizard again: split, accents and the rest asked one by one, the program shown before it is saved.
+        forma.app.ui.components.PrimaryButton("Собрать программу заново", { nav.push(Screen.ProgramWizard) }, Modifier.fillMaxWidth(), icon = forma.app.ui.theme.Ic.right)
         GhostButton("Изменить цель, дни и данные", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 52.dp)
         profile?.let {
             fun days(s: Set<Int>) = s.sorted().joinToString(", ") { d -> DAY_SHORT[d - 1] }

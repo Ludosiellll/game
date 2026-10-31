@@ -145,7 +145,7 @@ fun AppRoot() {
             }
             // After an update: what is new, once, over the app — not over a run going on or the first questions.
             val news = unseenReleases(s.newsSeen)
-            val busy = nav.current is Screen.RunActive || nav.current is Screen.Onboarding || nav.current is Screen.Tour
+            val busy = nav.current is Screen.RunActive || nav.current is Screen.Onboarding || nav.current is Screen.ProgramWizard || nav.current is Screen.Tour
             if (ready && news.isNotEmpty() && !busy) {
                 WhatsNewDialog(news) { scope.launch { repo.updateSettings { it.copy(newsSeen = RELEASES.last().id) } } }
             }
@@ -170,6 +170,7 @@ private val TABS = listOf(Screen.Today, Screen.Plan, Screen.Coach(), Screen.Prog
 private fun ScreenFor(screen: Screen) {
     when (screen) {
         Screen.Onboarding -> OnboardingScreen()
+        Screen.ProgramWizard -> forma.app.ui.screens.ProgramWizardScreen()
         Screen.Today -> TodayScreen()
         Screen.Plan -> PlanScreen()
         Screen.Progress -> ProgressScreen()

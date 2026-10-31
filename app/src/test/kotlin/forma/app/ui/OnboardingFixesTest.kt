@@ -194,8 +194,8 @@ class OnboardingFixesTest {
     }
 
     /**
-     * The dead end of the review: a bad race time on the second step, back to the first — "Дальше" there is grey
-     * without a word. Now each step checks its own fields, and a grey button says why.
+     * The dead end of the review: a bad race time, back a step — "Дальше" there is grey without a word. Each question checks
+     * its own fields, and a grey button says why (the program wizard of 31.10 asks one thing a screen).
      */
     @Test fun backNeverLeadsToAGreyButtonWithoutAReason() {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
@@ -209,44 +209,44 @@ class OnboardingFixesTest {
         }
         settle()
         val next = hasText("Дальше") and hasClickAction()
-        compose.onNode(next).performScrollTo().performClick()
+        compose.onNode(hasText("Собрать программу") and hasClickAction()).performClick()
         settle()
-        // Step 2: a runner (the first launch starts from "not 20 minutes yet") with a recent 1500 m, the dot instead of the colon.
+        // Sides, the gym, running: as they come.
+        repeat(3) { compose.onNode(next).performClick(); settle() }
+        // The gym level, then running: a runner with a recent 1500 m, the dot instead of the colon.
+        compose.onNode(next).performClick()
+        settle()
         compose.onNodeWithText("Пробегу 20–30 минут").performScrollTo().performClick()
         settle()
         compose.onNodeWithText("1,5 км").performScrollTo().performClick()
         settle()
         compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("12.10")
         settle()
-        compose.onNode(next).performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("Время забега не похоже на время", substring = true).performScrollTo().assertIsDisplayed()
-        // Back: the first step has nothing wrong of its own.
-        compose.onNode(hasText("Назад", ignoreCase = true) and hasClickAction()).performScrollTo().performClick()
+        compose.onNode(next).assertIsNotEnabled()
+        compose.onNodeWithText("Время забега не похоже на время", substring = true).assertIsDisplayed()
+        // Back: the gym level has nothing wrong of its own.
+        compose.onNode(hasText("Назад", ignoreCase = true) and hasClickAction()).performClick()
         settle()
-        compose.onNode(next).performScrollTo().assertIsEnabled()
-        // Forward again and the time fixed: on to the days.
+        compose.onNode(next).assertIsEnabled()
+        // Forward again and the time fixed: on to the days, the split, the accents.
         compose.onNode(next).performClick()
         settle()
         compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("5:41")
         settle()
-        compose.onNode(next).performScrollTo().assertIsEnabled().performClick()
-        settle()
-        compose.onNode(next).performScrollTo().assertIsEnabled().performClick()
-        settle()
+        repeat(4) { compose.onNode(next).assertIsEnabled().performClick(); settle() }
         // About oneself: empty birth year and weight, said why the button waits.
-        compose.onNode(next).performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("Впиши год рождения.").performScrollTo().assertIsDisplayed()
-        // The fields in order: birth year, weight, height, resting pulse — empty, with examples shown.
+        compose.onNode(next).assertIsNotEnabled()
+        compose.onNodeWithText("Впиши год рождения.").assertIsDisplayed()
         compose.onAllNodes(hasSetTextAction())[0].performScrollTo().performTextReplacement("2008")
         compose.onAllNodes(hasSetTextAction())[1].performScrollTo().performTextReplacement("72")
         settle()
-        compose.onNode(next).performScrollTo().assertIsEnabled().performClick()
-        settle()
-        // The summary: one's own gym and running days can be set right here.
+        compose.onNode(next).assertIsEnabled().performClick()
+        // The answers gathered, then the program: one's own gym and running days can be set right here.
+        compose.waitUntil(10_000) { settle(); compose.onAllNodes(hasText("Начать") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Поменять дни зала и бега", ignoreCase = true).performScrollTo().performClick()
         settle()
         compose.onNodeWithText("Отметь, в какие дни зал и в какие бег", substring = true).performScrollTo().assertIsDisplayed()
-        compose.onNode(hasText("Начать") and hasClickAction()).performScrollTo().performClick()
+        compose.onNode(hasText("Начать") and hasClickAction()).performClick()
         settle()
         val p = assertNotNull(runBlocking { store.profileNow() })
         assertEquals(2008, p.birthYear)

@@ -35,7 +35,7 @@ import forma.core.model.Muscle
  * are docs/design/body/body.js, 100 × 210 a figure.
  */
 @Composable
-fun BodyMap(level: Map<Muscle, Float>, modifier: Modifier = Modifier, selected: Set<Muscle> = emptySet(), onTap: ((Muscle) -> Unit)? = null, description: String = "Карта мышц") {
+fun BodyMap(level: Map<Muscle, Float>, modifier: Modifier = Modifier, selected: Set<Muscle> = emptySet(), onTap: ((Muscle) -> Unit)? = null, description: String = "Карта мышц", labels: Boolean = true) {
     val figures = remember { listOf(FRONT, BACK).map { parts -> parts.map { it.muscle to PathParser().parsePathString(it.d).toPath() } } }
     val skin = if (F.c.dark) Color(0xFF262626) else Color(0xFFE6E6E3)
     val idle = if (F.c.dark) Color(0xFF3A3A3A) else Color(0xFFCFCFCB)
@@ -71,7 +71,7 @@ fun BodyMap(level: Map<Muscle, Float>, modifier: Modifier = Modifier, selected: 
                 }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+        if (labels) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
             Text(labelText("Спереди"), style = T.label())
             Text(labelText("Сзади"), style = T.label())
         }

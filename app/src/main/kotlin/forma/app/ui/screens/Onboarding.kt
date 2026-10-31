@@ -57,6 +57,7 @@ private data class DraftState(
     val doubleDays: Boolean = false, val gymDays: Set<Int>? = null, val runDays: Set<Int>? = null,
     val goalDate: String = "",
     val gear: forma.core.model.Gear = forma.core.model.Gear.GYM, val pullupBar: Boolean = false,
+    val split: forma.core.model.Split = forma.core.model.Split.AUTO, val accents: Set<forma.core.model.Muscle> = emptySet(),
 )
 
 /**
@@ -72,7 +73,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
                     DraftState(
                         d.lift, d.run, d.emphasis, d.experience, d.runLevel, d.days, d.minutes, d.sex, d.birthYear, d.weight,
                         d.height, d.restingHr, d.raceKm, d.raceTime, d.goalMeters, d.goalTime, d.stadium, d.lapMeters, d.doubleDays,
-                        d.gymDays, d.runDays, d.goalDate, d.gear, d.pullupBar,
+                        d.gymDays, d.runDays, d.goalDate, d.gear, d.pullupBar, d.split, d.accents,
                     ),
                 )
             },
@@ -84,6 +85,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
                         height = s.height; restingHr = s.restingHr; raceKm = s.raceKm; raceTime = s.raceTime
                         goalMeters = s.goalMeters; goalTime = s.goalTime; stadium = s.stadium; lapMeters = s.lapMeters; doubleDays = s.doubleDays
                         gymDays = s.gymDays; runDays = s.runDays; goalDate = s.goalDate; gear = s.gear; pullupBar = s.pullupBar
+                        split = s.split; accents = s.accents
                     }
                 }
             },
@@ -119,6 +121,9 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
     /** Where the gym part is done, and a pull-up bar at home. */
     var gear by mutableStateOf(p.gear)
     var pullupBar by mutableStateOf(p.pullupBar)
+    /** How the gym week is divided, and up to two groups worked more (the program wizard). */
+    var split by mutableStateOf(p.split)
+    var accents by mutableStateOf(p.accents)
     /** The week day by day (the profile screen): the gym and running days; null — laid out by the app over [days]. */
     var gymDays by mutableStateOf(p.gymDays)
     var runDays by mutableStateOf(p.runDays)
@@ -253,6 +258,7 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
             runGoal = if (racing) runGoal else null, finishMeters = finish, lapMeters = if (runsShown) lapOrNull else null,
             doubleDays = doubleDays && aim.lifts && aim.runs,
             gear = if (aim.lifts) gear else base.gear, pullupBar = pullupBar && gear != forma.core.model.Gear.GYM,
+            split = if (aim.lifts) split else base.split, accents = if (aim.lifts) accents.take(forma.core.plan.Accents.MAX).toSet() else base.accents,
         ).let { p ->
             val gym = gymDays
             val run = runDays
@@ -264,106 +270,6 @@ class ProfileDraft(p: Profile, blankBody: Boolean = false) {
                 p.copy(gymDays = g, runDays = r, trainingDays = (g + r).ifEmpty { setOf(1, 3, 5) }, doubleDays = (g intersect r).isNotEmpty())
             }
         }
-    }
-}
-
-@Composable
-fun OnboardingScreen() {
-    val repo = LocalRepo.current
-    val nav = LocalNav.current
-    val scope = rememberCoroutineScope()
-    val draft = androidx.compose.runtime.saveable.rememberSaveable(saver = ProfileDraft.Saver) { ProfileDraft(Profile(), blankBody = true) }
-    var step by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(0) }
-    val last = 4
-    val cloud = LocalCloud.current
-    // Each step checks only what it shows: a field of another step (or one hidden by a choice) never greys out "Дальше".
-    val problem = when (step) {
-        0 -> draft.goalProblem
-        1 -> draft.raceProblem
-        2 -> draft.weekProblem
-        3 -> draft.aboutProblem
-        else -> draft.problem
-    }
-    ScrollScreen(gap = 18.dp, bottomInset = true) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
-            repeat(last + 1) { i ->
-                androidx.compose.foundation.layout.Box(
-                    Modifier.weight(1f).height(4.dp).background(if (i <= step) F.c.accent else F.c.line),
-                )
-            }
-        }
-        if (step == 0 && cloud?.configured == true) {
-            Banner("Уже тренировался в Splity (раньше «Форма»)? Войди, и твои данные вернутся из облака", F.c.accent, icon = forma.app.ui.theme.Ic.cloud) {
-                nav.push(Screen.CloudSignIn(restore = true))
-            }
-        }
-        when (step) {
-            0 -> GoalStep(draft)
-            1 -> ExperienceStep(draft)
-            2 -> DaysStep(draft)
-            3 -> AboutStep(draft)
-            else -> SummaryStep(draft)
-        }
-        Spacer(Modifier.height(4.dp))
-        // Why the button is grey, always in sight next to it.
-        if (problem != null) Text(problem, style = T.secondary(13.sp).copy(color = F.c.bad))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (step > 0) GhostButton("Назад", { step-- }, Modifier.weight(1f), height = 54.dp)
-            PrimaryButton(
-                if (step < last) "Дальше" else "Начать", {
-                    if (step < last) step++ else scope.launch {
-                        repo.completeOnboarding(draft.toProfile(Profile()))
-                        // A first look round the app before its main screen: what is where and what to press.
-                        nav.replaceAll(Screen.Tour(first = true))
-                    }
-                },
-                Modifier.weight(2f), enabled = problem == null,
-            )
-        }
-    }
-}
-
-@Composable
-private fun StepTitle(title: String, text: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(titleText(title), style = T.screenTitle())
-        Text(text, style = T.secondary(15.sp))
-    }
-}
-
-@Composable
-private fun Option(title: String, text: String?, selected: Boolean, onClick: () -> Unit) {
-    FCard(onClick = onClick, outline = if (selected) F.c.accent else null, gap = 4.dp) {
-        Text(title, style = T.body(17.sp, FontWeight.ExtraBold).copy(color = if (selected) F.c.accent else F.c.text))
-        if (text != null) Text(text, style = T.secondary(13.sp))
-    }
-}
-
-@Composable
-private fun GoalStep(d: ProfileDraft) {
-    StepTitle("Цель", "Выбери зал, бег или всё вместе и зачем тебе это. Под это приложение соберёт твою неделю.")
-    AimPicker(d)
-    RunGoalPicker(d)
-}
-
-@Composable
-private fun ExperienceStep(d: ProfileDraft) {
-    StepTitle("Опыт", "От опыта зависят первые веса, сколько подходов делать и как часто нужна лёгкая неделя.")
-    if (d.lift != LiftFocus.NONE) {
-        SectionLabel("Зал")
-        Option("Новичок", "Регулярно тренируюсь меньше полугода или только начинаю", d.experience == Experience.NOVICE) { d.experience = Experience.NOVICE }
-        Option("Средний", "От полугода до двух лет", d.experience == Experience.INTERMEDIATE) { d.experience = Experience.INTERMEDIATE }
-        Option("Опытный", "Больше двух лет, знаю свои рабочие веса", d.experience == Experience.ADVANCED) { d.experience = Experience.ADVANCED }
-        GearPicker(d)
-    }
-    if (d.run == RunFocus.NONE) return
-    SectionLabel("Бег", Modifier.padding(top = 6.dp))
-    Option("Пока не пробегу 20 минут", "Начнём с бега вперемешку с ходьбой", d.runLevel == RunLevel.NONE) { d.runLevel = RunLevel.NONE }
-    Option("Пробегу 20–30 минут", "Бегаю спокойно, быстрых отрезков ещё не делал", d.runLevel == RunLevel.BASE) { d.runLevel = RunLevel.BASE }
-    Option("Бегаю регулярно", "Делаю быстрые отрезки и длинные пробежки", d.runLevel == RunLevel.TRAINED) { d.runLevel = RunLevel.TRAINED }
-    if (d.raceShown) {
-        SectionLabel("Лучшее время за последние 2 месяца (необязательно)", Modifier.padding(top = 6.dp))
-        RaceFields(d, "Время")
     }
 }
 
@@ -404,25 +310,6 @@ fun BadHint(text: String) {
     Text(text, style = T.secondary(13.sp).copy(color = F.c.bad))
 }
 
-@Composable
-private fun DaysStep(d: ProfileDraft) {
-    StepTitle("Дни", "Отметь дни, когда можешь тренироваться. Приложение само решит, где зал, где бег, а где отдых.")
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        DAY_SHORT.forEachIndexed { i, name ->
-            val day = i + 1
-            Chip(name, day in d.days, {
-                d.days = if (day in d.days) d.days - day else d.days + day
-                // Other days: the week laid out by hand before is laid out again.
-                d.gymDays = null
-                d.runDays = null
-            }, Modifier.weight(1f), minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.TOGGLE)
-        }
-    }
-    Text("Выбрано дней: ${d.days.size}", style = T.secondary(14.sp))
-    if (d.gymDays == null) DoubleDaysToggle(d)
-    SessionMinutes(d)
-}
-
 /** How long one session may be, with what the choice is about. */
 @Composable
 fun SessionMinutes(d: ProfileDraft) {
@@ -449,57 +336,6 @@ fun BodyFields(d: ProfileDraft, onboarding: Boolean) {
         "уд/мин", keyboard = KeyboardType.Number, placeholder = "60",
     )
     if (d.restingHrBad) BadHint("Пульс в покое — от 30 до 110 ударов, или оставь поле пустым.")
-}
-
-@Composable
-private fun AboutStep(d: ProfileDraft) {
-    StepTitle(
-        "О себе",
-        if (d.aim.lifts) "По весу подберём первые веса в зале. Год рождения и рост нужны, чтобы считать калории."
-        else "Вес, год рождения и рост нужны, чтобы считать, сколько калорий ты тратишь.",
-    )
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Chip("Мужчина", d.sex == Sex.MALE, { d.sex = Sex.MALE }, Modifier.weight(1f))
-        Chip("Женщина", d.sex == Sex.FEMALE, { d.sex = Sex.FEMALE }, Modifier.weight(1f))
-    }
-    BodyFields(d, onboarding = true)
-}
-
-@Composable
-private fun SummaryStep(d: ProfileDraft) {
-    val profile = d.toProfile(Profile())
-    val program = remember(profile) { runCatching { ProgramGenerator.generate(profile, LocalDate.now()) }.getOrNull() }
-    var editWeek by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(d.gymDays != null) }
-    StepTitle(
-        "Твоя неделя",
-        if (profile.aim.lifts) "Так выглядит твой план. Веса подберём на первых тренировках. Дальше приложение будет менять их само."
-        else "Так выглядит твой план. Темп и длину пробежек приложение будет менять само, по тому, как они идут.",
-    )
-    if (program != null) {
-        FCard(gap = 0.dp) {
-            (1..7).forEach { day ->
-                val sessions = program.week.on(day)
-                Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(DAY_SHORT[day - 1], style = T.body(15.sp, FontWeight.ExtraBold).copy(color = if (sessions.isEmpty()) F.c.text3 else F.c.text), modifier = Modifier.padding(end = 4.dp))
-                    Text(
-                        if (sessions.isEmpty()) "Отдых" else sessions.joinToString(" + ") { sessionTitle(it, program) },
-                        style = T.body(15.sp).copy(color = if (sessions.isEmpty()) F.c.text3 else F.c.text),
-                    )
-                }
-            }
-        }
-        if ((1..7).all { program.week.on(it).isNotEmpty() }) {
-            Text("В неделе нет дня отдыха, а без него прогресс встаёт. Оставь хотя бы один свободный день.", style = T.secondary(14.sp).copy(color = F.c.warn))
-        }
-        program.week.notes.forEach { Text("• $it", style = T.secondary(14.sp)) }
-    }
-    if (!editWeek) {
-        GhostButton("Поменять дни зала и бега", { editWeek = true }, Modifier.fillMaxWidth())
-    } else if (program != null) {
-        val planGym = remember(program) { program.week.days.filter { day -> day.sessions.any { it.kind == forma.core.plan.SessionKind.LIFT } }.map { it.day }.toSet() }
-        val planRun = remember(program) { program.week.days.filter { day -> day.sessions.any { it.isRun } }.map { it.day }.toSet() }
-        WeekGrid(d, planGym, planRun)
-    }
 }
 
 /**

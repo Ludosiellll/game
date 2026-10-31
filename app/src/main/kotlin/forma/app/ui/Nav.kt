@@ -16,6 +16,8 @@ sealed interface Screen {
     @Serializable data object Progress : Screen
     @Serializable data object More : Screen
     @Serializable data object Onboarding : Screen
+    /** The program wizard again, from the plan: the answers filled in, the program built anew. */
+    @Serializable data object ProgramWizard : Screen
     @Serializable data class Workout(val workoutId: Long) : Screen
     @Serializable data class LiftDone(val workoutId: Long) : Screen
     @Serializable data class RunSetup(val workout: RunWorkout, val kind: SessionKind?) : Screen
