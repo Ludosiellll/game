@@ -121,24 +121,32 @@ object Updater {
     /** [u] when it is newer than [installed]; null otherwise (the same build, an older one, or none). */
     fun newer(u: Update?, installed: Long = this.installed): Update? = u?.takeIf { it.versionCode > installed }
 
+    /** How a check went: a newer build, this one is the latest, it could not be asked, or it was not asked now. */
+    enum class Checked { NEWER, LATEST, FAILED, SKIPPED }
+
     /**
      * Asks once a run of the app (or when [force]d — «Проверить обновления»): a newer build becomes [State.Available].
-     * No network, a limit hit, an odd answer: nothing is said, it is asked again next time.
+     * No network, a limit hit, an odd answer: [Checked.FAILED], asked again next time; on its own the app says nothing of
+     * it, «Проверить обновления» says how it went.
      */
-    suspend fun check(force: Boolean = false, fetch: suspend () -> String? = { get(LATEST) }) {
+    suspend fun check(force: Boolean = false, fetch: suspend () -> String? = { get(LATEST) }): Checked {
         // From Google Play: Play updates the app, nothing is fetched from GitHub.
-        if (!forma.app.BuildConfig.SELF_UPDATE) return
-        if (checked && !force) return
+        if (!forma.app.BuildConfig.SELF_UPDATE) return Checked.SKIPPED
+        if (checked && !force) return Checked.SKIPPED
         checked = true
-        if (state.value !is State.Idle && state.value !is State.Available) return
-        val u = newer(fetch()?.let(::parse))
+        if (state.value !is State.Idle && state.value !is State.Available) return Checked.SKIPPED
+        val latest = fetch()?.let(::parse) ?: return Checked.FAILED
+        val u = newer(latest)
         if (u != null) {
             if (force) {
                 later.value = false
                 asked.value = true
             }
             state.value = State.Available(u)
-        } else if (state.value is State.Available) state.value = State.Idle
+            return Checked.NEWER
+        }
+        if (state.value is State.Available) state.value = State.Idle
+        return Checked.LATEST
     }
 
     /** GET [url] as text; null when it cannot be read. */

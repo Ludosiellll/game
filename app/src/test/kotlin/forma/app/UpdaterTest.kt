@@ -87,6 +87,20 @@ class UpdaterTest {
         assertIs<Updater.State.Idle>(Updater.state.value)
     }
 
+    /**
+     * Denis (31.10): «при нажатии на поиск обновления если его нет, то не появляется блока с подсказкой что обновлений
+     * нет». The check by hand says how it went: a newer build, this one is the latest, or it could not be asked.
+     */
+    @Test fun aCheckByHandSaysHowItWent() = runBlocking<Unit> {
+        val mine = Updater.installed
+        Updater.reset()
+        assertEquals(Updater.Checked.LATEST, Updater.check(force = true) { release("v$mine") })
+        assertEquals(Updater.Checked.FAILED, Updater.check(force = true) { null })
+        assertEquals(Updater.Checked.FAILED, Updater.check(force = true) { "{oops" })
+        assertEquals(Updater.Checked.NEWER, Updater.check(force = true) { release("v${mine + 10}") })
+        Updater.reset()
+    }
+
     @Test fun neverOverARunOrASessionGoingOn() {
         val u = Updater.State.Available(Update(Updater.installed + 1, emptyList(), "https://x/a.apk", 1))
         fun offer(ready: Boolean = true, news: Boolean = true, busy: Boolean = false, later: Boolean = false, running: Boolean = false, lifting: Boolean = false, asked: Boolean = false, state: Updater.State = u) =

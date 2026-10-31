@@ -5,6 +5,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -29,8 +31,6 @@ fun MoreScreen() {
     ScrollScreen {
         Text(titleText("Ещё"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         FCard(gap = 0.dp) {
-            ListRow("Спросить тренера", "ИИ ответит по твоим тренировкам: почему так, что значат цифры, что делать", icon = Ic.user, iconTint = F.c.accent) { nav.tab(Screen.Coach()) }
-            Hairline()
             ListRow("Как пользоваться", "Что где в приложении и словарь слов", icon = Ic.info, iconTint = F.c.accent) { nav.push(Screen.Help) }
             Hairline()
             ListRow("Калькуляторы", "Вес на 1 раз, блины, разминка, темп, прогноз, пульс", icon = Ic.calc, iconTint = F.c.accent) { nav.push(Screen.Calculators) }
@@ -63,12 +63,27 @@ fun MoreScreen() {
             // The version and «Проверить обновления»: a newer one opens the update window (also after «Позже»).
             val scope = androidx.compose.runtime.rememberCoroutineScope()
             val update by forma.app.update.Updater.state.collectAsState()
+            // What the check by hand found, said in the row: «Проверяю…», then the latest or no connection.
+            var checking by androidx.compose.runtime.remember { mutableStateOf(false) }
+            var checked by androidx.compose.runtime.remember { mutableStateOf<forma.app.update.Updater.Checked?>(null) }
+            val build = forma.app.BuildConfig.VERSION_CODE
             if (forma.app.BuildConfig.SELF_UPDATE) ListRow(
                 "Обновления",
-                if (update is forma.app.update.Updater.State.Available) "Есть новая версия — нажми, чтобы обновить"
-                else "Сборка ${forma.app.BuildConfig.VERSION_CODE} · нажми, чтобы проверить",
+                when {
+                    update is forma.app.update.Updater.State.Available -> "Есть новая версия — нажми, чтобы обновить"
+                    checking -> "Проверяю…"
+                    checked == forma.app.update.Updater.Checked.LATEST -> "У тебя последняя версия · сборка $build"
+                    checked == forma.app.update.Updater.Checked.FAILED -> "Не получилось проверить: нет связи. Нажми ещё раз"
+                    else -> "Сборка $build · нажми, чтобы проверить"
+                },
                 icon = Ic.up, iconTint = F.c.text2,
-            ) { scope.launch { forma.app.update.Updater.check(force = true) } }
+            ) {
+                if (!checking) scope.launch {
+                    checking = true
+                    checked = forma.app.update.Updater.check(force = true)
+                    checking = false
+                }
+            }
             // From Google Play: the build, updates come from Play.
             else ListRow("Версия", "Сборка ${forma.app.BuildConfig.VERSION_CODE} · обновляется через Google Play", icon = Ic.up, iconTint = F.c.text2) {}
         }
