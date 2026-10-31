@@ -601,7 +601,7 @@ class RunService : Service() {
         /** Brought back by the system longer than this after a kill, the run does not go on: it most likely ended out there. */
         private const val MAX_GAP_MS = 30 * 60_000L
 
-        const val START_REFUSED = "Телефон не дал запустить пробежку. Попробуй ещё раз. Если повторится, сними для «Формы» ограничения батареи."
+        const val START_REFUSED = "Телефон не дал запустить пробежку. Попробуй ещё раз. Если повторится, сними для Splity ограничения батареи."
         const val UNREADABLE = "Не получилось прочитать тренировку. Открой её заново и нажми «Старт»."
 
         fun start(

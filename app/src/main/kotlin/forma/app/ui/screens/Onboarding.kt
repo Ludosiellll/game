@@ -293,7 +293,7 @@ fun OnboardingScreen() {
             }
         }
         if (step == 0 && cloud?.configured == true) {
-            Banner("Уже тренировался с «Формой»? Войди, и твои данные вернутся из облака", F.c.accent, icon = forma.app.ui.theme.Ic.cloud) {
+            Banner("Уже тренировался в Splity (раньше «Форма»)? Войди, и твои данные вернутся из облака", F.c.accent, icon = forma.app.ui.theme.Ic.cloud) {
                 nav.push(Screen.CloudSignIn(restore = true))
             }
         }

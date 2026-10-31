@@ -209,7 +209,7 @@ private fun Avatar(size: androidx.compose.ui.unit.Dp) {
 private fun Welcome(enabled: Boolean, onAsk: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         CoachBubble {
-            Text("Привет! Я тренер в «Форме» и вижу твои тренировки.", style = T.body(15.sp, FontWeight.Bold))
+            Text("Привет! Я тренер в Splity и вижу твои тренировки.", style = T.body(15.sp, FontWeight.Bold))
             Text(
                 "Объясню, почему тренировка такая и как идёт прогресс. Разберу тренировку. Поменяю план по твоей просьбе: " +
                     "скажу, что и почему, а ты сможешь вернуть как было.",

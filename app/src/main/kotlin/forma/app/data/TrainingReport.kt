@@ -52,9 +52,9 @@ object TrainingReport {
     fun build(b: Backup, today: LocalDate, version: String, feel: Map<Long, String> = emptyMap()): String = buildString {
         val p = b.profile
         val done = b.workouts.filter { it.status == Status.DONE }.sortedByDescending { it.startedAt }
-        appendLine("# Форма — все тренировки и прогресс")
+        appendLine("# Splity — все тренировки и прогресс")
         appendLine()
-        appendLine("Выгрузка от ${Ru.date(today)} ${today.year}, приложение «Форма» $version. Тренировок: ${done.size}" +
+        appendLine("Выгрузка от ${Ru.date(today)} ${today.year}, приложение Splity $version. Тренировок: ${done.size}" +
             (done.lastOrNull()?.let { ", первая — ${Ru.date(LocalDate.ofEpochDay(it.epochDay))} ${LocalDate.ofEpochDay(it.epochDay).year}" } ?: "") + ".")
         appendLine()
         appendLine("> Для разбора с ИИ: отправь этот файл и попроси, например: «Разбери мои тренировки: что идёт хорошо, где застой, " +

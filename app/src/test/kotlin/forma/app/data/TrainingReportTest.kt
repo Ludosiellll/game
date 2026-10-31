@@ -65,7 +65,7 @@ class TrainingReportTest {
         repo.saveRun(repo.freeRun(230), RunResult(1.0, 4, 1800, distanceM = 5000.0), clock, emptyList(), monday.plusDays(1))
         val text = TrainingReport.build(BackupManager(repo).snapshot(), monday.plusDays(2), "test")
         listOf(
-            "# Форма — все тренировки и прогресс", "Беговая цель: 1500 м за 5:30", "круг 230 м", "## План", "## Где сейчас",
+            "# Splity — все тренировки и прогресс", "Беговая цель: 1500 м за 5:30", "круг 230 м", "## План", "## Где сейчас",
             "80 кг × 8 (запас 2)", "Итог:", "тяжесть 7/10", "свободный", "5,00 км", "Нагрузка и восстановление", "## Обозначения",
         ).forEach { assertTrue(text.contains(it), "no «$it» in:\n$text") }
         // The plan as done here: the first exercise of the template is in it by name.

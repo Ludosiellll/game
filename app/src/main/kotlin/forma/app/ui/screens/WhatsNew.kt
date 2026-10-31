@@ -157,6 +157,12 @@ val RELEASES = listOf(
             NewThing(Ic.chart, false, "Тёмный вид", "Приложение теперь тёмное. Вернуть белый или другой вид можно в «Ещё → Оформление и звук»."),
         ),
     ),
+    Release(
+        14, "31 октября",
+        listOf(
+            NewThing(Ic.chart, false, "Теперь это Splity", "У приложения новое имя и значок: половина блина и половина беговой дорожки. Внутри ничего не поменялось, все тренировки на месте."),
+        ),
+    ),
 )
 
 /** The releases after [seen] (the last one shown), newest first; at most three, an old phone's long gap stays short. */

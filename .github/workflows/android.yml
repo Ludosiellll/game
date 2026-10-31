@@ -99,7 +99,7 @@ jobs:
             exit 0
           fi
           cp "$APK" forma.apk
-          gh release create "v$CODE" forma.apk --title "Форма — сборка $CODE" --notes-file .github/release-notes.md --target "$GITHUB_SHA" --latest
+          gh release create "v$CODE" forma.apk --title "Splity — сборка $CODE" --notes-file .github/release-notes.md --target "$GITHUB_SHA" --latest
           echo "Published build $CODE as the app's update." >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v6

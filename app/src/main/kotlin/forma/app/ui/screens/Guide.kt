@@ -124,7 +124,7 @@ fun TourScreen(first: Boolean) {
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Как устроена «Форма»", style = T.secondary(14.sp), modifier = Modifier.weight(1f))
+            Text("Как всё устроено", style = T.secondary(14.sp), modifier = Modifier.weight(1f))
             Text(
                 "Пропустить", style = T.body(14.sp, FontWeight.Bold).copy(color = F.c.text2),
                 modifier = Modifier.clickable(onClickLabel = "Пропустить знакомство") { done() }.padding(8.dp),

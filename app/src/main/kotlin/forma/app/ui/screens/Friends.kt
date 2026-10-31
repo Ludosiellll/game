@@ -139,7 +139,7 @@ fun FriendsScreen() {
         ui,
         onSignIn = { nav.push(Screen.CloudSignIn(restore = false)) },
         onShare = { code ->
-            val text = "Добавь меня в друзья в «Форме»: код $code"
+            val text = "Добавь меня в друзья в Splity: код $code"
             context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), null))
         },
         onRename = { name ->

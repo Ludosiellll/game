@@ -72,7 +72,7 @@ fun ReportCard() {
                         }
                         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                         val send = Intent(Intent.ACTION_SEND).setType("text/markdown").putExtra(Intent.EXTRA_STREAM, uri)
-                            .putExtra(Intent.EXTRA_SUBJECT, "Форма — тренировки").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            .putExtra(Intent.EXTRA_SUBJECT, "Splity — тренировки").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         context.startActivity(Intent.createChooser(send, "Отправить выгрузку").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         null
                     }.getOrElse { "Не получилось: ${it.message}" }

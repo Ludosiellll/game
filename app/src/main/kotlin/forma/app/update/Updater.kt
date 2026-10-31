@@ -286,7 +286,7 @@ object Updater {
         @Suppress("DEPRECATION")
         val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val apk = pm.getPackageArchiveInfo(file.path, flags) ?: return "Файл обновления повреждён. Попробуй ещё раз."
-        if (apk.packageName != context.packageName) return "Это не обновление «Формы»."
+        if (apk.packageName != context.packageName) return "Это не обновление Splity."
         if (PackageInfoCompat.getLongVersionCode(apk) <= installed) return "Эта версия не новее установленной."
         val mine = runCatching { pm.getPackageInfo(context.packageName, flags) }.getOrNull()
         val theirs = certs(apk)

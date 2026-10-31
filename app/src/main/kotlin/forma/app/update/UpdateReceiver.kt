@@ -57,7 +57,7 @@ class UpdateReceiver : BroadcastReceiver() {
         if (!RestTimer.notificationsAllowed(context) || !nm.areNotificationsEnabled()) return
         if (nm.getNotificationChannel(CHANNEL) == null) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "Обновления", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "«Форма» обновилась — открыть"
+                description = "Splity обновлено — открыть"
             })
         }
         val open = PendingIntent.getActivity(
@@ -67,7 +67,7 @@ class UpdateReceiver : BroadcastReceiver() {
         nm.notify(
             NOTIFICATION, NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_run)
-                .setContentTitle("«Форма» обновлена")
+                .setContentTitle("Splity обновлено")
                 .setContentText("Нажми, чтобы открыть — расскажу, что нового")
                 .setContentIntent(open)
                 .setAutoCancel(true)
@@ -88,7 +88,7 @@ class UpdateReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_FAILURE_STORAGE -> "Не хватает места на телефоне для обновления."
             PackageInstaller.STATUS_FAILURE_CONFLICT, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE ->
                 "Телефон не принял обновление: оно не подходит к установленной версии."
-            PackageInstaller.STATUS_FAILURE_BLOCKED -> "Телефон заблокировал установку. Разреши «Форме» ставить приложения и попробуй ещё раз."
+            PackageInstaller.STATUS_FAILURE_BLOCKED -> "Телефон заблокировал установку. Разреши Splity ставить приложения и попробуй ещё раз."
             else -> "Не получилось установить обновление. Попробуй ещё раз."
         }
     }

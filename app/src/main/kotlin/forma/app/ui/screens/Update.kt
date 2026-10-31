@@ -91,7 +91,7 @@ fun UpdateDialog(state: Updater.State, onLater: () -> Unit) {
                 when (state) {
                     is Updater.State.Available -> Notes(state.update.notes)
                     is Updater.State.NeedsPermission -> Text(
-                        "Чтобы «Форма» могла обновляться сама, разреши ей ставить приложения: откроются настройки — включи переключатель " +
+                        "Чтобы Splity обновлялось само, разреши ему ставить приложения: откроются настройки — включи переключатель " +
                             "«Разрешить из этого источника» и вернись сюда. Это нужно один раз.",
                         style = T.body(15.sp),
                     )

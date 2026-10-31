@@ -358,13 +358,13 @@ class RunFieldUiTest {
         show(repo) { key(round) { RunSetupScreen(easy, SessionKind.RUN_EASY) } }
         // The battery is free already; the autostart, which brings a closed run back, is still offered.
         assertTrue(texts("усыпить таймер").isEmpty())
-        assertTrue(texts("Включи «Форме» автозапуск").isNotEmpty())
+        assertTrue(texts("Включи для Splity автозапуск").isNotEmpty())
         compose.onAllNodesWithText("Уже включён", ignoreCase = true)[0].performScrollTo().performClick()
         settle()
-        assertTrue(texts("Включи «Форме» автозапуск").isEmpty())
+        assertTrue(texts("Включи для Splity автозапуск").isEmpty())
         round++
         settle()
-        assertTrue(texts("Включи «Форме» автозапуск").isEmpty())
+        assertTrue(texts("Включи для Splity автозапуск").isEmpty())
         // Another phone: nothing about autostart.
         org.robolectric.shadows.ShadowBuild.reset()
         ctx.getSharedPreferences("forma_run", android.content.Context.MODE_PRIVATE).edit().clear().commit()

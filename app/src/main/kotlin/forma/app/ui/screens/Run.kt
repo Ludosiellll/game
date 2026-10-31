@@ -472,12 +472,12 @@ private fun BatteryCard() {
     FCard(gap = 8.dp) {
         Text(
             "Телефон может усыпить таймер с выключенным экраном" + (if (xiaomi) " — на Xiaomi особенно" else "") +
-                ". Разреши «Форме» работать без ограничений батареи" + (if (xiaomi) " и включи ей автозапуск." else "."),
+                ". Разреши Splity работать без ограничений батареи" + (if (xiaomi) " и включи ей автозапуск." else "."),
             style = T.body(14.sp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GhostButton("Без ограничений", {
-                // The Google Play build may not ask for the exemption itself: the list of apps, where «Форма» is switched.
+                // The Google Play build may not ask for the exemption itself: the list of apps, where the app is switched.
                 if (forma.app.BuildConfig.SELF_UPDATE) open(
                     android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, ("package:" + context.packageName).toUri()),
                     android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
@@ -496,7 +496,7 @@ private fun BatteryCard() {
 private fun AutostartRow(onDone: () -> Unit) {
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Включи «Форме» автозапуск: без него Xiaomi не вернёт пробежку, если закроет приложение.", style = T.secondary(13.sp))
+        Text("Включи для Splity автозапуск: без него Xiaomi не вернёт пробежку, если закроет приложение.", style = T.secondary(13.sp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GhostButton("Автозапуск", { openFirst(context, autostartIntent()) }, Modifier.weight(1f), height = 40.dp)
             GhostButton("Уже включён", onDone, Modifier.weight(1f), color = F.c.text2, height = 40.dp)
