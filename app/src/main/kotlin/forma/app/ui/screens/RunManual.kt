@@ -22,6 +22,7 @@ import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.Screen
 import forma.app.ui.Texts
+import forma.app.ui.components.FitTitle
 import forma.app.ui.components.Chip
 import forma.app.ui.components.FCard
 import forma.app.ui.components.Hairline
@@ -115,7 +116,7 @@ fun RunManualScreen(workout: RunWorkout) {
         TopBar("Внести пробежку", if (workout.isOpenEnded) "Свободный бег" else workout.title, onBack = { leave() })
         val s = saved
         if (s != null) {
-            Text(titleText("Сохранено"), style = T.screenTitle(), modifier = Modifier.padding(top = 4.dp))
+            FitTitle(titleText("Сохранено"), style = T.screenTitle(), modifier = Modifier.padding(top = 4.dp))
             SectionLabel("Что дальше")
             FCard(gap = 0.dp) {
                 s.second.outcomes.forEachIndexed { i, o ->

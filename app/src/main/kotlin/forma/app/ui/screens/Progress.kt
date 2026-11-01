@@ -26,6 +26,7 @@ import forma.app.data.Kind
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.Screen
+import forma.app.ui.components.FitTitle
 import forma.app.ui.components.BarChart
 import forma.app.ui.components.FCard
 import forma.app.ui.components.GhostButton
@@ -74,7 +75,7 @@ internal var progressTabRequest: Int? = null
 fun ProgressScreen(initialTab: Int = 0) {
     var tab by rememberSaveable { mutableIntStateOf(progressTabRequest?.also { progressTabRequest = null } ?: initialTab) }
     ScrollScreen {
-        Text(titleText("Прогресс"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
+        FitTitle(titleText("Прогресс"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         ScreenHint(Hints.PROGRESS, Hints.PROGRESS_TEXT)
         Segmented(listOf("Сила", "Бег", "Нагрузка", "Тело"), tab, { tab = it })
         when (tab) {

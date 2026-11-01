@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.isSpecified
 import forma.app.ui.theme.F
 import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
@@ -401,5 +402,30 @@ fun NumText(
             numText(text, style), modifier, style = if (textAlign != null) style.copy(textAlign = textAlign) else style,
             overflow = overflow, maxLines = maxLines, autoSize = autoSize,
         )
+    }
+}
+
+/**
+ * A big title that never breaks inside a word. Denis: «ПРИСЕД / АНИЯ / СО / ШТАНГ / ОЙ» — a 34 sp capital name in a
+ * narrow column cut its words. The font shrinks until the longest word fits the width (not below [minScale] of the
+ * style), so lines break only between words.
+ */
+@Composable
+fun FitTitle(text: String, style: androidx.compose.ui.text.TextStyle, modifier: Modifier = Modifier, minScale: Float = 0.5f) {
+    BoxWithConstraints(modifier) {
+        val measurer = rememberTextMeasurer()
+        val width = constraints.maxWidth
+        val bounded = constraints.hasBoundedWidth
+        val scale = androidx.compose.runtime.remember(text, style, width, bounded) {
+            if (!bounded || width <= 0) return@remember 1f
+            val widest = text.split(' ', '\n').filter { it.isNotEmpty() }
+                .maxOfOrNull { measurer.measure(it, style, softWrap = false, maxLines = 1).size.width } ?: 0
+            if (widest <= width) 1f else (width.toFloat() / widest * 0.97f).coerceIn(minScale, 1f)
+        }
+        val fitted = if (scale == 1f) style else style.copy(
+            fontSize = style.fontSize * scale,
+            lineHeight = if (style.lineHeight.isSpecified) style.lineHeight * scale else style.lineHeight,
+        )
+        Text(text, style = fitted)
     }
 }

@@ -211,7 +211,7 @@ class CoachFourthReviewTest {
         repo.pause(today, today.plusDays(3))
         assertTrue(repo.paused(repo.store.settingsNow(), today))
         val h = head(coachContext(repo, today))
-        assertTrue("пауз" in h.lowercase() || "По плану сегодня:" !in h, "a paused day is told as a training day:\n$h")
+        assertTrue("пауз" in h.lowercase() || "По плану сегодня (" !in h, "a paused day is told as a training day:\n$h")
     }
 
     // ---------- 4. In a lighter week the model is told the lighter weight as "the next weight", never the working one ----------

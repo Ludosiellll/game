@@ -23,6 +23,7 @@ import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.Screen
 import forma.app.ui.Texts
+import forma.app.ui.components.FitTitle
 import forma.app.ui.components.FCard
 import forma.app.ui.components.Hairline
 import forma.app.ui.components.NumText
@@ -48,7 +49,7 @@ fun LiftDoneScreen(workoutId: Long) {
     } ?: return
     ScrollScreen(bottomInset = true) {
         Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(titleText("Тренировка сохранена"), style = T.screenTitle())
+            FitTitle(titleText("Тренировка сохранена"), style = T.screenTitle())
             Text(workout.title, style = T.secondary(15.sp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -61,6 +61,8 @@ internal const val COACH_RESEARCH = """## Исследования, на кот�
 - Бег мешает силовой тем больше, чем чаще и дольше (Wilson и др., 2012).
 - Икры (камбаловидная и икроножная) — главные мышцы толчка в беге на обычных скоростях (Dorn и др., 2012); слабые икры — риск перегрузки ахилла (Mahieu и др., 2006). Присед и жим ногами их почти не нагружают. Практический минимум для бегуна без них в плане — 2–3 подхода подъёмов на носки 1–2 раза в неделю (это совет, не число из исследования)."""
 
+private val WEEKDAY = listOf("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
+
 /** The summary sent with a question: today, the training as the readable report has it, and how the app works. */
 suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today(), reportChars: Int = 28_000): String {
     val program = repo.store.programNow()
@@ -93,7 +95,9 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
     val feels = TrainingReport.feelWords(settings.feels)
     val report = withContext(Dispatchers.Default) { TrainingReport.build(b, today, BuildConfig.VERSION_NAME, feels) }
     return buildString {
-        appendLine("Сегодня ${Ru.date(today)} ${today.year}.")
+        // The weekday said, not left to the model: it worked Sunday 1 November out as Monday and gave Monday's run.
+        val clock = if (today == repo.today()) repo.timeNow().let { ", время %d:%02d".format(it.hour, it.minute) } else ""
+        appendLine("Сегодня ${WEEKDAY[today.dayOfWeek.value - 1]}, ${Ru.date(today)} ${today.year}$clock.")
         when {
             paused -> appendLine("Сегодня пауза в плане до ${Ru.date(LocalDate.ofEpochDay(settings.pauseUntil!!))}: тренировок по плану нет.")
             feel == Feel.SICK -> appendLine("Сегодня человек отметил «Болею»: тренироваться не нужно, приложение предлагает отдых или паузу.")
@@ -110,8 +114,9 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             )
         }
         if (!paused) {
-            val head = if (feel == Feel.SICK) "По плану было (человек болеет, не делает):" else "По плану сегодня:"
-            appendLine(if (todayLines.isEmpty()) "По плану сегодня отдых." else head + "\n" + todayLines.joinToString("\n"))
+            val day = WEEKDAY[today.dayOfWeek.value - 1]
+            val head = if (feel == Feel.SICK) "По плану было (человек болеет, не делает):" else "По плану сегодня ($day):"
+            appendLine(if (todayLines.isEmpty()) "По плану сегодня ($day) отдых." else head + "\n" + todayLines.joinToString("\n"))
         }
         // Freshness now, the number «Сегодня» shows: said first, so a dip's lowest or a week's below is not taken for it.
         repo.loadStoryNow(today)?.takeIf { it.history }?.let { st ->

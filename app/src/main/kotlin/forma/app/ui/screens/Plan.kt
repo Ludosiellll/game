@@ -28,6 +28,7 @@ import forma.app.data.LiftPlan
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.Screen
+import forma.app.ui.components.FitTitle
 import forma.app.ui.components.FCard
 import forma.app.ui.components.GhostButton
 import forma.app.ui.components.Hairline
@@ -56,7 +57,7 @@ fun PlanScreen() {
     val weekNo = ProgramGenerator.programWeek(p, today)
     val lifting by repo.store.liftState.collectAsState(initial = forma.app.data.LiftState())
     ScrollScreen {
-        Text(titleText("План"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
+        FitTitle(titleText("План"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         val goal = aimTitle(p.aim) + (p.copiedFrom?.let { " · программа друга ($it)" } ?: "")
         Text("$goal · ${when (p.experience) { Experience.NOVICE -> "новичок"; Experience.INTERMEDIATE -> "средний уровень"; Experience.ADVANCED -> "опытный" }}", style = T.secondary(15.sp))
         ScreenHint(Hints.PLAN, Hints.PLAN_TEXT)

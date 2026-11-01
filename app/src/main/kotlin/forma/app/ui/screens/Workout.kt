@@ -69,6 +69,7 @@ import forma.app.ui.Texts
 import forma.app.ui.components.Banner
 import forma.app.ui.components.Chip
 import forma.app.ui.components.FCard
+import forma.app.ui.components.FitTitle
 import forma.app.ui.components.GhostButton
 import forma.app.ui.components.Hairline
 import forma.app.ui.components.PrimaryButton
@@ -381,16 +382,15 @@ fun WorkoutScreen(workoutId: Long) {
 
                 // Header.
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.Top) {
-                        Text(titleText(item.name), style = T.title(if (F.type.capsTitles || F.type.mega) 34.sp else 24.sp), modifier = Modifier.weight(1f))
-                        // Another exercise in its place, or none: only before its first set (the sets belong to the exercise).
-                        if (mine.isEmpty()) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                GhostButton("Заменить", {
-                                    nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInWorkout(workoutId, item.position, item.exerciseId)))
-                                }, height = 44.dp)
-                                if (plan.items.size > 1) GhostButton("Убрать", { removing = item.position }, height = 44.dp, color = F.c.bad)
-                            }
+                    // The name gets the whole width (the buttons beside it cut «ПРИСЕДАНИЯ» into «ПРИСЕД / АНИЯ»).
+                    FitTitle(titleText(item.name), style = T.title(if (F.type.capsTitles || F.type.mega) 34.sp else 24.sp), modifier = Modifier.fillMaxWidth())
+                    // Another exercise in its place, or none: only before its first set (the sets belong to the exercise).
+                    if (mine.isEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GhostButton("Заменить", {
+                                nav.push(Screen.Library(forma.app.ui.LibraryMode.SwapInWorkout(workoutId, item.position, item.exerciseId)))
+                            }, height = 44.dp)
+                            if (plan.items.size > 1) GhostButton("Убрать", { removing = item.position }, height = 44.dp, color = F.c.bad)
                         }
                     }
                     // How to do it: open the first time on the exercise, a tap away after.

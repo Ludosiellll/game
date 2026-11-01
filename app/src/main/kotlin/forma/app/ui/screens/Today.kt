@@ -43,6 +43,7 @@ import forma.app.run.RunSession
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.Screen
+import forma.app.ui.components.FitTitle
 import forma.app.ui.components.Banner
 import forma.app.ui.components.Dot
 import forma.app.ui.components.FCard
@@ -139,7 +140,7 @@ fun TodayScreen() {
         Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(if (F.type.mega) labelText(dateLine(today)) else dateLine(today), style = if (F.type.mega) T.label().copy(color = F.c.text) else T.secondary(13.sp))
-                Text(titleText("Сегодня"), style = T.screenTitle())
+                FitTitle(titleText("Сегодня"), style = T.screenTitle())
             }
             Text(labelText("Неделя $weekNo"), style = T.label())
         }
@@ -495,7 +496,7 @@ private fun LiftCard(
             Text(labelText("  Силовая"), style = T.label().copy(color = F.c.strength), modifier = Modifier.weight(1f))
             if (minutes != null) NumText(if (done) "$minutes мин" else "~$minutes мин", style = T.number(13.sp, FontWeight.Medium).copy(color = F.c.text2))
         }
-        Text(titleText(t?.title ?: "Силовая"), style = T.title(if (F.type.mega) 34.sp else 26.sp))
+        FitTitle(titleText(t?.title ?: "Силовая"), style = T.title(if (F.type.mega) 34.sp else 26.sp))
         if (doneAs != null) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Ic.check, null, tint = F.c.good, modifier = Modifier.size(18.dp))

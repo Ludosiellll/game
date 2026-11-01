@@ -111,7 +111,8 @@ class WizardUiTest {
         shot("11-result")
         compose.onNodeWithText("Нагрузка на мышцы", ignoreCase = true).assertExists()
         compose.onNode(hasText("Начать", ignoreCase = true) and hasClickAction()).performClick()
-        settle()
+        // The profile is saved off the main thread: under a loaded test run one settle was not always enough.
+        compose.waitUntil(10_000) { settle(); runBlocking { store.profileNow() } != null }
         val p = assertNotNull(runBlocking { store.profileNow() })
         assertEquals(Split.UPPER_LOWER, p.split)
         assertEquals(setOf(Muscle.GLUTES, Muscle.BACK), p.accents)

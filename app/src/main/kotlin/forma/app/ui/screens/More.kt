@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.sp
 import forma.app.ui.LocalCloud
 import forma.app.ui.LocalNav
 import forma.app.ui.Screen
+import forma.app.ui.components.FitTitle
 import forma.app.ui.components.FCard
 import forma.app.ui.components.Hairline
 import forma.app.ui.components.ListRow
@@ -29,7 +30,7 @@ fun MoreScreen() {
     val repo = forma.app.ui.LocalRepo.current
     val waiting by androidx.compose.runtime.remember { repo.db.sync().observeNotUploaded() }.collectAsState(initial = 0)
     ScrollScreen {
-        Text(titleText("Ещё"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
+        FitTitle(titleText("Ещё"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         FCard(gap = 0.dp) {
             ListRow("Как пользоваться", "Что где в приложении и словарь слов", icon = Ic.info, iconTint = F.c.accent) { nav.push(Screen.Help) }
             Hairline()

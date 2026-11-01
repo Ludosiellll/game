@@ -76,6 +76,7 @@ import forma.app.ui.LocalRepo
 import forma.app.ui.LocalSettings
 import forma.app.ui.Screen
 import forma.app.ui.Texts
+import forma.app.ui.components.FitTitle
 import forma.app.ui.components.Banner
 import forma.app.ui.components.Chip
 import forma.app.ui.components.FCard
@@ -1110,7 +1111,7 @@ fun RunDoneScreen(workoutId: Long) {
         val s = saved
         if (s == null && tracker != null) {
             val result = tracker.result(nowMs, rpe)
-            Text(titleText("Пробежка закончена"), style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
+            FitTitle(titleText("Пробежка закончена"), style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatTile("Время", Ru.clock(result.durationSec), if (tracker.workout.isOpenEnded) "" else "${(result.completed * 100).roundToInt()}% плана", F.c.text, Modifier.weight(1f))
                 val lapM = tracker.workout.lapMeters
@@ -1263,7 +1264,7 @@ fun RunDoneScreen(workoutId: Long) {
                 contentAlignment = Alignment.Center,
             ) { Text("Не сохранять", style = T.secondary(14.sp)) }
         } else if (s != null) {
-            Text(titleText("Сохранено"), style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
+            FitTitle(titleText("Сохранено"), style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
             LapLengthCard(lapSet, measuredLap)
             // How it went and why, from what was saved.
             val w by remember(s.first) { repo.db.workouts().observe(s.first) }.collectAsState(initial = null)

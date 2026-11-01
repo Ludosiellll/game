@@ -79,6 +79,9 @@ class TrainingRepository(
     /** The repository's clock, ms. */
     fun nowMs(): Long = now()
 
+    /** The time of day by the repository's clock, in the phone's zone. */
+    fun timeNow(): java.time.LocalTime = java.time.Instant.ofEpochMilli(now()).atZone(zone()).toLocalTime()
+
     /** Something worth copying to the cloud was saved past the repository's own functions (the coach's edits). */
     internal fun changed() = onChange()
 

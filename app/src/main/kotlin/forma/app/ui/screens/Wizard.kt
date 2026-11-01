@@ -66,6 +66,7 @@ import forma.app.ui.LocalCloud
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.Screen
+import forma.app.ui.components.FitTitle
 import forma.app.ui.components.Banner
 import forma.app.ui.components.BodyMap
 import forma.app.ui.components.Chip
@@ -257,7 +258,7 @@ private fun StepDots(at: Int, of: Int, modifier: Modifier) {
 @Composable
 private fun Question(title: String, text: String?) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(titleText(title), style = T.title(30.sp))
+        FitTitle(titleText(title), style = T.title(30.sp))
         if (text != null) Text(text, style = T.secondary(15.sp))
     }
 }
@@ -329,7 +330,7 @@ private fun Intro(first: Boolean) {
     LaunchedEffect(Unit) { t.animateTo(1f, tween(1100)) }
     Spacer(Modifier.height(24.dp))
     MarkDrawing(t.value, Modifier.fillMaxWidth().height(200.dp))
-    Text(titleText(if (first) "Соберём твою программу" else "Соберём программу заново"), style = T.screenTitle())
+    FitTitle(titleText(if (first) "Соберём твою программу" else "Соберём программу заново"), style = T.screenTitle())
     Text(
         "Пара минут: чем занимаешься, сколько дней, как делить тренировки и на что упор. Потом приложение само подстраивает веса, " +
             "подходы и бег под то, как у тебя идёт.",
@@ -575,7 +576,7 @@ private fun ResultStep(d: ProfileDraft) {
         append(if (lifts.isEmpty()) "Бег" else splitName(program).replaceFirstChar { it.uppercase() })
         if (d.accents.isNotEmpty() && lifts.isNotEmpty()) append(" — " + d.accents.joinToString(", ") { it.ru.lowercase() })
     }
-    Text(titleText(name), style = T.title(32.sp))
+    FitTitle(titleText(name), style = T.title(32.sp))
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         listOfNotNull(
             aimTitle(profile.aim),
