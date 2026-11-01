@@ -178,6 +178,12 @@ val RELEASES = listOf(
             NewThing(Ic.chat, false, "Тренер знает, какой сегодня день", "Тренер видит день недели и время на телефоне, поэтому не путает воскресенье с понедельником и берёт план именно на сегодня."),
         ),
     ),
+    Release(
+        17, "1 ноября",
+        listOf(
+            NewThing(Ic.chat, false, "Ответы тренера без звёздочек", "Жирный текст, списки и заголовки в ответах тренера теперь так и выглядят, а не как «**текст**»."),
+        ),
+    ),
 )
 
 /** The releases after [seen] (the last one shown), newest first; at most three, an old phone's long gap stays short. */

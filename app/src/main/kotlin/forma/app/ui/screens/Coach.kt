@@ -241,7 +241,7 @@ private fun Message(m: CoachChatMsg, log: List<CoachLogEntry>) {
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (m.text.isNotBlank()) CoachBubble { SelectionContainer { Text(m.text, style = T.body(15.sp)) } }
+        if (m.text.isNotBlank()) CoachBubble { SelectionContainer { Text(forma.app.ui.components.markdownText(m.text), style = T.body(15.sp)) } }
         m.acts.forEachIndexed { i, a -> ActCard(m.id, i, a, log) }
     }
 }
@@ -466,7 +466,7 @@ fun CoachReviewCard(workoutId: Long, title: String, day: LocalDate) {
             SectionLabel("Разбор тренера")
         }
         when {
-            text != null -> SelectionContainer { Text(text!!, style = T.body(15.sp)) }
+            text != null -> SelectionContainer { Text(forma.app.ui.components.markdownText(text!!), style = T.body(15.sp)) }
             busy -> Text("Тренер смотрит тренировку…", style = T.secondary(14.sp))
             used == false && tries == 0 -> {
                 Text("ИИ-тренер (Gemini от Google) разберёт тренировку: что получилось, что нет и что сделать в следующий раз. " +
