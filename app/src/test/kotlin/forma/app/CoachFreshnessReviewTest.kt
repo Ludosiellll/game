@@ -81,7 +81,7 @@ class CoachFreshnessReviewTest {
 
     @Test fun theBriefDoesNotDenyTheDipThatStartedToday() = runBlocking<Unit> {
         val loads = repo.dailyLoads().first()
-        val series = TrainingLoad.series(loads, today.minusDays(120), today)
+        val series = TrainingLoad.series(loads, today.minusDays(120), today, repo.loadBase().first())
         val shownPct = series.last().formPct
         val yesterday = series[series.lastIndex - 1].formPct
         // The precondition of the scenario: the first day under the line is today.

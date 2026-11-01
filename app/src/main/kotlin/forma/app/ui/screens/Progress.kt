@@ -459,7 +459,8 @@ private fun LoadTab() {
         Empty(LoadExplain.UNITS + " По нагрузке приложение считает тренированность за последние 6 недель, усталость за неделю и свежесть.")
         return
     }
-    val series = remember(loads, today) { TrainingLoad.series(loads, today.minusDays(120), today) }
+    val base by remember { repo.loadBase() }.collectAsState(initial = forma.core.load.LoadBase())
+    val series = remember(loads, today, base) { TrainingLoad.series(loads, today.minusDays(120), today, base) }
     val story by remember(today) { repo.loadStory(today) }.collectAsState(initial = null)
     val st = story ?: return
     val last = series.takeLast(56)

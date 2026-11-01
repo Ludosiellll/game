@@ -171,7 +171,7 @@ object TrainingReport {
             }
             appendLine()
         }
-        TrainingRepository.storyOf(done, today)?.let { st ->
+        TrainingRepository.storyOf(done, today, TrainingRepository.loadBaseOf(b.program, b.settings, done))?.let { st ->
             appendLine("### Нагрузка и восстановление")
             appendLine()
             st.zone?.let { appendLine("**${LoadExplain.zoneTitle(it)}.** ${LoadExplain.zoneText(st)}"); appendLine() }

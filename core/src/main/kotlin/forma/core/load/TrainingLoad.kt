@@ -19,6 +19,19 @@ data class LoadDay(
     val formPct: Double get() = if (fitness > 1e-6) form / fitness * 100 else 0.0
 }
 
+/**
+ * What the numbers lean on while there is little history. [planned]: what the person's plan asks each day, Monday first
+ * (7 values, load units), null without a plan — the floor of the usual week while there are few weeks. [off]: days not
+ * to judge by — marked sick or paused.
+ */
+data class LoadBase(val planned: List<Double>? = null, val off: Set<LocalDate> = emptySet()) {
+    /** The plan's week, null without one (or an empty one). */
+    val plannedWeek: Double? get() = planned?.sum()?.takeIf { it > 0 }
+
+    /** The plan from Monday through ISO day [day] (1 = Monday). */
+    fun plannedThrough(day: Int): Double = planned?.take(day.coerceIn(0, 7))?.sum() ?: 0.0
+}
+
 object TrainingLoad {
     /** Session-RPE (Foster et al. 2001): CR-10 rating × minutes. */
     fun sessionLoad(rpe: Int, minutes: Double): Double = rpe.coerceIn(0, 10) * minutes.coerceAtLeast(0.0)
@@ -40,14 +53,21 @@ object TrainingLoad {
      * Day-by-day fitness and fatigue from [from] to [to] inclusive. [loads] maps a date to the summed session load.
      * Uses the Banister impulse–response shape with exponential decay constants of 42 and 7 days.
      *
-     * Both averages start at the first training day, seeded with the mean daily load of its first two weeks.
-     * Starting from zero would show a new user a deep "fatigue hole" for weeks while the 42-day average fills up.
+     * Both averages start at the first training day, seeded with the mean daily load of the first six weeks (as many
+     * days of them as there are up to [to]; sick and paused days in [base] left out). Starting from zero would show a new
+     * user a deep "fatigue hole" for weeks while the 42-day average fills up. The first two weeks alone were the seed
+     * before, and they are often not the usual ones (Denis, October: the app new, then a week ill without «Болею» — his
+     * first full week by plan read as freshness −37 %, «нужен отдых»).
      */
-    fun series(loads: Map<LocalDate, Double>, from: LocalDate, to: LocalDate): List<LoadDay> {
+    fun series(loads: Map<LocalDate, Double>, from: LocalDate, to: LocalDate, base: LoadBase = LoadBase()): List<LoadDay> {
         val kFit = 1 - exp(-1 / FITNESS_DAYS)
         val kFat = 1 - exp(-1 / FATIGUE_DAYS)
         val first = loads.filter { it.value > 0 }.keys.minOrNull()
-        val seed = if (first == null) 0.0 else (0 until 14).sumOf { loads[first.plusDays(it.toLong())] ?: 0.0 } / 14
+        val seed = if (first == null) 0.0 else {
+            val span = (to.toEpochDay() - first.toEpochDay() + 1).coerceIn(14, FITNESS_DAYS.toLong())
+            val days = (0 until span).map { first.plusDays(it) }.filter { it !in base.off }
+            if (days.isEmpty()) 0.0 else days.sumOf { loads[it] ?: 0.0 } / days.size
+        }
         var fit = 0.0
         var fat = 0.0
         var seeded = false

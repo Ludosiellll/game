@@ -80,7 +80,7 @@ class CoachFreshnessTest {
     @Test fun theCoachSaysTheFreshnessTodayShows() = runBlocking<Unit> {
         // As «Сегодня» works it out (Today.kt: the series of the daily loads up to today).
         val loads = repo.dailyLoads().first()
-        val shown = Ru.pct(TrainingLoad.series(loads, today.minusDays(120), today).last().formPct)
+        val shown = Ru.pct(TrainingLoad.series(loads, today.minusDays(120), today, repo.loadBase().first()).last().formPct)
         val brief = coachContext(repo, today)
         // Said at the top, as the screen shows it.
         val top = brief.substringBefore("## Цели человека")

@@ -14,6 +14,9 @@ import kotlin.math.roundToInt
  * ones that went well, the line sits between the two. So it is theirs, not a rule of thumb.
  */
 object LoadStory {
+    /** Weeks with training (not ill, not paused) the usual week needs; with fewer it is not below the plan's week. */
+    const val FULL_WEEKS = 4
+
     /** The common line: below it most people need rest. */
     const val COMMON_REST = -30.0
     /** Above this one is fresh: ready for a hard session or a trial. */
@@ -84,6 +87,8 @@ object LoadStory {
         val fitnessChange: Double?,
         /** The person's usual week (median of recent weeks with training). */
         val usualWeek: Double?,
+        /** [usualWeek] is the plan's: fewer than [FULL_WEEKS] weeks to go by, and they were lighter than it asks. */
+        val usualFromPlan: Boolean = false,
         val weeks: List<Week>,
         val dips: List<Dip>,
         /** Days since the last training. */
@@ -135,9 +140,10 @@ object LoadStory {
         bad: Set<LocalDate> = emptySet(),
         good: Set<LocalDate> = emptySet(),
         weeks: Int = 8,
+        base: LoadBase = LoadBase(),
     ): Story {
         val from = today.minusDays(180)
-        val series = TrainingLoad.series(loads, from, today)
+        val series = TrainingLoad.series(loads, from, today, base)
         val history = TrainingLoad.hasHistory(loads, today)
         // Freshness means something from two weeks after the first session (the same rule as for today).
         val first = loads.filter { it.value > 0 }.keys.minOrNull()
@@ -152,6 +158,7 @@ object LoadStory {
         } else null
 
         val thisMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        fun offIn(monday: LocalDate) = (0 until 7L).any { monday.plusDays(it) in base.off }
         val all = (0 until weeks + 4).map { thisMonday.minusWeeks((weeks + 3 - it).toLong()) }.map { m ->
             val days = series.filter { !it.date.isBefore(m) && it.date.isBefore(m.plusDays(7)) }
             Triple(m, days, days.sumOf { it.load })
@@ -164,10 +171,14 @@ object LoadStory {
             if (i < 4) return@mapIndexedNotNull null
             // Weeks before the first session say nothing.
             if (first == null || m.plusDays(6).isBefore(first)) return@mapIndexedNotNull null
-            val priorWeeks = all.subList(i - 4, i).filter { it.third > 0 }
+            // Weeks ill or paused are not the usual: they would make the next ordinary week look like a jump.
+            val priorWeeks = all.subList(i - 4, i).filter { it.third > 0 && !offIn(it.first) }
             val current = m == thisMonday
-            val usual = if (!current) median(priorWeeks.map { it.third })
+            val own = if (!current) median(priorWeeks.map { it.third })
             else median(priorWeeks.map { (pm, pd, _) -> pd.filter { it.date.isBefore(pm.plusDays(daysIn.toLong())) }.sumOf { it.load } })
+            // Few weeks to go by (the app new, a week ill): the usual is not below what the plan asks.
+            val planned = if (current) base.plannedThrough(daysIn) else base.plannedWeek ?: 0.0
+            val usual = if (priorWeeks.isNotEmpty() && priorWeeks.size < FULL_WEEKS && planned > 0) maxOf(own ?: 0.0, planned) else own
             val soFar = if (current) days.filter { !it.date.isAfter(upTo) }.sumOf { it.load } else load
             val ratio = usual?.takeIf { it > 0 }?.let { soFar / it }
             val raw = when {
@@ -189,7 +200,11 @@ object LoadStory {
             val pcts = days.mapNotNull { pctOn(it) }
             Week(m, load, days.count { it.load > 0 }, ratio, level, pcts.minOrNull(), days.lastOrNull()?.let { pctOn(it) }, soFar = current)
         }
-        val usualWeek = median(all.takeLast(5).dropLast(1).map { it.third }.filter { it > 0 })
+        val recent = all.takeLast(5).dropLast(1).filter { it.third > 0 && !offIn(it.first) && first != null && !it.first.plusDays(6).isBefore(first) }
+        val ownUsual = median(recent.map { it.third })
+        val plannedWeek = base.plannedWeek
+        val usualFromPlan = recent.size < FULL_WEEKS && plannedWeek != null && plannedWeek > (ownUsual ?: 0.0)
+        val usualWeek = if (usualFromPlan) plannedWeek else ownUsual
 
         // Freshness of the morning (the day before's numbers), as for the rest line: a hard session's own load does not
         // make its evening a dip that "needed rest".
@@ -234,7 +249,7 @@ object LoadStory {
         return Story(
             today = now, history = history, personal = personal,
             zone = if (history) zone(now.formPct, personal.restBelow) else null,
-            fitnessChange = fitnessChange, usualWeek = usualWeek, weeks = rows, dips = dips,
+            fitnessChange = fitnessChange, usualWeek = usualWeek, usualFromPlan = usualFromPlan, weeks = rows, dips = dips,
             daysSinceTraining = lastTraining?.let { (today.toEpochDay() - it.toEpochDay()).toInt() },
         )
     }

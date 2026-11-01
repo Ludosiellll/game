@@ -129,8 +129,10 @@ fun TodayScreen() {
 
     ScrollScreen {
         // The same window as on Progress → Нагрузка, so "Свежесть" reads the same number on both screens.
-        val loadSeries = remember(loads, today) {
-            TrainingLoad.series(loads, today.minusDays(120), today)
+        // The same base as the coach and «Прогресс»: the plan while history is short, days ill left out.
+        val loadBase by remember { repo.loadBase() }.collectAsState(initial = forma.core.load.LoadBase())
+        val loadSeries = remember(loads, today, loadBase) {
+            TrainingLoad.series(loads, today.minusDays(120), today, loadBase)
         }
         val history = TrainingLoad.hasHistory(loads, today)
         val form = loadSeries.lastOrNull()?.takeIf { history }?.formPct

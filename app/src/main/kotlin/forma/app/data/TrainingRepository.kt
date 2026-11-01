@@ -547,8 +547,8 @@ class TrainingRepository(
             return plan.items.any { item -> Catalog.find(item.exerciseId)?.primary?.any { it in legs } == true }
         }
 
-        /** The load story from finished workouts; null without any load. */
-        fun storyOf(ws: List<WorkoutEntity>, today: LocalDate): forma.core.load.LoadStory.Story? {
+        /** The load story from finished workouts; null without any load. [base]: [loadBaseOf] for this person. */
+        fun storyOf(ws: List<WorkoutEntity>, today: LocalDate, base: forma.core.load.LoadBase = forma.core.load.LoadBase()): forma.core.load.LoadStory.Story? {
             val loads = ws.filter { (it.load ?: 0.0) > 0 }.groupBy { LocalDate.ofEpochDay(it.epochDay) }.mapValues { (_, l) -> l.sumOf { it.load ?: 0.0 } }
             if (loads.isEmpty()) return null
             val verdicts = ws.mapNotNull { w -> verdict(w)?.let { LocalDate.ofEpochDay(w.epochDay) to it } }
@@ -556,7 +556,39 @@ class TrainingRepository(
                 loads, today,
                 bad = verdicts.filter { !it.second }.map { it.first }.toSet(),
                 good = verdicts.filter { it.second }.map { it.first }.toSet(),
+                base = base,
             )
+        }
+
+        /** A lift, an easy run, a hard or long one before the person has done any: ~70 min at 6, ~30 min at 4, ~40 min at 6. */
+        private const val LIFT_LOAD = 420.0
+        private const val EASY_LOAD = 120.0
+        private const val HARD_LOAD = 250.0
+
+        /**
+         * What the load numbers start from while there is little history ([forma.core.load.LoadBase]). The plan's week by
+         * day: each session at this person's own mean load for its kind (a lift by its template, else any lift; a run as
+         * easy, hard or long), a common one before there is any. And the days not to judge by: marked «Болею» or paused.
+         */
+        fun loadBaseOf(program: Program?, settings: Settings, ws: List<WorkoutEntity>): forma.core.load.LoadBase {
+            val done = ws.filter { (it.load ?: 0.0) > 0 && !it.deload }
+            fun mean(xs: List<WorkoutEntity>) = xs.takeIf { it.isNotEmpty() }?.map { it.load ?: 0.0 }?.average()
+            val lifts = done.filter { it.kind == Kind.LIFT }
+            val runs = done.filter { it.kind == Kind.RUN }
+            fun runKind(type: String?) = when (type) {
+                RunType.LONG.name -> SessionKind.RUN_LONG
+                RunType.INTERVALS.name, RunType.TEMPO.name, RunType.TEST.name, RunType.GOAL_PACE.name -> SessionKind.RUN_QUALITY
+                else -> SessionKind.RUN_EASY
+            }
+            fun expected(p: PlannedSession): Double = when (p.kind) {
+                SessionKind.LIFT -> mean(lifts.filter { it.templateId == p.templateId }) ?: mean(lifts) ?: LIFT_LOAD
+                else -> mean(runs.filter { runKind(it.templateId) == p.kind }) ?: if (p.kind == SessionKind.RUN_EASY) EASY_LOAD else HARD_LOAD
+            }
+            val planned = program?.week?.let { wk -> (1..7).map { d -> wk.on(d).sumOf { expected(it) } } }
+            val sick = settings.feels.filterValues { it == Feel.SICK.name }.keys
+            val pauses = listOfNotNull(settings.pauseUntil?.let { listOf(settings.pauseFrom ?: it, it) }) + settings.pastPauses.filter { it.size == 2 }
+            val paused = pauses.flatMap { (a, b) -> (a..minOf(b, a + 366)).toList() }
+            return forma.core.load.LoadBase(planned, (sick + paused).map { LocalDate.ofEpochDay(it) }.toSet())
         }
 
         /**
@@ -1635,7 +1667,7 @@ class TrainingRepository(
         val recent = state.reactiveDeloadStart?.let { day.toEpochDay() < it + 42 } == true ||
             ProgramGenerator.isDeloadWeek(program, day.minusWeeks(1))
         // Run down by this person's own measure: below their rest line for four days or more (the dip still on).
-        val worn = storyOf(db.workouts().allDone(), day)?.let { st ->
+        val worn = loadStoryNow(day)?.let { st ->
             st.history && st.dips.lastOrNull()?.let { it.recovered == null && day.toEpochDay() - it.from.toEpochDay() >= 3 } == true
         } == true
         if ((setbacks.size >= 2 || worn && setbacks.isNotEmpty()) && !plannedSoon && !recent) {
@@ -2543,9 +2575,16 @@ class TrainingRepository(
     }
 
     /** The load story on [today]: the person's rest line is learned from how their own sessions went. */
-    fun loadStory(today: LocalDate): Flow<forma.core.load.LoadStory.Story?> = db.workouts().observeHistory().map { ws -> storyOf(ws, today) }
+    fun loadStory(today: LocalDate): Flow<forma.core.load.LoadStory.Story?> =
+        combine(db.workouts().observeHistory(), store.program, store.settings) { ws, p, st -> storyOf(ws, today, loadBaseOf(p, st, ws)) }
 
-    suspend fun loadStoryNow(today: LocalDate): forma.core.load.LoadStory.Story? = storyOf(db.workouts().allDone(), today)
+    suspend fun loadStoryNow(today: LocalDate): forma.core.load.LoadStory.Story? = db.workouts().allDone().let { ws ->
+        storyOf(ws, today, loadBaseOf(store.programNow(), store.settingsNow(), ws))
+    }
+
+    /** What the load numbers start from ([loadBaseOf]), for the screens that draw the freshness themselves. */
+    fun loadBase(): Flow<forma.core.load.LoadBase> =
+        combine(db.workouts().observeHistory(), store.program, store.settings) { ws, p, st -> loadBaseOf(p, st, ws) }
 
     suspend fun lastSetsFor(exerciseId: String): List<SetEntity> {
         val recent = db.sets().recent(exerciseId)
