@@ -242,6 +242,8 @@ data class OwnPlan(
 data class LiftState(
     /** Monday (epoch day) of a lighter week the app scheduled itself after repeated setbacks. */
     val reactiveDeloadStart: Long? = null,
+    /** Monday (epoch day) of a planned lighter week moved a week on: the block's weeks were mostly missed ([TrainingRepository.moveUnearnedLighterWeek]). */
+    val deloadMovedFrom: Long? = null,
 )
 
 /** One DataStore per file and process (DataStore forbids two instances on the same file). */

@@ -82,6 +82,8 @@ fun TodayScreen() {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val today = forma.app.ui.rememberToday(repo)
+    // A new week while the app stays open: a lighter week the block did not earn moves on (as on start).
+    androidx.compose.runtime.LaunchedEffect(today) { repo.moveUnearnedLighterWeek(today) }
     val monday = remember(today) { today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) }
     val program by repo.store.program.collectAsState(initial = null)
     val runState by repo.store.runState.collectAsState(initial = null)

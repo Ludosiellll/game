@@ -560,6 +560,9 @@ class TrainingRepository(
             )
         }
 
+        /** A week counts as full in its block from this share of the plan's load. */
+        const val FULL_WEEK = 0.7
+
         /** A lift, an easy run, a hard or long one before the person has done any: ~70 min at 6, ~30 min at 4, ~40 min at 6. */
         private const val LIFT_LOAD = 420.0
         private const val EASY_LOAD = 120.0
@@ -1309,6 +1312,37 @@ class TrainingRepository(
      * Once per change of the base rests (Denis, 31.10: longer on the main lifts and isolation): the plan's exercises still
      * on the old defaults take the new ones; rests the person set stay. A new plan is made with the new ones already.
      */
+    /**
+     * Denis, 2 November: «Неделя 4 из 4. Разгрузка» after a block he was ill in — two weeks short, one full. A lighter
+     * week sheds the fatigue of the block's hard weeks; when fewer than half of them were full (at least [FULL_WEEK] of
+     * the plan's load, no day «Болею» or paused), the missed days were rest already: the lighter week moves a week on
+     * (the block starts a week later). At the start of the lighter week only: not once its gym has begun, not over a
+     * lighter week the app set after setbacks.
+     */
+    suspend fun moveUnearnedLighterWeek(today: LocalDate = today()) = sessionLock.withLock {
+        val program = store.programNow() ?: return@withLock
+        if (program.blockWeeks < 2 || !ProgramGenerator.isDeloadWeek(program, today)) return@withLock
+        val monday = mondayOf(today)
+        val state = store.liftStateNow()
+        if (state.reactiveDeloadStart == monday.toEpochDay()) return@withLock
+        val ws = db.workouts().allDone()
+        val gymBegun = ws.any { it.kind == Kind.LIFT && it.epochDay in monday.toEpochDay()..today.toEpochDay() } ||
+            db.workouts().active()?.let { it.kind == Kind.LIFT } == true
+        if (gymBegun) return@withLock
+        val base = loadBaseOf(program, store.settingsNow(), ws)
+        val planned = base.plannedWeek ?: return@withLock
+        val weeks = (1 until program.blockWeeks).map { monday.minusWeeks(it.toLong()) }
+        val full = weeks.count { m ->
+            val days = m.toEpochDay()..m.toEpochDay() + 6
+            val load = ws.filter { it.epochDay in days }.sumOf { it.load ?: 0.0 }
+            load >= planned * FULL_WEEK && (0..6L).none { m.plusDays(it) in base.off }
+        }
+        if (full * 2 >= weeks.size) return@withLock
+        store.setProgram(program.copy(startEpochDay = program.startEpochDay + 7))
+        store.setLiftState(state.copy(deloadMovedFrom = monday.toEpochDay()))
+        onChange()
+    }
+
     suspend fun moveRest() {
         if (store.settingsNow().restVersion >= forma.core.plan.Templates.REST_VERSION) return
         store.programNow()?.let { store.setProgram(forma.core.plan.Templates.restMoved(it)) }

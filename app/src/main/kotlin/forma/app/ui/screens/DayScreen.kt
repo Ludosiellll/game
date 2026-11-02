@@ -289,7 +289,7 @@ private fun DayLiftCard(s: PlannedSession, p: Program, date: LocalDate, done: Wo
         template?.let { Explained("Зачем", focusWhy(it.focus, hardRun)) }
         Explained("Цели в зале", LIFT_FOCUS.firstOrNull { it.value == p.aim.normalized().lift }?.let { "${it.label} — ${it.text.replaceFirstChar { c -> c.lowercase() }}" } ?: "")
         val lifting by LocalRepo.current.store.liftState.collectAsState(initial = forma.app.data.LiftState())
-        cycleWords(p, date, lifting.reactiveDeloadStart)?.let { Explained("Неделя цикла", "Неделя ${it.first} из ${p.blockWeeks}: ${it.second}") }
+        cycleWords(p, date, lifting.reactiveDeloadStart, lifting.deloadMovedFrom)?.let { Explained("Неделя цикла", "Неделя ${it.first} из ${p.blockWeeks}: ${it.second}") }
         Explained("Что дальше", "После каждой тренировки приложение смотрит, как прошли подходы. Все повторы сделаны с запасом — вес растёт. Не хватило — тот же вес ещё раз или чуть легче.")
     }
 }
@@ -315,12 +315,15 @@ private fun focusWhy(f: Focus, hardRun: Boolean): String = when (f) {
  * Where the lifting cycle is in the week of [date]: the week of the block and what it asks, the same words as the plan's
  * cycle card. [reactive]: the Monday of a lighter week the app set itself (weights stepping back).
  */
-internal fun cycleWords(p: Program, date: LocalDate, reactive: Long?): Pair<Int, String>? {
+internal fun cycleWords(p: Program, date: LocalDate, reactive: Long?, moved: Long? = null): Pair<Int, String>? {
     if (p.blockWeeks <= 0) return null
     val pos = (ProgramGenerator.weekIndex(p, date) - 1) % p.blockWeeks + 1
     val off = ProgramGenerator.rirOffset(p, date)
     val d = date.toEpochDay()
     return pos to when {
+        moved != null && d in moved until moved + 7 ->
+            "разгрузку перенёс на следующую неделю: в этом цикле много пропусков, они и были отдыхом. " +
+                if (off < 0) "Эта неделя — самая тяжёлая в цикле, запас на 1 повтор меньше." else "Эта неделя обычная."
         pos == p.blockWeeks && reactive != null && d in reactive until reactive + 7 ->
             "разгрузка раньше плана, потому что веса пошли назад. Вдвое меньше подходов и вес на 10 % легче, потом новый цикл."
         pos == p.blockWeeks -> "разгрузка. Вдвое меньше подходов и вес на 10 % легче. Потом новый цикл с тех же весов."

@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch { repo.updateSettings(forma.app.ui.theme.Looks::moved) }
         // The longer base rests of 31.10 in a plan made before them, once (rests the person set stay).
         lifecycleScope.launch { repo.moveRest() }
+        lifecycleScope.launch { repo.moveUnearnedLighterWeek() }
         setContent {
             CompositionLocalProvider(LocalRepo provides repo, LocalCloud provides cloud) { AppRoot() }
         }

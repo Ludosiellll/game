@@ -65,7 +65,7 @@ fun PlanScreen() {
         // The cycle is the gym's (sets, reserve, light weeks): without the gym there is nothing to say.
         if (p.templates.isNotEmpty()) FCard(gap = 6.dp) {
             SectionLabel("Цикл")
-            val cycle = cycleWords(p, today, lifting.reactiveDeloadStart)
+            val cycle = cycleWords(p, today, lifting.reactiveDeloadStart, lifting.deloadMovedFrom)
             if (cycle != null) {
                 Text("Неделя ${cycle.first} из ${p.blockWeeks}", style = T.title(22.sp))
                 Text(cycle.second.replaceFirstChar { it.uppercase() }, style = T.secondary(14.sp))
