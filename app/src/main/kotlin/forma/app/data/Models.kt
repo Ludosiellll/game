@@ -68,6 +68,8 @@ data class RunSummary(
     val strides: List<Double?>? = null,
     /** The warm-up's jog before the strides, m/s. */
     val jog: Double? = null,
+    /** An easy run done for a hard one missed earlier in the week ([forma.core.run.RunWorkout.instead]). */
+    val instead: Boolean = false,
 )
 
 /** How the person feels today: decides between the planned session, a lighter one and rest. */

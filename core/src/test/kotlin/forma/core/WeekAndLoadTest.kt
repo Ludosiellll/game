@@ -82,9 +82,9 @@ class WeekAndLoadTest {
         val p = program(hybrid, 1 to listOf(quality), 6 to listOf(long))
         val upper = week(p, mapOf(2 to listOf(copy)), mapOf(2 to listOf(false)))
         assertEquals(CatchUp.Suggestion(quality, 1), CatchUp.suggest(p, 3, upper))
-        // With legs in it they do not.
+        // With legs in it they do not: as an easy run only.
         val legs = week(p, mapOf(2 to listOf(copy)), mapOf(2 to listOf(true)))
-        assertNull(CatchUp.suggest(p, 3, legs))
+        assertEquals(CatchUp.Suggestion(quality, 1, easy = true), CatchUp.suggest(p, 3, legs))
     }
 
     @Test fun aHardRunCaughtUpClosesAMissedEasyOne() {

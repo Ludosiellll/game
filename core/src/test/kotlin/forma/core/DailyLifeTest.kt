@@ -134,8 +134,8 @@ class DailyLifeTest {
     @Test fun theLayoutRulesDecideWhatFits() {
         // Missed: Monday full body, Tuesday intervals. Today Wednesday; Thursday is a leg day.
         val p = program(hybrid, 1 to listOf(lift), 2 to listOf(quality), 4 to listOf(lift), 6 to listOf(long))
-        // Neither heavy legs nor intervals the day before heavy legs: the missed sessions wait.
-        assertNull(CatchUp.suggest(p, 3, week(p, emptyMap())))
+        // Neither heavy legs nor intervals the day before heavy legs: the legs wait, the intervals only as an easy run.
+        assertEquals(CatchUp.Suggestion(quality, 2, easy = true), CatchUp.suggest(p, 3, week(p, emptyMap())))
         // An upper-body day fits anywhere, an easy run too.
         val q = program(hybrid, 1 to listOf(liftUpper, easy), 4 to listOf(lift), 6 to listOf(long))
         assertEquals(CatchUp.Suggestion(liftUpper, 1), CatchUp.suggest(q, 3, week(q, emptyMap())))
@@ -145,9 +145,9 @@ class DailyLifeTest {
         // Missed: Monday's lift. Tuesday the intervals were done; Wednesday is free.
         val p = program(hybrid, 1 to listOf(lift), 2 to listOf(quality), 6 to listOf(long))
         assertNull(CatchUp.suggest(p, 3, week(p, mapOf(2 to listOf(quality)))))
-        // Missed: Tuesday's intervals. Wednesday was a (catch-up) leg day; Thursday is free.
+        // Missed: Tuesday's intervals. Wednesday was a (catch-up) leg day; Thursday is free: the intervals as an easy run.
         val q = program(hybrid, 2 to listOf(quality), 6 to listOf(long))
-        assertNull(CatchUp.suggest(q, 4, week(q, mapOf(3 to listOf(lift)))))
+        assertEquals(CatchUp.Suggestion(quality, 2, easy = true), CatchUp.suggest(q, 4, week(q, mapOf(3 to listOf(lift)))))
         // Without the leg day the intervals fit on Thursday.
         assertEquals(CatchUp.Suggestion(quality, 2), CatchUp.suggest(q, 4, week(q, emptyMap())))
     }

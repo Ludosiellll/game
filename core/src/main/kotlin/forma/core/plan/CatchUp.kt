@@ -22,9 +22,12 @@ object CatchUp {
         val done: List<PlannedSession>,
         val doneLegs: List<Boolean?> = emptyList(),
         val paused: Boolean = false,
+        /** For each done session (in order): an easy run done for a hard one missed before it ([CatchUp.Suggestion.easy]). */
+        val doneInstead: List<Boolean> = emptyList(),
     )
 
-    data class Suggestion(val session: PlannedSession, val plannedOn: Int)
+    /** [easy]: the missed [session] is a hard run that cannot be today (a hard day around it): done as an easy run. */
+    data class Suggestion(val session: PlannedSession, val plannedOn: Int, val easy: Boolean = false)
 
     /**
      * A planned session closed by a done one: the [index]-th planned session of [day] by the [doneIndex]-th done one of
@@ -70,13 +73,20 @@ object CatchUp {
         } else {
             from.firstOrNull { s.isHardRun && planned(it).kind == SessionKind.RUN_EASY }
         }
+        // An easy run started for a hard one missed before it (the app offers that when the hard one cannot be today):
+        // it closes that one (Denis, 4 November: Monday's tempo missed, Thursday's ahead — Wednesday's easy run is
+        // Monday's, not Saturday's). Only so marked: an easy run with Saturday's lower moved to Friday is Saturday's.
+        fun easier(s: PlannedSession, from: List<Pair<Int, Int>>, instead: Boolean) =
+            if (instead && s.kind == SessionKind.RUN_EASY) from.firstOrNull { planned(it).isHardRun } else null
         for ((doneDay, doneIndex) in spare.sortedBy { it.first }) {
-            val s = week.first { it.day == doneDay }.done[doneIndex]
+            val day = week.first { it.day == doneDay }
+            val s = day.done[doneIndex]
+            val instead = day.doneInstead.getOrNull(doneIndex) == true
             val before = open.filter { it.first < doneDay }
             // Ahead only from this plan's days: a session of the plan before a mid-week change closes nothing later; nor one
             // done on a pause day — nothing was expected then, it is beyond the plan.
             val ahead = if (doneDay >= firstDay && !week.first { it.day == doneDay }.paused) open.filter { it.first > doneDay } else emptyList()
-            val match = sameIn(s, before) ?: sameIn(s, ahead) ?: other(s, before) ?: other(s, ahead) ?: continue
+            val match = easier(s, before, instead) ?: sameIn(s, before) ?: sameIn(s, ahead) ?: other(s, before) ?: other(s, ahead) ?: continue
             open.remove(match)
             out += Close(match.first, match.second, doneDay, doneIndex)
         }
@@ -107,7 +117,10 @@ object CatchUp {
             else -> true
         }
         val emphasis = program.aim.normalized().emphasis
-        return missed.filter { fits(it.session) }.sortedWith(
+        val fitting = missed.filter { fits(it.session) }
+        // Nothing fits, but a hard run was missed: it can be today as an easy one (an easy run fits any day).
+        if (fitting.isEmpty()) return missed.lastOrNull { it.session.isHardRun }?.copy(easy = true)
+        return fitting.sortedWith(
             compareByDescending<Suggestion> {
                 when (emphasis) {
                     Emphasis.GYM -> if (it.session.kind == SessionKind.LIFT) 1 else 0

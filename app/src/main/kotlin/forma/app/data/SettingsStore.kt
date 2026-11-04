@@ -122,6 +122,8 @@ data class Settings(
     val coachStrides: CoachTerm? = null,
     /** The coach's long easy run: the last easy run of the week is a long one, until a day (the long run's own limits hold). */
     val coachLong: CoachTerm? = null,
+    /** An easy run the coach put on the day [CoachTerm.until] (off the plan): [CoachTerm.value] minutes, 0 — the plan's length. */
+    val coachRunToday: CoachTerm? = null,
 ) {
     /** [ex] on this gym's weights: the person's own step, going from its first weight when the stack starts at one. */
     fun onSteps(ex: forma.core.model.Exercise): forma.core.model.Exercise =

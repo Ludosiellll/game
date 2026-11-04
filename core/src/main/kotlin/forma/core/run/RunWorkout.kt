@@ -44,6 +44,8 @@ data class RunWorkout(
     val cutback: Boolean = false,
     /** A free run's own target, set by the runner: its laps are judged against it and the pace is said when off it. */
     val targetPace: PaceRange? = null,
+    /** An easy run done for a hard one missed earlier in the week that could not be today ([forma.core.plan.CatchUp]). */
+    val instead: Boolean = false,
 ) {
     /** Work reps (WORK segments) in the plan. */
     val reps: Int get() = segments.count { it.kind == SegmentKind.WORK }

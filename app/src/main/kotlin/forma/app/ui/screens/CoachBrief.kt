@@ -117,6 +117,22 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             val day = WEEKDAY[today.dayOfWeek.value - 1]
             val head = if (feel == Feel.SICK) "По плану было (человек болеет, не делает):" else "По плану сегодня ($day):"
             appendLine(if (todayLines.isEmpty()) "По плану сегодня ($day) отдых." else head + "\n" + todayLines.joinToString("\n"))
+            // A missed session the app offers today, and the coach's own run of today (run_today).
+            repo.catchUp(today)?.let { c ->
+                val what = when (c.session.kind) {
+                    SessionKind.LIFT -> "силовая «${program?.templates?.firstOrNull { it.id == c.session.templateId }?.title ?: c.session.templateId}»"
+                    SessionKind.RUN_QUALITY -> "тяжёлый бег"
+                    SessionKind.RUN_LONG -> "длинный бег"
+                    SessionKind.RUN_EASY -> "лёгкий бег"
+                }
+                appendLine(
+                    "Пропущено на этой неделе: $what (было в ${WEEKDAY[c.plannedOn - 1]}). Приложение предлагает сегодня " +
+                        if (c.easy) "сделать его лёгким бегом: тяжёлым нельзя, рядом тяжёлый день." else "сделать его — кнопка на «Сегодня».",
+                )
+            }
+            settings.coachRunToday?.takeIf { it.until == today.toEpochDay() }?.let {
+                appendLine("Ты поставил на сегодня лёгкий бег" + (if (it.value > 0) " ${it.value} мин" else "") + " (run_today): карточка на «Сегодня».")
+            }
         }
         // Freshness now, the number «Сегодня» shows: said first, so a dip's lowest or a week's below is not taken for it.
         repo.loadStoryNow(today)?.takeIf { it.history }?.let { st ->

@@ -37,6 +37,7 @@ import forma.app.ui.theme.T
 import forma.core.plan.DayReasons
 import forma.core.plan.Focus
 import forma.core.plan.PlannedSession
+import forma.core.plan.SessionKind
 import forma.core.plan.Program
 import forma.core.plan.ProgramGenerator
 import forma.core.run.RunExplain
@@ -73,8 +74,8 @@ fun DayScreen(date: LocalDate) {
     val catchUp by produceState<forma.core.plan.CatchUp.Suggestion?>(null, week, settings, today) { value = repo.catchUp(today) }
     // Never into an unfinished session of another day or another session: asked about first.
     val startLift = rememberLiftStart(today, nav::push)
-    fun doToday(s: PlannedSession) {
-        if (s.isRun) scope.launch { nav.push(Screen.RunSetup(repo.runFor(s.kind, today), s.kind)) }
+    fun doToday(s: PlannedSession, instead: Boolean = false) {
+        if (s.isRun) scope.launch { nav.push(Screen.RunSetup(repo.runFor(s.kind, today).let { if (instead) it.copy(instead = true) else it }, s.kind)) }
         else startLift(s.templateId!!, false)
     }
     // A hard run as things stand: after a long break the hard sessions are easy runs for a while, and before running
@@ -119,7 +120,8 @@ fun DayScreen(date: LocalDate) {
                     // Only this week's: catch-up does not reach back into the weeks before.
                     canCatchUp = missed && catchUp?.let { it.session == s && it.plannedOn == date.dayOfWeek.value && monday.plusDays(6) >= today } == true,
                     thisWeek = !today.isAfter(monday.plusDays(6)),
-                ) { doToday(s) }
+                    easy = catchUp?.easy == true,
+                ) { if (catchUp?.easy == true) doToday(PlannedSession(SessionKind.RUN_EASY), instead = true) else doToday(s) }
                 s.isRun -> DayRunCard(s, date, done, trial = date == trialOn, goal = profile?.runGoal)
                 else -> DayLiftCard(s, p, date, done, hardRun = sessions.any(hard))
             }
@@ -144,7 +146,7 @@ fun DayScreen(date: LocalDate) {
  * with what was done), or missed — said so, never as if still ahead; [canCatchUp]: today is a free day it fits.
  */
 @Composable
-private fun NotOnItsDayCard(s: PlannedSession, p: Program, later: WorkoutEntity?, canCatchUp: Boolean, thisWeek: Boolean, onToday: () -> Unit) {
+private fun NotOnItsDayCard(s: PlannedSession, p: Program, later: WorkoutEntity?, canCatchUp: Boolean, thisWeek: Boolean, easy: Boolean = false, onToday: () -> Unit) {
     val color = if (s.isRun) F.c.endurance else F.c.strength
     FCard(gap = 10.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -159,6 +161,10 @@ private fun NotOnItsDayCard(s: PlannedSession, p: Program, later: WorkoutEntity?
         }
         SectionLabel("Пропущено", color = F.c.bad)
         when {
+            canCatchUp && easy -> {
+                Text("Сегодня свободный день, но рядом тяжёлый: эту пробежку сегодня — лёгким бегом, засчитается за этот день.", style = T.secondary(14.sp))
+                forma.app.ui.components.PrimaryButton("Лёгкий бег сегодня", onToday, Modifier.fillMaxWidth(), color = color, textColor = F.c.onData)
+            }
             canCatchUp -> {
                 Text("Сегодня у тебя свободный день. Эту тренировку можно сделать сегодня, соседним она не помешает.", style = T.secondary(14.sp))
                 forma.app.ui.components.PrimaryButton("Сделать в свободный день", onToday, Modifier.fillMaxWidth(), color = color, textColor = F.c.onData)

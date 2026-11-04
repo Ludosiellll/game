@@ -56,8 +56,12 @@ select pg_temp.who(:A); select public.my_profile('Денис');
 select pg_temp.who(:B); select public.my_profile('Егор');
 select pg_temp.who(:C); select public.my_profile('Чужой');
 select pg_temp.who(:D); select public.my_profile('Открытый');
-select pg_temp.ok((public.my_profile() ->> 'listed')::boolean = false, 'listed is off by default');
+select pg_temp.ok((public.my_profile() ->> 'listed')::boolean, 'listed is on by default');
 select pg_temp.ok((public.set_listed(true) ->> 'listed')::boolean, 'D is listed');
+-- A, B and C turn it off: the cases below are of people who are not listed.
+select pg_temp.who(:A); select pg_temp.ok((public.set_listed(false) ->> 'listed')::boolean = false, 'A turns it off');
+select pg_temp.who(:B); select public.set_listed(false);
+select pg_temp.who(:C); select public.set_listed(false);
 reset role;
 insert into public.friendships (requester, addressee, accepted) values (:A, :B, true);
 set role authenticated;

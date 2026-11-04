@@ -369,6 +369,8 @@ fun FriendsContent(
 @Composable
 private fun PeopleSection(ui: FriendsUi, onListed: (Boolean) -> Unit, onPerson: (forma.app.sync.Person) -> Unit) {
     val me = ui.me
+    // Everybody is listed by default now (4 November), the ones there before too: said once, with the way out below.
+    if (me?.listed == true) ScreenHint(Hints.PEOPLE_LISTED, Hints.PEOPLE_LISTED_TEXT)
     if (me != null) {
         FCard(gap = 6.dp) {
             Toggle(

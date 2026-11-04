@@ -1888,8 +1888,12 @@ class TrainingRepository(
             val pause = paused(settings, date)
             val planned = if (program == null || pause) emptyList() else program.week.on(d)
             val mine = done.filter { it.epochDay == date.toEpochDay() }.sortedBy { it.startedAt }
-            CatchUp.Day(d, planned, mine.map(::asSession), mine.map(::legsOf), paused = pause)
+            CatchUp.Day(d, planned, mine.map(::asSession), mine.map(::legsOf), paused = pause, doneInstead = mine.map(::insteadOf))
         }
+
+    /** Whether [w] is an easy run done for a missed hard one ([RunSummary.instead]). */
+    private fun insteadOf(w: WorkoutEntity): Boolean = w.kind == Kind.RUN &&
+        w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it).instead }.getOrNull() } == true
 
     /** The first day of [monday]'s week the plan held (catch-up ignores what was planned before it). */
     private fun firstDay(program: Program?, monday: LocalDate): Int =
@@ -1932,14 +1936,15 @@ class TrainingRepository(
      * The run of [kind] on [date]. [trial]: a due trial may be this one — false for a hard day after the one the trial
      * falls on ([trialDay]), which shows what comes after it instead.
      */
-    suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false, road: Boolean = false, trial: Boolean? = null): RunWorkout {
+    /** [minutes]: an easy run of this length (the coach's run of the day); the plan's caps still hold. */
+    suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false, road: Boolean = false, trial: Boolean? = null, minutes: Int? = null): RunWorkout {
         // A due trial goes on its own day ([trialDay]): not on a hard day too soon after the legs.
         @Suppress("NAME_SHADOWING") val trial = trial ?: (kind != SessionKind.RUN_QUALITY || trialDay(date) == date)
         val saved = store.runStateNow()
         val program = store.programNow()
         // The caps of the plan as it is now: after a switch to less running, runs are no longer than it allows.
         val caps = capsOn(date)
-        val st = RunPlan.withBreak(saved, date.toEpochDay()).let {
+        val st = RunPlan.withBreak(saved, date.toEpochDay()).let { if (minutes != null && kind == SessionKind.RUN_EASY) it.copy(easyMinutes = minutes) else it }.let {
             if (caps == null) it else it.copy(easyMinutes = minOf(it.easyMinutes, caps.easyMax), longMinutes = minOf(it.longMinutes, caps.longMax))
         }.let { s -> RunPlan.weekCap(saved, date.toEpochDay())?.let { cap -> s.copy(easyMinutes = minOf(s.easyMinutes, cap), longMinutes = minOf(s.longMinutes, cap)) } ?: s }
         val profile = store.profileNow()
@@ -2383,7 +2388,7 @@ class TrainingRepository(
         val (stored, measured) = forma.core.run.RunPlan.onMeasuredLoop(workout, result) ?: (workout to result)
         val minutes = max(1, (result.durationSec / 60.0).roundToInt())
         val load = TrainingLoad.sessionLoad(result.rpe, result.durationSec / 60.0)
-        val summary = RunSummary(outcomes, minutes, load, measured.laps.orEmpty(), result.cadence, manual, result.kmSplits.orEmpty(), result.strideSpeeds, result.jogSpeed)
+        val summary = RunSummary(outcomes, minutes, load, measured.laps.orEmpty(), result.cadence, manual, result.kmSplits.orEmpty(), result.strideSpeeds, result.jogSpeed, instead = workout.instead)
         val avgPace = measured.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
         val id = db.withTransaction {
             val id = db.workouts().insert(

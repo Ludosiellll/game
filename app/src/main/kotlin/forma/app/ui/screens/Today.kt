@@ -192,6 +192,16 @@ fun TodayScreen() {
         val extra = todayItem?.offPlan.orEmpty()
         // The goal in the gym's day: the test of the max, whatever else the day holds.
         GoalTestDayCard(today)
+        // The coach's easy run of today (off the plan), until a run is done today.
+        settings.coachRunToday?.takeIf { it.until == today.toEpochDay() && extra.none { w -> w.kind == forma.app.data.Kind.RUN } && !todays.any { it.isRun } }?.let { t ->
+            CoachRunCard(t.value) {
+                scope.launch {
+                    val w = repo.runFor(SessionKind.RUN_EASY, today, minutes = t.value.takeIf { it > 0 })
+                    // A hard run missed this week that cannot be today: this easy one is for it.
+                    nav.push(Screen.RunSetup(if (catchUp?.easy == true) w.copy(instead = true) else w, SessionKind.RUN_EASY))
+                }
+            }
+        }
         when {
             repo.paused(settings, today) -> {
                 PauseCard(
@@ -215,7 +225,8 @@ fun TodayScreen() {
                     onCatchUp = { s ->
                         scope.launch {
                             if (s.kind == SessionKind.LIFT) startLift(s.templateId!!, false)
-                            else nav.push(Screen.RunSetup(repo.runFor(s.kind, today), s.kind))
+                            // The missed hard run as an easy one: marked, so it closes the missed day, not a later easy run.
+                            else nav.push(Screen.RunSetup(repo.runFor(s.kind, today).let { if (catchUp?.easy == true && s.kind == SessionKind.RUN_EASY) it.copy(instead = true) else it }, s.kind))
                         }
                     },
                 )
@@ -641,12 +652,18 @@ private fun RestCard(
             SectionLabel("Пропущено", color = if (s.isRun) F.c.endurance else F.c.strength)
             Text(sessionTitle(s, program), style = T.title(22.sp))
             Text(
-                "Было в плане на ${DAY_ACCUSATIVE[catchUp.plannedOn - 1]}. Можно сделать сегодня вместо отдыха, " +
-                    "завтрашнему плану это не помешает.",
+                if (catchUp.easy) {
+                    "Было в плане на ${DAY_ACCUSATIVE[catchUp.plannedOn - 1]}. Тяжёлым сегодня нельзя: рядом другой тяжёлый день, " +
+                        "а два подряд перегружают ноги. Сделай его лёгким бегом — засчитается за ${DAY_ACCUSATIVE[catchUp.plannedOn - 1]}."
+                } else {
+                    "Было в плане на ${DAY_ACCUSATIVE[catchUp.plannedOn - 1]}. Можно сделать сегодня вместо отдыха, " +
+                        "завтрашнему плану это не помешает."
+                },
                 style = T.secondary(14.sp),
             )
             PrimaryButton(
-                "Сделать сегодня", { onCatchUp(s) }, Modifier.fillMaxWidth(),
+                if (catchUp.easy) "Лёгкий бег сегодня" else "Сделать сегодня",
+                { onCatchUp(if (catchUp.easy) PlannedSession(SessionKind.RUN_EASY) else s) }, Modifier.fillMaxWidth(),
                 color = if (s.isRun) F.c.endurance else F.c.strength, textColor = F.c.onData,
             )
         }
@@ -662,6 +679,17 @@ private fun RestCard(
         }
     }
     NextPlannedCard(today)
+}
+
+/** The easy run the coach put on today: [minutes] (0 — the plan's easy length). */
+@Composable
+private fun CoachRunCard(minutes: Int, onStart: () -> Unit) {
+    FCard(outline = F.c.endurance) {
+        SectionLabel("От тренера", color = F.c.endurance)
+        Text(if (minutes > 0) "Лёгкий бег · $minutes мин" else "Лёгкий бег", style = T.title(22.sp))
+        Text("Вне плана, по твоей просьбе. Спокойно, чтобы можно было говорить, без ускорений.", style = T.secondary(14.sp))
+        PrimaryButton("Начать", onStart, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData)
+    }
 }
 
 /** "на понедельник", "на среду": day names after «на». */

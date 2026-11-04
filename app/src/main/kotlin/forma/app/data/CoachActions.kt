@@ -76,6 +76,7 @@ object CoachActions {
     const val RESUME = "resume"
     const val RATE = "rate_workout"
     const val EASY = "set_easy_run_minutes"
+    const val RUN_TODAY = "run_today"
     const val STRIDES = "set_strides"
     const val LONG = "long_easy_run"
     const val STEP = "set_weight_step"
@@ -153,6 +154,8 @@ object CoachActions {
             Param("day", "string", "дата пробежки ГГГГ-ММ-ДД; не указывай — последняя пробежка", required = false))
         fn(EASY, "Длина лёгкого бега с этого дня (минуты); дальше она меняется по правилам приложения. Не больше потолка под цель, не больше 110 % самой длинной пробежки за 30 дней и не больше +15 % (минимум +5 мин) за неделю. Второе изменение за неделю и сокращение больше чем на 10 % за две недели человек подтверждает.",
             Param("minutes", "integer", "минуты"))
+        fn(RUN_TODAY, "Лёгкая пробежка сегодня вне плана: человек хочет пробежать сегодня (пропустил бег, свободный день). На экране «Сегодня» появится карточка с кнопкой «Начать». Только лёгкая: тяжёлый бег рядом с другим тяжёлым днём вреден, а пропущенный тяжёлый, когда он подходит, приложение само предлагает сделать сегодня. Не в день, где бег уже есть.",
+            Param("minutes", "integer", "минуты, 15–60; не сказано — как лёгкий бег по плану", required = false))
         fn(STRIDES, "Сколько ускорений после лёгкого бега в дни, когда они есть в плане, на weeks недель (0 — без ускорений).",
             Param("count", "integer", "0–8 (пока бег новый — до 6)"), Param("weeks", "integer", "1–$MAX_WEEKS"))
         fn(LONG, "Последний лёгкий бег недели — длинный лёгкий, на weeks недель (0 — отменить). Длина длинного растёт по правилам приложения: до часа, в день с залом — до 45 мин.",
@@ -627,6 +630,29 @@ object CoachActions {
                     val term = CoachTerm(n, until.toEpochDay())
                     repo.updateSettings { it.copy(coachStrides = term) }
                     CoachCall("undo_strides", args("old" to old?.let { AppJson.encodeToJsonElement(CoachTerm.serializer(), it) }, "expect" to AppJson.encodeToJsonElement(CoachTerm.serializer(), term)))
+                }
+            }
+            RUN_TODAY -> {
+                val min = a["minutes"]?.let { a.int("minutes") ?: return no("Минуты — целое число.") }
+                val program = repo.store.programNow() ?: return no("Нет плана.")
+                val st = repo.store.runStateNow()
+                if (!st.canRunContinuously) return no("Пока бег чередуется с ходьбой: пробежки ведёт лестница приложения.")
+                if (repo.paused(s, today)) return no("Сейчас пауза в плане.")
+                if (s.feelOn(today) == forma.app.data.Feel.SICK) return no("Сегодня отмечено «Болею»: бегать не нужно.")
+                if (program.week.on(today.dayOfWeek.value).any { it.isRun }) return no("Сегодня по плану уже есть пробежка — она на экране «Сегодня».")
+                if (repo.db.workouts().allDone().any { it.kind == Kind.RUN && it.epochDay == today.toEpochDay() }) return no("Сегодня пробежка уже сделана.")
+                if (s.coachRunToday?.until == today.toEpochDay() && (s.coachRunToday?.value ?: 0) == (min ?: 0)) return no("Эта пробежка на сегодня уже стоит.")
+                val middle = repo.store.profileNow()?.runGoal?.middleDistance == true
+                val cap = ProgramGenerator.runCaps(program, middle).easyMax
+                val longest = st.longestRecent(today.toEpochDay() + 1)
+                val limit = listOfNotNull(cap, longest?.let { (it * 1.10).toInt().coerceAtLeast(st.easyMinutes) }, 60).min()
+                if (min != null && min < 15) return no("Пробежка — не короче 15 минут.")
+                if (min != null && min > limit) return no("Сегодня можно до $limit мин: " + if (limit == cap) "это потолок лёгкого бега под твою цель." else "не длиннее 110 % самой длинной пробежки за месяц.")
+                auto("На сегодня лёгкий бег ${min ?: st.easyMinutes} мин: на экране «Сегодня» — «Начать». В разговорном темпе, без ускорений.") {
+                    val old = repo.store.settingsNow().coachRunToday
+                    val term = CoachTerm(min ?: 0, today.toEpochDay())
+                    repo.updateSettings { it.copy(coachRunToday = term) }
+                    CoachCall("undo_run_today", args("old" to old?.let { AppJson.encodeToJsonElement(CoachTerm.serializer(), it) }, "expect" to AppJson.encodeToJsonElement(CoachTerm.serializer(), term)))
                 }
             }
             LONG -> {
@@ -1370,12 +1396,18 @@ object CoachActions {
                 if (now.easyMinutes != a.int("expect")) false
                 else { repo.store.setRunState(now.copy(easyMinutes = a.int("minutes")!!)); repo.changed(); true }
             }
-            "undo_strides", "undo_long" -> {
+            "undo_strides", "undo_long", "undo_run_today" -> {
                 val s = repo.store.settingsNow()
-                val now = if (call.name == "undo_strides") s.coachStrides else s.coachLong
+                val now = when (call.name) { "undo_strides" -> s.coachStrides; "undo_long" -> s.coachLong; else -> s.coachRunToday }
                 if (now != term(a["expect"])) false
                 else {
-                    repo.updateSettings { if (call.name == "undo_strides") it.copy(coachStrides = term(a["old"])) else it.copy(coachLong = term(a["old"])) }
+                    repo.updateSettings {
+                        when (call.name) {
+                            "undo_strides" -> it.copy(coachStrides = term(a["old"]))
+                            "undo_long" -> it.copy(coachLong = term(a["old"]))
+                            else -> it.copy(coachRunToday = term(a["old"]))
+                        }
+                    }
                     true
                 }
             }
