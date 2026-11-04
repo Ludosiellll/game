@@ -69,8 +69,7 @@ fun GymGoalScreen() {
     val chosen = id ?: candidates.firstOrNull()
     val typed = kgText.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it in 1.0..500.0 }
     // On the lift's step in this gym: a weight that cannot be put on is no goal to test.
-    val step = chosen?.let { c -> settings.steps[c] ?: Catalog[c].stepAt(typed ?: 0.0) }
-    val kg = typed?.let { t -> step?.let { st -> (kotlin.math.round(t / st) * st).takeIf { it > 0 } } ?: t }
+    val kg = typed?.let { t -> chosen?.let { c -> settings.onSteps(Catalog[c]).roundW(t).takeIf { it > 0 } } ?: t }
     val today = repo.today()
     val date = if (dateText.isBlank()) null else parseRaceDay(dateText, today)?.takeIf { it.isAfter(today) }
     val dateBad = dateText.isNotBlank() && date == null
@@ -117,7 +116,7 @@ fun GymGoalScreen() {
             style = T.secondary(13.sp).let { if (dateBad) it.copy(color = F.c.warn) else it },
         )
         if (typed != null && kg != null && kotlin.math.abs(kg - typed) > 1e-9) {
-            Text("Шаг веса в твоём зале — ${Ru.kg(step!!)} кг, поэтому цель — ${Ru.kg(kg)} кг.", style = T.secondary(13.sp))
+            Text("Шаг веса в твоём зале — ${Ru.kg(settings.onSteps(Catalog[chosen!!]).stepAt(kg))} кг, поэтому цель — ${Ru.kg(kg)} кг.", style = T.secondary(13.sp))
         }
         if (draft != null) {
             FCard(gap = 8.dp) {

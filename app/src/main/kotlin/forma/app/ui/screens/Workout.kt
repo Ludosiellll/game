@@ -118,26 +118,21 @@ private const val UNDO_MS = 8_000L
 internal var finishOnOpen: Long? = null
 
 /** The next weight up from [w] on [ex]'s steps ([exerciseOf]): a weight off the steps lands on the next one there is. */
-private fun gridUp(ex: forma.core.model.Exercise, w: Double): Double {
-    val st = ex.stepAt(w)
-    return kotlin.math.floor(w / st + 1e-9) * st + st
-}
+private fun gridUp(ex: forma.core.model.Exercise, w: Double): Double = ex.upFrom(w)
 
-/** The next weight down from [w] on [ex]'s steps (finer below the light dumbbells' bound). */
-private fun gridDown(ex: forma.core.model.Exercise, w: Double): Double {
-    val st = ex.stepAt(w - 1e-6)
-    return kotlin.math.ceil(w / st - 1e-9) * st - st
-}
+/** The next weight down from [w] on [ex]'s steps (finer below the light dumbbells' bound; a stack not below its first). */
+private fun gridDown(ex: forma.core.model.Exercise, w: Double): Double = ex.downFrom(w)
 
 /**
- * The exercise [id] on this gym's weight steps: the person's own step from [steps] (set on the plan, or by the coach
+ * The exercise [id] on this gym's weight steps: the person's own step from [settings] (set on the plan, or by the coach
  * mid-session), or — before the settings are read — the one the session started with ([item]). The hints after a set
- * and the "−/+" buttons go by it: a 4 kg machine stack never gets a 5 kg jump.
+ * and the "−/+" buttons go by it: a 4 kg machine stack never gets a 5 kg jump, a stack from 9 by 5 goes 9, 14, 19.
  */
-internal fun exerciseOf(id: String, steps: Map<String, Double>?, item: LiftItem? = null): forma.core.model.Exercise {
+internal fun exerciseOf(id: String, settings: forma.app.data.Settings?, item: LiftItem? = null): forma.core.model.Exercise {
     val e = Catalog[id]
-    val own = if (steps != null) steps[id] else item?.step?.takeIf { it != e.step }
-    return own?.let { e.copy(step = it, fineStep = null) } ?: e
+    if (settings != null) return settings.onSteps(e)
+    val own = item?.takeIf { it.step != e.step || it.stepFrom > 0 } ?: return e
+    return e.copy(step = own.step, fineStep = null, stepFrom = own.stepFrom)
 }
 
 /** Values being edited for the next set of one exercise. [exerciseId]: the exercise they were typed for (a swap puts another one at the same position). */
@@ -236,7 +231,7 @@ fun WorkoutScreen(workoutId: Long) {
     /** Where the fields of [item] start before its first set: the plan's weight, the start guess, or the empty bar. */
     fun planStart(item: LiftItem): Double {
         val p = item.prescription
-        val e = exerciseOf(item.exerciseId, stored?.steps, item)
+        val e = exerciseOf(item.exerciseId, stored, item)
         return p.weight ?: p.startHint ?: if (e.load == LoadKind.EXTERNAL) (e.bar ?: item.step * 4) else 0.0
     }
 
@@ -245,7 +240,7 @@ fun WorkoutScreen(workoutId: Long) {
      * out from them, or the last set again once the planned ones are done; the plan's start with none.
      */
     fun resume(inp: SetInput, item: LiftItem, logged: List<SetEntity>) {
-        val e = exerciseOf(item.exerciseId, stored?.steps, item)
+        val e = exerciseOf(item.exerciseId, stored, item)
         val last = logged.lastOrNull()
         inp.rir = null
         if (last == null) {
@@ -281,7 +276,7 @@ fun WorkoutScreen(workoutId: Long) {
         current = plan.items.firstOrNull { count(it.position) < it.prescription.sets }?.position ?: plan.items.first().position
     }
     val item = plan.items.firstOrNull { it.position == current } ?: plan.items.firstOrNull { count(it.position) < it.prescription.sets } ?: plan.items.first()
-    val ex = exerciseOf(item.exerciseId, stored?.steps, item)
+    val ex = exerciseOf(item.exerciseId, stored, item)
     val inp = input(item)
     val note = stored?.notes?.get(item.exerciseId)
 
@@ -680,7 +675,7 @@ fun WorkoutScreen(workoutId: Long) {
                         } else {
                             advice.remove(key)
                             if (nx != null) {
-                                val nxEx = exerciseOf(nx.exerciseId, stored?.steps, nx)
+                                val nxEx = exerciseOf(nx.exerciseId, stored, nx)
                                 nextKey = keyOf(nx)
                                 nextBefore = advice[nextKey]
                                 advice[nextKey] = recordText + "«${logged.name}» сделано. Дальше — ${nx.name}: ${Texts.prescription(nxEx, nx.prescription)}. " +

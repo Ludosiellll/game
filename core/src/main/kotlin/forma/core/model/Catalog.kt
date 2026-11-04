@@ -57,11 +57,36 @@ data class Exercise(
     val custom: Boolean = false,
     /** A removed own exercise: its history still opens, it is no longer offered. */
     val archived: Boolean = false,
+    /**
+     * The weight the steps go from in this person's gym: a machine stack 9, 14, 19 … is [step] 5 from 9 (Denis's
+     * lateral raise machine). 0: multiples of the step. Set with the person's own step, never in the catalog.
+     */
+    val stepFrom: Double = 0.0,
 ) {
     val perHand: Boolean get() = equipment == Equipment.DUMBBELL
 
     /** The smallest practical change of the load around [weight]. */
     fun stepAt(weight: Double): Double = if (fineStep != null && weight < fineBelow - 1e-9) fineStep else step
+
+    /** [x] down to a weight this exercise can be set to (by [step] from [stepFrom], never below it). */
+    fun floorW(x: Double, step: Double = stepAt(x)): Double = forma.core.floorTo(x, step, stepFrom)
+
+    /** [x] to the nearest weight this exercise can be set to. */
+    fun roundW(x: Double, step: Double = stepAt(x)): Double = forma.core.roundTo(x, step, stepFrom)
+
+    /** The next weight up from [w] (a weight off the steps lands on the next one there is). */
+    fun upFrom(w: Double): Double {
+        val st = stepAt(w)
+        if (stepFrom > 0 && w < stepFrom - 1e-9) return stepFrom
+        return stepFrom + kotlin.math.floor((w - stepFrom) / st + 1e-9) * st + st
+    }
+
+    /** The next weight down from [w]; on a stack from [stepFrom], not below it. */
+    fun downFrom(w: Double): Double {
+        val st = stepAt(w - 1e-6)
+        val down = stepFrom + kotlin.math.ceil((w - stepFrom) / st - 1e-9) * st - st
+        return if (stepFrom > 0) maxOf(stepFrom, down) else down
+    }
 }
 
 object Catalog {

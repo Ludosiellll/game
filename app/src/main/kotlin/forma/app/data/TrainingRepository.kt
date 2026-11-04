@@ -459,10 +459,7 @@ class TrainingRepository(
         onChange()
     }
 
-    private fun exercise(id: String, settings: Settings): Exercise {
-        val ex = Catalog[id]
-        return settings.steps[id]?.let { ex.copy(step = it, fineStep = null) } ?: ex
-    }
+    private fun exercise(id: String, settings: Settings): Exercise = settings.onSteps(Catalog[id])
 
     private fun SlotStateEntity.toState() = SlotState(weight, reps, stalls, misses, sessions, linear, steady, cutFrom, cutReps)
 
@@ -946,7 +943,7 @@ class TrainingRepository(
             // The working weight, or the first time the weight the search starts from.
             val work = p.weight ?: p.startHint?.takeIf { p.calibrate && it > 0 }
             val heavy = work != null && ex.load == LoadKind.EXTERNAL && ex.compound && !deload
-            val single = if (heavy && fresh) WarmUp.single(work!!, ex.step, bar) else emptyList()
+            val single = if (heavy && fresh) WarmUp.single(work!!, ex.step, bar, ex.stepFrom) else emptyList()
             val out = when {
                 item.slot.role == SlotRole.MAIN && item.warmups.isNotEmpty() -> item.copy(warmups = if (fresh) item.warmups else item.warmups.takeLast(2))
                 single.isNotEmpty() -> item.copy(warmups = single)
@@ -1107,7 +1104,7 @@ class TrainingRepository(
         // The ramp leads to the working weight, or the first time to the weight to start the search from.
         val work = p.weight ?: p.startHint?.takeIf { p.calibrate }
         val warm = if (spec.role == SlotRole.MAIN && work != null && work > 0 && ex.load == LoadKind.EXTERNAL && !deload) {
-            WarmUp.sets(work, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
+            WarmUp.sets(work, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null, ex.stepFrom)
         } else emptyList()
         // How this person recovers on this exercise: reps lost from set to set after the rest they took.
         // Own rest belongs to the place in the plan: it stays after a swap, and one set for a day stays on that day.
@@ -1122,7 +1119,7 @@ class TrainingRepository(
             spec.restSec,
         )
         return LiftItem(
-            position, spec, ex.id, ex.name, p, warm, ex.step, restShift = shift, restOwn = ownRest,
+            position, spec, ex.id, ex.name, p, warm, ex.step, stepFrom = ex.stepFrom, restShift = shift, restOwn = ownRest,
             restWhy = when {
                 shift > 0 -> "Отдых здесь у тебя на ${shift} с длиннее. В прошлых тренировках после обычного отдыха ты терял " +
                     "в следующем подходе ${if (shift >= 60) "3 повтора и больше" else "2 повтора и больше"}."
@@ -1471,9 +1468,20 @@ class TrainingRepository(
         onChange()
     }
 
-    /** The weight step of [exerciseId] in this gym from now on; its own step ([default]) clears the override. */
-    suspend fun setStep(exerciseId: String, step: Double, default: Double) {
-        store.editSettings { s -> s.copy(steps = if (step == default) s.steps - exerciseId else s.steps + (exerciseId to step)) }
+    /**
+     * The weight step of [exerciseId] in this gym from now on, going from [from] (a machine stack 9, 14, 19 …: step 5
+     * from 9; 0 — multiples of the step; null — as it was); its own step ([default]) from 0 clears the override.
+     */
+    suspend fun setStep(exerciseId: String, step: Double, default: Double, from: Double? = null) {
+        store.editSettings { s ->
+            // Not said: the stack's first weight stays as it was (a step changed on the plan keeps it).
+            val from = from ?: s.stepsFrom[exerciseId] ?: 0.0
+            if (step == default && from <= 0.0) s.copy(steps = s.steps - exerciseId, stepsFrom = s.stepsFrom - exerciseId)
+            else s.copy(
+                steps = s.steps + (exerciseId to step),
+                stepsFrom = if (from > 0.0) s.stepsFrom + (exerciseId to from) else s.stepsFrom - exerciseId,
+            )
+        }
         restepActive(exerciseId)
         onChange()
     }
@@ -1489,9 +1497,8 @@ class TrainingRepository(
         val ex = exercise(exerciseId, store.settingsNow())
         val items = plan.items.map { i ->
             if (i.exerciseId != exerciseId || i.position in started || i.prescription.phase == Phase.TEST) i
-            else i.copy(step = ex.step, prescription = i.prescription.weight?.let { wt ->
-                val st = ex.stepAt(wt)
-                i.prescription.copy(weight = (kotlin.math.floor(wt / st + 1e-9) * st).coerceAtLeast(Progression.minWeight(ex, store.profileNow()?.bodyWeightKg ?: 75.0)))
+            else i.copy(step = ex.step, stepFrom = ex.stepFrom, prescription = i.prescription.weight?.let { wt ->
+                i.prescription.copy(weight = ex.floorW(wt).coerceAtLeast(Progression.minWeight(ex, store.profileNow()?.bodyWeightKg ?: 75.0)))
             } ?: i.prescription)
         }
         if (items != plan.items) replacePlan(w.id, plan.copy(items = items))

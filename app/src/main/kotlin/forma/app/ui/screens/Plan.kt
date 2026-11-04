@@ -309,10 +309,12 @@ private fun TemplateCard(t: Template) {
             canRemove = kept > 1,
             step = if (loaded) settings.steps[exId] ?: ex!!.step else null,
             defaultStep = ex?.step ?: 2.5,
-            onSave = { n, reps, rest, st ->
+            stepFrom = settings.stepsFrom[exId] ?: 0.0,
+            stack = ex?.equipment == forma.core.model.Equipment.MACHINE || ex?.equipment == forma.core.model.Equipment.CABLE,
+            onSave = { n, reps, rest, st, from ->
                 scope.launch {
                     repo.tunePlan(key, planned, n, reps, rest)
-                    if (st != null && ex != null) repo.setStep(exId, st, ex.step)
+                    if (st != null && ex != null) repo.setStep(exId, st, ex.step, from)
                 }
                 editing = -1
             },
@@ -363,8 +365,8 @@ internal fun swapNote(was: forma.core.strength.SlotSpec, now: forma.core.strengt
 @Composable
 private fun PlanExerciseDialog(
     name: String, sets: Int, planned: Int, reps: Pair<Int, Int>, plannedReps: Pair<Int, Int>, timed: Boolean,
-    rest: Int, plannedRest: Int, canRemove: Boolean, step: Double?, defaultStep: Double,
-    onSave: (Int, Pair<Int, Int>, Int, Double?) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, removeNote: String,
+    rest: Int, plannedRest: Int, canRemove: Boolean, step: Double?, defaultStep: Double, stepFrom: Double = 0.0, stack: Boolean = false,
+    onSave: (Int, Pair<Int, Int>, Int, Double?, Double?) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, removeNote: String,
     swapNote: String?, onHistory: () -> Unit, onDismiss: () -> Unit,
 ) {
     var n by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(sets) }
@@ -372,6 +374,8 @@ private fun PlanExerciseDialog(
     var hi by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(reps.second) }
     var rs by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(rest) }
     var st by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(step) }
+    // Buttons, not a text field: a field in this dialog never lets the screen settle (tests hang on it).
+    var from by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableDoubleStateOf(stepFrom) }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = F.c.surface,
@@ -420,6 +424,18 @@ private fun PlanExerciseDialog(
                             forma.app.ui.components.Chip(Ru.kg(v), chosen == v, { st = v }, Modifier.weight(1f), minWidth = 0.dp)
                         }
                     }
+                    // A machine stack that starts at a weight: 9, 14, 19 … is a 5 kg step from 9 (machines and cables only).
+                    if (stack || from > 0) Text("Первый вес тренажёра — если вес идёт не с нуля (9, 14, 19 …)", style = T.secondary(13.sp))
+                    if (stack || from > 0) forma.app.ui.components.Stepper(
+                        if (from > 0) Ru.kg(from) else "0", "кг",
+                        onMinus = { from = (from - 1).coerceAtLeast(0.0) }, onPlus = { from = (from + 1).coerceAtMost(100.0) },
+                        minusLabel = "Первый вес меньше", plusLabel = "Первый вес больше",
+                    )
+                    if (stack || from > 0) Text(
+                        if (from > 0) "Вес будет только ${listOf(0, 1, 2, 3).joinToString(", ") { Ru.kg(from + it * chosen) }} … кг."
+                        else "Вес кратен шагу: ${listOf(1, 2, 3).joinToString(", ") { Ru.kg(it * chosen) }} … кг.",
+                        style = T.secondary(12.sp),
+                    )
                 }
                 GhostButton("История и прогресс", onHistory, Modifier.fillMaxWidth())
                 GhostButton("Заменить упражнение", onSwap, Modifier.fillMaxWidth())
@@ -430,7 +446,7 @@ private fun PlanExerciseDialog(
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton({ onSave(n, lo to hi, rs, st) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+            androidx.compose.material3.TextButton({ onSave(n, lo to hi, rs, st, from) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
         },
         dismissButton = { androidx.compose.material3.TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
     )

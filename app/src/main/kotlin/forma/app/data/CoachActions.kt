@@ -157,8 +157,9 @@ object CoachActions {
             Param("count", "integer", "0–8 (пока бег новый — до 6)"), Param("weeks", "integer", "1–$MAX_WEEKS"))
         fn(LONG, "Последний лёгкий бег недели — длинный лёгкий, на weeks недель (0 — отменить). Длина длинного растёт по правилам приложения: до часа, в день с залом — до 45 мин.",
             Param("weeks", "integer", "0–$MAX_WEEKS"))
-        fn(STEP, "Шаг веса упражнения в зале человека — только когда он говорит, как меняется вес у снаряда в его зале (гантели через 2,5 кг, тренажёр через 4 кг). По этому шагу приложение прибавляет вес — сразу, и в идущей тренировке. Не для того, чтобы поднять или снизить вес — для этого set_working_weight.",
-            exercise, Param("step_kg", "number", "кг, 0,25–20"))
+        fn(STEP, "Шаг веса упражнения в зале человека — только когда он говорит, как меняется вес у снаряда в его зале (гантели через 2,5 кг, тренажёр через 4 кг). Тренажёр, где вес идёт не с нуля (9, 14, 19, 24 кг — шаг 5 от 9), — step_kg 5 и from_kg 9. По этому шагу приложение прибавляет вес — сразу, и в идущей тренировке. Не для того, чтобы поднять или снизить вес — для этого set_working_weight.",
+            exercise, Param("step_kg", "number", "кг, 0,25–20"),
+            Param("from_kg", "number", "первый (самый лёгкий) вес тренажёра, если вес идёт не кратно шагу: 9 для 9, 14, 19 …; 0 — кратно шагу. Не сказано — как было", required = false))
         fn(WEIGHT, "Рабочий вес упражнения на следующие тренировки, когда человек стабильно может больше или меньше, чем даёт приложение. Человек подтверждает кнопкой. Не больше 25 % за раз, тяжелее — только в пределах расчётного максимума с запасом плана, не ниже 85 % лучшего за 8 недель. Упражнение, которого ещё не было, первая тренировка подбирает сама. На вопрос «почему» сначала объясни.",
             exercise, Param("kg", "number", "кг (для упражнений с весом тела — добавочный вес)"), session)
         fn(REMEMBER, "Запомнить о человеке что-то важное надолго: нравится или нет, травмы, что есть в зале, расписание. Коротко, одной фразой.", Param("text", "string", "до $NOTE_LEN знаков"))
@@ -405,7 +406,7 @@ object CoachActions {
         return if (scored.getOrNull(1)?.second == first.second && norm(first.first.name) != norm(query)) null else first.first
     }
 
-    private fun exercise(id: String, s: Settings): Exercise = Catalog[id].let { ex -> s.steps[id]?.let { ex.copy(step = it, fineStep = null) } ?: ex }
+    private fun exercise(id: String, s: Settings): Exercise = s.onSteps(Catalog[id])
 
     private fun name(id: String) = Catalog.find(id)?.name ?: id
 
@@ -646,25 +647,34 @@ object CoachActions {
             STEP -> {
                 val q = a.str("exercise") ?: return no("Не сказано, какое упражнение.")
                 val step = a.num("step_kg")?.takeIf { it in 0.25..20.0 } ?: return no("Шаг — от 0,25 до 20 кг.")
+                val fromSaid = a["from_kg"]?.let { a.num("from_kg")?.takeIf { it in 0.0..300.0 } ?: return no("Первый вес тренажёра — от 0 до 300 кг.") }
                 val found = find(places(repo), q, null)
                 val ex = found.firstOrNull()?.let { Catalog[it.exerciseId] } ?: catalog(q) ?: return no("Не нашёл упражнение «$q».")
                 if (ex.load != LoadKind.EXTERNAL && ex.load != LoadKind.BODYWEIGHT_PLUS) return no("У «${ex.name}» нет веса.")
                 val was = s.steps[ex.id] ?: ex.step
-                if (abs(was - step) < 1e-9) return no("Шаг «${ex.name}» и так ${Ru.kg(step)} кг.")
-                // The weights now land on the new step (down): the step must not cut them more than a weight change may.
+                val wasFrom = s.stepsFrom[ex.id] ?: 0.0
+                val from = fromSaid ?: wasFrom
+                if (abs(was - step) < 1e-9 && abs(wasFrom - from) < 1e-9) {
+                    return no("Шаг «${ex.name}» и так ${Ru.kg(step)} кг" + (if (from > 0) " от ${Ru.kg(from)} кг." else "."))
+                }
+                // The weights now land on the new steps (down): the step must not cut them more than a weight change may.
+                fun on(w: Double) = forma.core.floorTo(w, step, from)
                 val weights = found.filter { it.exerciseId == ex.id }.mapNotNull { repo.db.state().slot(it.tuned.key)?.weight }.filter { it > 0 }
-                val cut = weights.maxOfOrNull { (it - down(it, step)) / it } ?: 0.0
+                val cut = weights.maxOfOrNull { (it - on(it)) / it } ?: 0.0
                 if (cut > WEIGHT_MAX + 1e-9) {
-                    val w = weights.maxBy { (it - down(it, step)) / it }
-                    return no("С шагом ${Ru.kg(step)} кг вес упал бы с ${Ru.kg(w)} до ${Ru.kg(down(w, step))} кг — слишком много.")
+                    val w = weights.maxBy { (it - on(it)) / it }
+                    return no("С шагом ${Ru.kg(step)} кг вес упал бы с ${Ru.kg(w)} до ${Ru.kg(on(w))} кг — слишком много.")
                 }
                 // A step that is a large part of the weight (20 kg on 60 kg) makes every later jump that large: the person says.
                 val coarse = weights.any { step > it * 0.3 }
                 val sure = cut <= WEIGHT_AUTO + 1e-9 && !coarse && (weights.isNotEmpty() || step <= 5.0)
-                either(sure, "Шаг веса «${ex.name}»: ${Ru.kg(was)} → ${Ru.kg(step)} кг. Вес будет меняться по ${Ru.kg(step)} кг." +
-                    (if (cut > 1e-9) " Нынешний вес станет кратен шагу (вниз)." else "")) {
-                    repo.setStep(ex.id, step, ex.step)
-                    CoachCall("undo_step", args("exercise" to ex.id, "step" to was, "expect" to step))
+                val stack = if (from > 0) listOf(0, 1, 2, 3).joinToString(", ") { Ru.kg(from + it * step) } + " … кг" else null
+                either(sure, "Шаг веса «${ex.name}»: " +
+                    (if (stack != null) "вес будет только $stack (шаг ${Ru.kg(step)} кг от ${Ru.kg(from)})."
+                    else "${Ru.kg(was)} → ${Ru.kg(step)} кг. Вес будет меняться по ${Ru.kg(step)} кг.") +
+                    (if (cut > 1e-9) " Нынешний вес встанет на ближний вес тренажёра (вниз)." else "")) {
+                    repo.setStep(ex.id, step, ex.step, from)
+                    CoachCall("undo_step", args("exercise" to ex.id, "step" to was, "from" to wasFrom, "expect" to step, "expect_from" to from))
                 }
             }
             WEIGHT -> {
@@ -685,7 +695,8 @@ object CoachActions {
                 val bodyWeight = repo.store.profileNow()?.bodyWeightKg ?: 75.0
                 if (kg < 0 && !ex.assisted) return no("Вес не может быть меньше нуля.")
                 if (ex.assisted && kg < -Progression.maxAssist(ex, bodyWeight)) return no("Такой помощи тренажёр не даёт.")
-                val w = down(kg, ex.stepAt(kg))
+                // On this gym's weights: a stack from 9 by 5 takes 19, not 20.
+                val w = if (kg > 0 && ex.stepFrom > 0) ex.floorW(kg) else down(kg, ex.stepAt(kg))
                 val row = repo.db.state().slot(p.tuned.key)
                 val old = row?.weight
                 val stat = repo.db.state().stat(ex.id)
@@ -1370,8 +1381,11 @@ object CoachActions {
             }
             "undo_step" -> {
                 val id = a.str("exercise")!!
-                val now = repo.store.settingsNow().steps[id] ?: Catalog[id].step
-                if (abs(now - a.num("expect")!!) > 1e-9) false else { repo.setStep(id, a.num("step")!!, Catalog[id].step); true }
+                val st = repo.store.settingsNow()
+                val now = st.steps[id] ?: Catalog[id].step
+                val nowFrom = st.stepsFrom[id] ?: 0.0
+                if (abs(now - a.num("expect")!!) > 1e-9 || abs(nowFrom - (a.num("expect_from") ?: 0.0)) > 1e-9) false
+                else { repo.setStep(id, a.num("step")!!, Catalog[id].step, a.num("from") ?: 0.0); true }
             }
             "undo_weight" -> {
                 val key = a.str("key")!!

@@ -174,7 +174,7 @@ class CoachSessionNowTest {
         assertEquals(4.0, now.step, 1e-9)
         now.prescription.weight?.let { w -> assertEquals(0.0, w % 4.0, 1e-9, "weight $w on the 4 kg step") }
         // The screen's hints after a set go by the person's step, not the catalog's (a 4 kg stack never gets 5).
-        val ex = exerciseOf("lat_pulldown", repo.store.settingsNow().steps)
+        val ex = exerciseOf("lat_pulldown", repo.store.settingsNow())
         assertEquals(4.0, ex.step, 1e-9)
         val p = now.prescription.copy(weight = 48.0, reps = 8, sets = 3, rir = 2, calibrate = false)
         val next = Progression.nextSet(ex, p, listOf(DoneSet(48.0, 14, 4)), 71.0)!!

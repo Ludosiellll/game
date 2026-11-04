@@ -113,8 +113,8 @@ fun ExerciseScreen(exerciseId: String) {
                         // Down to the step of this gym (the user's own, else the exercise's): "you can do it" must not
                         // promise more than the estimate, nor a weight the gym does not have.
                         val load = OneRm.loadFor(e1rm, r)
-                        val step = settings.steps[ex.id] ?: ex.stepAt(load)
-                        NumText(forma.app.ui.Texts.weight(ex, kotlin.math.floor(load / step + 1e-9) * step), style = T.number(14.sp, FontWeight.Bold))
+                        val on = settings.onSteps(ex)
+                        NumText(forma.app.ui.Texts.weight(ex, on.floorW(load)), style = T.number(14.sp, FontWeight.Bold))
                     }
                 }
             }

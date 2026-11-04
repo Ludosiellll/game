@@ -222,7 +222,7 @@ internal suspend fun inProgress(repo: TrainingRepository): String = buildString 
         else -> plan.items.indexOf(lastItem).let { i -> plan.items.drop(i + 1) + plan.items.take(i) }.firstOrNull { count(it) < it.prescription.sets }
     }
     for (i in plan.items) {
-        val ex = forma.core.model.Catalog[i.exerciseId].let { e -> settings.steps[e.id]?.let { e.copy(step = it, fineStep = null) } ?: e }
+        val ex = settings.onSteps(forma.core.model.Catalog[i.exerciseId])
         val plate = ex.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS
         fun kg(x: Double) = when {
             plate && x < 0 -> "помощь ${Ru.kg(-x)} кг"
@@ -288,7 +288,7 @@ private suspend fun exercises(repo: TrainingRepository, today: LocalDate): Strin
                         else -> "на этой тренировке тяжелее"
                     } + ")"
                 },
-                if (p.weight != null || p.calibrate) "шаг ${Ru.kg(i.step)} кг$each" else null,
+                if (p.weight != null || p.calibrate) "шаг ${Ru.kg(i.step)} кг$each" + (if (i.stepFrom > 0) " от ${Ru.kg(i.stepFrom)} кг (вес только ${Ru.kg(i.stepFrom)}, ${Ru.kg(i.stepFrom + i.step)}, ${Ru.kg(i.stepFrom + 2 * i.step)} …)" else "") else null,
                 "отдых ${Ru.clock(i.slot.restSec)}",
                 stat?.let { "расчётный максимум ${Ru.kg(it.e1rm)} кг" + if (plate) " (вместе с весом тела)" else each },
                 if (i.addedForGood) "добавлено человеком" else null,

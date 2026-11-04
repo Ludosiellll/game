@@ -43,6 +43,8 @@ data class Settings(
     val autoPause: Boolean = true,
     /** Per-exercise load step overrides, kg. */
     val steps: Map<String, Double> = emptyMap(),
+    /** The weight an exercise's own step goes from (a stack 9, 14, 19 …: 9), kg; only with a step in [steps]. */
+    val stepsFrom: Map<String, Double> = emptyMap(),
     /** Training paused (vacation, illness) from this epoch day … */
     val pauseFrom: Long? = null,
     /** … to this one, inclusive. */
@@ -121,6 +123,10 @@ data class Settings(
     /** The coach's long easy run: the last easy run of the week is a long one, until a day (the long run's own limits hold). */
     val coachLong: CoachTerm? = null,
 ) {
+    /** [ex] on this gym's weights: the person's own step, going from its first weight when the stack starts at one. */
+    fun onSteps(ex: forma.core.model.Exercise): forma.core.model.Exercise =
+        steps[ex.id]?.let { ex.copy(step = it, fineStep = null, stepFrom = stepsFrom[ex.id] ?: 0.0) } ?: ex
+
     /** Whether [day] is in a pause, the last one or one before it: no sessions are expected then. */
     fun pausedOn(day: java.time.LocalDate): Boolean {
         val d = day.toEpochDay()

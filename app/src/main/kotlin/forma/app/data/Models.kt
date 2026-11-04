@@ -19,6 +19,8 @@ data class LiftItem(
     val prescription: Prescription,
     val warmups: List<WarmUpSet>,
     val step: Double,
+    /** The weight [step] goes from (a machine stack 9, 14, 19 …); 0 — multiples of the step. */
+    val stepFrom: Double = 0.0,
     /** The plan's own exercise at this place (before a swap); null for one added today only (and in older sessions). */
     val planId: String? = null,
     /** Added to the plan by the user, not one of the generated plan's own. */

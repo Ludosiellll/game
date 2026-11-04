@@ -17,13 +17,14 @@ object WarmUp {
      * One set before a heavy exercise whose muscles have not worked yet today (a secondary press after a different
      * main lift): about 60 % of the working weight for 6. Empty when that is no lighter than the work itself.
      */
-    fun single(workWeight: Double, step: Double, barWeight: Double? = null): List<WarmUpSet> {
-        var w = roundTo(workWeight * 0.6, step)
+    fun single(workWeight: Double, step: Double, barWeight: Double? = null, from: Double = 0.0): List<WarmUpSet> {
+        var w = roundTo(workWeight * 0.6, step, from)
         if (barWeight != null && w < barWeight) w = barWeight
         return if (w <= 0 || w >= workWeight) emptyList() else listOf(WarmUpSet(w, 6))
     }
 
-    fun sets(workWeight: Double, step: Double, barWeight: Double? = 20.0): List<WarmUpSet> {
+    /** [from]: the weight a machine stack's steps go from (0: multiples of [step]). */
+    fun sets(workWeight: Double, step: Double, barWeight: Double? = 20.0, from: Double = 0.0): List<WarmUpSet> {
         if (workWeight <= 0) return emptyList()
         val ramp = when {
             workWeight < 30 -> listOf(0.5 to 10)
@@ -34,10 +35,10 @@ object WarmUp {
         val out = mutableListOf<WarmUpSet>()
         if (barWeight != null && workWeight >= barWeight + 20) out += WarmUpSet(barWeight, 10)
         for ((pct, reps) in ramp) {
-            var w = roundTo(workWeight * pct, step)
+            var w = roundTo(workWeight * pct, step, from)
             if (barWeight != null && w < barWeight) w = barWeight
-            if (w >= workWeight) w = floorTo(workWeight - step, step)
-            if (w <= 0 || (barWeight != null && w < barWeight)) continue
+            if (w >= workWeight) w = floorTo(workWeight - step, step, from)
+            if (w <= 0 || w >= workWeight || (barWeight != null && w < barWeight)) continue
             if (out.isNotEmpty() && w <= out.last().weight) continue
             out += WarmUpSet(w, reps)
         }
