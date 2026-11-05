@@ -59,6 +59,12 @@ data class RunState(
     /** The same for tempo. */
     val tempoFails: Int = 0,
     /**
+     * The tempo run for now instead of the ladder's step: the coach's, or the step split into reps half as long after a
+     * run far too hard (Denis, 5 November: 3 × 5 min stopped in the second rep). Done well, it grows back to the step
+     * ([RunPlan.towards]); null — the step.
+     */
+    val tempoOwn: TempoShape? = null,
+    /**
      * Seconds a km added to the threshold pace for this runner: a speed type (fitness from a short race) holds intervals and
      * race pace but not the tempo the fitness gives. Learnt from tempo runs, 0–12.
      */
@@ -213,6 +219,11 @@ sealed interface RunOutcome {
     /** The top of a ladder went well again: it stays there. */
     @Serializable data class LadderTop(val ladder: String) : RunOutcome
     /**
+     * The next tempo run is [reps] × [workSec]: [split] — the last one was far too hard, the same minutes in reps half as
+     * long; else the shorter reps went well and grow towards the plan's step (or are it again).
+     */
+    @Serializable data class TempoNext(val reps: Int, val workSec: Int, val split: Boolean = false) : RunOutcome
+    /**
      * The loop GPS measured ([loop] m) is clearly shorter than the lap length set ([set] m): the laps were read on the loop
      * as run — the trial's distance, the reps' pace. Setting the lap length makes the plans right too.
      */
@@ -237,6 +248,13 @@ data class RunAfter(val state: RunState, val outcomes: List<RunOutcome>)
 /** Caps for easy and long runs by how much the person runs. */
 @Serializable
 data class RunCaps(val easyMax: Int, val longMax: Int)
+
+/** A tempo run's reps: [reps] × [workSec] at threshold, [restSec] of easy jog between them. */
+@Serializable
+data class TempoShape(val reps: Int, val workSec: Int, val restSec: Int) {
+    /** Seconds at tempo in all. */
+    val total: Int get() = reps * workSec
+}
 
 object RunPlan {
     private const val WALK_WARM = 5 * 60
@@ -578,9 +596,33 @@ object RunPlan {
         return RunWorkout(RunType.INTERVALS, "Интервалы · $n × ${work / 60} мин", segs, note, targetRpe = 8, stage = stage, cutback = cutback && n < n0)
     }
 
-    fun tempo(state: RunState, cutback: Boolean = false): RunWorkout {
+    /** The plan's tempo step [stage] as reps. */
+    private fun rung(stage: Int): TempoShape = TEMPO[stage.coerceIn(0, TEMPO.lastIndex)].let { (n, w, r) -> TempoShape(n, w, r) }
+
+    /** The tempo run as it stands: the runner's own ([RunState.tempoOwn]) or the ladder's step. */
+    fun tempoNow(state: RunState): TempoShape = state.tempoOwn ?: rung(state.tempoStage)
+
+    /**
+     * Shorter reps done well grow towards the step [to]: about 1.6 times as long, rounded to half a minute, as many as
+     * make the step's minutes (6 × 2.5 → 4 × 4 → 3 × 5). Null — the next is the step itself.
+     */
+    fun towards(own: TempoShape, to: TempoShape): TempoShape? {
+        if (own.workSec >= to.workSec) return null
+        val work = ((own.workSec * 1.6) / 30).roundToInt() * 30
+        if (work >= to.workSec) return null
+        return TempoShape(max(2, (to.total.toDouble() / work).roundToInt()), work, max(60, to.restSec))
+    }
+
+    /** «5», «2,5»: a rep's minutes as said. */
+    private fun minutes(sec: Int): String = if (sec % 60 == 0) "${sec / 60}" else Ru.one(sec / 60.0)
+
+    /**
+     * [guess]: the fitness guessed from the goal before the first trial — the reps get their pace from it (approximate,
+     * said so): without one, a tempo run by feel is easily run far too fast (Denis, 5 November: 59 s laps for 61).
+     */
+    fun tempo(state: RunState, cutback: Boolean = false, guess: RunState? = null): RunWorkout {
         val stage = state.tempoStage.coerceIn(0, TEMPO.lastIndex)
-        val (n0, work, rest) = TEMPO[stage]
+        val (n0, work, rest) = tempoNow(state)
         val cap = hardCap(state, 20 * 60)
         var n = if (cutback && n0 > 1) n0 - 1 else n0
         var workSec = if (cutback && n0 == 1) (work * 0.75).roundToInt() else work
@@ -594,7 +636,8 @@ object RunPlan {
                 if (n == 1) workSec = min(workSec, (cap / 60) * 60)
             }
         }
-        val p = paces(state)
+        val guessed = state.vdot == null && guess?.vdot != null
+        val p = paces(if (guessed) guess!! else state)
         val t = p?.let { it.threshold + state.tempoSoft }
         val segs = mutableListOf(Segment(SegmentKind.WARMUP, 10 * 60, p?.easy))
         repeat(n) { i ->
@@ -602,8 +645,9 @@ object RunPlan {
             if (i < n - 1 && rest > 0) segs += Segment(SegmentKind.RECOVERY, rest, p?.easy)
         }
         segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
-        val title = if (n == 1) "Темповый бег · ${workSec / 60} мин" else "Темповый бег · $n × ${workSec / 60} мин"
-        val note = "Темп «тяжело, но держишь»: пару слов сказать можешь, болтать уже нет."
+        val title = if (n == 1) "Темповый бег · ${minutes(workSec)} мин" else "Темповый бег · $n × ${minutes(workSec)} мин"
+        val note = "Темп «тяжело, но держишь»: пару слов сказать можешь, болтать уже нет." +
+            if (guessed) " Темп примерный: контрольного забега ещё не было, и он взят от цели. Быстрее не беги: темповый не гонка." else ""
         return RunWorkout(RunType.TEMPO, title, segs, note, targetRpe = 7, stage = stage, cutback = cutback && (n < n0 || workSec < work))
     }
 
@@ -865,7 +909,7 @@ object RunPlan {
      * [goalLater]: the legs are not fresh today and a fresher hard day comes later in the week — race pace due today goes
      * there, and today runs the cycle's next session ([RunState.goalDeferred]).
      */
-    fun quality(state: RunState, cutback: Boolean = false, goal: RunGoal? = null, lapMeters: Int? = null, goalLater: Boolean = false): RunWorkout {
+    fun quality(state: RunState, cutback: Boolean = false, goal: RunGoal? = null, lapMeters: Int? = null, goalLater: Boolean = false, guess: RunState? = null): RunWorkout {
         val w = when {
             state.returnEasy > 0 -> easy(state, cutback).let {
                 val n = state.returnEasy
@@ -881,11 +925,11 @@ object RunPlan {
                 when {
                     !goalLater && (state.goalDeferredOn != null || pos % 2 == 0) -> goalPace(state, goal, lapMeters, cutback)
                     other == 3 -> intervals(state, cutback)
-                    else -> tempo(state, cutback)
+                    else -> tempo(state, cutback, guess)
                 }
             }
             state.qualityCount % 2 == 0 -> intervals(state, cutback)
-            else -> tempo(state, cutback)
+            else -> tempo(state, cutback, guess)
         }
         return if (lapMeters != null) onTrack(w, lapMeters) else w
     }
@@ -1162,30 +1206,64 @@ object RunPlan {
                 // fine (seen in simulations: intervals on one rung for months, a miss always "the first").
                 var own = if (w.type == RunType.INTERVALS) state.intervalFails else state.tempoFails
                 var streak = state.qualityOnPace
+                // The tempo run's own reps (the coach's, or a split step): they lead back to the step, not up the ladder.
+                var shape = state.tempoOwn
+                val step = rung(cur)
+                val ownRun = w.type == RunType.TEMPO && shape != null
+                val ownAsHard = shape != null && shape.workSec >= step.workSec && shape.total >= step.total
+                // Far too hard: not even 60 % done at an 8 or more. The same minutes in reps half as long next time, not
+                // the same run again (Denis, 5 November: 3 × 5 min, stopped in the second rep at an 8).
+                val planned = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.seconds ?: 0
+                val farTooHard = w.type == RunType.TEMPO && !success && !w.cutback && r.completed < 0.6 && r.rpe >= 8 && planned >= 240
                 if (success && w.cutback) {
                     // A lighter week's shorter session proves nothing about the full step: the ladder waits, and a miss
                     // of the full step before it still counts (seen: misses and lighter weeks in turn kept a rung for months).
                     out += RunOutcome.LighterWeek(ladder)
                     fails = 0
+                } else if (success && ownRun && !ownAsHard) {
+                    val next = towards(shape!!, step)
+                    shape = next
+                    (next ?: step).let { out += RunOutcome.TempoNext(it.reps, it.workSec) }
+                    fails = 0
+                    own = 0
+                    streak = if (onPace) streak + 1 else streak
                 } else if (success) {
                     // More reps than planned at the planned effort: the next step is too small.
                     stage = min(size - 1, cur + if (repsDone > w.reps) 2 else 1)
                     out += if (stage > cur) RunOutcome.StageUp(ladder, stage) else RunOutcome.LadderTop(ladder)
+                    if (w.type == RunType.TEMPO) shape = null
                     fails = 0
                     own = 0
                     streak = if (onPace) streak + 1 else streak
+                } else if (farTooHard) {
+                    val n = w.segments.count { it.kind == SegmentKind.WORK }
+                    val rest = w.segments.firstOrNull { it.kind == SegmentKind.RECOVERY }?.seconds ?: 0
+                    val split = TempoShape(n * 2, max(90, ((planned / 2.0) / 30).roundToInt() * 30), max(60, rest))
+                    shape = split
+                    out += RunOutcome.TempoNext(split.reps, split.workSec, split = true)
+                    fails += 1
+                    own = 0
+                    streak = 0
                 } else {
                     fails += 1
                     own += 1
                     streak = 0
-                    if (own >= 2) {
+                    val o = shape
+                    if (own >= 2 && ownRun && o != null) {
+                        // Own reps missed twice: one fewer (not below 2); the ladder's step stays.
+                        if (o.reps > 2) {
+                            shape = o.copy(reps = o.reps - 1)
+                            out += RunOutcome.TempoNext(o.reps - 1, o.workSec)
+                        } else out += RunOutcome.StageRepeat(ladder)
+                        own = 0
+                    } else if (own >= 2) {
                         stage = max(0, cur - 1)
                         out += RunOutcome.StageDown(ladder, stage)
                     } else {
                         out += RunOutcome.StageRepeat(ladder)
                     }
                 }
-                s = if (w.type == RunType.INTERVALS) s.copy(intervalStage = stage, intervalFails = own) else s.copy(tempoStage = stage, tempoFails = own)
+                s = if (w.type == RunType.INTERVALS) s.copy(intervalStage = stage, intervalFails = own) else s.copy(tempoStage = stage, tempoFails = own, tempoOwn = shape)
                 s = s.copy(qualityCount = state.qualityCount + 1, qualityFails = fails, qualityOnPace = streak)
                 // Ahead of the paces, done in full, three hard sessions running: well quicker than them (3 % and more), or
                 // on them (within 1 %) with effort to spare. The paces lag behind the runner, and the time trial says by

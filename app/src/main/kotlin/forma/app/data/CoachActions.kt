@@ -77,6 +77,7 @@ object CoachActions {
     const val RATE = "rate_workout"
     const val EASY = "set_easy_run_minutes"
     const val RUN_TODAY = "run_today"
+    const val TEMPO = "set_tempo"
     const val STRIDES = "set_strides"
     const val LONG = "long_easy_run"
     const val STEP = "set_weight_step"
@@ -156,6 +157,11 @@ object CoachActions {
             Param("minutes", "integer", "минуты"))
         fn(RUN_TODAY, "Лёгкая пробежка сегодня вне плана: человек хочет пробежать сегодня (пропустил бег, свободный день). На экране «Сегодня» появится карточка с кнопкой «Начать». Только лёгкая: тяжёлый бег рядом с другим тяжёлым днём вреден, а пропущенный тяжёлый, когда он подходит, приложение само предлагает сделать сегодня. Не в день, где бег уже есть.",
             Param("minutes", "integer", "минуты, 15–60; не сказано — как лёгкий бег по плану", required = false))
+        fn(TEMPO, "Темповый бег человека: сколько отрезков, по сколько минут и сколько отдыха трусцой между ними — когда он просит другой темповый или темповый был не по силам («5 минут подряд тяжело, хочу по 2,5 с минутой отдыха»). Темп отрезков задаёт приложение, ты его не меняешь. Отрезок 1,5–20 мин (шаг 0,5), отдых 0,5–3 мин, всего в темпе не меньше 6 мин и не больше, чем сейчас по плану, плюс 15 %. Получится хорошо — приложение само поведёт отрезки к своему шагу; слишком тяжело — само сделает их короче. reset: true — вернуть темповый приложения. Человек подтверждает кнопкой.",
+            Param("reps", "integer", "отрезков, 1–10", required = false),
+            Param("work_min", "number", "минут в отрезке, 1,5–20", required = false),
+            Param("rest_min", "number", "минут отдыха трусцой между отрезками, 0,5–3", required = false),
+            Param("reset", "boolean", "true — вернуть темповый приложения", required = false))
         fn(STRIDES, "Сколько ускорений после лёгкого бега в дни, когда они есть в плане, на weeks недель (0 — без ускорений).",
             Param("count", "integer", "0–8 (пока бег новый — до 6)"), Param("weeks", "integer", "1–$MAX_WEEKS"))
         fn(LONG, "Последний лёгкий бег недели — длинный лёгкий, на weeks недель (0 — отменить). Длина длинного растёт по правилам приложения: до часа, в день с залом — до 45 мин.",
@@ -631,6 +637,31 @@ object CoachActions {
                     repo.updateSettings { it.copy(coachStrides = term) }
                     CoachCall("undo_strides", args("old" to old?.let { AppJson.encodeToJsonElement(CoachTerm.serializer(), it) }, "expect" to AppJson.encodeToJsonElement(CoachTerm.serializer(), term)))
                 }
+            }
+            TEMPO -> {
+                val st = repo.store.runStateNow()
+                if (!st.canRunContinuously) return no("Пока бег чередуется с ходьбой: темповых ещё нет, их добавит лестница приложения.")
+                val now = forma.core.run.RunPlan.tempoNow(st)
+                val step = forma.core.run.RunPlan.tempoNow(st.copy(tempoOwn = null))
+                val reset = a["reset"]?.let { (it as? JsonPrimitive)?.takeIf { p -> p !is JsonNull }?.content?.lowercase() } in setOf("true", "да")
+                if (reset) {
+                    if (st.tempoOwn == null) return no("Темповый и так по плану приложения: ${tempoText(now)}.")
+                    return confirm("Темповый снова по плану приложения: ${tempoText(now)} → ${tempoText(step)}.") { setTempo(repo, null) }
+                }
+                val reps = a.int("reps") ?: return no("Не сказано, сколько отрезков (целое число).")
+                val work = a.num("work_min") ?: return no("Не сказано, сколько минут в отрезке.")
+                if (reps !in 1..10) return no("Отрезков — от 1 до 10.")
+                if (work < 1.5 - 1e-9 || work > 20 + 1e-9) return no("Отрезок — от 1,5 до 20 минут.")
+                val rest = if (reps == 1) 0.0 else a.num("rest_min") ?: return no("Не сказан отдых между отрезками.")
+                if (reps > 1 && (rest < 0.5 - 1e-9 || rest > 3 + 1e-9)) return no("Отдых между отрезками — от 0,5 до 3 минут.")
+                val shape = forma.core.run.TempoShape(reps, (work * 2).roundToInt() * 30, (rest * 2).roundToInt() * 30)
+                // No more at tempo than the plan's step or the run now, by more than 15 %: the minutes at threshold are the load.
+                val most = (maxOf(now.total, step.total) * 1.15).toInt()
+                if (shape.total < 6 * 60) return no("Всего в темпе меньше 6 минут — это уже не темповый.")
+                if (shape.total > most) return no("Всего в темпе ${mins(shape.total)} мин, а можно до ${mins(most / 30 * 30)}: сейчас по плану ${mins(maxOf(now.total, step.total))} мин в темпе, больше чем на 15 % сразу не прибавляем.")
+                if (shape == now) return no("Темповый и так ${tempoText(now)}.")
+                confirm("Темповый: ${tempoText(now)} → ${tempoText(shape)}. Темп отрезков даёт приложение. " +
+                    (if (shape == step) "Это шаг плана." else "Получится хорошо — приложение само поведёт к шагу плана (${tempoText(step)}); слишком тяжело — сделает отрезки короче.")) { setTempo(repo, shape) }
             }
             RUN_TODAY -> {
                 val min = a["minutes"]?.let { a.int("minutes") ?: return no("Минуты — целое число.") }
@@ -1391,6 +1422,11 @@ object CoachActions {
                 val id = a.long("workout")!!
                 if (repo.db.workouts().get(id)?.rpe != a.int("expect")) false else { repo.setRating(id, a.int("rpe")!!); true }
             }
+            "undo_tempo" -> {
+                val now = repo.store.runStateNow()
+                if (now.tempoOwn != tempoShape(a["expect"])) false
+                else { repo.store.setRunState(now.copy(tempoOwn = tempoShape(a["old"]))); repo.changed(); true }
+            }
             "undo_easy" -> {
                 val now = repo.store.runStateNow()
                 if (now.easyMinutes != a.int("expect")) false
@@ -1674,6 +1710,27 @@ object CoachActions {
         "sets" -> s.sets[key]?.let { JsonPrimitive(it) }
         "reps" -> ints(s.reps[key])
         else -> s.rest[key]?.let { JsonPrimitive(it) }
+    }
+
+    private fun tempoShape(e: JsonElement?): forma.core.run.TempoShape? =
+        (e as? JsonObject)?.let { AppJson.decodeFromJsonElement(forma.core.run.TempoShape.serializer(), it) }
+
+    /** «2,5» minutes, «5». */
+    private fun mins(sec: Int): String = if (sec % 60 == 0) "${sec / 60}" else Ru.one(sec / 60.0)
+
+    /** «6 × 2,5 мин, отдых 1 мин», «20 мин». */
+    fun tempoText(t: forma.core.run.TempoShape): String =
+        if (t.reps == 1) "${mins(t.workSec)} мин" else "${t.reps} × ${mins(t.workSec)} мин, отдых ${mins(t.restSec)} мин"
+
+    /** Sets the tempo run's own reps (null — the plan's step) and returns its undo. */
+    private suspend fun setTempo(repo: TrainingRepository, shape: forma.core.run.TempoShape?): CoachCall {
+        val now = repo.store.runStateNow()
+        repo.store.setRunState(now.copy(tempoOwn = shape, tempoFails = 0))
+        repo.changed()
+        return CoachCall("undo_tempo", args(
+            "old" to now.tempoOwn?.let { AppJson.encodeToJsonElement(forma.core.run.TempoShape.serializer(), it) },
+            "expect" to shape?.let { AppJson.encodeToJsonElement(forma.core.run.TempoShape.serializer(), it) },
+        ))
     }
 
     private fun term(e: JsonElement?): CoachTerm? = (e as? JsonObject)?.let { AppJson.decodeFromJsonElement(CoachTerm.serializer(), it) }

@@ -150,7 +150,9 @@ object TrainingReport {
             appendLine("- Лёгкий бег — ${st.easyMinutes} мин" +
                 (if (sessions.any { it.kind == SessionKind.RUN_LONG }) ", длинный — ${st.longMinutes} мин." else ".") +
                 (if (sessions.none { it.kind == SessionKind.RUN_QUALITY }) "" else " Шаги лестниц: интервалы ${st.intervalStage + 1}, " +
-                    "темповый ${st.tempoStage + 1}" + (b.profile?.runGoal?.takeIf { it.middleDistance }?.let { ", темп цели ${st.goalStage + 1} из ${forma.core.run.RunPlan.goalLadderSize}" } ?: "") + "."))
+                    "темповый ${st.tempoStage + 1}" + (b.profile?.runGoal?.takeIf { it.middleDistance }?.let { ", темп цели ${st.goalStage + 1} из ${forma.core.run.RunPlan.goalLadderSize}" } ?: "") + "." +
+                    " Темповый сейчас: ${forma.app.data.CoachActions.tempoText(forma.core.run.RunPlan.tempoNow(st))}" +
+                    (if (st.tempoOwn != null) " (свой, шаг плана — ${forma.app.data.CoachActions.tempoText(forma.core.run.RunPlan.tempoNow(st.copy(tempoOwn = null)))})." else ".")))
             if (st.rpeOffset > 0) appendLine("- Своя шкала тяжести: лёгкий бег оценивается строже нормы, пороги на ${st.rpeOffset} выше.")
             appendLine()
         }
@@ -419,8 +421,13 @@ object TrainingReport {
         appendLine("- Факт: ${facts.joinToString(", ")}.")
         summary?.laps?.takeIf { it.isNotEmpty() }?.let { laps ->
             // In order (the coach puts a lap right by its place here); a rep's first half lap said as such.
-            appendLine("- Круги: " + laps.joinToString(", ") { l ->
-                Ru.one(l.seconds) + (l.rep?.let { " (отр. $it" + (if (l.part < 1.0) ", полкруга" else "") + ")" } ?: "")
+            // Laps unmarked are the warm-up, the jogs between reps and the cool-down: not to be read against the reps' laps
+            // (5 November: the coach set a rep's 67 s against the warm-up's 82–83). A timed rep's first lap runs from where
+            // the rep began, not from the line.
+            appendLine("- Круги" + (if (laps.any { it.rep != null }) " (без «отр.» — разминка, отдых и заминка)" else "") + ": " + laps.joinToString(", ") { l ->
+                Ru.one(l.seconds) + (l.rep?.let {
+                    " (отр. $it" + (if (l.part < 1.0) ", полкруга" else "") + (if (l.of == null && l.number == 1) ", первый — не от линии" else "") + ")"
+                } ?: "")
             })
         }
         summary?.kmSplits?.takeIf { it.isNotEmpty() }?.let { appendLine("- По километрам: " + it.joinToString(", ") { s -> Ru.clock(s) }) }

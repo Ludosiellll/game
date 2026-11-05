@@ -1970,7 +1970,7 @@ class TrainingRepository(
                 it.copy(note = "До забега ${toRace} ${Ru.plural(toRace.toInt(), "день", "дня", "дней")}: только размяться, без усталости. " + it.note)
             }
             toRace != null && toRace in 3..5 && kind == SessionKind.RUN_QUALITY -> (
-                if (goal?.middleDistance == true) RunPlan.goalPace(st, goal, lap, cutback = true) else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap)
+                if (goal?.middleDistance == true) RunPlan.goalPace(st, goal, lap, cutback = true) else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap, guess = guess)
             ).let { it.copy(note = "Последняя тяжёлая перед забегом. Она короткая: освежить темп и не устать. " + it.note) }
             toRace != null && toRace in 3..7 && kind != SessionKind.RUN_QUALITY ->
                 RunPlan.easy(st.copy(easyMinutes = (minOf(st.easyMinutes, st.longMinutes) * 0.7).toInt().coerceAtLeast(20)), strides = 4)
@@ -1991,7 +1991,8 @@ class TrainingRepository(
                     )
                 }
             kind == SessionKind.RUN_QUALITY -> when {
-                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date))
+                // Before the first trial the tempo run gets its pace from the goal too (approximate), as easy runs do.
+                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date), guess = guess)
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
                 else -> RunPlan.test(st)
             }

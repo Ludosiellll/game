@@ -1414,12 +1414,16 @@ class RunTracker(
         val lapPace = if (lapM != null && timed.isNotEmpty() && timed.size * 2 >= reps.size) {
             timed.sumOf { it.second!! } / (timed.sumOf { it.first.laps!! * lapM } / 1000.0)
         } else null
+        // Reps by time (a tempo run): the laps pressed through inside them, when there are any to go by.
+        val timedPace = if (lapM != null && lapPace == null && workout.segments.filter { it.kind == SegmentKind.WORK }.all { it.laps == null }) {
+            ManualLaps.repPace(lapList, lapM)
+        } else null
         val testSeconds = if (workout.testMeters != null && trialLapsSane()) reps.firstOrNull()?.roundToInt() else null
         val (strideV, jogV) = strideResult(timelineMs(nowMs))
         return RunResult(
             completed = completed, rpe = rpe, durationSec = sec,
             // On a small loop GPS cuts the bends: without laps pressed the pace is unknown, not a guess.
-            distanceM = shownDistanceM().takeIf { it > 0 }, workPace = lapPace ?: gpsPace.takeIf { lapM == null },
+            distanceM = shownDistanceM().takeIf { it > 0 }, workPace = lapPace ?: timedPace ?: gpsPace.takeIf { lapM == null },
             workDistanceM = workDistanceM.takeIf { it > 0 }, workSec = if (workout.isOpenEnded) null else work,
             laps = lapList.toList().takeIf { it.isNotEmpty() }, testSeconds = testSeconds,
             kmSplits = kmSplitList.toList().takeIf { it.isNotEmpty() },

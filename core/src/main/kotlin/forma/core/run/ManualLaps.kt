@@ -56,6 +56,14 @@ object ManualLaps {
     fun repPace(laps: List<Lap>, lapM: Int): Double? {
         val reps = laps.filter { it.rep != null }
         if (reps.isEmpty()) return null
+        // Reps by time (no lap count): the laps pressed through inside them. Each rep's first runs from wherever the rep
+        // began, not from the line, so it is no lap; one lap left in all is too little to say (Denis, 5 November: a tempo
+        // run with laps pressed, its pace never measured).
+        if (reps.all { it.of == null }) {
+            val whole = reps.filter { it.number >= 2 && !it.rough }
+            if (whole.size < 2) return null
+            return whole.sumOf { it.seconds } / (whole.size * lapM / 1000.0)
+        }
         return reps.sumOf { it.seconds } / (reps.sumOf { it.part } * lapM / 1000.0)
     }
 
