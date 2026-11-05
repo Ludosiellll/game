@@ -61,6 +61,15 @@ fun MoreScreen() {
             Hairline()
             ListRow("Оформление и звук", "Стиль, голос, вибрация, выгрузка для разбора", icon = Ic.gear, iconTint = F.c.text2) { nav.push(Screen.Settings) }
             Hairline()
+            // «Токены ИИ» only for the two on the DeepSeek key (Denis and Egor); the server checks it again.
+            val cloudApi = LocalCloud.current
+            val showTokens by androidx.compose.runtime.produceState(false, cloud?.email) {
+                value = cloudApi?.accountId() in forma.app.sync.TOKEN_PEOPLE
+            }
+            if (showTokens) {
+                ListRow("Токены ИИ", "Сколько осталось на ключе тренера и на что ушло", icon = Ic.chat, iconTint = F.c.text2) { nav.push(Screen.Tokens) }
+                Hairline()
+            }
             // The version and «Проверить обновления»: a newer one opens the update window (also after «Позже»).
             val scope = androidx.compose.runtime.rememberCoroutineScope()
             val update by forma.app.update.Updater.state.collectAsState()

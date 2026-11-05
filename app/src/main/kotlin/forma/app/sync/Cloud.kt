@@ -348,6 +348,38 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         return CoachReply.parse(res.status.value, res.bodyAsText())
     }
 
+    /**
+     * «Токены ИИ»: the coach function's account of the DeepSeek key (for the two on [TOKEN_PEOPLE] only; anyone else
+     * gets a refusal). Throws [CoachException] as a question to the coach would.
+     */
+    suspend fun tokenUsage(): TokenUsage {
+        val c = client ?: throw CoachException(CoachException.Reason.NOT_SET_UP)
+        val user = try {
+            currentUser(c)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw CoachException(CoachException.reason(e))
+        } ?: throw CoachException(CoachException.Reason.NOT_SIGNED_IN)
+        if (user.id !in TOKEN_PEOPLE) throw CoachException(CoachException.Reason.FAILED)
+        val token = c.auth.currentAccessTokenOrNull() ?: throw CoachException(CoachException.Reason.NOT_SIGNED_IN)
+        val res = try {
+            http.post("${BuildConfig.SUPABASE_URL.trimEnd('/')}/functions/v1/coach") {
+                header("Authorization", "Bearer $token")
+                header("apikey", BuildConfig.SUPABASE_KEY)
+                contentType(io.ktor.http.ContentType.Application.Json)
+                setBody("""{"usage":true}""")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw CoachException(CoachException.reason(e))
+        }
+        val text = res.bodyAsText()
+        if (res.status.value != 200) throw CoachException(if (res.status.value == 401) CoachException.Reason.NOT_SIGNED_IN else CoachException.Reason.FAILED)
+        return runCatching { forma.app.data.AppJson.decodeFromString(TokenUsage.serializer(), text) }.getOrElse { throw CoachException(CoachException.Reason.FAILED) }
+    }
+
     /** The signed-in user with a fresh access token, or null. */
     private suspend fun currentUser(c: SupabaseClient): UserInfo? {
         val auth = c.auth

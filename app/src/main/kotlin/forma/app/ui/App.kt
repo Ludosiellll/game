@@ -51,6 +51,7 @@ import forma.app.ui.components.Hairline
 import forma.app.sync.Cloud
 import forma.app.ui.screens.BodyScreen
 import forma.app.ui.screens.CalculatorsScreen
+import forma.app.ui.screens.TokensScreen
 import forma.app.ui.screens.CloudScreen
 import forma.app.ui.screens.CloudSignInScreen
 import forma.app.ui.screens.ExerciseScreen
@@ -186,6 +187,7 @@ private fun ScreenFor(screen: Screen) {
         Screen.History -> HistoryScreen()
         is Screen.HistoryItem -> HistoryItemScreen(screen.workoutId)
         Screen.Calculators -> CalculatorsScreen()
+        Screen.Tokens -> TokensScreen()
         Screen.Settings -> SettingsScreen()
         Screen.Profile -> ProfileScreen()
         Screen.Body -> BodyScreen()

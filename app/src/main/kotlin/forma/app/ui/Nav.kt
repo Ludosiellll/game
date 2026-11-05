@@ -48,6 +48,8 @@ sealed interface Screen {
     /** The first look round the app; [first] — right after the questionnaire (then the main screen follows). */
     @Serializable data class Tour(val first: Boolean) : Screen
     @Serializable data object Help : Screen
+    /** «Токены ИИ»: the coach's DeepSeek key, only for Denis and Egor. */
+    @Serializable data object Tokens : Screen
     @Serializable data class Coach(val question: String? = null, val workoutId: Long? = null) : Screen
 }
 
