@@ -104,7 +104,9 @@ function declarations(raw: unknown): Declaration[] {
 
 /** DeepSeek through the owner's OpenAI-compatible key (DEEPSEEK_API_KEY): the coach's first choice when the key is set. */
 const DEEPSEEK_URL = Deno.env.get("DEEPSEEK_URL") ?? "https://api.aikeysforyou.com/v1/chat/completions";
-const DEEPSEEK_MODEL = Deno.env.get("DEEPSEEK_MODEL") ?? "deepseek-v4-flash";
+// DeepSeek V4.1 Flash first (the seller's deepseek-v4.1-flash-1017; same price as V4, but its own quota that resets
+// daily), V4 Flash when V4.1 does not answer. The owner's choice, 5 November.
+const DEEPSEEK_MODELS = (Deno.env.get("DEEPSEEK_MODELS") ?? "deepseek-v4.1-flash,deepseek-v4-flash").split(",").map((s) => s.trim()).filter(Boolean);
 /**
  * Who gets DeepSeek: the owner and Egor (5 November: «только для двух пользователей, остальные через гемини»). The
  * DEEPSEEK_USERS secret (user ids, comma-separated) replaces the list when set.
@@ -136,14 +138,14 @@ function keep(raw: { name: unknown; args: unknown }[], tools: Declaration[]): An
  * DeepSeek (OpenAI chat format): the same instructions, conversation and functions as Gemini gets. Null when it fails
  * (refused, unreachable, the key's limit spent, an empty answer): Gemini answers then. Logged like Gemini's tries.
  */
-async function deepseek(key: string, system: string, turns: Turn[], tools: Declaration[]): Promise<{ answer: Answer; prompt: number; completion: number } | null> {
+async function deepseek(key: string, model: string, system: string, turns: Turn[], tools: Declaration[]): Promise<{ answer: Answer; prompt: number; completion: number } | null> {
   const started = Date.now();
   try {
     const res = await fetch(DEEPSEEK_URL, {
       method: "POST",
       headers: { "content-type": "application/json", "authorization": `Bearer ${key}` },
       body: JSON.stringify({
-        model: DEEPSEEK_MODEL,
+        model,
         messages: [
           { role: "system", content: system },
           ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
@@ -158,7 +160,7 @@ async function deepseek(key: string, system: string, turns: Turn[], tools: Decla
         max_tokens: 2500,
       }),
     });
-    console.log(JSON.stringify({ provider: "deepseek", status: res.status, ms: Date.now() - started }));
+    console.log(JSON.stringify({ provider: "deepseek", model, status: res.status, ms: Date.now() - started }));
     if (!res.ok) return null;
     const data = await res.json().catch(() => null);
     const message = data?.choices?.[0]?.message;
@@ -178,7 +180,7 @@ async function deepseek(key: string, system: string, turns: Turn[], tools: Decla
     const completion = Number(data?.usage?.completion_tokens ?? 0) || 0;
     return text || calls.length > 0 ? { answer: { text, calls }, prompt, completion } : null;
   } catch {
-    console.log(JSON.stringify({ provider: "deepseek", status: "unreachable", ms: Date.now() - started }));
+    console.log(JSON.stringify({ provider: "deepseek", model, status: "unreachable", ms: Date.now() - started }));
     return null;
   }
 }
@@ -276,10 +278,12 @@ Deno.serve(async (req) => {
   // DeepSeek first for the people on its list (the owner's choice, 5 November), Gemini when it does not answer and for
   // everybody else.
   if (deepseekKey && DEEPSEEK_USERS.includes(user)) {
-    const got = await deepseek(deepseekKey, system, turns, tools);
-    if (got) {
-      await record(user, got.prompt, got.completion);
-      return json(got.answer);
+    for (const model of DEEPSEEK_MODELS) {
+      const got = await deepseek(deepseekKey, model, system, turns, tools);
+      if (got) {
+        await record(user, got.prompt, got.completion);
+        return json(got.answer);
+      }
     }
   }
   if (keys.length === 0) return json({ error: "provider" }, 502);
