@@ -1,5 +1,6 @@
-// «Спросить тренера»: a signed-in user's question about their own training, answered by Gemini with the summary of the
-// training the app sends. The app may also send the changes the coach can make (function declarations): Gemini answers
+// «Спросить тренера»: a signed-in user's question about their own training, answered by DeepSeek (DEEPSEEK_API_KEY, the
+// owner's OpenAI-compatible key from a reseller; for the people on DEEPSEEK_USERS since 5 November) or by Gemini (everybody
+// else, and when DeepSeek does not answer), with the summary of the training the app sends. The app may also send the changes the coach can make (function declarations): Gemini answers
 // with text and the calls it chose, and the app checks and makes them itself — this function only passes them on. The keys
 // stay here (the GEMINI_API_KEY secret, and GEMINI_API_KEY2 — the owner's second key, used when the first one fails or its
 // limit is spent), never in the app; verify_jwt stays on, so only a signed-in user of this project reaches this code.
@@ -101,13 +102,88 @@ function declarations(raw: unknown): Declaration[] {
   return out;
 }
 
+/** DeepSeek through the owner's OpenAI-compatible key (DEEPSEEK_API_KEY): the coach's first choice when the key is set. */
+const DEEPSEEK_URL = Deno.env.get("DEEPSEEK_URL") ?? "https://api.aikeysforyou.com/v1/chat/completions";
+const DEEPSEEK_MODEL = Deno.env.get("DEEPSEEK_MODEL") ?? "deepseek-v4-flash";
+/**
+ * Who gets DeepSeek: the owner and Egor (5 November: «только для двух пользователей, остальные через гемини»). The
+ * DEEPSEEK_USERS secret (user ids, comma-separated) replaces the list when set.
+ */
+const DEEPSEEK_USERS = (Deno.env.get("DEEPSEEK_USERS") ?? "f61a2185-036b-49fa-9252-df4b17a0ec3e,a19c13a6-7279-45dc-ada8-0958e59fef52")
+  .split(",").map((s) => s.trim()).filter((s) => s !== "");
+
+type Answer = { text: string; calls: { name: string; args: Record<string, unknown> }[] };
+type Turn = { role: "user" | "model"; text: string };
+
+/** Only calls of the functions the app declared; the app checks their arguments before anything changes. */
+function keep(raw: { name: unknown; args: unknown }[], tools: Declaration[]): Answer["calls"] {
+  const names = new Set(tools.map((t) => t.name));
+  return raw
+    .filter((c) => typeof c.name === "string" && names.has(c.name))
+    .slice(0, MAX_CALLS)
+    .map((c) => ({
+      name: c.name as string,
+      args: c.args && typeof c.args === "object" && !Array.isArray(c.args) ? c.args as Record<string, unknown> : {},
+    }));
+}
+
+/**
+ * DeepSeek (OpenAI chat format): the same instructions, conversation and functions as Gemini gets. Null when it fails
+ * (refused, unreachable, the key's limit spent, an empty answer): Gemini answers then. Logged like Gemini's tries.
+ */
+async function deepseek(key: string, system: string, turns: Turn[], tools: Declaration[]): Promise<Answer | null> {
+  const started = Date.now();
+  try {
+    const res = await fetch(DEEPSEEK_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", "authorization": `Bearer ${key}` },
+      body: JSON.stringify({
+        model: DEEPSEEK_MODEL,
+        messages: [
+          { role: "system", content: system },
+          ...turns.map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: t.text })),
+        ],
+        ...(tools.length > 0
+          ? {
+            tools: tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parametersJsonSchema } })),
+            tool_choice: "auto",
+          }
+          : {}),
+        // Room for the model's own thinking, which counts toward the limit (its seller asks for 2000 at least).
+        max_tokens: 2500,
+      }),
+    });
+    console.log(JSON.stringify({ provider: "deepseek", status: res.status, ms: Date.now() - started }));
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    const message = data?.choices?.[0]?.message;
+    if (!message) return null;
+    const text = typeof message.content === "string" ? message.content.trim() : "";
+    const raw = (Array.isArray(message.tool_calls) ? message.tool_calls : []).map((c: { function?: { name?: unknown; arguments?: unknown } }) => {
+      let args: unknown = {};
+      try {
+        args = typeof c.function?.arguments === "string" ? JSON.parse(c.function.arguments) : c.function?.arguments ?? {};
+      } catch {
+        args = {};
+      }
+      return { name: c.function?.name, args };
+    });
+    const calls = keep(raw, tools);
+    return text || calls.length > 0 ? { text, calls } : null;
+  } catch {
+    console.log(JSON.stringify({ provider: "deepseek", status: "unreachable", ms: Date.now() - started }));
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "method" }, 405);
   const user = signedIn(req);
   if (!user) return json({ error: "sign_in" }, 401);
   if (!allowed(user)) return json({ error: "busy" }, 429);
+  const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
   const keys = [Deno.env.get("GEMINI_API_KEY"), Deno.env.get("GEMINI_API_KEY2")].filter((k): k is string => !!k);
-  if (keys.length === 0) return json({ error: "no_key" }, 503);
+  if (keys.length === 0 && !(deepseekKey && DEEPSEEK_USERS.includes(user))) return json({ error: "no_key" }, 503);
   let body: { context?: unknown; messages?: unknown; tools?: unknown };
   try {
     body = await req.json();
@@ -115,16 +191,25 @@ Deno.serve(async (req) => {
     return json({ error: "bad_request" }, 400);
   }
   const context = String(body.context ?? "").slice(0, MAX_CONTEXT);
-  const turns = Array.isArray(body.messages) ? body.messages.slice(-MAX_TURNS) : [];
-  const contents = turns
+  const raw = Array.isArray(body.messages) ? body.messages.slice(-MAX_TURNS) : [];
+  const turns: Turn[] = raw
     .filter((m) => typeof m?.text === "string" && m.text.trim() !== "")
-    .map((m) => ({ role: m.role === "model" ? "model" : "user", parts: [{ text: String(m.text).slice(0, MAX_TURN) }] }));
-  if (contents.length === 0 || contents[contents.length - 1].role !== "user") return json({ error: "bad_request" }, 400);
+    .map((m) => ({ role: m.role === "model" ? "model" : "user", text: String(m.text).slice(0, MAX_TURN) }));
+  if (turns.length === 0 || turns[turns.length - 1].role !== "user") return json({ error: "bad_request" }, 400);
   const tools = declarations(body.tools);
+  const system = `${SYSTEM}\n\n---\n${context}`;
+
+  // DeepSeek first for the people on its list (the owner's choice, 5 November), Gemini when it does not answer and for
+  // everybody else.
+  if (deepseekKey && DEEPSEEK_USERS.includes(user)) {
+    const answer = await deepseek(deepseekKey, system, turns, tools);
+    if (answer) return json(answer);
+  }
+  if (keys.length === 0) return json({ error: "provider" }, 502);
 
   const request = JSON.stringify({
-    systemInstruction: { parts: [{ text: `${SYSTEM}\n\n---\n${context}` }] },
-    contents,
+    systemInstruction: { parts: [{ text: system }] },
+    contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
     ...(tools.length > 0
       ? { tools: [{ functionDeclarations: tools }], toolConfig: { functionCallingConfig: { mode: "AUTO" } } }
       : {}),
@@ -144,11 +229,11 @@ Deno.serve(async (req) => {
         body: request,
       });
     } catch {
-      console.log(JSON.stringify({ key: i + 1, status: "unreachable", ms: Date.now() - started }));
+      console.log(JSON.stringify({ provider: "gemini", key: i + 1, status: "unreachable", ms: Date.now() - started }));
       res = null;
       continue;
     }
-    console.log(JSON.stringify({ key: i + 1, status: res.status, ms: Date.now() - started }));
+    console.log(JSON.stringify({ provider: "gemini", key: i + 1, status: res.status, ms: Date.now() - started }));
     if (res.ok) break;
   }
   if (!res) return json({ error: "provider" }, 502);
@@ -160,16 +245,8 @@ Deno.serve(async (req) => {
     .map((p: { text?: string; thought?: boolean }) => (p.thought || typeof p.text !== "string" ? "" : p.text))
     .join("")
     .trim();
-  // Only calls of the functions the app declared; the app checks their arguments before anything changes.
-  const names = new Set(tools.map((t) => t.name));
-  const calls = parts
-    .map((p: { functionCall?: { name?: unknown; args?: unknown } }) => p.functionCall)
-    .filter((c: { name?: unknown } | undefined) => c && typeof c.name === "string" && names.has(c.name))
-    .slice(0, MAX_CALLS)
-    .map((c: { name: string; args?: unknown }) => ({
-      name: c.name,
-      args: c.args && typeof c.args === "object" && !Array.isArray(c.args) ? c.args : {},
-    }));
+  const calls = keep(parts.map((p: { functionCall?: { name?: unknown; args?: unknown } }) => p.functionCall).filter(Boolean)
+    .map((c: { name?: unknown; args?: unknown }) => ({ name: c.name, args: c.args })), tools);
   if (!text && calls.length === 0) return json({ error: "empty" }, 502);
   return json({ text, calls });
 });
