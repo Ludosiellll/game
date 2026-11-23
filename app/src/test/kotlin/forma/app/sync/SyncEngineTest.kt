@@ -97,6 +97,24 @@ class SyncEngineTest {
         )
     }
 
+    /**
+     * 23 November: the talk with the coach and the changes it made stayed on the phone — lost with it, and not to be looked
+     * into. They travel now; a phone that talked before its first sync keeps its own messages too.
+     */
+    @Test fun theCoachTalkAndItsChangesTravel() = runBlocking {
+        a.liftSession(LocalDate.of(2026, 10, 5))
+        a.store.editCoachChat { listOf(forma.app.data.CoachChatMsg(1, true, "Сделай бег спокойнее"), forma.app.data.CoachChatMsg(2, false, "Сделал: темпы спокойнее.")) }
+        a.store.editCoachLog { listOf(forma.app.data.CoachLogEntry(10, 10, "Темпы бега спокойнее")) }
+        a.sync()
+        b.store.editCoachChat { listOf(forma.app.data.CoachChatMsg(5, true, "Что сегодня?")) }
+        b.sync()
+        a.sync()
+        assertEquals(listOf(1L, 2L, 5L), b.store.coachChatNow().map { it.id })
+        assertEquals(b.store.coachChatNow(), a.store.coachChatNow())
+        assertEquals(listOf("Темпы бега спокойнее"), b.store.coachLogNow().map { it.text })
+        assertEquals(SyncResult(0, 0, 0), b.sync())
+    }
+
     @Test fun secondSyncFindsNothingToDo() = runBlocking {
         a.liftSession(LocalDate.of(2026, 10, 5))
         a.run(withTrack = true)

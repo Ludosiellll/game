@@ -181,6 +181,18 @@ internal fun mergeCustom(local: String?, incoming: String): String {
     return if (extra.isEmpty()) incoming else forma.app.data.AppJson.encodeToString(serializer, theirs + extra)
 }
 
+/**
+ * Two lists of the same kind, by [id]: for one in both, the [incoming] one; in [id] order, the last [keep]. Unreadable
+ * incoming JSON is passed on as it is (it is then refused when stored).
+ */
+internal fun <T> mergeById(local: String?, incoming: String, serializer: kotlinx.serialization.KSerializer<List<T>>, keep: Int, id: (T) -> Long): String {
+    val mine = local?.let { runCatching { forma.app.data.AppJson.decodeFromString(serializer, it) }.getOrNull() }.orEmpty()
+    val theirs = runCatching { forma.app.data.AppJson.decodeFromString(serializer, incoming) }.getOrNull() ?: return incoming
+    val ids = theirs.mapTo(HashSet()) { id(it) }
+    val extra = mine.filter { id(it) !in ids }
+    return if (extra.isEmpty()) incoming else forma.app.data.AppJson.encodeToString(serializer, (theirs + extra).sortedBy(id).takeLast(keep))
+}
+
 /** A finished run with the global id of its workout. The track is loaded only for uploads. */
 internal data class RunRow(
     val run: RunEntity,
@@ -205,8 +217,15 @@ internal class SyncTables(db: FormaDatabase, private val store: SettingsStore) {
         override fun decode(json: JsonObject) = Doc(json.str("key"), json.getValue("value"))
         override suspend fun write(row: Doc): Write {
             val text = textOf(row.value) ?: return Write.SKIP
-            // Own exercises made on two phones: both lists together (the cloud's version of the same one wins).
-            val merged = if (row.key == CUSTOM_DOC) mergeCustom(store.syncDocs()[CUSTOM_DOC], text) else text
+            // Own exercises made on two phones: both lists together (the cloud's version of the same one wins); the same
+            // for the coach's talk and its changes, by message and entry.
+            val mine = store.syncDocs()[row.key]
+            val merged = when (row.key) {
+                CUSTOM_DOC -> mergeCustom(mine, text)
+                SettingsStore.COACH_CHAT_DOC -> mergeById(mine, text, kotlinx.serialization.builtins.ListSerializer(forma.app.data.CoachChatMsg.serializer()), SettingsStore.COACH_CHAT) { it.id }
+                SettingsStore.COACH_LOG_DOC -> mergeById(mine, text, kotlinx.serialization.builtins.ListSerializer(forma.app.data.CoachLogEntry.serializer()), SettingsStore.COACH_LOG) { it.id }
+                else -> text
+            }
             return if (store.putSyncDoc(row.key, merged)) Write.OK else Write.SKIP
         }
         override suspend fun delete(key: String) = store.removeSyncDoc(key)

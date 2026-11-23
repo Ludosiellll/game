@@ -299,6 +299,11 @@ class SettingsStore(context: Context, name: String = "forma") {
         "settings" to (Keys.settings to Settings.serializer()),
         "lift_state" to (Keys.lift to LiftState.serializer()),
         "custom_exercises" to (Keys.custom to ListSerializer(Exercise.serializer())),
+        // The talk with the coach and the changes it made: kept when the phone is replaced, and readable when the coach
+        // is looked into (23 November: «переписка и журнал тренера не синхронизируются с облаком»). Only the person reads
+        // their own rows: nothing of it goes to friends.
+        COACH_CHAT_DOC to (Keys.coachChat to ListSerializer(CoachChatMsg.serializer())),
+        COACH_LOG_DOC to (Keys.coachLog to ListSerializer(CoachLogEntry.serializer())),
     )
 
     private fun <T> read(key: Preferences.Key<String>, s: KSerializer<T>): Flow<T?> =
@@ -378,7 +383,7 @@ class SettingsStore(context: Context, name: String = "forma") {
 
     private val runRecords: KSerializer<List<LastRun>> = ListSerializer(LastRun.serializer())
 
-    /** What the coach changed on this phone, newest last (the last [COACH_LOG] kept); not copied to the cloud. */
+    /** What the coach changed, newest last (the last [COACH_LOG] kept); copied to the cloud ([COACH_LOG_DOC]). */
     val coachLog: Flow<List<CoachLogEntry>> = read(Keys.coachLog, ListSerializer(CoachLogEntry.serializer())).map { it.orEmpty() }
     suspend fun coachLogNow(): List<CoachLogEntry> = coachLog.first()
 
@@ -391,7 +396,7 @@ class SettingsStore(context: Context, name: String = "forma") {
         }
     }
 
-    /** The talk with the coach, oldest first (the last [COACH_CHAT] messages); kept on this phone only. */
+    /** The talk with the coach, oldest first (the last [COACH_CHAT] messages); copied to the cloud ([COACH_CHAT_DOC]). */
     val coachChat: Flow<List<CoachChatMsg>> = read(Keys.coachChat, ListSerializer(CoachChatMsg.serializer())).map { it.orEmpty() }
     suspend fun coachChatNow(): List<CoachChatMsg> = coachChat.first()
 
@@ -443,6 +448,9 @@ class SettingsStore(context: Context, name: String = "forma") {
 
     companion object {
         const val COACH_LOG = 50
+        /** Cloud keys of the coach's talk and of its changes. */
+        const val COACH_CHAT_DOC = "coach_chat"
+        const val COACH_LOG_DOC = "coach_log"
         const val COACH_REVIEWS = 40
         const val COACH_CHAT = 80
         /** Runs kept before the last one: a long run and the five of a six-day week after it. */

@@ -28,6 +28,7 @@ internal const val COACH_RULES = """## Как решает приложение
 Зал:
 - У упражнения подходы × диапазон повторов и «запас» — сколько повторов ещё мог бы сделать. Вес на следующую тренировку — рабочий вес упражнения в этом диапазоне; он всегда кратен шагу веса упражнения (вниз).
 - В первую неделю блока запас на 1 больше, в предпоследнюю — на 1 меньше; последняя неделя блока — разгрузка (меньше подходов, вес на 10 % легче). «Так себе» сегодня — тоже облегчённая тренировка.
+- Отдых между подходами и длину тренировки человек выбирает сам, по самочувствию: время между отметками подходов приложение не читает и ничего по нему не решает. Не оценивай отдых и длину тренировки и не советуй отдыхать короче или дольше, пока человек сам не спросит.
 - Разминка: перед главным упражнением — лесенка к рабочему весу (с пустого грифа у штанги; 40–88 % веса, повторы 8 → 5 → 3 → 2, одного повтора в разминке нет), перед тяжёлым вторым на свежие мышцы — один подход 60 % на 6; перед упражнением на уже разогретые мышцы и на одну мышцу — не нужна. В разгрузочную неделю и в день «Так себе» разминка такая же, к более лёгкому весу.
 - Последний подход каждого упражнения с весом (2+ подходов, не в разгрузку и не при подборе) — «N+»: сделать цель, потом ещё, пока идёт, и остановиться с 1 в запасе (с 2 — ноги в день тяжёлого бега и за 1–2 дня до него). Лишние повторы показывают, насколько стал сильнее.
 - Получилось: новичок в базовых добавляет вес каждую тренировку (двойной шаг при 2+ лишних в «+»); остальные сначала поднимаются по диапазону повторов, потом добавляют вес шагом. 4+ лишних в «+» — сразу к весу по расчётному максимуму (не больше +10 %, новичку +15 %). Ничего лишнего в «+» — вес держится.
@@ -347,8 +348,8 @@ private suspend fun exercises(repo: TrainingRepository, today: LocalDate): Strin
 private suspend fun running(repo: TrainingRepository, today: LocalDate): String = buildString {
     val program = repo.store.programNow() ?: return@buildString
     if (program.week.days.none { d -> d.sessions.any { it.isRun } }) return@buildString
-    val st = repo.store.runStateNow()
     val profile = repo.store.profileNow()
+    val st = repo.runStateToGo(profile?.runGoal)
     val caps = ProgramGenerator.runCaps(program, profile?.runGoal?.middleDistance == true)
     appendLine("## Бег сейчас")
     appendLine(
@@ -360,6 +361,15 @@ private suspend fun running(repo: TrainingRepository, today: LocalDate): String 
             appendLine(if (known.estimated) "- Форма бега (VDOT) ≈ ${Ru.one(v)} — оценка по цели и по тому, как идут пробежки: контрольного забега не было, и он не обязателен. От неё все темпы."
             else "- Форма бега (VDOT) ${Ru.one(v)} (по контрольному забегу).")
         }
+    }
+    profile?.runGoal?.takeIf { it.middleDistance }?.let { g ->
+        val step = forma.core.run.RunPlan.stepPace(forma.core.run.RunPlan.estimated(st, g), g)
+        val lap = profile.lapMeters
+        appendLine(
+            "- Отрезки к цели (Темп цели): " + (lap?.let { "круг за ${Ru.one(forma.core.run.Track.lapSec(step, it))} с, " } ?: "") + "${Ru.pace(step)} на км" +
+                (if (step <= g.pace + 0.5) " — темп цели" else "") +
+                (st.goalRepPace?.let { " (по тому, что человек держал в отрезках с запасом; не медленнее этого, не быстрее цели)" } ?: " (по форме)") + ".",
+        )
     }
     appendLine("- Контрольный забег: " + when {
         st.noTrialUntil?.let { today.toEpochDay() < it } == true -> "отложен человеком до ${Ru.date(LocalDate.ofEpochDay(st.noTrialUntil!!))}."
@@ -412,7 +422,7 @@ private suspend fun changes(repo: TrainingRepository, today: LocalDate): String 
     }
 }
 
-/** One finished workout for the coach's review: what was planned and done, the app's own debrief, the rests taken. */
+/** One finished workout for the coach's review: what was planned and done, the app's own debrief. */
 suspend fun coachWorkoutFacts(repo: TrainingRepository, workoutId: Long): String? {
     val w = repo.db.workouts().get(workoutId) ?: return null
     val sets = repo.db.sets().forWorkout(workoutId)
@@ -421,21 +431,7 @@ suspend fun coachWorkoutFacts(repo: TrainingRepository, workoutId: Long): String
     return buildString {
         appendLine("## Разбираемая тренировка: ${Ru.date(day)} ${day.year} — ${w.title}")
         append(TrainingReport.workout(w, sets, run))
-        if (w.kind == Kind.LIFT) {
-            val plan = w.planJson?.let { runCatching { AppJson.decodeFromString(LiftPlan.serializer(), it) }.getOrNull() }
-            val rests = sets.groupBy { it.position }.toSortedMap().mapNotNull { (pos, list) ->
-                val done = list.sortedBy { it.doneAt }
-                if (done.size < 2) return@mapNotNull null
-                val gaps = done.zipWithNext { a, b -> ((b.doneAt - a.doneAt) / 1000).toInt() }
-                val planned = plan?.items?.firstOrNull { it.position == pos }?.slot?.restSec
-                "- ${plan?.items?.firstOrNull { it.position == pos }?.name ?: done.first().exerciseId}: " +
-                    gaps.joinToString(", ") { Ru.clock(it) } + (planned?.let { " (план отдыха ${Ru.clock(it)})" } ?: "")
-            }
-            if (rests.isNotEmpty()) {
-                appendLine("Время между отметками подходов (отдых и сам подход; сюда же входят подготовка, ожидание тренажёра, отвлечения — длинное не значит тяжело):")
-                rests.forEach { appendLine(it) }
-            }
-        } else if (run != null) {
+        if (run != null) {
             val plan = runCatching { AppJson.decodeFromString(forma.core.run.RunWorkout.serializer(), run.planJson) }.getOrNull()
             val summary = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
             if (plan != null) {

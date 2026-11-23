@@ -79,15 +79,20 @@ class PersonalRepoTest {
         assertTrue(r in 1.4..1.6, "ratio $r")
     }
 
-    @Test fun repsFallingOffSessionAfterSessionGiveLongerRest() = runBlocking<Unit> {
+    /**
+     * Denis, 23 November: «смысла учитывать отдых между подходами по-моему вообще нет, у каждого свой организм и каждый
+     * сам чувствует когда нужно делать». Reps falling off from set to set, the clock between the marks: the plan's rest
+     * stays as it is, and no line tells the person they recover slowly.
+     */
+    @Test fun repsFallingOffSessionAfterSessionLeaveTheRestAsPlanned() = runBlocking<Unit> {
         val item = firstItem()
         assertNull(item.restWhy)
         assertEquals(0, item.restShift)
         // 8 with 2 left, then 6 and 4 to failure, three minutes apart: 3–4 reps lost a set.
         repeat(4) { session(start.plusDays(it * 2L), item, listOf(Triple(80.0, 8, 2), Triple(80.0, 6, 0), Triple(80.0, 4, 0))) }
         val again = repo.liftPlan(repo.store.programNow()!!.templates.first().id, start.plusDays(10)).items.first { it.exerciseId == item.exerciseId }
-        assertEquals(60, again.restShift)
-        assertNotNull(again.restWhy)
+        assertEquals(0, again.restShift)
+        assertNull(again.restWhy)
         // A rest the person set themselves stays theirs.
         repo.updateSettings { it.copy(rest = mapOf(item.exerciseId to 120)) }
         val own = repo.liftPlan(repo.store.programNow()!!.templates.first().id, start.plusDays(10)).items.first { it.exerciseId == item.exerciseId }

@@ -131,6 +131,11 @@ object Texts {
     fun run(o: RunOutcome, manual: Boolean = false, plan: forma.core.run.RunWorkout? = null): String = when {
         manual && o == RunOutcome.PaceUnknown -> "Средний круг не вписан, поэтому шаг выбран по ощущениям. В следующий раз впиши его — так видно, держишь ли темп цели."
         manual && o == RunOutcome.TestNotCounted -> "Время контрольного забега не вписано, поэтому он не засчитан. Следующий — через две недели."
+        o is RunOutcome.RepPace && plan?.lapMeters != null -> {
+            val lap = plan.lapMeters!!
+            "Отрезки к цели ты держишь с запасом, поэтому дальше они быстрее: круг за ${Ru.one(forma.core.run.Track.lapSec(o.to, lap))} с " +
+                "вместо ${Ru.one(forma.core.run.Track.lapSec(o.from, lap))} с. Быстрее темпа цели они не станут."
+        }
         o is RunOutcome.Same && plan != null && plan.workSeconds / 60 < o.minutes ->
             "Короткая пробежка длительность не меняет. Обычная " +
                 (if (plan.type == forma.core.run.RunType.LONG) "длинная" else "лёгкая") + " — ${o.minutes} мин."
@@ -200,6 +205,8 @@ object Texts {
         is RunOutcome.EstChanged ->
             if (o.to > o.from) "Тяжёлые пробежки идут с запасом, поэтому темпы теперь чуть быстрее. Форма оценена по тренировкам: ${Ru.one(o.from)} → ${Ru.one(o.to)}."
             else "Было слишком тяжело, поэтому темпы теперь спокойнее — во всех пробежках. Форма оценена по тренировкам: ${Ru.one(o.from)} → ${Ru.one(o.to)}."
+        is RunOutcome.RepPace -> "Отрезки к цели ты держишь с запасом, поэтому дальше они быстрее: ${Ru.pace(o.to)} на км вместо ${Ru.pace(o.from)}. " +
+            "Быстрее темпа цели они не станут."
         RunOutcome.TrialEarned -> "По тренировкам ты уже рядом с целью. Теперь контрольный забег имеет смысл: он будет в следующий тяжёлый день. Не хочешь — скажи тренеру «без контрольного»."
         RunOutcome.AheadOfPaces -> "Третью тяжёлую тренировку подряд темп даётся тебе легче, чем задуман: форма, похоже, выросла. Следующая тяжёлая тренировка — контрольный, он покажет насколько."
         RunOutcome.GoalReached -> "Цель достигнута! Можно поставить новую в профиле."

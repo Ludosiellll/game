@@ -765,11 +765,13 @@ object CoachActions {
                     "темповый ${Ru.pace(a0.threshold.toDouble())} → ${Ru.pace(a1.threshold.toDouble())} /км. Так же сдвинутся интервалы и отрезки. " +
                     "Дальше темпы сами подстраиваются по тому, как идут пробежки."
                 either(!up, text) {
-                    val now = forma.core.run.RunPlan.estimated(repo.store.runStateNow(), goal)
-                    val next = if (now.estimated) now.copy(estVdot = to) else now.copy(vdot = to)
+                    val now = forma.core.run.RunPlan.estimated(repo.runStateToGo(goal), goal)
+                    // Easier: the race-pace reps too, by the same steps (each about 2.5 % on the pace held in them).
+                    val rep = now.goalRepPace?.let { if (up) it else it * (1 + forma.core.run.RunPlan.STEP_AHEAD * steps) }
+                    val next = (if (now.estimated) now.copy(estVdot = to) else now.copy(vdot = to)).copy(goalRepPace = rep)
                     repo.store.setRunState(next)
                     repo.changed()
-                    CoachCall("undo_run_pace", args("est" to now.estimated, "old" to from, "expect" to to))
+                    CoachCall("undo_run_pace", args("est" to now.estimated, "old" to from, "expect" to to, "rep" to now.goalRepPace))
                 }
             }
             RUN_STEP -> {
@@ -1844,7 +1846,13 @@ object CoachActions {
                 val cur = if (est) now.estVdot else now.vdot
                 val old = a.num("old")
                 if (old == null || cur != a.num("expect") || est != (now.vdot == null)) false
-                else { repo.store.setRunState(if (est) now.copy(estVdot = old) else now.copy(vdot = old)); repo.changed(); true }
+                else {
+                    val back = if (est) now.copy(estVdot = old) else now.copy(vdot = old)
+                    // The race-pace reps' pace as it was, when the change moved it.
+                    repo.store.setRunState(if (a.containsKey("rep")) back.copy(goalRepPace = a.num("rep")) else back)
+                    repo.changed()
+                    true
+                }
             }
             "undo_tempo" -> {
                 val now = repo.store.runStateNow()

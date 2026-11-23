@@ -1114,27 +1114,12 @@ class TrainingRepository(
         val warm = if (spec.role == SlotRole.MAIN && work != null && work > 0 && ex.load == LoadKind.EXTERNAL) {
             WarmUp.sets(work, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null, ex.stepFrom)
         } else emptyList()
-        // How this person recovers on this exercise: reps lost from set to set after the rest they took.
         // Own rest belongs to the place in the plan: it stays after a swap, and one set for a day stays on that day.
+        // The time between set marks is never read (Denis, 23 November: «смысла учитывать отдых между подходами по-моему
+        // вообще нет, у каждого свой организм и каждый сам чувствует когда нужно делать»): rest is the person's own, and
+        // the gaps hold talk and waiting as much as rest. The rest said after a set follows the set alone.
         val ownRest = restKey != null && restKey in settings.rest
-        val shift = if (ex.load == LoadKind.TIMED || ownRest) 0 else forma.core.strength.RestAdvice.personal(
-            db.sets().history(ex.id).groupBy { it.workoutId }.values.flatMap { l ->
-                val target = l.firstOrNull()?.targetReps ?: spec.repMin
-                forma.core.strength.RestAdvice.pairsOf(l.sortedBy { it.doneAt }.map { DoneSet(it.weight, it.reps, it.rir) to it.doneAt }, target) {
-                    Progression.effectiveLoad(ex, it, profile.bodyWeightKg)
-                }
-            },
-            spec.restSec,
-        )
-        return LiftItem(
-            position, spec, ex.id, ex.name, p, warm, ex.step, stepFrom = ex.stepFrom, restShift = shift, restOwn = ownRest,
-            restWhy = when {
-                shift > 0 -> "Отдых здесь у тебя на ${shift} с длиннее. В прошлых тренировках после обычного отдыха ты терял " +
-                    "в следующем подходе ${if (shift >= 60) "3 повтора и больше" else "2 повтора и больше"}."
-                shift < 0 -> "Отдых здесь у тебя на ${-shift} с короче. В прошлых тренировках ты почти не терял повторов от подхода к подходу."
-                else -> null
-            },
-        )
+        return LiftItem(position, spec, ex.id, ex.name, p, warm, ex.step, stepFrom = ex.stepFrom, restOwn = ownRest)
     }
 
     // ---------- exercise swaps and own exercises ----------
@@ -1954,12 +1939,12 @@ class TrainingRepository(
         }
         // A due trial goes on its own day ([trialDay]): not on a hard day too soon after the legs.
         @Suppress("NAME_SHADOWING") val trial = trial ?: (kind != SessionKind.RUN_QUALITY || trialDay(date) == date)
-        val saved = store.runStateNow()
+        val profile = store.profileNow()
+        val goal = profile?.runGoal
+        val saved = runStateToGo(goal)
         val program = store.programNow()
         // The caps of the plan as it is now: after a switch to less running, runs are no longer than it allows.
         val caps = capsOn(date)
-        val profile = store.profileNow()
-        val goal = profile?.runGoal
         // Before any trial is counted every pace comes from the estimate of the fitness: from the goal at first, then as
         // the runs go ([RunPlan.estimated]).
         val st = RunPlan.withBreak(saved, date.toEpochDay()).let { if (minutes != null && kind == SessionKind.RUN_EASY) it.copy(easyMinutes = minutes) else it }.let {
@@ -2053,7 +2038,7 @@ class TrainingRepository(
         return forma.core.plan.PlanAdvisor.advise(
             forma.core.plan.PlanAdvisor.Input(
                 days, program.aim, program.experience,
-                runs = sessions.count { it.isRun }, sessionMinutes = profile.sessionMinutes, timeRatio = timeRatio(),
+                runs = sessions.count { it.isRun }, sessionMinutes = profile.sessionMinutes,
                 stalled = weeksWithoutBest(today), tiredOften = lows >= 3 || zone == forma.core.load.LoadStory.Zone.REST || lighter,
                 daysToRace = daysToRace(today), habits = habitsOf(program, settings, today), find = Catalog::find,
             ),
@@ -2405,7 +2390,7 @@ class TrainingRepository(
             val s = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
             return@withLock w.id to (s ?: RunSummary(emptyList(), max(1, (w.durationSec ?: 60) / 60), w.load ?: 0.0))
         }
-        val st = store.runStateNow()
+        val st = runStateToGo(store.profileNow()?.runGoal)
         val seen = store.settingsNow().loopSeen
         // No loop of its own (no GPS, a run entered by hand): the one GPS measured before, on the same lap length set.
         @Suppress("NAME_SHADOWING") val result = if (result.loopM == null && seen != null && seen.set == workout.lapMeters) result.copy(loopM = seen.meters.toDouble()) else result
@@ -2451,6 +2436,17 @@ class TrainingRepository(
         if (outcomes.any { it is RunOutcome.Graduated }) graduate()
         onChange()
         id to summary
+    }
+
+    /**
+     * The running progress to plan and decide by: as stored, with the pace of race-pace reps taken from the last
+     * race-pace session on this phone for a runner who ran such reps before the app kept it ([RunState.goalRepPace]).
+     */
+    internal suspend fun runStateToGo(goal: forma.core.model.RunGoal?): RunState {
+        val st = store.runStateNow()
+        if (st.goalRepPace != null || goal == null) return st
+        val records = (store.earlierRunsNow() + listOfNotNull(store.lastRunNow())).map { it.workout to it.result }
+        return RunPlan.withShownRepPace(st, goal, records)
     }
 
     /** The running progress after [result] of [workout] run on [date] from [st], and the plan's decisions on it. */

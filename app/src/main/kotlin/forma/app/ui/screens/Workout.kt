@@ -427,7 +427,6 @@ fun WorkoutScreen(workoutId: Long) {
                     )
                     if (about) {
                         Text(Texts.roleLine(item.slot.role, ex) + " " + Texts.orderWhy(item.slot.role, ex), style = T.secondary(13.sp))
-                        item.restWhy?.let { Text(it, style = T.secondary(13.sp)) }
                         Text(Texts.muscles(ex), style = T.secondary(13.sp))
                     }
                     if (note == null) {
@@ -690,7 +689,7 @@ fun WorkoutScreen(workoutId: Long) {
                         val lastOfAll = closes && nx == null
                         // Rest from this set: how hard it was, how heavy, the exercise, how this person recovers.
                         val restAdvice = forma.core.strength.RestAdvice.after(
-                            logged.slot.restSec, doneSet.reps, doneSet.rir, logged.prescription.rir, ex.compound, plan.deload, logged.restShift, logged.restOwn,
+                            logged.slot.restSec, doneSet.reps, doneSet.rir, logged.prescription.rir, ex.compound, plan.deload, 0, logged.restOwn,
                             target = if (logged.prescription.calibrate) null else logged.prescription.reps,
                         )
                         if (ns != null && ex.load != LoadKind.TIMED) {

@@ -154,4 +154,30 @@ class RunNoForcedTrialTest {
         val harder = assertIs<CoachActions.Ready>(CoachActions.prepare(repo, call(CoachActions.RUN_PACE, "change" to "harder"), monday))
         assertEquals(CoachActions.Mode.CONFIRM, harder.mode)
     }
+
+    /**
+     * 16 November: «Темп цели · 6 × 1 круг» at 42.6–44.4 s a lap, effort 6. After the update the reps were to go by the
+     * estimate (52.6 s a lap); the phone keeps that run, so they stay at the goal's 45.1 s — and the coach is told so.
+     */
+    @Test fun raceRepsKeepThePaceHeldBeforeTheUpdate() = runBlocking<Unit> {
+        val goal = RunGoal(1500, 330)
+        val before = store.runStateNow()
+        val old = RunPlan.goalPace(before, goal, 205)
+        val result = forma.core.run.RunResult(1.0, 6, old.totalSeconds, workPace = 43.53 / 0.205, reps = old.reps)
+        store.setLastRun(forma.app.data.LastRun(1, 20773, before, before, old, result))
+        assertEquals(goal.pace, assertNotNull(repo.runStateToGo(goal).goalRepPace), 1e-9)
+        // A hard day that holds race-pace reps (the cycle decides which one): 45.1 s a lap.
+        val day = (0..5).firstNotNullOfOrNull { n ->
+            store.setRunState(before.copy(qualityCount = n))
+            listOf(monday, thursday).firstOrNull { repo.runFor(SessionKind.RUN_QUALITY, it).type == RunType.GOAL_PACE }
+        }
+        val reps = repo.runFor(SessionKind.RUN_QUALITY, assertNotNull(day, "a race-pace day"))
+        assertEquals(45.1, assertNotNull(workOf(reps).first().lapSec), 0.1)
+        val brief = coachContext(repo, monday)
+        assertTrue("Отрезки к цели (Темп цели): круг за 45,1 с" in brief, brief.lineSequence().filter { "Отрезки" in it }.joinToString("\n"))
+        // Run again after the update: the pace is kept with the progress from then on.
+        val at = assertNotNull(day).atTime(18, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        repo.saveRun(reps, forma.core.run.RunResult(1.0, 6, reps.totalSeconds, workPace = 44.0 / 0.205, reps = reps.reps), at, emptyList(), day)
+        assertEquals(goal.pace, assertNotNull(store.runStateNow().goalRepPace), 1e-9)
+    }
 }

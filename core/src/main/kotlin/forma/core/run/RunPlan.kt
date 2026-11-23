@@ -111,6 +111,14 @@ data class RunState(
     val estUpDay: Long? = null,
     /** No trial is due before this day: the runner put it off («не хочу контрольный»). */
     val noTrialUntil: Long? = null,
+    /**
+     * The pace (s a km) the runner has held in race-pace reps, done with the effort asked or less: the reps are never
+     * slower than that, and never quicker than the goal ([RunPlan.stepPace]). Fitness, measured or estimated, is about
+     * endurance; a runner can be quicker over a lap than it says (Denis, 16 November: 6 × 205 m at 42.6–44.4 s, effort
+     * 6 — the goal's 45 s and quicker, while his estimate gave 52.6 s). Slower by a step after two misses in a row and
+     * after a break. Null: the step from the fitness alone.
+     */
+    val goalRepPace: Double? = null,
 ) {
     val canRunContinuously: Boolean get() = walkStage < 0
 
@@ -245,6 +253,8 @@ sealed interface RunOutcome {
     @Serializable data class EstChanged(val from: Double, val to: Double) : RunOutcome
     /** By training the estimate has come within a point of the goal's fitness: the trial is worth running now. */
     @Serializable data object TrialEarned : RunOutcome
+    /** Race-pace reps held with effort to spare at a quicker pace than the step: the step comes to it (s a km). */
+    @Serializable data class RepPace(val from: Double, val to: Double) : RunOutcome
     /**
      * The loop GPS measured ([loop] m) is clearly shorter than the lap length set ([set] m): the laps were read on the loop
      * as run — the trial's distance, the reps' pace. Setting the lap length makes the plans right too.
@@ -878,9 +888,43 @@ object RunPlan {
      * Within reach, and with nothing known of the runner at all, the goal's own pace.
      */
     fun stepPace(state: RunState, goal: RunGoal): Double {
+        val byFitness = fitnessStep(state, goal)
+        // What the runner has held in these reps: the step is never slower than that (nor quicker than the goal).
+        val shown = state.goalRepPace ?: return byFitness
+        return max(goal.pace, min(byFitness, shown))
+    }
+
+    /** The step from the fitness alone: the race pace of the current form a step quicker, not quicker than the goal. */
+    private fun fitnessStep(state: RunState, goal: RunGoal): Double {
         val v = state.fitness ?: return goal.pace
         val current = Vdot.predictSeconds(v, goal.meters.toDouble()) / (goal.meters / 1000.0)
         return max(goal.pace, current * (1 - STEP_AHEAD))
+    }
+
+    /**
+     * The pace race-pace reps [r] of [w] showed the runner holds, s a km: the session done (almost) in full, at the pace
+     * asked or quicker (measured), with the effort asked or less — the runner's own effort scale applied, as [decide]
+     * does. Never quicker than the goal's own pace. Null when the session says nothing of it (not measured, missed, too
+     * hard, not race-pace reps).
+     */
+    fun shownRepPace(state: RunState, w: RunWorkout, r: RunResult, goal: RunGoal): Double? {
+        if (w.type != RunType.GOAL_PACE || w.light || w.custom) return null
+        val target = w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.pace?.let { (it.fast + it.slow) / 2.0 } ?: return null
+        val pace = r.workPace ?: return null
+        val enough = r.reps?.let { it >= w.reps && r.completed >= 0.9 } ?: (r.completed >= 0.95)
+        val rpe = (r.rpe - state.rpeOffset).coerceAtLeast(1)
+        if (!enough || pace > target * 1.03 || rpe > w.targetRpe) return null
+        return max(goal.pace, min(target, pace))
+    }
+
+    /**
+     * [state] with the race-pace reps' pace taken from the last race-pace session of [records] (oldest first) when it is not
+     * kept yet: for a runner who ran such reps before the app kept it (24 November). Unchanged with one kept or none shown.
+     */
+    fun withShownRepPace(state: RunState, goal: RunGoal?, records: List<Pair<RunWorkout, RunResult>>): RunState {
+        if (state.goalRepPace != null || goal == null || !goal.middleDistance) return state
+        val (w, r) = records.lastOrNull { it.first.type == RunType.GOAL_PACE && !it.first.light && !it.first.custom } ?: return state
+        return shownRepPace(state, w, r, goal)?.let { state.copy(goalRepPace = it) } ?: state
     }
 
     /**
@@ -1101,6 +1145,7 @@ object RunPlan {
         return state.copy(
             vdot = state.vdot?.let { (it * (1 - fitnessLoss(off)) * 2).roundToInt() / 2.0 },
             estVdot = state.estVdot?.let { (it * (1 - fitnessLoss(off)) * 2).roundToInt() / 2.0 },
+            goalRepPace = state.goalRepPace?.let { it * (1 + fitnessLoss(off)) },
             walkStage = if (state.walkStage >= 0) max(0, state.walkStage - 3 * back) else state.walkStage,
             easyMinutes = cut(state.easyMinutes, 20),
             longMinutes = cut(state.longMinutes, 30),
@@ -1640,9 +1685,18 @@ object RunPlan {
                     s = s.copy(goalStage = back, goalFails = 0)
                     // And by an estimate the step's pace itself was too quick.
                     if (est) s = moveEst(s, -1.0, day, goal, out)
+                    // The pace held before was too quick for these reps: a step slower, back to the fitness's step at most.
+                    if (goal != null) s = s.copy(goalRepPace = s.goalRepPace?.let { it * (1 + STEP_AHEAD) }?.takeIf { it < fitnessStep(s, goal) })
                 } else {
                     out += RunOutcome.StageRepeat("goal")
                     s = s.copy(goalFails = 1)
+                }
+                // The pace the reps showed the runner holds: kept, the quickest so far, and the step comes to it.
+                if (goal != null) shownRepPace(state, w, r, goal)?.let { shown ->
+                    val was = stepPace(s, goal)
+                    s = s.copy(goalRepPace = min(shown, s.goalRepPace ?: shown))
+                    val now = stepPace(s, goal)
+                    if (now < was * 0.99) out += RunOutcome.RepPace(was, now)
                 }
                 s = s.copy(qualityCount = state.qualityCount + 1, goalDeferredOn = null)
             }

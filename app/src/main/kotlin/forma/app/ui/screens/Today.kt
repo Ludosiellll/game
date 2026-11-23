@@ -509,10 +509,7 @@ private fun LiftCard(
         value = if (done) null else runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
     }
     val t = program.templates.firstOrNull { it.id == s.templateId }
-    // The time at this person's own pace in the gym, learned from their sessions.
-    val ratio by produceState(1.0) { value = repo.timeRatio() }
-    val budget = repo.store.profile.collectAsState(initial = null).value?.sessionMinutes
-    val minutes = if (doneAs != null) doneAs.durationSec?.let { it / 60 } else plan?.let { forma.core.plan.SessionTime.round(forma.app.data.TrainingRepository.estimateOf(it) * ratio) } ?: t?.let { Templates.minutes(it) }
+    val minutes = if (doneAs != null) doneAs.durationSec?.let { it / 60 } else plan?.let { forma.core.plan.SessionTime.round(forma.app.data.TrainingRepository.estimateOf(it)) } ?: t?.let { Templates.minutes(it) }
     FCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Ic.dumbbell, null, tint = F.c.strength, modifier = Modifier.size(18.dp))
@@ -536,11 +533,6 @@ private fun LiftCard(
             GhostButton("Всё равно сделать сегодня", onStart, Modifier.fillMaxWidth())
             return@FCard
         }
-        if (minutes != null && budget != null && ratio != 1.0 && minutes > budget * 1.15) Text(
-            "Судя по твоим прошлым тренировкам, сегодня выйдет около $minutes мин, а у тебя $budget. " +
-                "Не успеваешь — убери лишнее упражнение в «Плане» или отдыхай меньше.",
-            style = T.secondary(12.sp).copy(color = F.c.warn),
-        )
         val items = plan?.items.orEmpty()
         Column {
             items.take(3).forEach { item ->

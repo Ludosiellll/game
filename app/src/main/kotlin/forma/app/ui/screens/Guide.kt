@@ -202,8 +202,24 @@ fun HelpScreen() {
             if (shown) "Подсказки снова на экранах" else "Показать подсказки на экранах снова",
             { scope.launch { repo.updateSettings { it.copy(hintsSeen = emptySet()) }; shown = true } }, Modifier.fillMaxWidth(),
         )
+        // The notices the MIT licence asks to keep with the app: the muscle map's shapes (BodyShapes.kt).
+        var notices by rememberSaveable { mutableStateOf(false) }
+        Text(
+            if (notices) "Лицензии ▴" else "Лицензии ▾", style = T.secondary(13.sp),
+            modifier = Modifier.clickable(onClickLabel = if (notices) "Свернуть лицензии" else "Показать лицензии") { notices = !notices }.padding(vertical = 8.dp),
+        )
+        if (notices) Text(LICENSES, style = T.secondary(12.sp))
     }
 }
+
+/** Third-party notices shipped with the app. */
+const val LICENSES = """Карта мышц: react-native-body-highlighter, © 2022 ELABBASSI Hicham; контур тела: react-muscle-highlighter, © 2024 My Muscle Contributors. Обе — лицензия MIT:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."""
 
 /** What each screen is for, the same words as its hint. */
 val SCREENS = listOf(
