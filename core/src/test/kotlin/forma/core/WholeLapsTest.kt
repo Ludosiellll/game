@@ -25,7 +25,7 @@ class WholeLapsTest {
         val work = w.segments.single { it.kind == SegmentKind.WORK }
         assertEquals(7.0, work.laps)
         assertEquals(1435, w.testMeters)
-        assertTrue("середины" !in w.note && "Старт —" !in w.note, w.note)
+        assertTrue("середины" !in w.note && "Старт " !in w.note, w.note)
     }
 
     @Test fun everyRepAndTrialIsWholeLaps() {
@@ -35,7 +35,7 @@ class WholeLapsTest {
                 val l = s.laps
                 if (l != null && l % 1.0 != 0.0) bad += "$what: ${w.title} — $l"
             }
-            if ("середины" in w.note || "Старт —" in w.note) bad += "$what: ${w.note}"
+            if ("середины" in w.note || "Старт " in w.note) bad += "$what: ${w.note}"
         }
         for (lap in 150..450 step 5) for (m in listOf(800, 1000, 1500, 1609, 2000, 3000)) {
             val goal = RunGoal(m, (m * 0.24).toInt())

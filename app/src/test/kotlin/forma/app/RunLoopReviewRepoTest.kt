@@ -234,7 +234,7 @@ class RunLoopReviewRepoTest {
         assertEquals(measured, plan.lapMeters)
         val review = forma.core.run.RunReview.of(forma.core.run.RunReview.Run(plan, s.laps, 7, run.movingSec, run.avgPace, run.workPace, null, run.completed, null), goal)
         val text = review.joinToString(" ") { it.text }
-        assertTrue("быстрее цели" !in text && "медленнее" in text, text)
+        assertTrue("быстрее нужного" !in text && "медленнее" in text, text)
         assertEquals(20 * measured.toDouble(), run.distanceM!!, 1.0)
     }
 

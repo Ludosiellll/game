@@ -110,7 +110,7 @@ class TrialHeldRepoTest {
         // The run is in his history and load whatever the trial gave.
         assertTrue(summary.load > 0)
         // Told so, in words.
-        assertTrue("держал" in Texts.run(part), Texts.run(part))
+        assertTrue("темп держался" in Texts.run(part), Texts.run(part))
     }
 
     @Test fun runToTheEndButSlowerTheHeldStretchIsTheFitness() = runBlocking<Unit> {

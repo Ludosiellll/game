@@ -91,7 +91,7 @@ class TrialTomorrowTest {
         assertEquals(1435, w.testMeters)
         assertEquals(7.0, w.segments.first { it.laps != null }.laps)
         assertEquals(48.7, lapSec, 0.05)
-        assertTrue("середины" !in w.note && "Старт —" !in w.note, w.note)
+        assertTrue("середины" !in w.note && "Старт " !in w.note, w.note)
         assertTrue("по 49 с" in w.note, w.note)
     }
 
