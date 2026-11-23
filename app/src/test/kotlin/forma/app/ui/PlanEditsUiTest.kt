@@ -11,6 +11,8 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
@@ -127,5 +129,39 @@ class PlanEditsUiTest {
         val item = runBlocking { repo.planOf(repo.db.workouts().get(id)!!)!!.items.last() }
         assertEquals(pick.id, item.exerciseId)
         assertTrue(item.addedForGood)
+    }
+
+    /**
+     * Denis, 23 November: the coach moves an exercise ("поставь первым"), and the workout follows — the plan's screen
+     * must show the same order, or the change looks undone.
+     */
+    @Test fun theOwnOrderOfExercisesIsShownOnThePlan() {
+        val repo = repo("ui-plan-order")
+        val t = runBlocking { repo.store.programNow()!!.templates.first() }
+        val plan = runBlocking { repo.liftPlan(t.id, java.time.LocalDate.now()) }
+        val first = plan.items.first()
+        val last = plan.items.last()
+        runBlocking { repo.updateSettings { it.copy(order = mapOf(t.id to listOf(last.planId ?: last.exerciseId))) } }
+        show(repo, Navigator(Screen.Plan)) { PlanScreen() }
+        // The names in the order the screen lays them out.
+        fun shown(): List<String> {
+            val out = mutableListOf<String>()
+            fun walk(n: androidx.compose.ui.semantics.SemanticsNode) {
+                n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.forEach { out += it.text }
+                n.children.forEach(::walk)
+            }
+            walk(compose.onRoot(useUnmergedTree = true).fetchSemanticsNode())
+            return out
+        }
+        fun moved() = shown().let { it.indexOf(last.name) in 0 until it.indexOf(first.name) }
+        // The plan is built in the background: the rows follow it once it is there.
+        runCatching {
+            compose.waitUntil(10_000) {
+                shadowOf(Looper.getMainLooper()).idle()
+                moved()
+            }
+        }
+        assertTrue(moved(), "«${last.name}» is asked to go first, above «${first.name}»: ${shown().filter { n -> plan.items.any { it.name == n } }}")
+        assertTrue(compose.onAllNodesWithText("Свой порядок упражнений", substring = true).fetchSemanticsNodes().isNotEmpty(), "the screen says the order is the person's own")
     }
 }

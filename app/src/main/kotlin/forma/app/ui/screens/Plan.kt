@@ -227,51 +227,59 @@ private fun TemplateCard(t: Template) {
     val added = repo.addedTo(t.id, settings)
     FCard(gap = 0.dp) {
         Text(titleText(t.title), style = T.title(20.sp), modifier = Modifier.padding(bottom = 8.dp))
-        t.slots.forEachIndexed { i, s ->
+        // With the person's own order (set through the coach) the rows follow the workout; otherwise the plan's order.
+        // A row is known by its position: the plan's own first, then the ones added for good.
+        val ownOrder = !settings.order[t.id].isNullOrEmpty()
+        val at = plan?.items?.takeIf { ownOrder }?.withIndex()?.associate { it.value.position to it.index }
+        val rows = (0 until t.slots.size + added.size).let { all -> if (at == null) all.toList() else all.sortedBy { at[it] ?: Int.MAX_VALUE } }
+        if (ownOrder) Text("Свой порядок упражнений. Вернуть обычный — попроси тренера.", style = T.secondary(12.sp), modifier = Modifier.padding(bottom = 8.dp))
+        rows.forEach { pos ->
             Hairline()
-            val item = plan?.items?.firstOrNull { it.position == i && !it.addedForGood }
-            val removed = s.exerciseId in settings.removed && plan != null && item == null
-            Row(
-                Modifier.fillMaxWidth().clickable {
-                    if (removed) scope.launch { repo.setRemoved(s.exerciseId, false) } else editing = i
-                }.padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    val name = item?.name ?: forma.core.model.Catalog.find(settings.swaps[s.exerciseId] ?: s.exerciseId)?.name ?: s.exerciseId
-                    Text(name, style = T.body(15.sp, FontWeight.SemiBold).copy(color = if (removed) F.c.text3 else F.c.text))
-                    val now = item?.slot ?: s
-                    // A single-joint exercise in the place of a heavy lift is done as one: said with the numbers.
-                    val demoted = s.exerciseId in settings.demoted && settings.swaps[s.exerciseId]?.let { forma.app.data.TrainingRepository.demotes(s, it) } == true
-                    // Only what the user changed, next to what the plan had.
-                    val was = if (demoted) emptyList() else listOfNotNull(
-                        if (now.sets != s.sets) "${s.sets} ${Ru.plural(s.sets, "подход", "подхода", "подходов")}" else null,
-                        if (now.repMin != s.repMin || now.repMax != s.repMax) "${s.repMin}–${s.repMax}" else null,
-                        if (now.restSec != s.restSec) "отдых ${Ru.clock(s.restSec)}" else null,
-                    )
-                    Text(
-                        if (removed) "Убрано из плана · нажми, чтобы вернуть"
-                        else specLine(now, timed(item?.exerciseId ?: s.exerciseId)) + when {
-                            demoted -> " · вместо «${forma.core.model.Catalog.find(s.exerciseId)?.name ?: s.exerciseId}»: ${swapNote(s, now)}"
-                            was.isNotEmpty() -> " · в плане было: ${was.joinToString(", ")}"
-                            else -> ""
-                        },
-                        style = T.secondary(12.sp),
-                    )
+            if (pos < t.slots.size) {
+                val i = pos
+                val s = t.slots[pos]
+                val item = plan?.items?.firstOrNull { it.position == i && !it.addedForGood }
+                val removed = s.exerciseId in settings.removed && plan != null && item == null
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        if (removed) scope.launch { repo.setRemoved(s.exerciseId, false) } else editing = i
+                    }.padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        val name = item?.name ?: forma.core.model.Catalog.find(settings.swaps[s.exerciseId] ?: s.exerciseId)?.name ?: s.exerciseId
+                        Text(name, style = T.body(15.sp, FontWeight.SemiBold).copy(color = if (removed) F.c.text3 else F.c.text))
+                        val now = item?.slot ?: s
+                        // A single-joint exercise in the place of a heavy lift is done as one: said with the numbers.
+                        val demoted = s.exerciseId in settings.demoted && settings.swaps[s.exerciseId]?.let { forma.app.data.TrainingRepository.demotes(s, it) } == true
+                        // Only what the user changed, next to what the plan had.
+                        val was = if (demoted) emptyList() else listOfNotNull(
+                            if (now.sets != s.sets) "${s.sets} ${Ru.plural(s.sets, "подход", "подхода", "подходов")}" else null,
+                            if (now.repMin != s.repMin || now.repMax != s.repMax) "${s.repMin}–${s.repMax}" else null,
+                            if (now.restSec != s.restSec) "отдых ${Ru.clock(s.restSec)}" else null,
+                        )
+                        Text(
+                            if (removed) "Убрано из плана · нажми, чтобы вернуть"
+                            else specLine(now, timed(item?.exerciseId ?: s.exerciseId)) + when {
+                                demoted -> " · вместо «${forma.core.model.Catalog.find(s.exerciseId)?.name ?: s.exerciseId}»: ${swapNote(s, now)}"
+                                was.isNotEmpty() -> " · в плане было: ${was.joinToString(", ")}"
+                                else -> ""
+                            },
+                            style = T.secondary(12.sp),
+                        )
+                    }
+                    if (item != null) NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.exerciseId), style = T.number(14.sp, FontWeight.Bold))
                 }
-                if (item != null) NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.exerciseId), style = T.number(14.sp, FontWeight.Bold))
-            }
-        }
-        added.forEachIndexed { j, id ->
-            Hairline()
-            val pos = t.slots.size + j
-            val item = plan?.items?.firstOrNull { it.position == pos && it.addedForGood }
-            Row(Modifier.fillMaxWidth().clickable { editing = pos }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(item?.name ?: forma.core.model.Catalog.find(id)?.name ?: id, style = T.body(15.sp, FontWeight.SemiBold))
-                    Text("Добавлено тобой · " + specLine(item?.slot ?: repo.addedPlanned(id), timed(id)), style = T.secondary(12.sp))
+            } else {
+                val id = added[pos - t.slots.size]
+                val item = plan?.items?.firstOrNull { it.position == pos && it.addedForGood }
+                Row(Modifier.fillMaxWidth().clickable { editing = pos }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(item?.name ?: forma.core.model.Catalog.find(id)?.name ?: id, style = T.body(15.sp, FontWeight.SemiBold))
+                        Text("Добавлено тобой · " + specLine(item?.slot ?: repo.addedPlanned(id), timed(id)), style = T.secondary(12.sp))
+                    }
+                    if (item != null) NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.exerciseId), style = T.number(14.sp, FontWeight.Bold))
                 }
-                if (item != null) NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.exerciseId), style = T.number(14.sp, FontWeight.Bold))
             }
         }
         Hairline()
