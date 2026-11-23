@@ -2210,7 +2210,8 @@ class TrainingRepository(
             RunType.LONG -> forma.core.plan.SessionOrder.Run.LONG
             else -> forma.core.plan.SessionOrder.Run.EASY
         }
-        val plan = liftPlan(templateId, date)
+        // The data may be gone by now (wiped, another account signed in while the screen still asks): no order, not a crash.
+        val plan = runCatching { liftPlan(templateId, date) }.getOrNull() ?: return null
         val legMuscles = setOf(forma.core.model.Muscle.QUADS, forma.core.model.Muscle.HAMSTRINGS, forma.core.model.Muscle.GLUTES, forma.core.model.Muscle.CALVES)
         val legItems = plan.items.filter { item -> exercise(item.exerciseId, settings).let { ex -> ex.lowerBody || ex.primary.any { it in legMuscles } } }
         val heavy = legItems.filter { it.slot.role != SlotRole.ACCESSORY && exercise(it.exerciseId, settings).compound }
