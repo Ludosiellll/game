@@ -78,6 +78,8 @@ object CoachActions {
     const val EASY = "set_easy_run_minutes"
     const val RUN_TODAY = "run_today"
     const val TEMPO = "set_tempo"
+    const val TRIAL = "set_trial"
+    const val RUN_PACE = "set_run_pace"
     const val STRIDES = "set_strides"
     const val LONG = "long_easy_run"
     const val STEP = "set_weight_step"
@@ -162,6 +164,11 @@ object CoachActions {
             Param("work_min", "number", "минут в отрезке, 1,5–20", required = false),
             Param("rest_min", "number", "минут отдыха трусцой между отрезками, 0,5–3", required = false),
             Param("reset", "boolean", "true — вернуть темповый приложения", required = false))
+        fn(TRIAL, "Контрольный забег: поставить на следующий тяжёлый день (next) — когда человек сам хочет проверить форму; или отложить на 4 недели (skip) — когда он не хочет или не готов («зачем контрольный, я не пробегу»). При цели контрольный не обязателен: форму приложение оценивает по тренировкам. Темп контрольного — по нынешней форме, не по цели.",
+            Param("when", "string", "next — поставить, skip — отложить на 4 недели", values = listOf("next", "skip")))
+        fn(RUN_PACE, "Темпы бега спокойнее или быстрее — когда человек говорит, что бег по темпу слишком тяжёлый или слишком лёгкий. Сдвигает форму, от которой идут ВСЕ темпы (лёгкий, темповый, интервалы, отрезки, контрольный): один шаг — примерно 2 % темпа, около 1–1,5 с на круге 200 м. easier приложение делает сразу, harder человек подтверждает. Одна тяжёлая тренировка — не повод делать быстрее.",
+            Param("change", "string", "easier — спокойнее, harder — быстрее", values = listOf("easier", "harder")),
+            Param("steps", "integer", "1 или 2; не сказано — 1", required = false))
         fn(STRIDES, "Сколько ускорений после лёгкого бега в дни, когда они есть в плане, на weeks недель (0 — без ускорений).",
             Param("count", "integer", "0–8 (пока бег новый — до 6)"), Param("weeks", "integer", "1–$MAX_WEEKS"))
         fn(LONG, "Последний лёгкий бег недели — длинный лёгкий, на weeks недель (0 — отменить). Длина длинного растёт по правилам приложения: до часа, в день с залом — до 45 мин.",
@@ -662,6 +669,60 @@ object CoachActions {
                 if (shape == now) return no("Темповый и так ${tempoText(now)}.")
                 confirm("Темповый: ${tempoText(now)} → ${tempoText(shape)}. Темп отрезков даёт приложение. " +
                     (if (shape == step) "Это шаг плана." else "Получится хорошо — приложение само поведёт к шагу плана (${tempoText(step)}); слишком тяжело — сделает отрезки короче.")) { setTempo(repo, shape) }
+            }
+            TRIAL -> {
+                val st = repo.store.runStateNow()
+                if (!st.canRunContinuously) return no("Пока бег чередуется с ходьбой: контрольного нет, его время придёт после 30 минут бега без остановки.")
+                when (a.str("when")) {
+                    "next" -> {
+                        if (st.testSoon && st.noTrialUntil == null) return no("Контрольный и так стоит на следующий тяжёлый день.")
+                        if (repo.store.programNow()?.week?.days?.none { d -> d.sessions.any { it.kind == SessionKind.RUN_QUALITY } } != false) {
+                            return no("В неделе нет тяжёлого бега: контрольный ставится на его день. Сначала добавь тяжёлую пробежку (set_week).")
+                        }
+                        auto("Контрольный забег — в следующий тяжёлый день со свежими ногами (не раньше чем через две недели после прошлой попытки). Темп — по твоей нынешней форме, не по цели.") {
+                            val now = repo.store.runStateNow()
+                            repo.store.setRunState(now.copy(testSoon = true, noTrialUntil = null))
+                            repo.changed()
+                            CoachCall("undo_trial", args("soon" to now.testSoon, "until" to now.noTrialUntil, "expect_soon" to true))
+                        }
+                    }
+                    "skip" -> {
+                        val until = today.plusWeeks(4)
+                        if (!st.testSoon && st.noTrialUntil?.let { it >= until.toEpochDay() - 7 } == true) return no("Контрольный и так отложен до ${Ru.date(LocalDate.ofEpochDay(st.noTrialUntil!!))}.")
+                        auto("Контрольного не будет до ${Ru.date(until)}: в тяжёлые дни — обычные тренировки. Форму приложение оценивает по тому, как идут пробежки.") {
+                            val now = repo.store.runStateNow()
+                            repo.store.setRunState(now.copy(testSoon = false, noTrialUntil = until.toEpochDay()))
+                            repo.changed()
+                            CoachCall("undo_trial", args("soon" to now.testSoon, "until" to now.noTrialUntil, "expect_soon" to false, "expect_until" to until.toEpochDay()))
+                        }
+                    }
+                    else -> return no("Не сказано: поставить контрольный (next) или отложить (skip).")
+                }
+            }
+            RUN_PACE -> {
+                val up = when (a.str("change")) { "easier" -> false; "harder" -> true; else -> return no("Не сказано: спокойнее (easier) или быстрее (harder).") }
+                val steps = (a["steps"]?.let { a.int("steps") ?: return no("Шагов — 1 или 2.") } ?: 1).takeIf { it in 1..2 } ?: return no("Шагов — 1 или 2.")
+                val goal = repo.store.profileNow()?.runGoal
+                val st = forma.core.run.RunPlan.estimated(repo.store.runStateNow(), goal)
+                val from = st.fitness ?: return no("Темпов пока нет: они появятся после первых пробежек по плану" + (if (goal == null) " или с целью по бегу." else "."))
+                val top = goal?.let { forma.core.run.Vdot.fromRace(it.meters.toDouble(), it.seconds.toDouble()) } ?: forma.core.run.RunPlan.MAX_VDOT
+                val to = (from + if (up) steps else -steps).coerceIn(forma.core.run.RunPlan.MIN_VDOT, maxOf(forma.core.run.RunPlan.MIN_VDOT, top)).let { (it * 2).roundToInt() / 2.0 }
+                if (to == from) return no(if (up) "Быстрее некуда: темпы уже по цели." else "Спокойнее некуда.")
+                // A week between changes made faster: one good day is no reason, and each step is felt in every run.
+                if (up && recent("undo_run_pace").isNotEmpty()) return no("Темпы уже меняли на этой неделе. Быстрее — не чаще раза в неделю.")
+                val a0 = forma.core.run.PaceTable.forVdot(from)
+                val a1 = forma.core.run.PaceTable.forVdot(to)
+                val text = (if (up) "Темпы бега быстрее" else "Темпы бега спокойнее") +
+                    ": лёгкий ${Ru.pace(a0.easy.fast.toDouble())}–${Ru.pace(a0.easy.slow.toDouble())} → ${Ru.pace(a1.easy.fast.toDouble())}–${Ru.pace(a1.easy.slow.toDouble())} /км, " +
+                    "темповый ${Ru.pace(a0.threshold.toDouble())} → ${Ru.pace(a1.threshold.toDouble())} /км. Так же сдвинутся интервалы и отрезки. " +
+                    "Дальше темпы сами подстраиваются по тому, как идут пробежки."
+                either(!up, text) {
+                    val now = forma.core.run.RunPlan.estimated(repo.store.runStateNow(), goal)
+                    val next = if (now.estimated) now.copy(estVdot = to) else now.copy(vdot = to)
+                    repo.store.setRunState(next)
+                    repo.changed()
+                    CoachCall("undo_run_pace", args("est" to now.estimated, "old" to from, "expect" to to))
+                }
             }
             RUN_TODAY -> {
                 val min = a["minutes"]?.let { a.int("minutes") ?: return no("Минуты — целое число.") }
@@ -1421,6 +1482,24 @@ object CoachActions {
             "undo_rate" -> {
                 val id = a.long("workout")!!
                 if (repo.db.workouts().get(id)?.rpe != a.int("expect")) false else { repo.setRating(id, a.int("rpe")!!); true }
+            }
+            "undo_trial" -> {
+                val now = repo.store.runStateNow()
+                val expectUntil = (a["expect_until"] as? JsonPrimitive)?.content?.toLongOrNull()
+                if (now.testSoon != (a.str("expect_soon") == "true") || now.noTrialUntil != expectUntil) false
+                else {
+                    repo.store.setRunState(now.copy(testSoon = a.str("soon") == "true", noTrialUntil = (a["until"] as? JsonPrimitive)?.content?.toLongOrNull()))
+                    repo.changed()
+                    true
+                }
+            }
+            "undo_run_pace" -> {
+                val now = repo.store.runStateNow()
+                val est = a.str("est") == "true"
+                val cur = if (est) now.estVdot else now.vdot
+                val old = a.num("old")
+                if (old == null || cur != a.num("expect") || est != (now.vdot == null)) false
+                else { repo.store.setRunState(if (est) now.copy(estVdot = old) else now.copy(vdot = old)); repo.changed(); true }
             }
             "undo_tempo" -> {
                 val now = repo.store.runStateNow()

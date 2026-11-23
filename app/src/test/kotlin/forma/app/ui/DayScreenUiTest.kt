@@ -88,6 +88,8 @@ class DayScreenUiTest {
 
     @Test fun thursdayOpensFromThePlanWithWhyAndHow() {
         val repo = repo()
+        // A trial asked for (or earned): no trial comes just because none was run.
+        runBlocking { repo.store.setRunState(repo.store.runStateNow().copy(testSoon = true)) }
         val nav = Navigator(Screen.Plan)
         compose.setContent {
             CompositionLocalProvider(LocalRepo provides repo, LocalNav provides nav, LocalSettings provides Settings()) {

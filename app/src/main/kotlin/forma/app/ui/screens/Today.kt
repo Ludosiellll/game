@@ -292,13 +292,15 @@ fun TodayScreen() {
                 "Сила", strength?.let { (if (it >= 0) "+" else "") + it.roundToInt() + "%" } ?: "—", if (strength == null) "после 2 недель" else "с начала",
                 F.c.strength, Modifier.weight(1f).clickable(onClickLabel = "Прогресс силы") { toProgress(0) },
             )
-            val rs = runState
-            val vdot = rs?.vdot
+            // Measured by a trial, or the estimate gone by before any is counted (said with «≈»).
+            val rs = runState?.let { forma.core.run.RunPlan.estimated(it, runGoal) }
+            val vdot = rs?.fitness
+            val approx = rs?.estimated == true
             if (aim?.runs == false) weekTile()
             else StatTile(
                 if (vdot != null) "Форма бега" else "Бег",
                 when {
-                    vdot != null -> Ru.one(vdot)
+                    vdot != null -> (if (approx) "≈ " else "") + Ru.one(vdot)
                     rs != null && !rs.canRunContinuously -> "${rs.walkStage / 3 + 1}/9"
                     else -> "—"
                 },
@@ -306,7 +308,7 @@ fun TodayScreen() {
                     vdot != null && runGoal != null -> goalGap(Vdot.predictSeconds(vdot, runGoal.meters.toDouble()), runGoal.seconds)
                     vdot != null -> "5 км ≈ ${Ru.clock(Vdot.predictSeconds(vdot, 5000.0).roundToInt())}"
                     rs != null && !rs.canRunContinuously -> "неделя бега с ходьбой"
-                    else -> trialOn?.let { "тест ${soonDay(it, today)}" } ?: "после теста"
+                    else -> trialOn?.let { "тест ${soonDay(it, today)}" } ?: "после первых пробежек"
                 },
                 F.c.endurance, Modifier.weight(1f).clickable(onClickLabel = "Прогресс бега") { toProgress(1) },
             )

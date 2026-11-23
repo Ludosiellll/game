@@ -137,12 +137,16 @@ object TrainingReport {
         b.runState?.takeIf { p?.aim?.runs != false }?.let { st ->
             appendLine("### Бег")
             appendLine()
-            val v = st.vdot
+            // Measured by a trial, or the estimate gone by before any is counted (from the goal, moved by the runs).
+            val known = forma.core.run.RunPlan.estimated(st, b.profile?.runGoal)
+            val v = known.fitness
             if (v != null) {
                 val t = PaceTable.forVdot(v)
                 // The goal distance first (800 m, 3 km...), then the usual ones.
                 val forecast = listOf(b.profile?.runGoal?.meters ?: 1500, 5000, 10000).distinct()
-                appendLine("- VDOT ${Ru.one(v)}. Прогноз: " + forecast.joinToString(", ") { m -> "${dist(m)} — ${Ru.clock(Vdot.predictSeconds(v, m.toDouble()).roundToInt())}" } + ".")
+                appendLine((if (known.estimated) "- Форма (VDOT) ≈ ${Ru.one(v)}: оценка по цели и по тому, как идут пробежки, контрольного забега не было. Темпы и прогноз примерные. Прогноз: "
+                else "- VDOT ${Ru.one(v)}. Прогноз: ") +
+                    forecast.joinToString(", ") { m -> "${dist(m)} — ${Ru.clock(Vdot.predictSeconds(v, m.toDouble()).roundToInt())}" } + ".")
                 appendLine("- Темпы, мин/км: лёгкий ${Ru.pace(t.easy.fast.toDouble())}–${Ru.pace(t.easy.slow.toDouble())}, " +
                     "пороговый ${Ru.pace(t.threshold.toDouble())}, интервальный ${Ru.pace(t.interval.toDouble())}, повторный ${Ru.pace(t.repetition.toDouble())}.")
             } else appendLine("- VDOT ещё не рассчитан (нет контрольного забега).")

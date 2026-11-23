@@ -67,6 +67,8 @@ class RunLoopReviewRepoTest {
     /** His running progress as his phone holds it after 26.10 (run_state): no trial yet, the first race-pace step. */
     private val after26 = RunState(
         walkStage = -1, easyMinutes = 20, longMinutes = 35, runs = 5, qualityCount = 1, lastRunDay = 20752, easyRpes = listOf(7),
+        // A trial was due by the rule of those days (no fitness known); now one is due when earned or asked for.
+        testSoon = true,
         recent = listOf(RunLog(20738, 24), RunLog(20738, 2), RunLog(20748, 25), RunLog(20749, 17), RunLog(20752, 36)),
     )
 
@@ -94,7 +96,7 @@ class RunLoopReviewRepoTest {
      * «после перерыва». Saved rated [rpe]; his phone had 7.
      */
     private suspend fun easy22(rpe: Int): Long {
-        repo.store.setRunState(repo.store.runStateNow().copy(runs = 2, lastRunDay = 20738, recent = listOf(RunLog(20738, 24), RunLog(20738, 2))))
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 2, lastRunDay = 20738, testSoon = true, recent = listOf(RunLog(20738, 24), RunLog(20738, 2))))
         val d = LocalDate.of(2026, 10, 22)
         at(d, 15)
         val w = repo.runFor(SessionKind.RUN_QUALITY, d)
@@ -225,7 +227,8 @@ class RunLoopReviewRepoTest {
             w, RunResult(1.0, 7, 2142, distanceM = 20 * 230.0, workPace = pace, laps = laps, reps = 5, loopM = measured.toDouble()), clock - 2142_000L, emptyList(), d,
         ).first
         val s = summaryOf(id)
-        assertTrue(RunOutcome.LoopShorter(measured, 230) in s.outcomes && RunOutcome.TooSlow in s.outcomes, "${s.outcomes}")
+        // Read on the loop (205 m) the reps are no «faster than the goal»: slower than its pace, quicker than his step.
+        assertTrue(RunOutcome.LoopShorter(measured, 230) in s.outcomes && RunOutcome.TooFastRepeat !in s.outcomes, "${s.outcomes}")
         val run = db.runs().get(id)!!
         val plan = AppJson.decodeFromString(forma.core.run.RunWorkout.serializer(), run.planJson)
         assertEquals(measured, plan.lapMeters)
@@ -254,7 +257,9 @@ class RunLoopReviewRepoTest {
         repo.recountLaps(230)
         assertEquals(18 * measured.toDouble(), db.runs().get(free)!!.distanceM!!, 1.0)
         assertEquals(1517 / (18 * measured / 1000.0), db.runs().get(free)!!.avgPace!!, 0.5)
-        assertTrue(RunOutcome.TooSlow in summaryOf(race).outcomes && RunOutcome.TooFastRepeat !in summaryOf(race).outcomes, "${summaryOf(race).outcomes}")
+        // On his loop the reps are slower than the goal's pace — and quicker than his step toward it (no trial counted:
+        // the step is paced from the estimate of his form, not from the goal): a step up, not «повтори ровнее».
+        assertTrue(RunOutcome.TooFastRepeat !in summaryOf(race).outcomes && summaryOf(race).outcomes.any { it is RunOutcome.StageUp }, "${summaryOf(race).outcomes}")
         assertEquals(null, repo.runsOnOtherLap())
     }
 

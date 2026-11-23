@@ -31,8 +31,8 @@ class TempoOwnTest {
     private fun work(w: forma.core.run.RunWorkout) = w.segments.filter { it.kind == SegmentKind.WORK }
 
     @Test fun beforeTheFirstTrialTheTempoHasAPaceFromTheGoal() {
-        val guess = denis.copy(vdot = RunPlan.provisionalVdot(goal))
-        val w = RunPlan.quality(denis, goal = null, lapMeters = 205, guess = guess)
+        val guess = RunPlan.estimated(denis, goal)
+        val w = RunPlan.quality(guess, goal = null, lapMeters = 205)
         assertEquals(RunType.TEMPO, w.type)
         val pace = assertNotNull(work(w).first().pace, "a tempo run without a trial still has a pace")
         // Threshold at the guessed fitness (41): about 4:59 a km, 61 s a 205 m lap.

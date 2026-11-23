@@ -249,9 +249,12 @@ class RepositoryTest {
         assertEquals(36 * 60, easy.workSeconds)
         clock += 1000
         repo.saveRun(easy, RunResult(1.0, 4, easy.totalSeconds + 6 * 60), clock, emptyList(), thu)
-        // Two runs done and no fitness known yet: the 1500 m time trial, 7 laps from the line — not on Saturday, two days after
-        // Thursday's legs, but on the next Tuesday with fresh legs.
+        // Two runs done and no fitness known yet: no trial hangs over the plan (the paces come from the estimate). Asked
+        // for, the 1500 m time trial, 7 laps from the line, is not on Saturday, two days after Thursday's legs, but on the
+        // next Tuesday with fresh legs.
         val sat = tue.plusDays(7)
+        assertNull(repo.trialDay(tue.plusDays(4)))
+        repo.store.setRunState(repo.store.runStateNow().copy(testSoon = true))
         assertEquals(sat, repo.trialDay(tue.plusDays(4)))
         val trial = repo.runFor(SessionKind.RUN_QUALITY, sat)
         assertEquals(RunType.TEST, trial.type)

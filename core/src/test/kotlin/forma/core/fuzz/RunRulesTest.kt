@@ -229,15 +229,20 @@ class RunRulesTest {
     @Test fun runStateStaysSane() = check("run_state_sane") { c ->
         val a = after(c)
         val s = a.state
-        // The form is said to move by a trial, the ladder, the easy runs' pace or a break: the last said is the form.
-        val vs = a.outcomes.mapNotNull { o -> when (o) { is RunOutcome.VdotChanged -> o.to; is RunOutcome.EasyPaces -> o.to; else -> null } }
+        // The form is said to move by a trial, the ladder, the easy runs' pace or a break: the last said is the form —
+        // measured, or the estimate gone by before any trial (it starts from the goal with no word, and a break cuts it).
+        val vs = a.outcomes.mapNotNull { o -> when (o) { is RunOutcome.VdotChanged -> o.to; is RunOutcome.EasyPaces -> o.to; is RunOutcome.EstChanged -> o.to; else -> null } }
+        val estBefore = RunPlan.estimated(RunPlan.withBreak(c.state, c.day), c.goal).estVdot
         when {
             s.vdot?.let { it.isNaN() || it < RunPlan.MIN_VDOT - 1e-9 || it > RunPlan.MAX_VDOT + 1e-9 } == true -> "форма ${s.vdot}"
             s.easyMinutes !in 10..300 || s.longMinutes !in 10..400 -> "лёгкий ${s.easyMinutes}, длинный ${s.longMinutes}"
             s.intervalStage < 0 || s.tempoStage < 0 || s.goalStage !in 0 until RunPlan.goalLadderSize || s.walkStage < -1 -> "ступени ${s.intervalStage}/${s.tempoStage}/${s.goalStage}/${s.walkStage}"
             s.runs != c.state.runs + 1 -> "пробежек ${s.runs} после ${c.state.runs}"
-            vs.isNotEmpty() && vs.last() != s.vdot -> "последнее «форма → ${vs.last()}», а форма ${s.vdot}"
+            vs.isNotEmpty() && vs.last() != s.fitness -> "последнее «форма → ${vs.last()}», а форма ${s.fitness}"
             vs.isEmpty() && s.vdot != c.state.vdot -> "форма изменилась ${c.state.vdot} → ${s.vdot} без слова об этом"
+            vs.isEmpty() && s.estVdot != estBefore -> "оценка формы изменилась $estBefore → ${s.estVdot} без слова об этом"
+            s.vdot != null && s.estVdot != null && c.state.estVdot == null -> "оценка формы появилась при измеренной форме"
+            s.estVdot?.let { it.isNaN() || it < RunPlan.MIN_VDOT - 1e-9 || it > RunPlan.MAX_VDOT + 1e-9 } == true -> "оценка формы ${s.estVdot}"
             s.qualityFails < 0 || s.goalFails < 0 || s.walkFails < 0 -> "отрицательные промахи"
             else -> null
         }

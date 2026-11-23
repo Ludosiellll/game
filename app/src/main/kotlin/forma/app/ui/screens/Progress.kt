@@ -193,7 +193,9 @@ private fun Modifier.clickableRow(onClick: () -> Unit) = this.clickable(onClick 
 /** The race goal: its pace (and lap time on a stadium), the forecast from the current form, the race-pace ladder. */
 @Composable
 private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState?, lap: Int?, hard: Boolean) {
-    val now = st?.vdot?.let { Vdot.predictSeconds(it, goal.meters.toDouble()) }
+    val now = st?.fitness?.let { Vdot.predictSeconds(it, goal.meters.toDouble()) }
+    // No trial counted: the forecast is from the estimate (the goal and how the runs go), said as approximate.
+    val approx = st?.estimated == true
     FCard(gap = 6.dp) {
         Text("Цель", style = T.secondary(13.sp))
         Text("${goalDistance(goal.meters)} за ${Ru.clock(goal.seconds)}", style = T.title(26.sp).copy(color = F.c.endurance))
@@ -206,7 +208,12 @@ private fun GoalCard(goal: forma.core.model.RunGoal, st: forma.core.run.RunState
                 "В неделе нет тяжёлых пробежек, а без них к забегу не подготовиться. Добавь день или выбери бег «Скорость».",
                 style = T.body(14.sp).copy(color = F.c.warn),
             )
-            now == null -> Text("Прогноз появится после контрольного забега. Приложение добавит его в план через пару пробежек.", style = T.secondary(13.sp))
+            now == null -> Text("Прогноз появится после первых пробежек по плану.", style = T.secondary(13.sp))
+            approx -> Text(
+                "Прогноз сейчас: примерно ${Ru.clock(now.roundToInt())}, до цели ${Ru.clock((now - goal.seconds).roundToInt().coerceAtLeast(0))}. " +
+                    "Это оценка по тренировкам: тяжёлые пробежки идут от неё, а не от цели. Контрольный забег не обязателен — он появится, когда будешь близко к цели, или попроси тренера.",
+                style = T.body(14.sp),
+            )
             now <= goal.seconds + 0.5 -> Text(
                 "Прогноз сейчас: ${Ru.clock(now.roundToInt())} — цель по силам. Подтверди её на контрольном забеге.",
                 style = T.body(14.sp).copy(color = F.c.good),
@@ -341,9 +348,11 @@ private fun RunTab() {
     val runs by remember { repo.db.runs().observeAll() }.collectAsState(initial = emptyList())
     val workouts by remember { repo.db.workouts().observeHistory() }.collectAsState(initial = emptyList())
     val today = forma.app.ui.rememberToday(repo)
-    val st = runState?.let { RunPlan.withBreak(it, today.toEpochDay()) }
-    val vdot = st?.vdot
     val profile by repo.store.profile.collectAsState(initial = null)
+    // Measured by a trial, or the estimate gone by before any is counted.
+    val st = runState?.let { RunPlan.estimated(RunPlan.withBreak(it, today.toEpochDay()), profile?.runGoal) }
+    val vdot = st?.fitness
+    val approx = st?.estimated == true
     val program by repo.store.program.collectAsState(initial = null)
     val hard = program?.week?.days?.any { d -> d.sessions.any { it.kind == forma.core.plan.SessionKind.RUN_QUALITY } } != false
     profile?.runGoal?.let { GoalCard(it, st, profile?.lapMeters, hard) }
@@ -358,10 +367,11 @@ private fun RunTab() {
     if (vdot != null) {
         FCard(gap = 6.dp) {
             Text(if (F.type.mega) labelText("Форма бега") else "Форма бега", style = if (F.type.mega) T.label().copy(color = F.c.text) else T.secondary(13.sp))
-            NumText(Ru.one(vdot), style = T.number(44.sp).copy(color = F.c.endurance))
+            NumText((if (approx) "≈ " else "") + Ru.one(vdot), style = T.number(44.sp).copy(color = F.c.endurance))
             val middle = profile?.runGoal?.middleDistance == true
             Text(
-                if (middle) "Чем выше, тем быстрее ты бегаешь. Меняется после контрольных забегов на дистанцию цели."
+                if (approx) "Оценка по цели и по тому, как идут пробежки: контрольного забега ещё не было. Слишком тяжело — она снижается и темпы становятся спокойнее; получается с запасом — растёт."
+                else if (middle) "Чем выше, тем быстрее ты бегаешь. Меняется после контрольных забегов на дистанцию цели."
                 else "Чем выше, тем быстрее ты бегаешь. Меняется после контрольных забегов и когда ты с запасом держишь темп в тяжёлых пробежках.",
                 style = T.secondary(12.sp),
             )

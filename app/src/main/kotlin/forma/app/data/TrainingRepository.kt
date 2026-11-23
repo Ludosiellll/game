@@ -906,7 +906,7 @@ class TrainingRepository(
             item(t.slots.size + j, overrides(addedSpec(id), settings, key), key).copy(planId = id, addedForGood = true)
         }
         val why = if (deload && !forceDeload && liftAfterSick(date) && !ProgramGenerator.isDeloadWeek(program, date)) SICK_LIFT else null
-        val items = warmUps(inOrder(own + extra, goal?.exerciseId), deload)
+        val items = warmUps(inOrder(own + extra, goal?.exerciseId))
         val test = goal?.date == date.toEpochDay() && !unwell
         return LiftPlan(t.id, t.title, if (test) testOn(items, goal!!) else items, deload, why)
     }
@@ -933,7 +933,7 @@ class TrainingRepository(
      * already), one set before a heavy secondary exercise whose muscles have not worked yet; none before work on warm
      * muscles or a single muscle — said why.
      */
-    private fun warmUps(items: List<LiftItem>, deload: Boolean): List<LiftItem> {
+    private fun warmUps(items: List<LiftItem>): List<LiftItem> {
         val warm = mutableSetOf<forma.core.model.Muscle>()
         return items.map { item ->
             val ex = Catalog[item.exerciseId]
@@ -942,12 +942,13 @@ class TrainingRepository(
             val bar = if (ex.equipment == Equipment.BARBELL) ex.bar else null
             // The working weight, or the first time the weight the search starts from.
             val work = p.weight ?: p.startHint?.takeIf { p.calibrate && it > 0 }
-            val heavy = work != null && ex.load == LoadKind.EXTERNAL && ex.compound && !deload
+            // In a lighter week too: the weight is a tenth lighter, the joints and the groove want the ramp all the same.
+            val heavy = work != null && ex.load == LoadKind.EXTERNAL && ex.compound
             val single = if (heavy && fresh) WarmUp.single(work!!, ex.step, bar, ex.stepFrom) else emptyList()
             val out = when {
                 item.slot.role == SlotRole.MAIN && item.warmups.isNotEmpty() -> item.copy(warmups = if (fresh) item.warmups else item.warmups.takeLast(2))
                 single.isNotEmpty() -> item.copy(warmups = single)
-                ex.load == LoadKind.TIMED || deload -> item
+                ex.load == LoadKind.TIMED -> item
                 // Nothing lighter than the work itself: the empty bar or the lightest load.
                 heavy && fresh -> item.copy(
                     warmups = emptyList(),
@@ -1103,7 +1104,7 @@ class TrainingRepository(
         )
         // The ramp leads to the working weight, or the first time to the weight to start the search from.
         val work = p.weight ?: p.startHint?.takeIf { p.calibrate }
-        val warm = if (spec.role == SlotRole.MAIN && work != null && work > 0 && ex.load == LoadKind.EXTERNAL && !deload) {
+        val warm = if (spec.role == SlotRole.MAIN && work != null && work > 0 && ex.load == LoadKind.EXTERNAL) {
             WarmUp.sets(work, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null, ex.stepFrom)
         } else emptyList()
         // How this person recovers on this exercise: reps lost from set to set after the rest they took.
@@ -1944,15 +1945,18 @@ class TrainingRepository(
         val program = store.programNow()
         // The caps of the plan as it is now: after a switch to less running, runs are no longer than it allows.
         val caps = capsOn(date)
+        val profile = store.profileNow()
+        val goal = profile?.runGoal
+        // Before any trial is counted every pace comes from the estimate of the fitness: from the goal at first, then as
+        // the runs go ([RunPlan.estimated]).
         val st = RunPlan.withBreak(saved, date.toEpochDay()).let { if (minutes != null && kind == SessionKind.RUN_EASY) it.copy(easyMinutes = minutes) else it }.let {
             if (caps == null) it else it.copy(easyMinutes = minOf(it.easyMinutes, caps.easyMax), longMinutes = minOf(it.longMinutes, caps.longMax))
         }.let { s -> RunPlan.weekCap(saved, date.toEpochDay())?.let { cap -> s.copy(easyMinutes = minOf(s.easyMinutes, cap), longMinutes = minOf(s.longMinutes, cap)) } ?: s }
-        val profile = store.profileNow()
-        val goal = profile?.runGoal
+            .let { RunPlan.estimated(it, goal) }
         val lap = profile?.lapMeters?.takeIf { !road }
         val cutback = program != null && ProgramGenerator.isRunCutbackWeek(program, date)
-        // Before the first test of a race goal, easy and long runs get a pace limit from the goal (approximate).
-        val guess = if (st.vdot == null && goal != null) st.copy(vdot = RunPlan.provisionalVdot(goal)) else null
+        // Going by the estimate: easy and long runs say their pace limit is approximate.
+        val guess = st.takeIf { it.estimated }
         // The goal race ahead: two weeks lighter, then a short race-pace session, then easy running; the day is the race.
         val toRace = daysToRace(date)
         if (toRace == 0L && goal != null && st.canRunContinuously) return RunPlan.race(st, goal)
@@ -1970,7 +1974,7 @@ class TrainingRepository(
                 it.copy(note = "До забега ${toRace} ${Ru.plural(toRace.toInt(), "день", "дня", "дней")}: только размяться, без усталости. " + it.note)
             }
             toRace != null && toRace in 3..5 && kind == SessionKind.RUN_QUALITY -> (
-                if (goal?.middleDistance == true) RunPlan.goalPace(st, goal, lap, cutback = true) else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap, guess = guess)
+                if (goal?.middleDistance == true) RunPlan.goalPace(st, goal, lap, cutback = true) else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap)
             ).let { it.copy(note = "Последняя тяжёлая перед забегом. Она короткая: освежить темп и не устать. " + it.note) }
             toRace != null && toRace in 3..7 && kind != SessionKind.RUN_QUALITY ->
                 RunPlan.easy(st.copy(easyMinutes = (minOf(st.easyMinutes, st.longMinutes) * 0.7).toInt().coerceAtLeast(20)), strides = 4)
@@ -1991,8 +1995,7 @@ class TrainingRepository(
                     )
                 }
             kind == SessionKind.RUN_QUALITY -> when {
-                // Before the first trial the tempo run gets its pace from the goal too (approximate), as easy runs do.
-                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date), guess = guess)
+                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date))
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
                 else -> RunPlan.test(st)
             }
@@ -2311,17 +2314,22 @@ class TrainingRepository(
     }
 
     /**
-     * A test calibrates paces when they are unknown, and again every 8 weeks — every 5 with a race goal, and right after
-     * the race-pace ladder is done (not while coming back from a break).
+     * A test calibrates paces. Without a goal: when they are unknown, and again every 8 weeks. With a goal the paces come
+     * from the estimate of the fitness until a trial is counted, so no trial is due just because none was run: it comes
+     * when it is earned or asked for ([RunState.testSoon]: the race-pace ladder done, the estimate within a point of the
+     * goal, the runner's own wish), and after one has counted again every 5 weeks (8 for a longer goal). Denis,
+     * 23 November: «очевидно что я не могу пробежать с темпом нужным полтора километра, зачем ставить контрольный?» — his
+     * goal was ten points of fitness away, and a trial hung over every hard day. Never while coming back from a break, in
+     * the two weeks after a try, or while the runner has put it off ([RunState.noTrialUntil]).
      */
     private fun needsTest(st: RunState, date: LocalDate, goal: forma.core.model.RunGoal?): Boolean {
         if (st.runs < 2 || st.returnEasy > 0) return false
         if (st.lastTrialTryDay?.let { date.toEpochDay() - it < 14 } == true) return false
+        if (st.noTrialUntil?.let { date.toEpochDay() < it } == true) return false
         // The goal race within three weeks is the test: no trial before it.
         if (goal?.date?.let { it - date.toEpochDay() in 0..21 } == true) return false
         if (st.testSoon) return true
-        // With a race of up to 3 km as the goal the first test is that race, whatever fitness was typed in.
-        val last = st.lastTestDay ?: return st.vdot == null || goal?.middleDistance == true
+        val last = st.lastTestDay ?: return goal == null && st.vdot == null
         return date.toEpochDay() - last >= if (goal?.middleDistance == true) 35 else 56
     }
 
