@@ -81,6 +81,8 @@ class WeekFromCloudTest {
         assertNotEquals(RunType.EASY, egor.runFor(SessionKind.RUN_QUALITY, mon.plusDays(14)).type)
         db.close()
         val denis = person("cloud-denis", egor = false)
+        // A trial was due for him by the rule of those days (no fitness known); now one is due when earned or asked for.
+        denis.store.setRunState(denis.store.runStateNow().copy(testSoon = true))
         at(thu)
         val d = denis.runFor(SessionKind.RUN_QUALITY, thu)
         assertEquals(RunType.EASY, d.type)

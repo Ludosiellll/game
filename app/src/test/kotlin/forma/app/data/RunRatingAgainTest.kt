@@ -61,7 +61,8 @@ class RunRatingAgainTest {
         repo.completeOnboarding(denis)
         // The program as on his phone: the block from Monday 12.10, made on 13.10; two free runs on 12.10.
         repo.store.setProgram(repo.store.programNow()!!.copy(startEpochDay = 20738, createdEpochDay = 20739))
-        repo.store.setRunState(repo.store.runStateNow().copy(runs = 2, lastRunDay = 20738, recent = listOf(RunLog(20738, 24), RunLog(20738, 2))))
+        // A trial was due by the rule of those days (no fitness known); now one is due when earned or asked for.
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 2, lastRunDay = 20738, testSoon = true, recent = listOf(RunLog(20738, 24), RunLog(20738, 2))))
     }
 
     @After fun tearDown() = db.close()

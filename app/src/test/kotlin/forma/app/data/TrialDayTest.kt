@@ -75,7 +75,7 @@ class TrialDayTest {
         )
         repo.completeOnboarding(denis)
         // Two runs behind him: the first trial is due.
-        repo.store.setRunState(repo.store.runStateNow().copy(runs = 2, walkStage = -1))
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 2, walkStage = -1, testSoon = true))
     }
 
     @After fun tearDown() = db.close()

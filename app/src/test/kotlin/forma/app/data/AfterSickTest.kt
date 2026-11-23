@@ -28,7 +28,7 @@ import kotlin.test.assertTrue
 @Config(sdk = [36])
 class AfterSickTest {
     private val profileJson = """{"aim": {"run": "ENDURANCE", "lift": "POWERBUILDING", "emphasis": "BALANCED"}, "sex": "MALE", "goal": "HYBRID", "gymDays": [2, 4, 6], "runDays": [4, 6, 1], "runGoal": {"date": null, "meters": 1500, "seconds": 330}, "heightCm": 183, "runLevel": "BASE", "birthYear": 2008, "lapMeters": 230, "restingHr": 65, "doubleDays": true, "experience": "ADVANCED", "bodyWeightKg": 70.0, "trainingDays": [2, 4, 6, 1], "sessionMinutes": 75}"""
-    private val runJson = """{"runs": 2, "vdot": null, "recent": [{"day": 20738, "minutes": 24}, {"day": 20738, "minutes": 2}], "walkStage": -1, "lastRunDay": 20738, "easyMinutes": 25, "longMinutes": 40, "qualityCount": 0}"""
+    private val runJson = """{"runs": 2, "vdot": null, "recent": [{"day": 20738, "minutes": 24}, {"day": 20738, "minutes": 2}], "walkStage": -1, "lastRunDay": 20738, "easyMinutes": 25, "longMinutes": 40, "qualityCount": 0, "testSoon": true}"""
     private val zone = ZoneId.systemDefault()
     private val mon = LocalDate.of(2026, 10, 12)
     private val fri = mon.plusDays(4)

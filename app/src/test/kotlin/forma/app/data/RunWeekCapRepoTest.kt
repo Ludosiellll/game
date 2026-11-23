@@ -52,6 +52,8 @@ class RunWeekCapRepoTest {
     /** His running progress after 26.10 as his phone holds it (logs kept before the running in them was counted apart). */
     private val after26 = RunState(
         walkStage = -1, easyMinutes = 20, longMinutes = 35, runs = 5, qualityCount = 1, lastRunDay = 20752, easyRpes = listOf(7),
+        // A trial was due by the rule of those days (no fitness known); now one is due when earned or asked for.
+        testSoon = true,
         recent = listOf(RunLog(20738, 24), RunLog(20738, 2), RunLog(20748, 25), RunLog(20749, 17), RunLog(20752, 36)),
     )
 

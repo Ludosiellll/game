@@ -179,7 +179,7 @@ class ReviewFixesRepoTest {
     @Test fun anUncountedTrialIsNotRepeatedTheNextHardDay() = runBlocking {
         val g = RunGoal(1500, 335)
         repo.completeOnboarding(profile.copy(aim = Aim(LiftFocus.MUSCLE, RunFocus.SPEED, Emphasis.BALANCED), runGoal = g, lapMeters = 230))
-        repo.store.setRunState(repo.store.runStateNow().copy(runs = 3))
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 3, testSoon = true))
         // As on its own day (the day [trialDay] picks may be a later one; here the trial being due is what is tested).
         val trial = repo.runFor(SessionKind.RUN_QUALITY, trial = true)
         assertEquals(RunType.TEST, trial.type)

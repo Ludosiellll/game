@@ -52,7 +52,8 @@ class DenisWeekRepoTest {
 
     @Test fun theTrialGoesToAHardDayWithFreshLegs() = runBlocking<Unit> {
         val repo = repo(denis, "denis-trial")
-        repo.store.setRunState(repo.store.runStateNow().copy(runs = 4, vdot = 47.0))
+        // A trial earned or asked for: none comes just because none was run.
+        repo.store.setRunState(repo.store.runStateNow().copy(runs = 4, vdot = 47.0, testSoon = true))
         val program = repo.store.programNow()!!
         fun legsOn(d: LocalDate) = program.week.on(d.dayOfWeek.value)
             .any { it.kind == SessionKind.LIFT && program.templates.first { t -> t.id == it.templateId }.legs }
