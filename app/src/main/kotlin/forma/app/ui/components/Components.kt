@@ -309,9 +309,11 @@ fun TopBar(title: String, subtitle: String? = null, onBack: (() -> Unit)? = null
     ) {
         if (onBack != null) RoundIcon(Ic.back, "Назад", onBack, size = 42.dp)
         Column(Modifier.weight(1f)) {
+            // Two lines: a long title wraps between words instead of losing its end («Лёгкий бег · 28 мин + 6 ускорений»
+            // was cut at «+ 6…»); the ellipsis only past the second line.
             Text(
                 if (F.type.mega) title.uppercase() else title,
-                style = if (F.type.mega) T.title(22.sp) else T.body(17.sp, FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = if (F.type.mega) T.title(22.sp) else T.body(17.sp, FontWeight.ExtraBold), maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
             if (subtitle != null) Text(subtitle, style = T.secondary(13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }

@@ -17,6 +17,7 @@ import forma.core.run.RunReview
 import forma.core.run.RunState
 import forma.core.run.RunType
 import forma.core.run.RunWorkout
+import forma.core.run.SegmentKind
 import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -86,13 +87,19 @@ class RunExplainTest {
         assertTrue("3 из 8 в темпе" in how.text && "быстрее — 3" in how.text && "медленнее — 2" in how.text, how.text)
         assertTrue("Последний отрезок медленнее первого" in how.text, how.text)
         assertEquals(-1, how.tone)
+        // A 9 over the 7 meant: said against the plan, in no warning colour, and without the plan's decision (that is
+        // the outcomes' block).
         val effort = review.first { it.title == "Тяжесть" }
-        assertTrue("шаг не засчитан" in effort.text, effort.text)
+        assertEquals("9 из 10, задумано 7.", effort.text)
+        assertEquals(0, effort.tone)
         // Made lighter for a bad day: it moves nothing, and the debrief says no more.
         val light = RunReview.of(RunReview.Run(RunPlan.lighter(state, w), rpe = 9), goal).first { it.title == "Тяжесть" }
         assertTrue("облегчённой" in light.text && "не двигает" in light.text, light.text)
         assertTrue(review.any { it.title == "Что это даёт телу" })
-        assertTrue(review.first { it.title == "Восстановление" }.text.contains("2–3 дня"), "a 9 adds a day to the 48 h")
+        val rest = review.first { it.title == "Восстановление" }.text
+        assertTrue(rest.replace('\u00A0', ' ').contains("2–3 дня"), "a 9 adds a day to the 48 h")
+        // The next hard run only: no gym day named (the plan may put legs the next day).
+        assertTrue("зал" !in rest && rest.startsWith("Следующий тяжёлый бег"), rest)
     }
 
     /** A free run: what it was for the body by how hard it felt, and that it moves no step of the plan. */
@@ -103,7 +110,29 @@ class RunExplainTest {
         assertTrue("не двигает" in easy.first { it.title == "План" }.text)
         val hard = RunReview.of(RunReview.Run(w, rpe = 9, avgPace = 240.0), goal)
         assertTrue(hard.first { it.title == "Что это даёт телу" }.text.startsWith("По тяжести — как тяжёлая"))
-        assertTrue("48 часов" in hard.first { it.title == "Восстановление" }.text)
+        assertTrue("48 часов" in hard.first { it.title == "Восстановление" }.text.replace('\u00A0', ' '))
+    }
+
+    /**
+     * «Тяжесть» reads the rating as the plan does: an easy run up to 5 (not its mark of 4), on the runner's own scale; reps
+     * on it only where their pace was measured and held — else a usual 6 after an easy run, or a 9 the plan counted as
+     * an 8, is flagged under the plan's own «as meant».
+     */
+    @Test fun theRatingIsReadAsThePlanReadsIt() {
+        val easy = RunPlan.easy(state)
+        fun said(r: RunReview.Run) = RunReview.of(r, goal).first { it.title == "Тяжесть" }
+        assertEquals("5 из 10, как задумано.", said(RunReview.Run(easy, rpe = 5)).text)
+        val six = said(RunReview.Run(easy, rpe = 6))
+        assertEquals("6 из 10, задумано до 5.", six.text)
+        assertEquals(0, six.tone)
+        assertEquals("6 из 10, как задумано.", said(RunReview.Run(easy, rpe = 6, ownScale = 1)).text)
+        // Race pace meant at 7: an 8 on a scale one up is as meant — when the reps were on pace.
+        val reps = RunPlan.goalPace(state.copy(goalStage = 0), goal, 230)
+        val target = reps.segments.first { it.kind == SegmentKind.WORK }.pace!!.let { (it.fast + it.slow) / 2.0 }
+        assertEquals("8 из 10, как задумано.", said(RunReview.Run(reps, rpe = 8, workPace = target, ownScale = 1)).text)
+        assertEquals("8 из 10, задумано 7.", said(RunReview.Run(reps, rpe = 8, ownScale = 1)).text, "pace not measured")
+        assertEquals("8 из 10, задумано 7.", said(RunReview.Run(reps, rpe = 8, workPace = target * 1.05, ownScale = 1)).text, "pace not held")
+        assertEquals("5 из 10, задумано 7: силы были в запасе.", said(RunReview.Run(reps, rpe = 5)).text)
     }
 
     /** What follows is said as RunPlan.after does it: a lighter week moves no rung, growth needs a run of the usual length. */
@@ -120,11 +149,12 @@ class RunExplainTest {
         assertTrue("По времени" in trial && "Темп цели не меняется" in trial && "примерные" !in trial, trial)
         assertTrue("По дистанции" in RunExplain.of(RunPlan.test(state)).purpose)
         assertTrue("кислота" !in RunExplain.of(RunPlan.tempo(state), goal).purpose)
-        // Race pace early on: meant at 7, a step on up to 8 — an 8 is not "as meant".
+        // Race pace early on: meant at 7 — an 8 is not "as meant", and whether the plan steps on is the outcomes' to say.
         val early = RunPlan.goalPace(state.copy(goalStage = 0), goal, 230)
         assertEquals(7, early.targetRpe)
         val eight = RunReview.of(RunReview.Run(early, rpe = 8), goal).first { it.title == "Тяжесть" }
-        assertTrue("тяжелее задуманной (7), но шаг вперёд засчитывается до 8" in eight.text, eight.text)
+        assertEquals("8 из 10, задумано 7.", eight.text)
+        assertTrue("шаг" !in eight.text, eight.text)
         // Run/walk not finished: no promise of a repeat (a second miss goes a week back).
         val walk = RunReview.of(RunReview.Run(RunPlan.runWalk(RunState()), completed = 0.6), goal).first { it.title == "Как прошла пробежка" }
         assertTrue("когда пробежишь её целиком" in walk.text, walk.text)
@@ -152,7 +182,7 @@ class RunExplainTest {
         assertTrue("быстрее лёгкого" in fast.text, fast.text)
         val ok = RunReview.of(RunReview.Run(w, rpe = 4, avgPace = limit + 20.0), goal)
         assertEquals(1, ok.first { it.title == "Как прошла пробежка" }.tone)
-        assertEquals("Оценка 4 — легко, как и должно быть.", ok.first { it.title == "Тяжесть" }.text)
+        assertEquals("4 из 10, как задумано.", ok.first { it.title == "Тяжесть" }.text)
         assertTrue(ok.first { it.title == "Восстановление" }.text.startsWith("Такой бег проходит за сутки"))
         // On a stadium but no laps pressed (GPS only, or entered by hand): the pace a km, against the limit a km.
         val gps = RunReview.of(RunReview.Run(w, rpe = 4, avgPace = limit - 30.0), goal).first { it.title == "Как прошла пробежка" }

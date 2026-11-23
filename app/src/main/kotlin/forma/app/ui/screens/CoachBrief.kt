@@ -67,7 +67,7 @@ internal const val COACH_MAP = """## Что где в приложении (эт
 - ideal_plan «Идеальный план»: что приложение предлагает поменять в зальном плане, по пунктам.
 - friends «Люди и друзья»: чужие тренировки и программы, сообщения, взять программу друга.
 - body «Вес тела»: записать вес, график.
-- cloud «Облако и резервная копия»: вход, синхронизация, копия в файл, удалить аккаунт.
+- cloud «Облако и копия»: вход, синхронизация, копия в файл, удалить аккаунт.
 - profile «Цель, дни и данные»: анкета (для чего зал и бег, дни, длина тренировки, опыт), цель по бегу, круг стадиона, вес, рост, год рождения.
 - gym_goal «Цель в зале»: упражнение, вес, дата.
 - settings «Оформление и звук»: оформление, голос, сигналы, вибрация, GPS, автопауза, таймер отдыха, не гасить экран, выгрузка тренировок в файл.
@@ -439,9 +439,14 @@ suspend fun coachWorkoutFacts(repo: TrainingRepository, workoutId: Long): String
                 val reached = if (trial != null) summary?.outcomes?.any { it is forma.core.run.RunOutcome.GoalReached } == true else null
                 val held = summary?.outcomes?.filterIsInstance<forma.core.run.RunOutcome.TestFromPart>()?.firstOrNull()?.let { it.meters to it.seconds }
                 val profile = repo.store.profileNow()
+                // The rating read on the runner's own scale, as «История» shows it and the plan read it.
+                val own = summary?.outcomes?.filterIsInstance<forma.core.run.RunOutcome.OwnScale>()?.firstOrNull()?.offset ?: 0
                 val items = forma.core.run.RunReview.of(
-                    forma.core.run.RunReview.Run(plan, summary?.laps.orEmpty(), w.rpe, run.movingSec, run.avgPace, run.workPace, trial, run.completed, reached, held, summary?.strides, summary?.jog),
-                    profile?.runGoal, gym = profile?.aim?.lifts != false,
+                    forma.core.run.RunReview.Run(
+                        plan, summary?.laps.orEmpty(), w.rpe, run.movingSec, run.avgPace, run.workPace, trial, run.completed, reached, held, summary?.strides, summary?.jog,
+                        ownScale = own,
+                    ),
+                    profile?.runGoal,
                 )
                 appendLine("Разбор приложения:")
                 items.forEach { appendLine("- ${it.title}: ${it.text}") }

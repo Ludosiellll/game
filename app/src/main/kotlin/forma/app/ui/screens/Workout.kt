@@ -408,7 +408,8 @@ fun WorkoutScreen(workoutId: Long) {
                             Pill(if (p.calibrate) "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" else "${p.sets} × ${p.reps}")
                             if (p.top) Pill("последний ${p.reps}+")
                         } else Pill("${p.sets} × ${p.reps} с", filled = true)
-                        if (!p.calibrate) Pill("оставь ${p.rir}")
+                        // A hold has no reps to leave; none left is «до отказа», as the plan's row and the workout line say.
+                        if (!p.calibrate && ex.load != LoadKind.TIMED) Pill(if (p.rir <= 0) "до отказа" else "оставь ${p.rir}")
                     }
                     // The person's own note on the exercise: the seat, the grip — what is forgotten from one week to the next.
                     if (note != null) {

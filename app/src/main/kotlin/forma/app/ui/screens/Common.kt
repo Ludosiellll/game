@@ -351,7 +351,7 @@ fun NextPlannedCard(today: LocalDate) {
                 androidx.compose.foundation.layout.Column(Modifier.weight(1f), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
                     val w = runs[s]
                     Text(w?.title ?: sessionTitle(s, p), style = forma.app.ui.theme.T.body(15.sp, androidx.compose.ui.text.font.FontWeight.SemiBold))
-                    if (w != null) Text(forma.app.ui.RunHow.short(w), style = forma.app.ui.theme.T.secondary(13.sp))
+                    w?.let { forma.app.ui.RunHow.short(it) }?.takeIf { it.isNotEmpty() }?.let { Text(it, style = forma.app.ui.theme.T.secondary(13.sp)) }
                 }
             }
         }

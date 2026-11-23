@@ -108,13 +108,18 @@ class GuideUiTest {
     /** No cloud in this build: the coach says it needs the cloud and shows the way in; its questions wait. */
     @Test fun theCoachWithoutTheCloud() {
         val repo = repo("ui-coach")
-        show(repo, Navigator(Screen.Coach())) { CoachScreen() }
+        val nav = Navigator(Screen.Coach())
+        show(repo, nav) { CoachScreen() }
         compose.onNodeWithText("Тренер работает через облако", substring = true).assertExists()
         compose.onNodeWithText("Войти в облако", ignoreCase = true).assertExists()
         compose.onNodeWithText("Как идёт мой прогресс?").performScrollTo().performClick()
         settle()
         compose.onNodeWithText("Тренер думает", substring = true).assertDoesNotExist()
         compose.onRoot().captureRoboImage("build/shots/carbon-coach.png")
+        // The way in is the e-mail form itself, not the backup page with a second button.
+        compose.onNodeWithText("Войти в облако", ignoreCase = true).performClick()
+        settle()
+        assertEquals(Screen.CloudSignIn(restore = false), nav.current)
     }
 
     /** What goes with a question: today, the training and how the app works — not the person's name. */

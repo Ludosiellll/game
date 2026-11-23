@@ -306,8 +306,14 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
                 open.firstOrNull { runCatching { context.startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess }
             }
         }
-        // The run in one line first; the plan's note a tap away.
-        if (!workout.isOpenEnded) Text(forma.app.ui.RunHow.short(workout), style = T.body(17.sp, FontWeight.SemiBold))
+        // The run in one line first, and one grey line under it for the rest (the cool-down, the whole time, the effort
+        // meant); the plan's note a tap away. The breakdown by parts is the day screen's (23 November: the plan read twice).
+        if (!workout.isOpenEnded) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                forma.app.ui.RunHow.short(workout).takeIf { it.isNotEmpty() }?.let { Text(it, style = T.body(17.sp, FontWeight.SemiBold)) }
+                Text(forma.app.ui.RunHow.totals(workout), style = T.secondary(14.sp))
+            }
+        }
         if (workout.note.isNotEmpty()) {
             var how by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
             Text(
@@ -316,27 +322,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
             )
             if (how) Text(workout.note, style = T.body(15.sp).copy(color = F.c.text2))
         }
-        if (!workout.isOpenEnded) {
-            FCard {
-                Row {
-                    Text("Всего ${Ru.durationWords(workout.totalSeconds)}", style = T.body(15.sp, FontWeight.Bold), modifier = Modifier.weight(1f))
-                    Text("по ощущениям: ${Texts.RPE.first { it.first == workout.targetRpe }.second.lowercase()}", style = T.secondary(13.sp))
-                }
-                SegmentBar(workout, 0)
-                Column {
-                    groupSegments(workout).forEach { (title, detail, target) ->
-                        Hairline()
-                        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Column(Modifier.weight(1f)) {
-                                Text(title, style = T.body(15.sp, FontWeight.SemiBold))
-                                if (target != null) NumText(target, style = T.secondary(13.sp))
-                            }
-                            NumText(detail, style = T.number(14.sp, FontWeight.Bold).copy(color = F.c.text2))
-                        }
-                    }
-                }
-            }
-        } else {
+        if (workout.isOpenEnded) {
             Text(
                 if (workout.lapMeters != null) "Секундомер и круги. Время каждого круга скажу голосом."
                 else "Секундомер, дистанция и темп по GPS. Время каждого километра скажу голосом.",
@@ -359,17 +345,10 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
                 style = T.secondary(13.sp).copy(color = if (targetBad) F.c.warn else F.c.text2),
             )
         }
+        // Laps and starts are the presses (GPS gives the distance, the pace and the loop's length): the GPS row says so. No
+        // box for it: the loop is on the tab above, the lap button and the headset in the hint, the run screen and «Как
+        // бежать ›» (23 November: «Жми «Круг»» five times before the start).
         val track = workout.lapMeters != null
-        if (track) {
-            // Laps and starts are the presses (GPS gives the distance, the pace and the loop's length).
-            Banner(
-                // A headset's button works with the screen off too (HeadsetLap): said here once, not on every run screen.
-                "Круг ${workout.lapMeters} м. Жми «Круг» на каждой линии и на старте отрезка, можно и кнопкой на наушниках." +
-                    // The pacer beeps only in reps of laps (RunTimeline: Cue.LapMark).
-                    (if (workout.reps > 0) " На писке будь на линии." else ""),
-                F.c.endurance, icon = Ic.info,
-            )
-        }
         FCard(gap = 4.dp) {
             ToggleRow(
                 "GPS: дистанция и темп",
@@ -1075,6 +1054,12 @@ private fun Metric(value: String, label: String, modifier: Modifier, align: Alig
     }
 }
 
+/**
+ * The tile of the reps' pace (after the run and in «История»): «Отрезки», a word that fits a third of a narrow screen
+ * (a tile's label is one line, and «Темп отрезков» would end in «…» there); its caption «мин/км» says it is a pace.
+ */
+internal fun repsLabel(reps: Int): String = if (reps == 1) "Отрезок" else "Отрезки"
+
 /** After the run: rate it, save it, see what changes. [workoutId] 0 means "not saved yet". */
 @Composable
 fun RunDoneScreen(workoutId: Long) {
@@ -1163,7 +1148,13 @@ fun RunDoneScreen(workoutId: Long) {
                     StatTile("Отрезки", result.workPace?.let { Ru.lap(Track.lapSec(it, lapM)) } ?: "—", "средний круг", F.c.text, Modifier.weight(1f))
                 } else {
                     StatTile("Дистанция", result.distanceM?.let { Ru.distance(it) } ?: "—", "", F.c.endurance, Modifier.weight(1f))
-                    StatTile("Темп", tracker.averagePace(nowMs)?.let { Ru.pace(it) } ?: "—", result.cadence?.let { "средний · $it шаг/мин" } ?: "средний", F.c.text, Modifier.weight(1f))
+                    val repsCount = tracker.workout.reps
+                    if (repsKind && repsCount > 0) {
+                        // The reps' own pace: the whole session's, warm-up and rests in it, would read as a failed one.
+                        StatTile(repsLabel(repsCount), result.workPace?.let { Ru.pace(it) } ?: "—", "мин/км", F.c.text, Modifier.weight(1f))
+                    } else {
+                        StatTile("Темп", tracker.averagePace(nowMs)?.let { Ru.pace(it) } ?: "—", result.cadence?.let { "средний · $it шаг/мин" } ?: "средний", F.c.text, Modifier.weight(1f))
+                    }
                 }
             }
             LapLengthCard(lapSet, measuredLap)
@@ -1212,8 +1203,8 @@ fun RunDoneScreen(workoutId: Long) {
                 Text(
                     when {
                         boardBad -> "Не похоже на дистанцию за это время. Впиши километры, например 5,2."
-                        result.distanceM != null -> "Без GPS дистанция посчитана по шагам, примерно. Если бежал на дорожке, впиши с табло."
-                        else -> "Если бежал на дорожке, впиши дистанцию с табло."
+                        result.distanceM != null -> "Без GPS дистанция посчитана по шагам, примерно. Если это беговая дорожка, впиши с табло."
+                        else -> "Если это беговая дорожка, впиши дистанцию с табло."
                     },
                     style = T.secondary(13.sp).copy(color = if (boardBad) F.c.warn else F.c.text2),
                 )
@@ -1233,7 +1224,8 @@ fun RunDoneScreen(workoutId: Long) {
                     style = T.secondary(13.sp),
                 )
             }
-            LapsCard(tracker.laps, test = testM != null)
+            // No laps here: the rating and «Сохранить» stay on the first screen, still out of breath. The laps come right
+            // after the save, and in «История».
             SectionLabel("Насколько тяжело было?")
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { (1..5).forEach { v -> Chip("$v", rpe == v, { rpe = v }, Modifier.weight(1f), minWidth = 0.dp) } }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { (6..10).forEach { v -> Chip("$v", rpe == v, { rpe = v }, Modifier.weight(1f), minWidth = 0.dp) } }
@@ -1317,7 +1309,8 @@ fun RunDoneScreen(workoutId: Long) {
             val savedPlan = remember(savedRun) {
                 savedRun?.let { runCatching { forma.app.data.AppJson.decodeFromString(RunWorkout.serializer(), it.planJson) }.getOrNull() }
             }
-            SectionLabel("Что дальше в плане")
+            // «Что изменилось в плане», as in «История»: «Дальше по плану» below is the next day's session.
+            SectionLabel("Что изменилось в плане")
             FCard(gap = 0.dp) {
                 s.second.outcomes.forEachIndexed { i, o ->
                     if (i > 0) Hairline()

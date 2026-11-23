@@ -422,7 +422,7 @@ object PlanAdvisor {
         val oneDayShort = sessions == 1 && shortNow.size >= 3
         if (oneDayShort) held += "Зал раз в неделю, а подходов не хватает сразу на ${shortNow.size} " +
             "${Ru.plural(shortNow.size, "мышцу", "мышцы", "мышц")} (${shortNow.joinToString(", ") { it.ru.lowercase() }}). В одну тренировку " +
-            "всё не влезет. Лучше добавь второй день в зале: План → Поменять дни. Тогда предложу, что в него поставить."
+            "всё не влезет. Лучше добавь второй день в зале: «План» → «Изменить цель, дни и данные». Тогда предложу, что в него поставить."
 
         // 4. Weekly sets per muscle. Short, with another muscle to spare: one exercise swapped for the other. Short alone:
         // more sets where it works already, else an exercise for it. Far over: a set less on its single-muscle work.

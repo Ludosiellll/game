@@ -73,6 +73,9 @@ class LapsEditUiTest {
             }
         }
         settle()
+        // The editor is closed until asked for: most runs need nothing put right.
+        compose.onNodeWithText("Поправить круги ›").performScrollTo().performClick()
+        settle()
         compose.onNodeWithText("5 · 2:21").performScrollTo().performClick()
         settle()
         compose.onNodeWithText("Это 2 круга — разделить").performScrollTo().performClick()
@@ -102,6 +105,8 @@ class LapsEditUiTest {
                 FormaTheme(Looks.byId("carbon")) { Box(Modifier.fillMaxSize().background(F.c.bg)) { HistoryItemScreen(id) } }
             }
         }
+        settle()
+        compose.onNodeWithText("Поправить круги ›").performScrollTo().performClick()
         settle()
         compose.onNodeWithText("2 · 1:35").performScrollTo().performClick()
         settle()

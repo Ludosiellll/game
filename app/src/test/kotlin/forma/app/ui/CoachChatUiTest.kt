@@ -127,11 +127,11 @@ class CoachChatUiTest {
             )
         }
         show(repo, api)
-        compose.onNodeWithText("Привет! Я тренер", substring = true).assertExists()
+        compose.onNodeWithText("Спроси про тренировку", substring = true).assertExists()
         compose.onRoot().captureRoboImage("build/shots/carbon-coach-hello.png")
-        compose.onNodeWithText("Сегодня плохо себя чувствую — давай полегче").performScrollTo().performClick()
+        compose.onNodeWithText("Мне сегодня плохо, давай полегче").performScrollTo().performClick()
         waitFor("Предлагаю изменить")
-        assertEquals(listOf("Сегодня плохо себя чувствую — давай полегче"), api.asked)
+        assertEquals(listOf("Мне сегодня плохо, давай полегче"), api.asked)
         // Made at once, with its way back; the plan's change waits.
         assertEquals(Feel.LOW, runBlocking { repo.store.settingsNow().feelOn(repo.today()) })
         compose.onNodeWithText("Почему: ты плохо спал", substring = true).assertExists()
@@ -161,12 +161,12 @@ class CoachChatUiTest {
         val repo = repo("ui-coach-panels")
         runBlocking { repo.updateSettings { it.copy(coachNotes = listOf("Гантели в зале через 2,5 кг", "Любит долгий бег")) } }
         show(repo, Fake { CoachReply("ок") })
-        compose.onNodeWithText("Что знает обо мне").performClick()
+        compose.onNodeWithText("Что помнит").performClick()
         settle()
         compose.onNodeWithText("Гантели в зале через 2,5 кг").assertExists()
         compose.onAllNodesWithText("Забыть", ignoreCase = true)[0].performScrollTo().performClick()
         compose.waitUntil(10_000) { settle(); runBlocking { repo.store.settingsNow().coachNotes } == listOf("Любит долгий бег") }
-        compose.onNodeWithText("Как это работает").performClick()
+        compose.onNodeWithText("Как работает").performClick()
         settle()
         compose.onNodeWithText("Сам меняет", substring = true).assertExists()
         compose.onRoot().captureRoboImage("build/shots/carbon-coach-about.png")

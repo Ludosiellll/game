@@ -637,7 +637,7 @@ private fun RunCard(
         // What to run in one line, the lap time in it; the plan's note a tap away (23 November: a twelve-line note pushed
         // «Начать» below the screen).
         if (!other) {
-            Text(forma.app.ui.RunHow.short(w), style = T.body(16.sp, FontWeight.SemiBold))
+            forma.app.ui.RunHow.short(w).takeIf { it.isNotEmpty() }?.let { Text(it, style = T.body(16.sp, FontWeight.SemiBold)) }
             if (w.note.isNotEmpty()) {
                 var how by androidx.compose.runtime.saveable.rememberSaveable(w.title) { androidx.compose.runtime.mutableStateOf(false) }
                 Text(

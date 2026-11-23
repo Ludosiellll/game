@@ -1,10 +1,13 @@
 package forma.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -15,11 +18,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
-import forma.app.ui.Screen
 import forma.app.ui.components.GhostButton
 import forma.app.ui.components.StatTile
 import forma.app.ui.components.FCard
@@ -44,24 +47,28 @@ fun BodyScreen() {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val list by remember { repo.db.state().observeBodyWeight() }.collectAsState(initial = emptyList())
-    var value by remember(list.isEmpty()) { mutableStateOf(list.lastOrNull()?.kg?.let { Ru.kg(it) } ?: "") }
+    // Empty until today's weight is typed: the last one is only the grey example, so one tap never saves an old weight
+    // for today.
+    var value by remember { mutableStateOf("") }
     ScrollScreen {
         TopBar("Вес тела", "Взвешивайся утром натощак, раз в неделю", onBack = { nav.back() })
         var saved by remember { mutableStateOf(false) }
-        NumberField(value, { value = it; saved = false }, "Сегодня", "кг", placeholder = "70")
+        NumberField(value, { value = it; saved = false }, "Сегодня", "кг", placeholder = list.lastOrNull()?.kg?.let { Ru.kg(it) } ?: "70")
         val kg = parseNum(value)?.takeIf { it in 30.0..250.0 }
-        // Not believable: said in red, and the button waits (it used to do nothing without a word).
-        if (value.isNotBlank() && kg == null) BadHint("Вес — от 30 до 250 кг, например 72,5.")
+        // Not believable: said in red, and the button waits. Not while the first digits are typed («7» of 74).
+        if (kg == null && (value.length >= 3 || (parseNum(value) ?: 0.0) > 250)) BadHint("Вес — от 30 до 250\u00A0кг, например 72,5.")
         if (saved) Text("Записано.", style = T.secondary(13.sp).copy(color = F.c.good))
         PrimaryButton("Записать", {
             if (kg != null) scope.launch { repo.logBodyWeight(kg); saved = true }
         }, Modifier.fillMaxWidth(), enabled = kg != null)
-        Estimates(list.lastOrNull()?.kg)
         if (list.size >= 2) {
             FCard {
+                // The chart spreads any change over its height: the first and the last weight say how big it is.
+                NumText("${Ru.kg(list.first().kg)} → ${Ru.kg(list.last().kg)}\u00A0кг", style = T.number(15.sp))
                 LineChart(listOf(Series(list.map { it.kg }, F.c.text, fill = true)), description = "Вес тела", xLabels = listOf(shortDate(LocalDate.ofEpochDay(list.first().epochDay)), shortDate(LocalDate.ofEpochDay(list.last().epochDay))))
             }
         }
+        Estimates(list.lastOrNull()?.kg)
         if (list.isNotEmpty()) {
             SectionLabel("Записи")
             FCard(gap = 0.dp) {
@@ -81,38 +88,69 @@ fun BodyScreen() {
 @Composable
 private fun Estimates(latestKg: Double?) {
     val repo = LocalRepo.current
-    val nav = LocalNav.current
+    val scope = rememberCoroutineScope()
     val profile by repo.store.profile.collectAsState(initial = null)
     val p = profile ?: return
     val kg = latestKg ?: p.bodyWeightKg
     val training by produceState(0.0, kg) { value = repo.trainingKcalPerWeek(kg) }
+    var askHeight by remember { mutableStateOf(false) }
     SectionLabel("Расчёты")
     FCard(gap = 10.dp) {
         val h = p.heightCm
         if (h == null) {
-            Text("Укажи рост, и я посчитаю ИМТ и сколько калорий ты тратишь в покое и за день.", style = T.secondary(14.sp))
-            GhostButton("Указать рост", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth())
+            Text("Нужен рост, чтобы посчитать ИМТ и калории.", style = T.secondary(14.sp))
+            GhostButton("Указать рост", { askHeight = true }, Modifier.fillMaxWidth())
         } else {
             val bmi = Body.bmi(kg, h)
             val bmr = Body.bmr(kg, h, p.age(LocalDate.now().year), p.sex)
             val daily = Body.dailyEnergy(bmr, training)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatTile("ИМТ", Ru.one(bmi), Body.bmiClass(bmi), F.c.text, Modifier.weight(1f))
-                StatTile("Покой", "≈${(bmr / 10).roundToInt() * 10}", "ккал в день", F.c.text, Modifier.weight(1f))
-                StatTile("Расход", "≈${(daily / 50).roundToInt() * 50}", "ккал в день", F.c.load, Modifier.weight(1f))
+                StatTile("В покое", "≈${(bmr / 10).roundToInt() * 10}", "ккал в день", F.c.text, Modifier.weight(1f))
+                StatTile("Расход", "≈${(daily / 50).roundToInt() * 50}", "ккал в день", F.c.text, Modifier.weight(1f))
             }
-            Text(
-                "Это примерные цифры. ИМТ не отличает мышцы от жира. Расход — это калории в покое × 1,3 плюс тренировки. " +
-                    "На тренировки за последний месяц уходило ≈${(training / 50).roundToInt() * 50} ккал в неделю. Чтобы худеть, обычно ешь на 300–500 ккал меньше расхода.",
-                style = T.secondary(12.sp),
+            // No «≈0 ккал» for a month without training; the BMI caveat only where it can mislead.
+            val perWeek = (training / 50).roundToInt() * 50
+            val notes = listOfNotNull(
+                "На тренировки за последний месяц уходило ≈$perWeek\u00A0ккал в неделю.".takeIf { perWeek > 0 },
+                "ИМТ не отличает мышцы от жира.".takeIf { bmi >= 25 },
             )
+            if (notes.isNotEmpty()) Text(notes.joinToString(" "), style = T.secondary(12.sp))
         }
         val protein = Body.protein(kg, p.aim.lift)
         Text("Белок: ${protein.start.roundToInt()}–${protein.endInclusive.roundToInt()} г в день", style = T.body(15.sp, FontWeight.Bold))
-        Text(
-            if (protein.start >= kg * 1.6) "Для роста мышц и силы — 1,6–2,2 г на кг веса."
-            else "Для восстановления и здоровья — 1,2–1,6 г на кг веса.",
-            style = T.secondary(12.sp),
-        )
     }
+    if (askHeight) HeightDialog(onDismiss = { askHeight = false }) { cm ->
+        askHeight = false
+        // The height alone: the plan stays as it is (the profile screen would build it again).
+        scope.launch {
+            repo.store.profileNow()?.let { now ->
+                repo.store.setProfile(now.copy(heightCm = cm))
+                repo.changed()
+            }
+        }
+    }
+}
+
+/** The height typed right here, 120 to 230 cm as in the questionnaire. */
+@Composable
+private fun HeightDialog(onDismiss: () -> Unit, onSave: (Int) -> Unit) {
+    var typed by remember { mutableStateOf("") }
+    val cm = typed.trim().toIntOrNull()?.takeIf { it in 120..230 }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = F.c.surface,
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                NumberField(typed, { typed = it.filter(Char::isDigit) }, "Рост", "см", keyboard = KeyboardType.Number, placeholder = "178")
+                if (cm == null && typed.length >= 3) BadHint("Рост — от 120 до 230\u00A0см.")
+            }
+        },
+        confirmButton = {
+            TextButton({ cm?.let(onSave) }, enabled = cm != null) {
+                Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = if (cm != null) F.c.accent else F.c.text3))
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
+    )
 }

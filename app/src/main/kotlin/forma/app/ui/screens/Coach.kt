@@ -36,6 +36,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -83,7 +84,7 @@ private val STARTERS = listOf(
     "Почему сегодня такая тренировка?",
     "Разбери мою последнюю тренировку",
     "Как идёт мой прогресс?",
-    "Сегодня плохо себя чувствую — давай полегче",
+    "Мне сегодня плохо, давай полегче",
     "Почему мне дают меньше веса, чем я могу?",
     "Прошлая пробежка была лёгкой, хочу бегать дольше",
 )
@@ -98,12 +99,26 @@ private fun coachApi(): Pair<CoachApi?, Boolean> {
     return cloud to (cloud != null && email != null)
 }
 
+/**
+ * One of the two the coach's DeepSeek key is for ([forma.app.sync.TOKEN_PEOPLE], as «Токены ИИ» in «Ещё»): their questions
+ * go to DeepSeek through the key's seller first, to Google only when it fails. False until the account is known, and with
+ * no cloud.
+ */
+@Composable
+private fun asksDeepSeek(): Boolean {
+    val cloud = LocalCloud.current
+    val email = cloud?.state?.collectAsState()?.value?.email
+    val on by produceState(false, cloud, email) { value = cloud?.accountId() in forma.app.sync.TOKEN_PEOPLE }
+    return on
+}
+
 private enum class Panel { MEMORY, CHANGES, ABOUT }
 
 /**
- * «Тренер»: a chat with an AI coach (Gemini, through the project's server function) that knows the training, the app's
- * rules and what it was told about the person. It explains, reviews workouts and makes changes within the app's limits —
- * the day, ratings, running and weights at once (with «Вернуть»), the gym plan, the goal and the stadium on «Принять».
+ * «Тренер»: a chat with an AI coach (Gemini, or DeepSeek for the two on its key, through the project's server function)
+ * that knows the training, the app's rules and what it was told about the person. It explains, reviews workouts and makes
+ * changes within the app's limits — the day, ratings, running and weights at once (with «Вернуть»), the gym plan, the goal
+ * and the stadium on «Принять».
  * A tab of its own; opened with [question] (from a workout's review) it puts it in the field.
  */
 @Composable
@@ -137,11 +152,15 @@ fun CoachScreen(question: String? = null, workoutId: Long? = null) {
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().let { if (nav.canGoBack) it.navigationBarsPadding() else it }) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (nav.canGoBack) { RoundIcon(Ic.back, "Назад", { nav.back() }, size = 42.dp); Spacer(Modifier.width(10.dp)) }
-            Avatar(40.dp)
-            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("Тренер", style = T.title(22.sp))
                 Text(if (busy) "печатает…" else "ИИ · знает твои тренировки", style = T.secondary(13.sp).copy(color = if (busy) F.c.accent else F.c.text2))
+            }
+            // A button of its own, in sight: it clears the talk. Not while an answer is on its way (it would land alone in
+            // the new talk).
+            if (chat.isNotEmpty() && !busy) {
+                Spacer(Modifier.width(8.dp))
+                GhostButton("Новый разговор", { scope.launch { CoachTalk.clear(repo) } })
             }
         }
         Row(
@@ -153,11 +172,10 @@ fun CoachScreen(question: String? = null, workoutId: Long? = null) {
                 // An opened panel is the first thing of the list: shown from its top.
                 if (panel != null) scope.launch { list.scrollToItem(0) }
             }
-            ToolChip("Что знает обо мне", settings.coachNotes.size, panel == Panel.MEMORY) { toggle(Panel.MEMORY) }
-            ToolChip("Изменения", log.count { !it.undone }, panel == Panel.CHANGES) { toggle(Panel.CHANGES) }
-            ToolChip("Как это работает", null, panel == Panel.ABOUT) { toggle(Panel.ABOUT) }
-            // Not while an answer is on its way: it would land alone in the new talk.
-            if (chat.isNotEmpty() && !busy) ToolChip("Новый разговор", null, false) { scope.launch { CoachTalk.clear(repo) } }
+            // No counts: «Изменения 37» read as 37 unread, and the three names fit the row.
+            ToolChip("Что помнит", panel == Panel.MEMORY) { toggle(Panel.MEMORY) }
+            ToolChip("Изменения", panel == Panel.CHANGES) { toggle(Panel.CHANGES) }
+            ToolChip("Как работает", panel == Panel.ABOUT) { toggle(Panel.ABOUT) }
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(), state = list,
@@ -171,50 +189,32 @@ fun CoachScreen(question: String? = null, workoutId: Long? = null) {
             if (busy) item(key = "typing") { Typing() }
             failed?.let { (why, _) -> item(key = "failed") { Text(why, style = T.body(14.sp).copy(color = F.c.warn), modifier = Modifier.padding(horizontal = 8.dp)) } }
         }
+        // Not signed in: straight to the e-mail form (not the backup page), and back here once signed in.
         if (signedIn) InputBar(typed, { typed = it }, enabled = !busy, onSend = { send(typed) })
-        else SignIn { nav.push(Screen.Cloud) }
+        else SignIn { nav.push(Screen.CloudSignIn(restore = false)) }
     }
 }
 
-/** A small pill over the talk: a panel to open (with a count) or an action. */
+/** A small pill over the talk: a panel to open. */
 @Composable
-private fun ToolChip(text: String, count: Int?, selected: Boolean, onClick: () -> Unit) {
+private fun ToolChip(text: String, selected: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     Row(
         Modifier.heightIn(min = 40.dp).clip(shape).background(if (selected) F.c.text else F.c.surface)
             .border(1.dp, if (selected) F.c.text else F.c.line, shape)
             .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        val fg = if (selected) F.c.bg else F.c.text
-        Text(text, style = T.body(14.sp, FontWeight.SemiBold).copy(color = fg), maxLines = 1)
-        if (count != null) Box(
-            Modifier.heightIn(min = 20.dp).widthIn(min = 20.dp).clip(RoundedCornerShape(50)).background(if (selected) F.c.bg else F.c.surface2)
-                .padding(horizontal = 6.dp),
-            contentAlignment = Alignment.Center,
-        ) { Text("$count", style = T.body(12.sp, FontWeight.Bold).copy(color = if (selected) F.c.text else F.c.text2)) }
+        Text(text, style = T.body(14.sp, FontWeight.SemiBold).copy(color = if (selected) F.c.bg else F.c.text), maxLines = 1)
     }
 }
 
-/** The coach's round mark: its initial on the accent. */
-@Composable
-private fun Avatar(size: androidx.compose.ui.unit.Dp) {
-    Box(Modifier.size(size).clip(CircleShape).background(F.c.accent), contentAlignment = Alignment.Center) {
-        Icon(Ic.chat, null, tint = F.c.onAccent, modifier = Modifier.size(size * 0.55f))
-    }
-}
-
-/** The first look: who the coach is, what it can do, questions to start with. */
+/** The first look: one line on what to ask, then questions to start with. */
 @Composable
 private fun Welcome(enabled: Boolean, onAsk: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         CoachBubble {
-            Text("Привет! Я тренер в Splity и вижу твои тренировки.", style = T.body(15.sp, FontWeight.Bold))
-            Text(
-                "Объясню, почему тренировка такая и как идёт прогресс. Разберу тренировку. Поменяю план по твоей просьбе: " +
-                    "скажу, что и почему, а ты сможешь вернуть как было.",
-                style = T.body(15.sp),
-            )
+            Text("Спроси про тренировку или попроси поменять план. Изменения можно вернуть.", style = T.body(15.sp))
         }
         SectionLabel("Можно спросить", Modifier.padding(start = 4.dp, top = 4.dp))
         STARTERS.forEach { q ->
@@ -308,7 +308,8 @@ private fun ActCard(msgId: Long, index: Int, act: CoachChatAct, log: List<CoachL
                             .onFailure { note = "Не получилось — попробуй ещё раз." }
                     }
                 }, Modifier.weight(1f), enabled = !working)
-                GhostButton("Не надо", { run { CoachTalk.decline(repo, msgId, index) } }, Modifier.weight(1f))
+                // As tall as «Принять» beside it.
+                GhostButton("Не надо", { run { CoachTalk.decline(repo, msgId, index) } }, Modifier.weight(1f), height = 54.dp)
             }
             CoachActState.DONE -> if (open) {
                 val nav = forma.app.ui.LocalNav.current
@@ -330,7 +331,7 @@ private fun PanelCard(p: Panel, notes: List<String>, log: List<CoachLogEntry>) {
     FCard(gap = 10.dp) {
         when (p) {
             Panel.MEMORY -> {
-                SectionLabel("Что тренер знает обо мне")
+                SectionLabel("Что тренер помнит")
                 if (notes.isEmpty()) Text("Пока ничего. Расскажи тренеру, что тебе нравится, что нет, какие гантели в зале — он запомнит.", style = T.secondary(14.sp))
                 notes.forEach { n ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -362,28 +363,24 @@ private fun PanelCard(p: Panel, notes: List<String>, log: List<CoachLogEntry>) {
             Panel.ABOUT -> {
                 SectionLabel("Как это работает")
                 Text(
-                    "Тренер — ИИ. Он видит твой план, тренировки, бег, самочувствие и правила приложения, " +
-                        "на которых строятся тренировки. Проси своими словами: он сам подберёт, что и как поменять.",
+                    "Отвечает ИИ. Он видит твой план, тренировки, бег и самочувствие. Пиши своими словами, он сам подберёт, что поменять.",
                     style = T.body(14.sp),
                 )
                 Text(
-                    "Сам меняет: самочувствие на сегодня, короткую паузу, оценку тренировки, длину лёгкого бега (раз в неделю), ускорения, " +
-                        "длинный бег, шаг веса под твой зал, темпы бега спокойнее, лёгкий бег вместо тяжёлого, лёгкую пробежку на сегодня, " +
-                        "контрольный забег (поставить или отложить), настройки звука и оформления, вес тела. Каждое такое изменение можно " +
-                        "вернуть, пока его не сдвинула тренировка. Больше 6 изменений в день сам не делает.",
+                    "Сам меняет: самочувствие на сегодня, длину лёгкого бега, шаг веса под твой зал, звук и оформление. " +
+                        "Их можно вернуть в «Изменения», пока тренировка не сдвинула то же самое.",
                     style = T.body(14.sp),
                 )
                 Text(
-                    "Только после «Принять»: рабочий вес, «Болею», пауза на неделю и больше, упражнения, их порядок, подходы, повторы, отдых, " +
-                        "цель, стадион, разгрузочная неделя, своя тяжёлая пробежка на сегодня, темпы бега быстрее. " +
-                        "Чего сделать не может — скажет прямо, покажет кнопкой, где это делается руками, и запишет пожелание. " +
-                        "Пределы приложения ИИ не обойдёт: лёгкий бег растёт не больше чем на 15 % в неделю, а сократить его больше чем на 10 % " +
-                        "сам не может; вес — не больше чем на 25 % за раз, в пределах расчётного максимума и не ниже 85 % лучшего за 8 недель.",
+                    "Рабочий вес, упражнения, подходы, отдых, цель, стадион и паузу на неделю и больше меняет только после твоего «Принять». " +
+                        "Правила плана он не обходит. Чего не может, скажет прямо, покажет, где это сделать, и запишет пожелание.",
                     style = T.body(14.sp),
                 )
+                // Where the questions go: DeepSeek first for the two on its key (Google when it fails), Google for the rest.
+                val where = if (asksDeepSeek()) "в DeepSeek через продавца ключа, а если он не ответит, в Google" else "в Google"
                 Text(
-                    "При боли или болезни — к врачу. Вопросы и сводка тренировок (без имени и почты) уходят в Google; " +
-                        "на бесплатном тарифе Google может использовать переписку для улучшения моделей.",
+                    "При боли или болезни иди к врачу. Вопросы и сводка тренировок (без имени и почты) уходят $where. " +
+                        "На бесплатном тарифе Google может использовать переписку для улучшения моделей.",
                     style = T.secondary(13.sp),
                 )
             }
@@ -431,8 +428,8 @@ private fun SignIn(onSignIn: () -> Unit) {
 
 /**
  * The coach's word on a finished workout: what went well, what not, what to do next time — kept on the phone once asked.
- * Asked by itself for a person who has talked to the coach before; anyone else is told first that the workouts go to
- * Google's AI, and asks with a tap. Nothing shown when the coach is not set up.
+ * Asked by itself for a person who has talked to the coach before; anyone else is told first which AI gets the workouts
+ * (Google's, or DeepSeek first for the two on its key), and asks with a tap. Nothing shown when the coach is not set up.
  */
 @Composable
 fun CoachReviewCard(workoutId: Long, title: String, day: LocalDate) {
@@ -467,16 +464,15 @@ fun CoachReviewCard(workoutId: Long, title: String, day: LocalDate) {
         }
     }
     val nav = LocalNav.current
+    // The two on the DeepSeek key are asked by DeepSeek first, Gemini only when it fails.
+    val who = if (asksDeepSeek()) "DeepSeek, а если он не ответит, Gemini от Google" else "Gemini от Google"
     FCard(gap = 10.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Avatar(28.dp)
-            SectionLabel("Разбор тренера")
-        }
+        SectionLabel("Разбор тренера")
         when {
             text != null -> SelectionContainer { Text(forma.app.ui.components.markdownText(text!!), style = T.body(15.sp)) }
             busy -> Text("Тренер смотрит тренировку…", style = T.secondary(14.sp))
             used == false && tries == 0 -> {
-                Text("ИИ-тренер (Gemini от Google) разберёт тренировку: что получилось, что нет и что сделать в следующий раз. " +
+                Text("ИИ-тренер ($who) разберёт тренировку: что получилось, что нет и что сделать в следующий раз. " +
                     "Для этого он получит сводку твоих тренировок — без имени и почты.", style = T.secondary(14.sp))
                 GhostButton("Разобрать тренировку", { tries++ }, Modifier.fillMaxWidth())
             }

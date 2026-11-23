@@ -1,7 +1,6 @@
 package forma.app.ui.screens
 
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -9,7 +8,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import forma.app.ui.LocalCloud
 import forma.app.ui.LocalNav
 import forma.app.ui.Screen
@@ -32,24 +30,25 @@ fun MoreScreen() {
     ScrollScreen {
         FitTitle(titleText("Ещё"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         FCard(gap = 0.dp) {
-            ListRow("Как пользоваться", "Что где в приложении и словарь слов", icon = Ic.info, iconTint = F.c.accent) { nav.push(Screen.Help) }
+            // The titles say where each row goes: no grey line repeating them.
+            ListRow("Как пользоваться", icon = Ic.info, iconTint = F.c.accent) { nav.push(Screen.Help) }
             Hairline()
-            ListRow("Калькуляторы", "Вес на 1 раз, блины, разминка, темп, прогноз, пульс", icon = Ic.calc, iconTint = F.c.accent) { nav.push(Screen.Calculators) }
+            ListRow("Калькуляторы", icon = Ic.calc, iconTint = F.c.accent) { nav.push(Screen.Calculators) }
             Hairline()
-            ListRow("История", "Все тренировки и пробежки", icon = Ic.list, iconTint = F.c.accent) { nav.push(Screen.History) }
+            ListRow("История", icon = Ic.list, iconTint = F.c.accent) { nav.push(Screen.History) }
             Hairline()
-            ListRow("Упражнения", "Найти упражнение, замену или добавить своё", icon = Ic.dumbbell, iconTint = F.c.accent) { nav.push(Screen.Library()) }
+            ListRow("Упражнения", icon = Ic.dumbbell, iconTint = F.c.accent) { nav.push(Screen.Library()) }
             Hairline()
-            ListRow("Люди и друзья", "Чужие тренировки, программы, сообщения", icon = Ic.user, iconTint = F.c.accent) { nav.push(Screen.Friends) }
+            ListRow("Люди и друзья", icon = Ic.user, iconTint = F.c.accent) { nav.push(Screen.Friends) }
             Hairline()
-            ListRow("Вес тела", "Записать и посмотреть график", icon = Ic.scale, iconTint = F.c.accent) { nav.push(Screen.Body) }
+            ListRow("Вес тела", icon = Ic.scale, iconTint = F.c.accent) { nav.push(Screen.Body) }
         }
         FCard(gap = 0.dp) {
+            // One name for the place, here, in «Оформление и звук» and on the screen itself; only the live state under it.
             ListRow(
-                "Облако и резервная копия",
+                "Облако и копия",
                 when {
-                    cloud == null || !cloud.configured -> "Резервная копия в файл"
-                    cloud.email == null -> "Копия в облаке по почте и паролю или в файл"
+                    cloud == null || !cloud.configured || cloud.email == null -> "Сейчас всё только на этом телефоне"
                     cloud.otherAccount -> "На телефоне данные другого аккаунта"
                     cloud.lastError != null -> listOfNotNull("Есть ошибка синхронизации", waitingText(waiting)).joinToString(" · ")
                     else -> waitingText(waiting) ?: "Синхронизация: ${lastSyncText(cloud.lastSyncAt)}"
@@ -57,9 +56,10 @@ fun MoreScreen() {
                 icon = Ic.cloud, iconTint = F.c.accent,
             ) { nav.push(Screen.Cloud) }
             Hairline()
-            ListRow("Цель, дни и данные", "По ним строится план", icon = Ic.user, iconTint = F.c.text2) { nav.push(Screen.Profile) }
+            ListRow("Цель, дни и данные", icon = Ic.user, iconTint = F.c.text2) { nav.push(Screen.Profile) }
             Hairline()
-            ListRow("Оформление и звук", "Стиль, голос, вибрация, выгрузка для разбора", icon = Ic.gear, iconTint = F.c.text2) { nav.push(Screen.Settings) }
+            // What the title does not say lives there too.
+            ListRow("Оформление и звук", "GPS, автопауза, выгрузка для разбора", icon = Ic.gear, iconTint = F.c.text2) { nav.push(Screen.Settings) }
             Hairline()
             // «Токены ИИ» only for the two on the DeepSeek key (Denis and Egor); the server checks it again.
             val cloudApi = LocalCloud.current
@@ -67,7 +67,7 @@ fun MoreScreen() {
                 value = cloudApi?.accountId() in forma.app.sync.TOKEN_PEOPLE
             }
             if (showTokens) {
-                ListRow("Токены ИИ", "Сколько осталось на ключе тренера и на что ушло", icon = Ic.chat, iconTint = F.c.text2) { nav.push(Screen.Tokens) }
+                ListRow("Токены ИИ", icon = Ic.chat, iconTint = F.c.text2) { nav.push(Screen.Tokens) }
                 Hairline()
             }
             // The version and «Проверить обновления»: a newer one opens the update window (also after «Позже»).
@@ -78,13 +78,13 @@ fun MoreScreen() {
             var checked by androidx.compose.runtime.remember { mutableStateOf<forma.app.update.Updater.Checked?>(null) }
             val build = forma.app.BuildConfig.VERSION_CODE
             if (forma.app.BuildConfig.SELF_UPDATE) ListRow(
-                "Обновления",
+                "Проверить обновления",
                 when {
-                    update is forma.app.update.Updater.State.Available -> "Есть новая версия · нажми, чтобы обновить"
+                    update is forma.app.update.Updater.State.Available -> "Есть новая версия, нажми, чтобы обновить"
                     checking -> "Проверяю…"
-                    checked == forma.app.update.Updater.Checked.LATEST -> "У тебя последняя версия · сборка $build"
+                    checked == forma.app.update.Updater.Checked.LATEST -> "Это последняя версия"
                     checked == forma.app.update.Updater.Checked.FAILED -> "Не получилось проверить: нет связи. Нажми ещё раз"
-                    else -> "Сборка $build · нажми, чтобы проверить"
+                    else -> "Версия $build"
                 },
                 icon = Ic.up, iconTint = F.c.text2,
             ) {
@@ -94,13 +94,8 @@ fun MoreScreen() {
                     checking = false
                 }
             }
-            // From Google Play: the build, updates come from Play.
-            else ListRow("Версия", "Сборка ${forma.app.BuildConfig.VERSION_CODE} · обновляется через Google Play", icon = Ic.up, iconTint = F.c.text2) {}
+            // From Google Play: the build, updates come from Play. Nothing to tap, so no chevron.
+            else ListRow("Версия", "Сборка ${forma.app.BuildConfig.VERSION_CODE} · обновляется через Google Play", icon = Ic.up, iconTint = F.c.text2)
         }
-        Text(
-            if (cloud?.email != null) "Данные хранятся на телефоне, копия в облаке."
-            else "Данные есть только на этом телефоне. Чтобы не потерять историю при смене телефона, включи облако или сохраняй копию в файл.",
-            style = T.secondary(13.sp),
-        )
     }
 }

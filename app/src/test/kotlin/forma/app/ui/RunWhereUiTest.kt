@@ -78,11 +78,13 @@ class RunWhereUiTest {
             }
         }
         settle()
-        assertTrue(texts("Круг 230 м. Жми «Круг»").isNotEmpty())
+        // On the stadium: laps come from the presses, said once in the GPS row (no box repeating the hint and the tab).
+        assertTrue(texts("Круги по нажатию «Круг»").isNotEmpty())
+        assertTrue(texts("Круг 230 м. Жми").isEmpty())
         compose.onNodeWithText("Улица", ignoreCase = true).performClick()
         settle()
-        // On the road: no lap button banner, the targets in minutes a km.
-        assertTrue(texts("Круг 230 м. Жми «Круг»").isEmpty())
-        assertTrue(texts("мин/км").isNotEmpty())
+        // On the road: no word of the lap button, the target a km.
+        assertTrue(texts("Круги по нажатию «Круг»").isEmpty())
+        assertTrue(texts("/км").isNotEmpty())
     }
 }

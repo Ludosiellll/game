@@ -283,7 +283,7 @@ class DayScreenUiTest {
         compose.onNodeWithText("Разбор", ignoreCase = true).performScrollTo()
         compose.onNodeWithText("Круги отрезков: 4 из 6 в темпе", substring = true).performScrollTo()
         compose.onRoot().captureRoboImage("build/shots/carbon-debrief.png")
-        compose.onNodeWithText("Оценка 9", substring = true).performScrollTo()
+        compose.onNodeWithText("9 из 10, задумано", substring = true).performScrollTo()
         compose.onNodeWithText("Восстановление").performScrollTo()
         compose.onRoot().captureRoboImage("build/shots/carbon-debrief2.png")
     }

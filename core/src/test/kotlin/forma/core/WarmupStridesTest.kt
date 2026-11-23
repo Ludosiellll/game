@@ -90,8 +90,10 @@ class WarmupStridesTest {
         assertEquals(2, t.result(545_000, 6).strideSpeeds!!.size)
         val none = RunReview.of(RunReview.Run(t0, strides = listOf(null, null, null, null))).single { it.title == "Ускорения" }
         assertTrue("не измерен" in none.text, none.text)
+        // All four fast: the numbers alone, no ratio to the jog and no pat on the back; the good tone stays.
         val good = RunReview.of(RunReview.Run(t0, strides = List(4) { 5.4 }, jog = 2.8)).single { it.title == "Ускорения" }
-        assertTrue("Ноги готовы" in good.text && good.tone == 1, good.text)
+        assertEquals("4 из 4: 3:05/км.", good.text)
+        assertEquals(1, good.tone)
     }
 
     private val t0 = RunPlan.goalTest(RunState(walkStage = -1), goal, null)

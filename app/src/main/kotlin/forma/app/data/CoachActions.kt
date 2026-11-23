@@ -94,7 +94,7 @@ object CoachActions {
     val SCREENS = linkedMapOf(
         "today" to "Сегодня", "plan" to "План", "progress" to "Прогресс", "history" to "История", "exercises" to "Упражнения",
         "my_exercises" to "Мои упражнения", "ideal_plan" to "Идеальный план", "friends" to "Люди и друзья", "body" to "Вес тела",
-        "cloud" to "Облако и резервная копия", "profile" to "Цель, дни и данные", "gym_goal" to "Цель в зале",
+        "cloud" to "Облако и копия", "profile" to "Цель, дни и данные", "gym_goal" to "Цель в зале",
         "settings" to "Оформление и звук", "calculators" to "Калькуляторы", "help" to "Как пользоваться",
     )
     private val APP_FLAGS = linkedMapOf(
@@ -1170,7 +1170,7 @@ object CoachActions {
             REMEMBER -> {
                 val text = a.str("text")?.take(NOTE_LEN) ?: return no("Нечего запомнить.")
                 if (s.coachNotes.any { norm(it) == norm(text) }) return no("Это уже запомнено.")
-                if (s.coachNotes.size >= MAX_NOTES) return no("Запомнено уже $MAX_NOTES — сначала забудь что-то ненужное («Что знает обо мне»).")
+                if (s.coachNotes.size >= MAX_NOTES) return no("Запомнено уже $MAX_NOTES — сначала забудь что-то ненужное («Что помнит»).")
                 auto("Запомнил: «$text».") {
                     repo.updateSettings { it.copy(coachNotes = (it.coachNotes + text).takeLast(MAX_NOTES)) }
                     CoachCall("undo_remember", args("text" to text))

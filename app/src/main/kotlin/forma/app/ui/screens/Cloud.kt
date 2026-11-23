@@ -153,7 +153,8 @@ fun CloudContent(
 ) {
     var deleteStep by remember { mutableStateOf(0) }
     ScrollScreen {
-        TopBar("Облако и данные", onBack = onBack)
+        // The same name as the rows that open it («Ещё», «Оформление и звук»), short enough for one line in capitals.
+        TopBar("Облако и копия", onBack = onBack)
         when {
             !state.configured -> FCard {
                 Text("В этой версии приложения облако не подключено.", style = T.body(15.sp))

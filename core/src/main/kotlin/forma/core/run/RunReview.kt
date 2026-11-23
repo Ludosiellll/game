@@ -35,10 +35,15 @@ object RunReview {
         /** The warm-up's strides: each one's speed by GPS, m/s (null where not measured); the jog before them. */
         val strides: List<Double?>? = null,
         val jog: Double? = null,
+        /** The runner's own effort scale the plan read this run on (`RunOutcome.OwnScale`), 0 when none was. */
+        val ownScale: Int = 0,
     )
 
-    /** [gym]: the person also lifts (the advice between hard runs names the gym only then). */
-    fun of(r: Run, goal: RunGoal? = null, gym: Boolean = true): List<Item> {
+    /**
+     * [gym] is no longer read: the rest after a hard run names no gym day (23 November: «зал на верх тела» for 48 hours
+     * stood over a plan with squats the next day). Kept for the callers that still pass it.
+     */
+    fun of(r: Run, goal: RunGoal? = null, @Suppress("UNUSED_PARAMETER") gym: Boolean = true): List<Item> {
         val w = r.workout
         val out = mutableListOf<Item>()
         how(r, goal)?.let { out += it }
@@ -53,7 +58,7 @@ object RunReview {
         } else {
             out += Item("Что это даёт телу", why.body, 0)
         }
-        out += recovery(r, why.recoveryHours, gym)
+        out += recovery(r, why.recoveryHours)
         return out
     }
 
@@ -198,9 +203,10 @@ object RunReview {
     }
 
     /**
-     * The warm-up's strides: how many were run faster than the jog (a fifth and more — else it was a jog), their pace
-     * and how much faster than the jog. They wake the legs for fast running; they do not measure the form (15 seconds
-     * are speed, not endurance), so nothing in the plan moves by them.
+     * The warm-up's strides: how many, their pace from the quickest to the slowest; and the ones no faster than the jog
+     * (by less than a fifth — that was a jog), with the jog's pace. They wake the legs for fast running; they do not
+     * measure the form (15 seconds are speed, not endurance), so nothing in the plan moves by them. Kept even when all is
+     * well: a stride far too fast shows in its pace (26 October, Denis asked to be told of one).
      */
     private fun strides(r: Run): Item? {
         val s = r.strides ?: return null
@@ -208,19 +214,22 @@ object RunReview {
         if (got.isEmpty()) return Item("Ускорения", "Сделано ${s.size} из ${RunTimeline.STRIDES}. Темп не измерен: GPS их не поймал.", 0)
         val jog = r.jog
         val slow = if (jog != null) s.withIndex().filter { (_, v) -> v != null && v < jog * 1.2 }.map { it.index + 1 } else emptyList()
+        val quickest = Ru.pace(1000 / got.max())
+        val slowest = Ru.pace(1000 / got.min())
         val parts = mutableListOf(
-            "${s.size} из ${RunTimeline.STRIDES}: " +
-                if (got.size == 1) "${Ru.pace(1000 / got[0])}/км." else "от ${Ru.pace(1000 / got.min())} до ${Ru.pace(1000 / got.max())}/км.",
+            "${s.size} из ${RunTimeline.STRIDES}: " + if (quickest == slowest) "$quickest/км." else "от $quickest до $slowest/км.",
         )
-        if (jog != null) parts += "Трусца была ${Ru.pace(1000 / jog)}/км, ускорения быстрее в ${Ru.one(got.average() / jog)} раза."
-        parts += when {
-            slow.isNotEmpty() -> (if (slow.size == 1) "Ускорение ${slow[0]}" else "Ускорения ${slow.joinToString(", ")}") +
-                " почти не быстрее трусцы. В следующий раз смелее, но не в полную силу."
-            s.size < RunTimeline.STRIDES -> "В следующий раз сделай все 4."
-            else -> "Ноги готовы к быстрому бегу."
+        when {
+            slow.isNotEmpty() && jog != null -> parts += (if (slow.size == 1) "Ускорение ${slow[0]}" else "Ускорения ${andList(slow)}") +
+                " почти не быстрее трусцы (${Ru.pace(1000 / jog)}/км). В следующий раз смелее, но не в полную силу."
+            s.size < RunTimeline.STRIDES -> parts += "В следующий раз сделай все 4."
         }
         return Item("Ускорения", parts.joinToString(" "), if (slow.isEmpty() && s.size == RunTimeline.STRIDES) 1 else 0)
     }
+
+    /** "2 и 3", "1, 2 и 4". */
+    private fun andList(xs: List<Int>): String =
+        if (xs.size < 2) xs.joinToString(", ") else xs.dropLast(1).joinToString(", ") + " и " + xs.last()
 
     /** A free run: its pace, its laps, its own target. */
     private fun free(r: Run): Item? {
@@ -238,49 +247,68 @@ object RunReview {
         return if (parts.isEmpty()) null else Item("Как прошла пробежка", parts.joinToString(" "), 0)
     }
 
-    /** The effort against the one the session was meant to be. */
+    /**
+     * The rating against the one the session was meant for, and nothing more: what the plan does with it is said once,
+     * in its own block (13 October: the debrief announces no decisions). Read as [RunPlan.after] reads it, on the
+     * runner's own scale ([Run.ownScale] taken off) — for reps only where the pace was measured and held, the pace being
+     * the proof. Easy, long and run/walk have a limit, not a mark to hit: up to 5, 6 and 6. Never in a warning colour: a
+     * rating is no mistake.
+     */
     private fun effort(r: Run): Item? {
         val rpe = r.rpe ?: return null
         val w = r.workout
-        val t = w.targetRpe
-        // A session made lighter for a bad day moves nothing in the plan: nothing to say about the next step.
-        if (w.light) return Item("Тяжесть", "Оценка $rpe. Тренировка была облегчённой, план она не двигает.", 0)
+        // A session made lighter for a bad day moves nothing in the plan.
+        if (w.light) return Item("Тяжесть", "$rpe из 10. Тренировка была облегчённой, план она не двигает.", 0)
+        val own = when (w.type) {
+            RunType.GOAL_PACE, RunType.INTERVALS, RunType.TEMPO -> if (paceHeld(r)) r.ownScale else 0
+            RunType.TEST, RunType.FREE -> 0
+            RunType.EASY, RunType.LONG, RunType.RUN_WALK -> r.ownScale
+        }
+        val read = (rpe - own).coerceAtLeast(1)
         return when (w.type) {
             RunType.TEST -> null
-            RunType.FREE -> if (rpe >= 8) Item("Тяжесть", "Оценка $rpe: считай этот день тяжёлым.", 0) else null
-            // As RunPlan.after decides: an easy run grows at 5 or less and shortens at 7 or more; a long run grows at 6 or
-            // less and shortens at 8 or more; run/walk steps on at 6 or less.
-            RunType.EASY -> when {
-                rpe >= 7 -> Item("Тяжесть", "Оценка $rpe, для лёгкого бега тяжело. Следующий будет короче.", -1)
-                rpe <= 5 -> Item("Тяжесть", "Оценка $rpe — легко, как и должно быть.", 1)
-                else -> Item("Тяжесть", "Оценка $rpe, длина пока прежняя. Она растёт при оценке до 5.", 0)
+            RunType.FREE -> if (rpe >= 8) Item("Тяжесть", "$rpe из 10: считай этот день тяжёлым.", 0) else null
+            RunType.EASY, RunType.LONG, RunType.RUN_WALK -> {
+                val limit = ratingLimit(w.type) ?: w.targetRpe
+                if (read <= limit) Item("Тяжесть", "$rpe из 10, как задумано.", 1)
+                else Item("Тяжесть", "$rpe из 10, задумано до $limit.", 0)
             }
-            RunType.LONG -> when {
-                rpe >= 8 -> Item("Тяжесть", "Оценка $rpe, тяжело. Следующая длинная будет короче.", -1)
-                rpe <= 6 -> Item("Тяжесть", "Оценка $rpe — спокойно, как и должно быть.", 1)
-                else -> Item("Тяжесть", "Оценка $rpe, длина пока прежняя. Она растёт при оценке до 6.", 0)
-            }
-            RunType.RUN_WALK -> if (rpe >= 7) {
-                Item("Тяжесть", "Оценка $rpe, нужно до 6: шаг не засчитан.", -1)
-            } else {
-                Item("Тяжесть", "Оценка $rpe, по силам.", 1)
-            }
-            else -> {
-                // A step on needs the effort no harder than this (race pace: up to 8; intervals and tempo: their own).
-                val limit = if (w.type == RunType.GOAL_PACE) 8 else t
+            RunType.GOAL_PACE, RunType.INTERVALS, RunType.TEMPO -> {
+                val t = w.targetRpe
                 when {
-                    rpe > limit -> Item("Тяжесть", "Оценка $rpe, нужно до $limit: шаг не засчитан.", -1)
-                    // Race pace early on is meant at 7, but a step on counts up to 8.
-                    rpe > t -> Item("Тяжесть", "Оценка $rpe — тяжелее задуманной ($t), но шаг вперёд засчитывается до $limit.", 0)
-                    rpe <= t - 2 -> Item("Тяжесть", "Оценка $rpe при задуманной $t, силы в запасе.", 1)
-                    else -> Item("Тяжесть", "Оценка $rpe при задуманной $t, так и надо.", 1)
+                    read <= t - 2 -> Item("Тяжесть", "$rpe из 10, задумано $t: силы были в запасе.", 1)
+                    read <= t -> Item("Тяжесть", "$rpe из 10, как задумано.", 1)
+                    else -> Item("Тяжесть", "$rpe из 10, задумано $t.", 0)
                 }
             }
         }
     }
 
-    /** How long before the next hard session: longer after a very hard one. */
-    private fun recovery(r: Run, base: Int, gym: Boolean): Item {
+    /**
+     * The rating an easy run, a long run or run/walk is meant to stay within, as [RunPlan.after] moves them on: up to 5, 6
+     * and 6. Null for the others, which have a mark ([RunWorkout.targetRpe]).
+     */
+    fun ratingLimit(type: RunType): Int? = when (type) {
+        RunType.EASY -> 5
+        RunType.LONG, RunType.RUN_WALK -> 6
+        else -> null
+    }
+
+    /**
+     * The reps' pace measured and no more than 3 % slower than their target: as [RunPlan.after] decides whether the
+     * runner's own scale counts for a session of reps.
+     */
+    private fun paceHeld(r: Run): Boolean {
+        val pace = r.workPace ?: return false
+        val target = r.workout.segments.firstOrNull { it.kind == SegmentKind.WORK }?.pace?.let { (it.fast + it.slow) / 2.0 } ?: return true
+        return pace <= target * 1.03
+    }
+
+    /**
+     * How long before the next hard run: longer after a very hard one. Nothing about the gym in between: the plan may put
+     * legs the next day (23 November: «зал на верх тела» for 48 hours stood over «Всё тело · А» the next morning).
+     */
+    private fun recovery(r: Run, base: Int): Item {
         val hard = (r.rpe ?: 0) >= 8
         val h = when {
             r.workout.type == RunType.FREE && hard -> 48
@@ -288,7 +316,7 @@ object RunReview {
             else -> base
         }
         val text = if (h <= 24) "Такой бег проходит за сутки. Завтра можно тренироваться по плану."
-        else "Следующая тяжёлая тренировка не раньше чем через ${RunExplain.recoveryWords(h)}. До неё лёгкий бег${if (gym) ", зал на верх тела" else ""} или отдых."
+        else "Следующий тяжёлый бег не раньше чем через ${Ru.nobreak(RunExplain.recoveryWords(h))}."
         return Item("Восстановление", text, 0)
     }
 }

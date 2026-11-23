@@ -738,7 +738,7 @@ object RunPlan {
             }
             if (c.cooldownMin > 0) segs += Segment(SegmentKind.COOLDOWN, c.cooldownMin * 60, p?.easy)
             val note = "Отрезки: ${c.pace.ru}" + (range?.let { ", ${Ru.pace(it.fast.toDouble())}–${Ru.pace(it.slow.toDouble())} на км" } ?: "") +
-                (if (c.restSec > 0 && c.reps > 1) ", между ними ${Ru.clock(c.restSec)} трусцой или шагом." else ".") +
+                (if (c.restSec > 0 && c.reps > 1) ", между ними ${RunExplain.timeWords(c.restSec)} трусцой или шагом." else ".") +
                 " Эта пробежка план не двигает." + (if (state.estimated && range != null) " Темп примерный." else "")
             RunWorkout(
                 if (c.pace == CustomRun.Pace.TEMPO) RunType.TEMPO else RunType.INTERVALS,
@@ -851,7 +851,8 @@ object RunPlan {
         fun len(s: Segment) = s.laps?.let { Ru.laps(it) } ?: "${(s.seconds / pace * 1000 / 50).roundToInt() * 50} м"
         val title = "Темп цели · " + if (work.all { it.seconds == work.first().seconds }) "${work.size} × ${len(work.first())}"
         else work.joinToString(" + ") { len(it) }
-        val restWords = Ru.clock(rest)
+        // In minutes, as the card's line says it («отдых 2 мин»), not as a clock.
+        val restWords = RunExplain.timeWords(rest)
         val note = if (lapSec != null) {
             val lapRange = Ru.lapRange(Track.lapSec(range.fast.toDouble(), lapMeters), Track.lapSec(range.slow.toDouble(), lapMeters))
             "Круг $lapRange, не быстрее. На писке будь на линии. Между отрезками $restWords шагом или трусцой. " +

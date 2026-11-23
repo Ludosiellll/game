@@ -58,7 +58,8 @@ fun TokensScreen(load: (suspend () -> TokenUsage)? = null) {
         }
     }
     ScrollScreen {
-        TopBar("Токены ИИ", "Ключ DeepSeek: тренер для тебя и Егора", onBack = { nav.back() })
+        // Seen by both of them: no «тебя и Егора», which is wrong when Egor opens it.
+        TopBar("Токены ИИ", "Ключ DeepSeek на двоих", onBack = { nav.back() })
         val u = usage
         when {
             u == null && error == null -> Text("Загружаю…", style = T.secondary(14.sp))

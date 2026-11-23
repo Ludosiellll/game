@@ -128,15 +128,14 @@ fun HistoryItemScreen(workoutId: Long) {
         TopBar(workout.title, dateLine(LocalDate.ofEpochDay(workout.epochDay)), onBack = { nav.back() })
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatTile("Время", "${(workout.durationSec ?: 0) / 60}", "мин", F.c.text, Modifier.weight(1f))
+            // «Тяжесть», as «Разбор» calls the rating (23 November: «тяжесть N из 10»); a tap puts it right.
             StatTile(
-                "Оценка", "${workout.rpe ?: "—"}", "из 10", F.c.text,
+                "Тяжесть", "${workout.rpe ?: "—"}", "из 10", F.c.text,
                 Modifier.weight(1f).clickable(onClickLabel = "Изменить оценку") { rating = true },
             )
             // Not in a warning colour: a load is a number to read, not a mistake.
             StatTile("Нагрузка", "${workout.load?.roundToInt() ?: "—"}", null, F.c.text, Modifier.weight(1f))
         }
-        GhostButton("Изменить оценку", { rating = true }, Modifier.fillMaxWidth())
-        rated?.let { Text(it, style = T.secondary(13.sp)) }
         if (workout.kind == Kind.LIFT) {
             val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }
             val plan = repo.planOf(workout)
@@ -161,7 +160,7 @@ fun HistoryItemScreen(workoutId: Long) {
                 }
             }
             if (summary != null) {
-                SectionLabel("Что изменилось после")
+                SectionLabel("Что изменилось в плане")
                 FCard(gap = 0.dp) {
                     summary.reports.forEachIndexed { i, r ->
                         if (i > 0) Hairline()
@@ -174,27 +173,40 @@ fun HistoryItemScreen(workoutId: Long) {
             }
         } else {
             val r = run
+            val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
+            val planned = remember(r?.planJson) {
+                r?.let { runCatching { AppJson.decodeFromString(forma.core.run.RunWorkout.serializer(), it.planJson) }.getOrNull() }
+            }
+            val trial = summary?.outcomes?.any {
+                it is forma.core.run.RunOutcome.TestTime || it is forma.core.run.RunOutcome.TestFromPart || it is forma.core.run.RunOutcome.TestStopped
+            } == true
             if (r != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatTile("Дистанция", r.distanceM?.let { Ru.distance(it) } ?: "—", null, F.c.endurance, Modifier.weight(1f))
-                    StatTile("Темп", r.avgPace?.let { Ru.pace(it) } ?: "—", "мин/км", F.c.text, Modifier.weight(1f))
+                    // A session of reps: their own pace. The whole run's, warm-up and rests in it, reads as a failed one
+                    // (23 November: 5:43 under «Темповый бег» for reps at 4:58).
+                    val reps = planned?.takeIf {
+                        it.type == forma.core.run.RunType.GOAL_PACE || it.type == forma.core.run.RunType.INTERVALS || it.type == forma.core.run.RunType.TEMPO
+                    }?.reps ?: 0
+                    if (reps > 0) StatTile(repsLabel(reps), r.workPace?.let { Ru.pace(it) } ?: "—", "мин/км", F.c.text, Modifier.weight(1f))
+                    else StatTile("Темп", r.avgPace?.let { Ru.pace(it) } ?: "—", "мин/км", F.c.text, Modifier.weight(1f))
                     StatTile("Выполнено", "${(r.completed * 100).roundToInt()}%", "плана", F.c.text, Modifier.weight(1f))
                 }
-                if (r.workPace != null) Text("Темп на отрезках, без разминки и отдыха: ${Ru.pace(r.workPace)} /км", style = T.body(15.sp))
-                if (r.vdotAfter != null) Text(formLine(r.vdotAfter, profile?.runGoal), style = T.secondary(14.sp))
+                // The goal's time by the fitness, only on the run that set it: every run keeps the last trial's, and under
+                // an easy run it read as if that run had set it.
+                val setIt = summary?.outcomes?.any { it is forma.core.run.RunOutcome.TestTime || it is forma.core.run.RunOutcome.VdotChanged } == true
+                if (setIt && r.vdotAfter != null) formLine(r.vdotAfter, profile?.runGoal)?.let { Text(it, style = T.secondary(14.sp)) }
             }
-            val summary = workout.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }
             if (summary?.manual == true) Text("Внесено вручную: бег без телефона.", style = T.secondary(14.sp))
             summary?.cadence?.let { Text("Шагов в минуту: $it", style = T.secondary(14.sp)) }
             if (r != null) RunDebrief(workout, r, summary)
-            if (summary != null) LapsCard(summary.laps, test = summary.outcomes.any { it is forma.core.run.RunOutcome.TestTime || it is forma.core.run.RunOutcome.TestFromPart || it is forma.core.run.RunOutcome.TestStopped })
-            if (summary != null && summary.laps.isNotEmpty()) LapsEditor(workout.id, summary.laps)
+            if (summary != null) LapsCard(summary.laps, test = trial)
+            if (summary != null && summary.laps.isNotEmpty()) LapsEditor(workout.id, summary.laps, test = trial)
             // On the road: the time of each kilometre, as the voice said it (active time, the tracker's distance).
             val splits = summary?.kmSplits.orEmpty()
             if (summary?.laps.isNullOrEmpty() && splits.size >= 2) KmSplitsCard(splits.map { it.toDouble() })
             if (summary != null && summary.outcomes.isNotEmpty()) {
-                val planned = r?.let { runCatching { AppJson.decodeFromString(forma.core.run.RunWorkout.serializer(), it.planJson) }.getOrNull() }
-                SectionLabel("Что изменилось после")
+                SectionLabel("Что изменилось в плане")
                 FCard(gap = 0.dp) {
                     summary.outcomes.forEachIndexed { i, o ->
                         if (i > 0) Hairline()
@@ -204,6 +216,10 @@ fun HistoryItemScreen(workoutId: Long) {
             }
         }
         CoachReviewCard(workout.id, workout.title, LocalDate.ofEpochDay(workout.epochDay))
+        // The rating put right, at the bottom with the other change to the workout: between the tiles it split them in two
+        // (the «Тяжесть» tile opens the same dialog).
+        GhostButton("Изменить оценку", { rating = true }, Modifier.fillMaxWidth())
+        rated?.let { Text(it, style = T.secondary(13.sp)) }
         GhostButton("Удалить из истории", { confirm = true }, Modifier.fillMaxWidth(), color = F.c.bad)
     }
     if (rating) RatingDialog(workout.rpe, run = workout.kind == Kind.RUN, onDismiss = { rating = false }) { v ->
@@ -261,30 +277,45 @@ private fun RatingDialog(now: Int?, run: Boolean, onDismiss: () -> Unit, onSave:
 }
 
 /**
- * The laps of a saved run put right: tap a lap — a press forgotten on the line (one lap of two laps' time) splits into
- * two, a press too many merges two into one, a press late or early gets the lap's time typed by hand. A rep's lap gets
- * its time only (the reps stay as many); the last run is then decided again on it.
+ * The laps of a saved run put right, closed by default (most runs need nothing, and the laps are in «Круги» right
+ * above): tap a lap — a press forgotten on the line (one lap of two laps' time) splits into two, a press too many merges
+ * two into one, a press late or early gets the lap's time typed by hand. The laps grouped as in «Круги»: each rep's
+ * under its name, the rest by their numbers. A rep's lap gets its time only (the reps stay as many); the last run is
+ * then decided again on it. The buttons say what each does: no manual above them (23 November: five sentences of it).
  */
 @Composable
-private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
+private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>, test: Boolean) {
     val repo = LocalRepo.current
     val scope = rememberCoroutineScope()
+    var shown by androidx.compose.runtime.saveable.rememberSaveable(workoutId) { mutableStateOf(false) }
     var open by remember { mutableStateOf<Int?>(null) }
-    SectionLabel("Поправить круги")
     Text(
-        "Круг вышел вдвое длиннее, потому что «Круг» не нажат? Нажми на него и раздели. Два нажатия подряд — соедини. " +
-            "Нажатие не вовремя — впиши время круга вручную. Круга не было (случайное нажатие) — убери его. " +
-            "У кругов отрезков («О») можно поправить только время.",
-        style = T.secondary(13.sp),
+        if (shown) "Поправить круги" else "Поправить круги ›",
+        style = T.body(15.sp, FontWeight.SemiBold).copy(color = F.c.accent),
+        modifier = Modifier.fillMaxWidth().clickable(onClickLabel = if (shown) "Свернуть" else "Развернуть") {
+            shown = !shown
+            open = null
+        }.padding(vertical = 4.dp),
     )
-    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        laps.forEachIndexed { i, l ->
-            // A rep's lap: its time only (a touch ended it early) — the last run is then decided again on it.
-            val label = if (l.rep != null) "О${l.rep}" else "${l.number}"
-            forma.app.ui.components.Chip(
-                "$label · ${if (l.rough) "≈" else ""}${Ru.lap(l.seconds)}", false, { open = i },
-                minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.ACTION,
-            )
+    if (!shown) return
+    val indexed = laps.withIndex().toList()
+    val reps = indexed.filter { it.value.rep != null }.groupBy { it.value.rep!! }
+    val free = indexed.filter { it.value.rep == null }
+    fun repName(rep: Int) = if (test) "Забег" else "Отрезок $rep"
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Нажми на круг, который записался неправильно.", style = T.secondary(13.sp))
+        reps.forEach { (rep, group) ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(repName(rep), style = T.body(14.sp, FontWeight.SemiBold))
+                LapChips(group, numbered = false) { open = it }
+            }
+        }
+        if (free.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (reps.isNotEmpty()) Text("Между отрезками", style = T.body(14.sp, FontWeight.SemiBold))
+                // Outside the reps a lap keeps its number: a warm-up on a short loop has some twenty of them.
+                LapChips(free, numbered = true) { open = it }
+            }
         }
     }
     val i = open ?: return
@@ -296,9 +327,14 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
         open = null
         scope.launch { repo.editRunLaps(workoutId, next) }
     }
+    // Which lap: a rep's by its place in the rep («Отрезок 1, круг 2»), any other by its number.
+    val name = l.rep?.let { rep ->
+        val inRep = laps.count { it.rep == rep }
+        if (inRep > 1) "${repName(rep)}, круг ${laps.take(i + 1).count { it.rep == rep }}" else repName(rep)
+    } ?: "Круг ${l.number}"
     // On the screen under the laps, not in a dialog: the keyboard for the time has room, and the laps stay in sight.
     FCard(gap = 8.dp) {
-        Text(if (l.rep != null) "Отрезок ${l.rep} — ${Ru.lapTenth(l.seconds)}" else "Круг ${l.number} — ${Ru.lapTenth(l.seconds)}", style = T.title(20.sp))
+        Text("$name: ${Ru.nobreak(Ru.lapTenth(l.seconds))}", style = T.title(20.sp))
         Text("Что было на самом деле?", style = T.secondary(14.sp))
         NumberField(typed, { typed = it }, "Время круга", "с", placeholder = Ru.one(l.seconds))
         Text(
@@ -326,6 +362,20 @@ private fun LapsEditor(workoutId: Long, laps: List<forma.core.run.Lap>) {
     }
 }
 
+/** Laps to tap, each with its index in the run's laps: «49 с» in a rep, «5 · 2:21» with its number outside the reps. */
+@Composable
+private fun LapChips(group: List<IndexedValue<forma.core.run.Lap>>, numbered: Boolean, onOpen: (Int) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        group.forEach { (i, l) ->
+            val time = (if (l.rough) "≈" else "") + Ru.lap(l.seconds)
+            forma.app.ui.components.Chip(
+                if (numbered) "${l.number} · $time" else time, false, { onOpen(i) },
+                minWidth = 0.dp, kind = forma.app.ui.components.ChipKind.ACTION,
+            )
+        }
+    }
+}
+
 /** The time of each kilometre on the road, as bars and as numbers. */
 @Composable
 private fun KmSplitsCard(splits: List<Double>) {
@@ -342,14 +392,15 @@ private fun KmSplitsCard(splits: List<Double>) {
 }
 
 /**
- * The fitness after a run in words that say what it means: "VDOT после пробежки: 46,2 → прогноз на 1,5 км — 5:31" with
- * a goal, the number alone without one. Not «форма»: that word is the app's name.
+ * The fitness a trial set, in what it means for the goal: «Прогноз на 1500 м: 5:31». Null without a goal: the fitness
+ * number itself is no word for the screen (30 October: no VDOT on the main screens). Not «форма»: that word is the
+ * app's name. The distance as «Прогресс» and the trial's own line write the goal: metres up to 3000, then «10 км».
  */
-internal fun formLine(vdot: Double, goal: forma.core.model.RunGoal?): String {
-    val head = "VDOT после пробежки: ${Ru.one(vdot)}"
-    if (goal == null) return head
+internal fun formLine(vdot: Double, goal: forma.core.model.RunGoal?): String? {
+    goal ?: return null
     val m = goal.meters
-    return "$head → прогноз на ${goalDistance(m)} — ${Ru.clock(forma.core.run.Vdot.predictSeconds(vdot, m.toDouble()).roundToInt())}"
+    val dist = Ru.nobreak(if (m <= 3000) "$m м" else goalDistance(m))
+    return "Прогноз на $dist: ${Ru.clock(forma.core.run.Vdot.predictSeconds(vdot, m.toDouble()).roundToInt())}"
 }
 
 private const val BODY = "Что это даёт телу"
@@ -366,17 +417,19 @@ fun RunDebrief(workout: forma.app.data.WorkoutEntity, run: RunEntity, summary: R
     val repo = LocalRepo.current
     val profile by repo.store.profile.collectAsState(initial = null)
     val plan = remember(run.planJson) { runCatching { AppJson.decodeFromString(forma.core.run.RunWorkout.serializer(), run.planJson) }.getOrNull() } ?: return
-    val items = remember(plan, run, summary, workout.rpe, profile?.runGoal, profile?.aim) {
+    val items = remember(plan, run, summary, workout.rpe, profile?.runGoal) {
         val trial = summary?.outcomes?.filterIsInstance<forma.core.run.RunOutcome.TestTime>()?.firstOrNull()?.let { it.meters to it.seconds }
         // Reached or not, as the plan counted it (fitness against the goal's, not rounded seconds).
         val reached = if (trial != null) summary?.outcomes?.any { it is forma.core.run.RunOutcome.GoalReached } == true else null
         val held = summary?.outcomes?.filterIsInstance<forma.core.run.RunOutcome.TestFromPart>()?.firstOrNull()?.let { it.meters to it.seconds }
+        // The rating read on the runner's own scale where the plan read it so (else «Тяжесть» and the plan disagree).
+        val own = summary?.outcomes?.filterIsInstance<forma.core.run.RunOutcome.OwnScale>()?.firstOrNull()?.offset ?: 0
         forma.core.run.RunReview.of(
             forma.core.run.RunReview.Run(
                 plan, summary?.laps.orEmpty(), workout.rpe, run.movingSec, run.avgPace, run.workPace, trial, run.completed, reached, held, summary?.strides, summary?.jog,
+                ownScale = own,
             ),
             profile?.runGoal,
-            gym = profile?.aim?.lifts != false,
         )
     }
     // "What it gives the body" says the same after every run of a type: read a few times, it folds away. Counted once

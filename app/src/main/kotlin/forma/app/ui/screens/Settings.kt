@@ -91,7 +91,7 @@ fun SettingsScreen() {
         SectionLabel("Данные")
         FCard(gap = 0.dp) {
             forma.app.ui.components.ListRow(
-                "Резервная копия и облако", "Сохранить всё в файл, восстановить, аккаунт", icon = forma.app.ui.theme.Ic.cloud, iconTint = F.c.accent,
+                "Облако и копия", "Сохранить всё в файл, восстановить, аккаунт", icon = forma.app.ui.theme.Ic.cloud, iconTint = F.c.accent,
             ) { nav.push(forma.app.ui.Screen.Cloud) }
         }
         ReportCard()

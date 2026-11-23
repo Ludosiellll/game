@@ -125,7 +125,7 @@ fun PlanScreen() {
                                         // How: the lap time or pace to keep, so the week says what to do, not only what.
                                         if (done != null) Text(if (free) "Сделано вместо плановой" else "Сделано", style = T.secondary(13.sp).copy(color = F.c.good))
                                         else if (laterLine != null) Text(laterLine, style = T.secondary(13.sp).copy(color = F.c.good))
-                                        else w?.let { Text(forma.app.ui.RunHow.short(it), style = T.secondary(13.sp)) }
+                                        else w?.let { forma.app.ui.RunHow.short(it) }?.takeIf { it.isNotEmpty() }?.let { Text(it, style = T.secondary(13.sp)) }
                                     }
                                 }
                             }

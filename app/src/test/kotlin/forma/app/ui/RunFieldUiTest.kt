@@ -389,11 +389,13 @@ class RunFieldUiTest {
     }
 
     @Test fun theWordsAroundTheRun() {
-        assertEquals("VDOT после пробежки: 46,2", formLine(46.2, null))
-        val line = formLine(46.2, RunGoal(1500, 335))
-        assertTrue(line.startsWith("VDOT после пробежки: 46,2 → прогноз на 1,5 км — 5:"), line)
-        assertTrue(formLine(40.0, RunGoal(10_000, 2700)).contains("на 10 км"))
-        assertTrue(formLine(40.0, RunGoal(21_097, 6300)).contains("на 21,1 км"))
+        // The fitness a trial set, as the goal's time: no VDOT code on the screen, and nothing without a goal. The goal's
+        // distance as «Прогресс» writes it: metres up to 3000, kilometres beyond.
+        assertNull(formLine(46.2, null))
+        val line = formLine(46.2, RunGoal(1500, 335))!!.replace('\u00A0', ' ')
+        assertTrue(line.startsWith("Прогноз на 1500 м: 5:") && "VDOT" !in line, line)
+        assertTrue(formLine(40.0, RunGoal(10_000, 2700))!!.replace('\u00A0', ' ').contains("на 10 км"))
+        assertTrue(formLine(40.0, RunGoal(21_097, 6300))!!.replace('\u00A0', ' ').contains("на 21,1 км"))
         assertNull(deniedWarning(gpsWanted = true, location = true, notifications = true))
         assertTrue(deniedWarning(gpsWanted = true, location = false, notifications = true)!!.contains("геопозиции"))
         assertNull(deniedWarning(gpsWanted = false, location = false, notifications = true))

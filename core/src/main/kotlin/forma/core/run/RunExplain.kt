@@ -133,6 +133,20 @@ object RunExplain {
         else -> "2–3 дня"
     }
 
+    /**
+     * A warm-up, a cool-down or a rest in plain words: "12 мин", "90 с" under two minutes, "2 мин 15 с" — never as on a
+     * clock (23 November: «Разминка 12:00» read as a warm-up at noon). The number keeps its unit on one line.
+     */
+    fun timeWords(sec: Int): String {
+        val m = sec / 60
+        val s = sec % 60
+        return when {
+            s == 0 && m > 0 -> "$m\u00A0мин"
+            m < 2 -> "$sec\u00A0с"
+            else -> "$m\u00A0мин\u00A0$s\u00A0с"
+        }
+    }
+
     /** An easy run's limit: "Круг — не быстрее 1:23. ". */
     private fun easyLimit(w: RunWorkout): String {
         val pace = w.segments.firstOrNull { it.kind == SegmentKind.RUN }?.pace ?: return ""

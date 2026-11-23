@@ -15,8 +15,9 @@ class RunHowTest {
     @Test fun anEasyRunOnTheStadiumSaysTheLapNotToBeat() {
         val w = RunPlan.onTrack(RunPlan.easy(st), 230)
         val how = RunHow.short(w).replace('\u00A0', ' ')
-        assertTrue(how.startsWith("25 мин спокойно"), how)
-        assertTrue("круг не быстрее" in how, how)
+        // The minutes are the title's («Лёгкий бег · 25 мин»), right above the line: not said twice.
+        assertTrue("25 мин" in w.title && "мин" !in how, "${w.title} / $how")
+        assertTrue(how.startsWith("Круг не быстрее"), how)
     }
 
     @Test fun anEasyRunOnTheRoadSaysThePace() {
@@ -24,16 +25,30 @@ class RunHowTest {
         assertTrue("/км" in how && "круг" !in how, how)
     }
 
-    @Test fun goalPaceRepsSayHowManyAndTheLapRange() {
+    @Test fun goalPaceRepsSayTheLapRangeAndTheTitleHowMany() {
         val w = RunPlan.onTrack(RunPlan.goalPace(st, goal, 230), 230)
         val how = RunHow.short(w).replace('\u00A0', ' ')
-        // Reps of one lap read as laps (23 November: «6 × 1 круг — круг 45–46 с»).
-        assertTrue(how.startsWith("Разминка 12:00, ${w.reps} кругов по "), how)
-        assertTrue(Regex("по \\d\\d(,\\d)?–\\d\\d(,\\d)? с").containsMatchIn(how), how)
-        assertTrue("отдых" in how && "—" !in how, how)
-        // Longer reps: how many, and the lap time to keep.
-        val longer = RunHow.short(RunPlan.onTrack(RunPlan.goalPace(st.copy(goalStage = 5), goal, 230), 230))
-        assertTrue(Regex("\\d × \\d круга?, круг \\d\\d").containsMatchIn(longer), longer)
+        // How many is the title's («Темп цели · 6 × 1 круг»), right above the line; the line has the lap time to keep,
+        // and the warm-up and the rest in minutes, not as a clock (23 November: «Разминка 12:00» read as noon).
+        assertTrue("${w.reps} × " in w.title && " × " !in how && "${w.reps} круг" !in how, "${w.title} / $how")
+        assertTrue(how.startsWith("Разминка 12 мин, круг "), how)
+        assertTrue(Regex("круг \\d\\d(,\\d)?–\\d\\d(,\\d)? с").containsMatchIn(how), how)
+        assertTrue(Regex("отдых \\d+ (мин|с)").containsMatchIn(how) && "—" !in how && ":00" !in how, how)
+        // Longer reps: the lap time to keep, the reps again in the title only.
+        val longerRun = RunPlan.onTrack(RunPlan.goalPace(st.copy(goalStage = 5), goal, 230), 230)
+        val longer = RunHow.short(longerRun).replace('\u00A0', ' ')
+        assertTrue(Regex("^Разминка \\d+ мин, круг \\d\\d").containsMatchIn(longer), longer)
+        assertTrue(Regex("\\d × \\d круга?").containsMatchIn(longerRun.title) && " × " !in longer, "${longerRun.title} / $longer")
+    }
+
+    /** Under the line before the start: the cool-down, the whole time in minutes, the effort as «тяжесть N из 10». */
+    @Test fun theSetupSaysTheRestInOneGreyLine() {
+        val w = RunPlan.onTrack(RunPlan.goalPace(st, goal, 230), 230)
+        assertEquals("Заминка 8 мин · всего ${w.totalSeconds / 60} мин · тяжесть ${w.targetRpe} из 10", RunHow.totals(w).replace('\u00A0', ' '))
+        // An easy run is its running alone, its minutes in the title: the effort up to the plan's limit.
+        assertEquals("Тяжесть до 5 из 10", RunHow.totals(RunPlan.easy(st)).replace('\u00A0', ' '))
+        // A trial's line has no warm-up: said here.
+        assertTrue(RunHow.totals(RunPlan.goalTest(st, goal, 230)).replace('\u00A0', ' ').startsWith("Разминка "))
     }
 
     @Test fun theTrialSaysEvenFirstThenFaster() {
