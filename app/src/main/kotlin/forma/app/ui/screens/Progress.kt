@@ -583,6 +583,9 @@ private fun LoadTab() {
     }
 }
 
+/** Sets as counted: whole ones as whole numbers («6», not «6,0»), a half from a helping muscle as «2,5». */
+internal fun setsText(v: Double): String = if (v % 1.0 == 0.0) v.roundToInt().toString() else Ru.one(v)
+
 /** Weekly hard sets per muscle that suit the gym focus (more for hypertrophy, fewer heavy ones for strength). */
 fun setsTarget(lift: LiftFocus?): Pair<Double, Double> = when (lift) {
     LiftFocus.MUSCLE -> 10.0 to 20.0
@@ -601,14 +604,14 @@ fun MuscleWeek(sets: Map<Muscle, Double>, target: Pair<Double, Double>, title: S
     FCard(gap = 10.dp) {
         forma.app.ui.components.BodyMap(
             sets.mapValues { (_, v) -> (v / target.second).toFloat() }, Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            description = "Нагрузка на мышцы: " + sets.entries.sortedByDescending { it.value }.filter { it.value > 0 }.joinToString(", ") { "${it.key.ru} ${Ru.one(it.value)}" },
+            description = "Нагрузка на мышцы: " + sets.entries.sortedByDescending { it.value }.filter { it.value > 0 }.joinToString(", ") { "${it.key.ru} ${setsText(it.value)}" },
         )
         Muscle.entries.sortedByDescending { sets[it] ?: 0.0 }.forEach { m ->
             val v = sets[m] ?: 0.0
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(m.ru, style = T.body(13.sp), modifier = Modifier.width(110.dp))
                 RangeBar(v, 24.0, target.first, target.second, F.c.strength, Modifier.weight(1f))
-                NumText(Ru.one(v), style = T.number(13.sp, FontWeight.Bold), modifier = Modifier.width(36.dp))
+                NumText(setsText(v), style = T.number(13.sp, FontWeight.Bold), modifier = Modifier.width(36.dp))
             }
         }
         Text(
