@@ -49,7 +49,7 @@ object CoachText {
         SegmentKind.WORK -> "Ровно и сильно."
     }
 
-    /** [gps]: GPS on a stadium starts the rep and times the laps by itself — the press is not needed. */
+    /** [gps]: GPS is on. A rep still starts and a lap still counts only on a press (30 October), with GPS or without. */
     fun say(w: RunWorkout, e: RunEvent, gps: Boolean = false): String? = when (e) {
         // On a track the laps speak; GPS kilometres on a small loop are noise.
         is RunEvent.Kilometre -> if (w.lapMeters != null) null else "Километр ${e.km}. Темп ${paceWords(e.splitSec)}."
@@ -71,8 +71,8 @@ object CoachText {
             is Cue.Halfway -> "Половина отрезка."
             is Cue.MinuteLeft ->
                 if (RunTimeline.startOnLine(w) == c.index + 1) "Через минуту ${startWhat(w)}. Закончи круг и подходи к старту." else "Осталась минута."
-            is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)}. " +
-                if (gps) "Старт засчитаю сам, когда побежишь. Можно и нажать «Круг»." else "Когда побежишь, нажми «Круг»: время пойдёт с нажатия."
+            // Only a press starts a rep (30 October), with GPS or without.
+            is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)}. Побежишь, нажми «Круг»."
             // Explained ahead: a stride is 15 s, at its start there is time only for «пошёл».
             is Cue.StridesAhead -> "Через ${RunTimeline.STRIDES_AHEAD} секунд ускорения: ${RunTimeline.STRIDES} по ${RunTimeline.STRIDE_SEC} секунд, " +
                 "между ними ${RunTimeline.STRIDE_JOG} секунд трусцы. Быстро, но легко, не в полную силу."

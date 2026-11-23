@@ -687,7 +687,6 @@ fun RunActiveScreen() {
                     when {
                         w.isOpenEnded -> "с начала"
                         over -> "сверх плана +${Ru.clock(u.overSec)} · «Стоп», когда хватит"
-                        waiting && u.gps -> CoachText.startWhere(w, tl.index + 1) + " и беги: старт засчитается сам (или жми «Круг»)"
                         waiting -> CoachText.startWhere(w, tl.index + 1) + " и жми «Круг», когда побежишь: " +
                             (if (w.testMeters != null) "время забега" else "отрезок") + " пойдёт с нажатия"
                         race -> "время забега · финиш — последнее нажатие «Круг»"
@@ -731,7 +730,7 @@ fun RunActiveScreen() {
                         target?.let { Ru.lapRange(Track.lapSec(it.fast.toDouble(), lapM), Track.lapSec(it.slow.toDouble(), lapM)) } ?: "—",
                         when {
                             w.isOpenEnded -> if (target != null) "твоя цель" else "свободный бег"
-                            waiting -> if (u.gps) "отсчёт — со старта" else "отсчёт — с нажатия"
+                            waiting -> "отсчёт с нажатия"
                             repNo != null && lapsInRep != null && lapsInRep > 1 -> "круг ${minOf(lapNo, lapsInRep)} из $lapsInRep"
                             target == null -> "сейчас без темпа"
                             shown?.kind != SegmentKind.WORK -> "медленнее — нормально"

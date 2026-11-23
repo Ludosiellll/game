@@ -21,4 +21,19 @@ class StrideVoiceTest {
         val go = CoachText.say(w, RunEvent.Timeline(first), gps = true)!!
         assertTrue("пошёл" in go && go.length < 60, go)
     }
+
+    /**
+     * 23 November: with GPS on, the voice said «Старт засчитаю сам, когда побежишь», the screen «старт засчитается сам»,
+     * and a run with no laps «С GPS на стадионе они засчитываются сами». Since 30 October only a press starts a rep and
+     * makes a lap: a runner waiting for the start to count itself loses the rep's time.
+     */
+    @Test fun theStartIsAlwaysAPress() {
+        val toLine = RunTimeline.allCues(w).filterIsInstance<Cue.ToLine>().first()
+        for (gps in listOf(true, false)) {
+            val said = CoachText.say(w, RunEvent.Timeline(toLine), gps = gps)!!
+            assertTrue("«Круг»" in said && "сам" !in said, said)
+        }
+        val unknown = forma.app.ui.Texts.run(forma.core.run.RunOutcome.PaceUnknown)
+        assertTrue("сами" !in unknown && "«Круг»" in unknown, unknown)
+    }
 }
