@@ -18,7 +18,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import forma.app.data.AppJson
+import forma.app.data.LiftPlan
 import forma.app.data.LiftSummary
+import forma.app.data.SetEntity
+import forma.app.data.SlotReport
 import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.Screen
@@ -35,6 +38,8 @@ import forma.app.ui.theme.Ic
 import forma.app.ui.theme.T
 import forma.app.ui.theme.titleText
 import forma.core.model.Catalog
+import forma.core.model.Exercise
+import forma.core.model.LoadKind
 import forma.core.text.Ru
 
 @Composable
@@ -68,40 +73,30 @@ fun LiftDoneScreen(workoutId: Long) {
                 }
             }
         }
-        // What was done, exercise by exercise in the order of the day.
-        val sets by remember(workoutId) { repo.db.sets().observeFor(workoutId) }.collectAsState(initial = emptyList())
+        // What was done, exercise by exercise in the order of the day, and under each what changes next time: one list
+        // (23 November: the six names twice, then one sentence six times). Null until the sets are read.
+        val loaded by remember(workoutId) { repo.db.sets().observeFor(workoutId) }.collectAsState(initial = null)
         val plan = remember(workout.planJson) { repo.planOf(workout) }
-        if (sets.isNotEmpty()) {
-            SectionLabel("Сделано")
-            val byPosition = sets.groupBy { it.position }
-            val order = plan?.items?.filter { it.position in byPosition }?.map { it.position to it.name }.orEmpty() +
-                byPosition.keys.filter { p -> plan?.items?.none { it.position == p } != false }
-                    .map { p -> p to (Catalog.find(byPosition.getValue(p).first().exerciseId)?.name ?: "") }
-            FCard(gap = 0.dp) {
-                order.forEachIndexed { i, (position, name) ->
-                    if (i > 0) Hairline()
-                    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(name, style = T.body(15.sp, FontWeight.Bold))
-                        NumText(setsLine(byPosition.getValue(position)), style = T.number(15.sp))
+        val sets = loaded
+        if (sets != null) {
+            val rows = doneRows(sets, plan, summary.reports)
+            // The same line for every exercise (a lighter session): said once, under the list.
+            val once = rows.map { r -> r.report?.let { Texts.outcome(it.outcome, Catalog.find(it.exerciseId)) } }
+                .distinct().singleOrNull()?.takeIf { rows.size > 1 }
+            if (rows.isNotEmpty()) {
+                SectionLabel("Сделано")
+                FCard(gap = 0.dp) {
+                    rows.forEachIndexed { i, row ->
+                        if (i > 0) Hairline()
+                        Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(row.name, style = T.body(15.sp, FontWeight.Bold))
+                            row.sets?.let { NumText(it, style = T.number(15.sp)) }
+                            val r = row.report
+                            if (r != null && once == null) OutcomeLine(Texts.outcome(r.outcome, Catalog.find(r.exerciseId)), Texts.tone(r.outcome))
+                        }
                     }
                 }
-            }
-        }
-        SectionLabel("Что изменится в следующий раз")
-        FCard(gap = 0.dp) {
-            summary.reports.forEachIndexed { i, r ->
-                if (i > 0) Hairline()
-                val tone = Texts.tone(r.outcome)
-                Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(
-                            when (tone) { 1 -> Ic.up; -1 -> Ic.down; else -> Ic.right }, null,
-                            tint = when (tone) { 1 -> F.c.good; -1 -> F.c.warn; else -> F.c.text2 }, modifier = Modifier.size(18.dp),
-                        )
-                        Text(r.name, style = T.body(16.sp, FontWeight.Bold))
-                    }
-                    Text(Texts.outcome(r.outcome, Catalog.find(r.exerciseId)), style = T.secondary(14.sp))
-                }
+                once?.let { line -> OutcomeLine(line, rows.firstNotNullOfOrNull { it.report }?.let { Texts.tone(it.outcome) } ?: 0) }
             }
         }
         // No «Нагрузка тренировки: 345. Это твоя оценка × минуты…» here: the number is in «История», how it adds up in «Прогресс».
@@ -110,11 +105,60 @@ fun LiftDoneScreen(workoutId: Long) {
     }
 }
 
-/** "80 кг × 5, 5, 4 · 85 кг × 3" (dumbbells "по 20 кг × 10, 10"): sets in a row at one weight together; holds in seconds. */
-private fun setsLine(sets: List<forma.app.data.SetEntity>): String {
-    val ex = Catalog.find(sets.first().exerciseId)
-    if (ex?.load == forma.core.model.LoadKind.TIMED) return sets.joinToString(", ") { "${it.reps} с" }
-    val runs = mutableListOf<MutableList<forma.app.data.SetEntity>>()
-    for (s in sets) if (runs.lastOrNull()?.first()?.weight == s.weight) runs.last() += s else runs += mutableListOf(s)
-    return runs.joinToString(" · ") { run -> Texts.weightReps(ex, run.first().weight, run.joinToString(", ") { it.reps.toString() }) }
+/** One exercise of the summary: its name, its sets in a row (null for a report without sets) and its report. */
+private class DoneRow(val name: String, val sets: String?, val report: SlotReport?)
+
+/**
+ * The exercises done, in the order of the day, each with its report. A report has no position: it goes to the first row
+ * of its exercise that has none yet (an exercise done twice is judged by its first). A report with no sets comes last.
+ */
+private fun doneRows(sets: List<SetEntity>, plan: LiftPlan?, reports: List<SlotReport>): List<DoneRow> {
+    val byPosition = sets.groupBy { it.position }
+    val order = plan?.items?.filter { it.position in byPosition }?.map { it.position to it.name }.orEmpty() +
+        byPosition.keys.filter { p -> plan?.items?.none { it.position == p } != false }
+            .map { p -> p to (Catalog.find(byPosition.getValue(p).first().exerciseId)?.name ?: "") }
+    val taken = BooleanArray(reports.size)
+    val rows = order.map { (position, name) ->
+        val done = byPosition.getValue(position)
+        val i = reports.indices.firstOrNull { !taken[it] && reports[it].exerciseId == done.first().exerciseId }
+        if (i != null) taken[i] = true
+        DoneRow(name, setsLine(done), i?.let { reports[it] })
+    }
+    return rows + reports.indices.filter { !taken[it] }.map { DoneRow(reports[it].name, null, reports[it]) }
 }
+
+/** What changes next time, under the exercise's sets: grey, with an arrow only for a step up or down. */
+@Composable
+private fun OutcomeLine(text: String, tone: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (tone != 0) Icon(
+            if (tone > 0) Ic.up else Ic.down, null,
+            tint = if (tone > 0) F.c.good else F.c.warn, modifier = Modifier.padding(top = 2.dp).size(16.dp),
+        )
+        Text(text, style = T.secondary(14.sp), modifier = Modifier.weight(1f))
+    }
+}
+
+/** A number and its unit on one line: «82,5 кг» never leaves «кг» alone at the start of the next. */
+private val SET_UNIT = Regex("(\\d) (кг|с)(?![а-яё])")
+
+/**
+ * "80 кг × 5, 5, 4 · 85 кг × 3" (dumbbells "по 20 кг × 10, 10", "+10 кг × 8", "помощь 15 кг × 8"): sets in a row at one
+ * weight together, the weight once; holds in seconds. [sets]: the weight and reps of each, in order. The one way sets are
+ * written: the summary, the exercise's page and «Прошлый раз» on the workout screen.
+ */
+internal fun setsLine(ex: Exercise?, sets: List<Pair<Double, Int>>): String {
+    val line = if (ex?.load == LoadKind.TIMED) sets.joinToString(", ") { "${it.second} с" } else {
+        val runs = mutableListOf<MutableList<Pair<Double, Int>>>()
+        for (s in sets) {
+            val run = runs.lastOrNull()
+            if (run != null && run.first().first == s.first) run += s else runs += mutableListOf(s)
+        }
+        runs.joinToString(" · ") { run -> Texts.weightReps(ex, run.first().first, run.joinToString(", ") { it.second.toString() }) }
+    }
+    return line.replace(SET_UNIT, "$1\u00A0$2")
+}
+
+/** [setsLine] of one exercise's logged sets. */
+internal fun setsLine(sets: List<SetEntity>): String =
+    if (sets.isEmpty()) "" else setsLine(Catalog.find(sets.first().exerciseId), sets.map { it.weight to it.reps })

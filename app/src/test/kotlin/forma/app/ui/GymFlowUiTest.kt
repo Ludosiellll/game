@@ -46,6 +46,7 @@ import forma.core.strength.HoldReason
 import forma.core.strength.NextSet
 import forma.core.strength.OneRm
 import forma.core.strength.Outcome
+import forma.core.strength.Progression
 import forma.core.text.Ru
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -131,7 +132,10 @@ class GymFlowUiTest {
         val done = weightOf(first) + 5.0
         log(repo, id, first, 1, done)
         show(repo) { WorkoutScreen(id) }
-        assertTrue(texts("Следующий подход:").isNotEmpty(), "the next set is said again")
+        // The verdict on the sets so far, worked out again (its numbers are in the fields, not said twice).
+        val ns = assertNotNull(Progression.nextSet(Catalog[first.exerciseId], first.prescription, setsOf(repo, id).map { DoneSet(it.weight, it.reps, it.rir) }, profile.bodyWeightKg))
+        assertTrue(texts(Texts.nextSet(Catalog[first.exerciseId], ns)).isNotEmpty(), "the next set is said again")
+        assertTrue(texts("Следующий подход:").isEmpty(), "the numbers are not said again over the fields")
         assertTrue(texts(Ru.kg(done)).isNotEmpty(), "the weight field holds the last set's weight")
         compose.onNodeWithText("Подход 2 из", substring = true, ignoreCase = true).assertExists()
     }
@@ -150,13 +154,14 @@ class GymFlowUiTest {
         settle()
         compose.onNodeWithText("Подход сделан").performClick()
         settle()
-        assertTrue(texts("Дальше — ${first.name}").isNotEmpty(), "the open exercise before it comes next")
+        assertTrue(texts("${last.name}: все подходы сделаны. Дальше ${first.name}").isNotEmpty(), "the open exercise before it comes next")
         compose.onNodeWithText("Подход 1 из", substring = true, ignoreCase = true).assertExists()
         assertNotNull(RestTimer.rest.value, "one exercise is still open: rest")
+        assertTrue(texts("дальше:").isEmpty(), "the rest does not name the exercise already on the screen")
 
         compose.onNodeWithText("Отменить").performClick()
         settle()
-        assertTrue(texts("Дальше —").isEmpty(), "the hint of the set taken back is gone")
+        assertTrue(texts("все подходы сделаны").isEmpty(), "the hint of the set taken back is gone")
         assertNull(RestTimer.rest.value)
         compose.onNodeWithText("Подход ${last.prescription.sets} из", substring = true, ignoreCase = true).assertExists()
     }
@@ -175,7 +180,7 @@ class GymFlowUiTest {
         assertNull(RestTimer.rest.value, "nothing to rest for")
     }
 
-    /** A14: a swap at a position takes the "Дальше — …" hint of the exercise that was there with it. */
+    /** A14: a swap at a position takes the "…: все подходы сделаны. Дальше …" hint of the exercise that was there with it. */
     @Test fun aSwapTakesTheHintOfTheExerciseBefore() {
         val repo = repo("gym-swap-hint")
         val id = startWithWeight(repo)
@@ -184,11 +189,11 @@ class GymFlowUiTest {
         show(repo) { WorkoutScreen(id) }
         compose.onNodeWithText("Подход сделан").performClick()
         settle()
-        assertTrue(texts("Дальше — ${second.name}").isNotEmpty())
+        assertTrue(texts("${first.name}: все подходы сделаны. Дальше ${second.name}").isNotEmpty())
         val alt = repo.alternativesFor(second.exerciseId).first { it.id != second.exerciseId && !it.custom }.id
         runBlocking { assertTrue(repo.swapExercise(id, second.position, alt, forever = false)) }
         settle()
-        assertTrue(texts("Дальше —").isEmpty(), "the hint was for the exercise swapped out")
+        assertTrue(texts("все подходы сделаны").isEmpty(), "the hint was for the exercise swapped out")
     }
 
     /** A10: no effort chosen for the person; the exercises not started are named. */
@@ -218,7 +223,8 @@ class GymFlowUiTest {
         show(repo) { LiftDoneScreen(id) }
         assertTrue(texts("Сделано").isNotEmpty())
         val reps = first.prescription.reps
-        assertTrue(texts(Texts.weightReps(Catalog[first.exerciseId], weightOf(first), "$reps, $reps")).isNotEmpty())
+        // The weight once for the sets at it, the number and its unit kept on one line.
+        assertTrue(texts(Texts.weightReps(Catalog[first.exerciseId], weightOf(first), "$reps, $reps").replace(" кг", "\u00A0кг")).isNotEmpty())
     }
 
     /** A plank to the stopwatch: "Засечь время", get into position, then the seconds count. */
@@ -379,8 +385,9 @@ class GymFlowUiTest {
         assertEquals("30 с", Texts.weightReps(Catalog["plank"], 0.0, 30))
         assertEquals("30 кг ×2", Texts.oneRm(db, 30.1))
         assertEquals("100,5 кг", Texts.oneRm(bench, 100.4))
+        // After a set only the verdict: the next set's numbers are in the fields under it, so no weight to misread there.
         val next = Texts.nextSet(db, NextSet(22.0, 10, 1, 4, 2, plus = false, calibrate = false))
-        assertTrue(next.startsWith("Следующий подход: по 22 кг × 10."), next)
+        assertEquals("Было легко, прибавляем.", next)
         listOf(Outcome.AddWeight(20.0, 22.0, 10), Outcome.Reset(24.0, 22.0, 10), Outcome.Hold(22.0, 10, HoldReason.NEAR_MISS)).forEach { o ->
             val t = Texts.outcome(o, db)
             assertTrue("по 22 кг × 10" in t, t)
@@ -391,7 +398,7 @@ class GymFlowUiTest {
     /** A plank has no weight and no reserve to mark: after a hold it is not asked for "сколько ещё мог". */
     @Test fun aHoldHasItsOwnHint() {
         assertEquals(
-            "Следующий подход: 30 с. Удержишь во всех — в следующий раз дольше.",
+            "Удержишь во всех подходах, в следующий раз будет дольше.",
             Texts.nextSet(Catalog["plank"], NextSet(0.0, 30, 0, null, 2, plus = false, calibrate = false)),
         )
     }

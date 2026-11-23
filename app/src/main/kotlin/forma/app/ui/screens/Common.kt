@@ -167,11 +167,14 @@ fun dateLine(d: LocalDate) = "${DAY_FULL[d.dayOfWeek.value - 1]}, ${d.dayOfMonth
 fun shortDate(d: LocalDate) = "${d.dayOfMonth} ${MONTH_GEN[d.monthValue - 1]}"
 fun dayShort(d: DayOfWeek) = DAY_SHORT[d.value - 1]
 
-/** Human title of a planned session. */
+/**
+ * Human title of a planned session. A hard run is named as its card on the day names it, «Тяжёлый бег» (23 November: a
+ * missed «Темп цели» came back as «Интервалы или темп», a name never seen before).
+ */
 fun sessionTitle(s: PlannedSession, program: Program?): String = when (s.kind) {
     SessionKind.LIFT -> program?.templates?.firstOrNull { it.id == s.templateId }?.title ?: "Силовая"
     SessionKind.RUN_EASY -> "Лёгкий бег"
-    SessionKind.RUN_QUALITY -> "Интервалы или темп"
+    SessionKind.RUN_QUALITY -> "Тяжёлый бег"
     SessionKind.RUN_LONG -> "Длинная пробежка"
 }
 

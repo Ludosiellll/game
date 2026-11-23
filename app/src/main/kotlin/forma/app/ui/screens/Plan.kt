@@ -136,11 +136,19 @@ fun PlanScreen() {
             }
         }
 
-        GhostButton(if (p.templates.isNotEmpty() && p.aim.runs) "Поменять дни зала и бега" else "Поменять дни тренировок", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 48.dp)
+        // One way to the profile, by the name its screen has (23 November: two buttons, two names, one screen).
+        GhostButton("Изменить цель, дни и данные", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 48.dp)
 
-        if (p.week.notes.isNotEmpty()) {
-            SectionLabel("Почему так")
-            p.week.notes.forEach { Text("• ${forma.core.plan.Scheduler.reworded(it)}", style = T.secondary(14.sp)) }
+        // Why the week is laid out so: a tap away, as «Как бежать» on the main screen (23 November: eleven lines between the
+        // week and the gym). Each day's own reasons are on the day.
+        val why = forma.core.plan.Scheduler.shown(p.week.notes)
+        if (why.isNotEmpty()) {
+            var open by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+            Text(
+                if (open) "Скрыть" else "Почему так ›", style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.accent),
+                modifier = Modifier.clickable(onClickLabel = if (open) "Скрыть" else "Почему так") { open = !open }.padding(vertical = 2.dp),
+            )
+            if (open) why.forEach { Text("• $it", style = T.secondary(14.sp)) }
         }
 
         SectionLabel("Силовые")
@@ -188,18 +196,26 @@ fun PlanScreen() {
                 }
             }
         }
-        // Said once above the sessions, not under each of them.
-        if (p.templates.isNotEmpty()) Text(
-            "Нажми на упражнение, чтобы изменить его. «Оставь 2»: стоп, когда можешь ещё 2.",
-            style = T.secondary(12.sp),
-        )
+        // Said once above the sessions, not under each of them; the number is the first row's that shows one, this week's.
+        if (p.templates.isNotEmpty()) {
+            val rowsSettings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+            val reserve by produceState<Int?>(null, p, rowsSettings, today) {
+                value = p.templates.firstNotNullOfOrNull { t ->
+                    runCatching { repo.liftPlan(t.id, today) }.getOrNull()?.let { legendReserve(it, !rowsSettings.order[t.id].isNullOrEmpty()) }
+                }
+            }
+            Text(
+                "Нажми на упражнение, чтобы изменить его." + (reserve?.let { " «Оставь $it»: стоп, когда можешь ещё $it." } ?: ""),
+                style = T.secondary(12.sp),
+            )
+        }
         p.templates.forEach { t -> TemplateCard(t) }
 
         PauseControl()
 
-        // The wizard again: split, accents and the rest asked one by one, the program shown before it is saved.
-        forma.app.ui.components.PrimaryButton("Собрать программу заново", { nav.push(Screen.ProgramWizard) }, Modifier.fillMaxWidth(), icon = forma.app.ui.theme.Ic.right)
-        GhostButton("Изменить цель, дни и данные", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 52.dp)
+        // The wizard again: split, accents and the rest asked one by one, the program shown before it is saved. The rarest
+        // action on the page, so not its loudest button.
+        GhostButton("Собрать программу заново", { nav.push(Screen.ProgramWizard) }, Modifier.fillMaxWidth(), height = 52.dp)
         profile?.let {
             fun days(s: Set<Int>) = s.sorted().joinToString(", ") { d -> DAY_SHORT[d - 1] }
             val gym = it.gymDays
@@ -259,7 +275,7 @@ private fun TemplateCard(t: Template) {
                         )
                         Text(
                             if (removed) "Убрано из плана · нажми, чтобы вернуть"
-                            else specLine(now, timed(item?.exerciseId ?: s.exerciseId)) + when {
+                            else specLine(now, timed(item?.exerciseId ?: s.exerciseId), reserveOf(item)) + when {
                                 demoted -> " · вместо «${forma.core.model.Catalog.find(s.exerciseId)?.name ?: s.exerciseId}»: ${swapNote(s, now)}"
                                 was.isNotEmpty() -> " · в плане было: ${was.joinToString(", ")}"
                                 else -> ""
@@ -275,7 +291,7 @@ private fun TemplateCard(t: Template) {
                 Row(Modifier.fillMaxWidth().clickable { editing = pos }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(item?.name ?: forma.core.model.Catalog.find(id)?.name ?: id, style = T.body(15.sp, FontWeight.SemiBold))
-                        Text("Добавлено тобой · " + specLine(item?.slot ?: repo.addedPlanned(id), timed(id)), style = T.secondary(12.sp))
+                        Text("Добавлено тобой · " + specLine(item?.slot ?: repo.addedPlanned(id), timed(id), reserveOf(item)), style = T.secondary(12.sp))
                     }
                     if (item != null) NumText(prescriptionShort(item.prescription.sets, item.prescription.reps, item.prescription.weight, item.exerciseId), style = T.number(14.sp, FontWeight.Bold))
                 }
@@ -354,9 +370,28 @@ private fun TemplateCard(t: Template) {
 
 private fun timed(exerciseId: String) = forma.core.model.Catalog.find(exerciseId)?.load == forma.core.model.LoadKind.TIMED
 
-/** "3 × 6–10 · оставь 2 · отдых ~2:00" for a plan row (the rest is worked out after each set around it). */
-private fun specLine(s: forma.core.strength.SlotSpec, timed: Boolean): String =
-    "${s.sets} × ${s.repMin}–${s.repMax}${if (timed) " с" else ""} · оставь ${s.rir} · отдых ~${Ru.clock(s.restSec)}"
+/**
+ * This week's reserve of a plan row, the number the workout gives (23 November: the plan said «оставь 2» for the squat
+ * the workout asked to stop with 3 left). None for a hold, while the weight is being found, or before the plan has loaded.
+ */
+private fun reserveOf(item: forma.app.data.LiftItem?): Int? =
+    item?.takeIf { !it.prescription.calibrate && !timed(it.exerciseId) }?.prescription?.rir
+
+/**
+ * The reserve the legend over the sessions explains: the first row's that says «оставь», in the order the card lists
+ * them ([ownOrder]: the person's own, otherwise the plan's places).
+ */
+private fun legendReserve(plan: LiftPlan, ownOrder: Boolean): Int? =
+    (if (ownOrder) plan.items else plan.items.sortedBy { it.position }).firstNotNullOfOrNull { item -> reserveOf(item)?.takeIf { it > 0 } }
+
+/**
+ * "3 × 6–10 · оставь 3 · отдых ~2:00" for a plan row, the reserve this week's ([reserve], null: none said); the rest is
+ * worked out after each set around it.
+ */
+private fun specLine(s: forma.core.strength.SlotSpec, timed: Boolean, reserve: Int?): String =
+    "${s.sets} × ${s.repMin}–${s.repMax}${if (timed) "\u00A0с" else ""}" +
+        (reserve?.let { if (it <= 0) " · до отказа" else " · оставь $it" } ?: "") +
+        " · отдых ~${Ru.clock(s.restSec)}"
 
 /** Rep ranges to pick from: strength, strength and size, size, size and endurance. */
 private val REP_RANGES = listOf(3 to 5, 5 to 8, 6 to 10, 8 to 12, 10 to 15, 12 to 20)

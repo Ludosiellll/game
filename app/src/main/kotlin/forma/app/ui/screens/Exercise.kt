@@ -77,17 +77,9 @@ fun ExerciseScreen(exerciseId: String) {
                     if (i > 0) Hairline()
                     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
                         Text(shortDate(LocalDate.ofEpochDay(sets.first().epochDay)), style = T.secondary(12.sp))
-                        // "+10 кг × 8" for a weighted pull-up, "помощь 15 кг × 8" with help: a bare "-15×8" says nothing.
-                        NumText(
-                            sets.joinToString("  ") {
-                                when {
-                                    ex.load == LoadKind.TIMED -> "${it.reps} с"
-                                    ex.load == LoadKind.BODYWEIGHT_PLUS || ex.assisted -> "${forma.app.ui.Texts.weight(ex, it.weight)} × ${it.reps}"
-                                    else -> "${Ru.kg(it.weight)}×${it.reps}"
-                                }
-                            },
-                            style = T.number(15.sp, FontWeight.SemiBold),
-                        )
+                        // As the summary writes them, the weight once with its unit: «82,5 кг × 6, 6, 6», «по 14 кг × 10, 8»,
+                        // «+10 кг × 8», «помощь 15 кг × 8» (23 November: «82,5×6  82,5×6  82,5×6» had no unit).
+                        NumText(setsLine(ex, sets.map { it.weight to it.reps }), style = T.number(15.sp, FontWeight.SemiBold))
                     }
                 }
             }

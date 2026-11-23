@@ -12,6 +12,7 @@ import forma.core.plan.Scheduler
 import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * «Почему так» on the plan: the notes are stored with the week, so a plan laid out before the words were made plain (23
@@ -34,8 +35,30 @@ class PlanNotesWordsTest {
             "В день верха тела тяжёлый бег — первым, пока ноги свежие. Руки и спину бег почти не утомляет. В день верха с лёгким бегом — сначала зал, потом бег." to
                 "В день верха тела тяжёлый бег — первым, пока ноги свежие. В день верха с лёгким бегом сначала зал, потом бег.",
             "Дней полного отдыха: 2. Сильнее ты становишься как раз во время отдыха." to "Дней полного отдыха: 2.",
+            // The gym first, then the run first in one note (23 November, second pass), in its words of now and of October.
+            "В дни «зал + лёгкий бег» сначала зал. Если можешь разнести, бег утром, а зал через 6 часов и больше." to
+                "В дни «зал + лёгкий бег» сначала зал, потом бег. Можно и разнести: бег утром, зал через 6\u00A0часов и больше.",
+            "В дни «силовая + лёгкий бег» за один заход — сначала силовая. Если можешь разнести, бег утром, зал через 6+ часов." to
+                "В дни «зал + лёгкий бег» сначала зал, потом бег. Можно и разнести: бег утром, зал через 6\u00A0часов и больше.",
         )
         for ((old, new) in said) assertEquals(new, Scheduler.reworded(old))
+    }
+
+    /** A week laid out before 23 November keeps its count of rest days: the plan does not show it, the week's rows do. */
+    @Test fun theCountOfRestDaysIsNotShown() {
+        val stored = listOf(
+            "Зал на одни и те же мышцы не идёт два дня подряд: между ними есть день на восстановление.",
+            "Дней полного отдыха: 3. Сильнее ты становишься как раз во время отдыха.",
+            "В дни «зал + лёгкий бег» сначала зал. Если можешь разнести, бег утром, а зал через 6 часов и больше.",
+            "Дней полного отдыха: 2.",
+        )
+        assertEquals(
+            listOf(
+                "Зал на одни и те же мышцы не идёт два дня подряд.",
+                "В дни «зал + лёгкий бег» сначала зал, потом бег. Можно и разнести: бег утром, зал через 6\u00A0часов и больше.",
+            ),
+            Scheduler.shown(stored),
+        )
     }
 
     @Test fun theNotesOfANewPlanAreLeftAsTheyAre() {
@@ -47,7 +70,11 @@ class PlanNotesWordsTest {
                 runLevel = if (run == RunFocus.NONE) RunLevel.NONE else RunLevel.BASE, trainingDays = d, sessionMinutes = 90,
                 aim = Aim(lift, run, if (run == RunFocus.NONE) Emphasis.GYM else Emphasis.BALANCED),
             )
-            for (n in ProgramGenerator.generate(profile, monday).week.notes) assertEquals(n, Scheduler.reworded(n), "$d $run $lift")
+            val notes = ProgramGenerator.generate(profile, monday).week.notes
+            for (n in notes) assertEquals(n, Scheduler.reworded(n), "$d $run $lift")
+            // The rest days are the week's own rows: no note counts them, and the plan shows every note a new week has.
+            assertTrue(notes.none { it.startsWith("Дней полного отдыха") }, "$d $run $lift: $notes")
+            assertEquals(notes, Scheduler.shown(notes), "$d $run $lift")
         }
     }
 }

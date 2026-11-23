@@ -11,7 +11,8 @@ import kotlin.test.assertTrue
 /**
  * 23 November, a review of the squat screen as a lifter sees it between sets: «в последнем сколько сможешь» (read as «to
  * failure»), «Заканчивай подход, когда можешь ещё 3 раза» and «Остановись, когда сможешь ещё 2» on one screen. Now the
- * base sets have one rule in the line, and the last set one rule under the sets.
+ * base sets have one rule in the line, and the last set one rule, in the panel right above that set (a second review the
+ * same day: under the logged sets it was behind the panel while resting).
  */
 class LastSetRuleTest {
     private val squat = Catalog["squat"]
@@ -24,5 +25,8 @@ class LastSetRuleTest {
         val last = lastSetRule(p)
         assertTrue("после 6 продолжай" in last && "ещё 2" in last, last)
         assertTrue("ещё 1" in lastSetRule(p.copy(topRir = 1)))
+        // Two left only on legs before a hard run: said why then, and only then.
+        assertEquals("Последний подход: после 6 продолжай, стоп, когда можешь ещё 2. Скоро тяжёлый бег.", last)
+        assertEquals("Последний подход: после 6 продолжай, стоп, когда можешь ещё 1.", lastSetRule(p.copy(topRir = 1)))
     }
 }

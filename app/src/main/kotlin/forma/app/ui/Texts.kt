@@ -10,27 +10,29 @@ import kotlin.math.roundToInt
 
 /** Short Russian sentences that explain what the app changed and why. */
 object Texts {
-    /** After a set: the next one, with its numbers, and why (the reserve against the plan). */
+    /**
+     * After a set: why the next one is as it is (the reserve against the plan). Only the verdict: the next set's numbers
+     * are in the fields right under the line (23 November: «Следующий подход: 82,5 кг × 6.» said them twice).
+     */
     fun nextSet(ex: Exercise, n: forma.core.strength.NextSet): String {
-        val target = weightReps(ex, n.weight, n.reps)
         val r = n.reserve
-        val why = when {
+        return when {
             // A hold: no weight and no reserve to mark, its time grows from one session to the next.
-            ex.load == LoadKind.TIMED -> "Удержишь во всех — в следующий раз дольше."
+            ex.load == LoadKind.TIMED -> "Удержишь во всех подходах, в следующий раз будет дольше."
             n.calibrate && n.change > 0 -> "Легко, можно тяжелее."
             n.calibrate && n.change < 0 -> "Тяжеловато, чуть легче."
-            n.calibrate && r == null -> "Отметь, сколько повторов ещё оставалось, и я подберу вес."
+            // The chips under this line are for the next set: the one done is marked by a tap on its row.
+            n.calibrate && r == null -> "Не отмечено, сколько повторов ещё оставалось, вес пока тот же. Чтобы отметить, нажми на последний подход в списке."
             n.calibrate -> "Вес подходящий."
             n.change > 0 -> "Было легко, прибавляем."
             n.change < 0 && r != null && r < 0 -> "Не хватило повторов, убавляем."
             n.change < 0 -> "Было тяжело, убавляем."
-            r == null -> "Отметь, сколько повторов ещё оставалось, и я подскажу вес."
+            r == null -> "Не отмечено, сколько повторов ещё оставалось, вес тот же. Чтобы отметить, нажми на последний подход в списке."
             r < 0 -> "Чуть не хватило. Вес тот же, попробуй добрать."
             r > n.plannedReserve -> "Легковато, но вес пока тот же."
             r < n.plannedReserve -> "Тяжеловато, но вес тот же."
             else -> "Как надо, вес тот же."
         }
-        return "Следующий подход: $target. $why"
     }
 
     /** "3 × 8 · 80 кг". */
@@ -122,7 +124,9 @@ object Texts {
         is Outcome.Reduce -> "Вес оказался тяжёлым. Теперь ${target(ex, o.to, o.reps)} (−${Ru.kg(o.from - o.to)} кг)."
         is Outcome.Reset -> "Три тренировки без роста. Теперь легче: ${target(ex, o.to, o.reps)}."
         Outcome.NotDone -> "Не сделано, план тот же."
-        Outcome.Deload -> "Лёгкая неделя. Потом продолжим с тех же весов."
+        // «Тренировка полегче», as the workout's banner: the same outcome comes on a «Так себе» day, after being sick and
+        // for legs before a race, none of them a lighter week; «прежние»: the weights from before it, not today's.
+        Outcome.Deload -> "Тренировка полегче. Потом снова прежние рабочие веса."
     }
 
     /** Positive, neutral or negative tone for colouring. */
@@ -157,9 +161,9 @@ object Texts {
             "goal" -> "Отрезки получились. Следующий шаг: ${o.to + 1} из ${forma.core.run.RunPlan.goalLadderSize}."
             else -> "Темповый бег получился. В следующий раз чуть сложнее."
         }
-        is RunOutcome.StageRepeat ->
-            if (o.ladder == "goal") "Темп пока не держится. Повторим эту тренировку."
-            else "Пока не вышло. Повторим эту тренировку."
+        // One line for every ladder: a repeat comes from slow reps, a rating over 8 or reps short, and the reason is
+        // already said by «Тяжесть», «Отрезки были медленнее нужного…» or the reps count.
+        is RunOutcome.StageRepeat -> "Пока не вышло. Повторим эту тренировку."
         is RunOutcome.StageDown -> "Шаг назад, в следующий раз будет легче."
         is RunOutcome.LadderTop -> "Это самый сложный шаг, закрепляем."
         is RunOutcome.TempoNext -> {
@@ -170,7 +174,7 @@ object Texts {
         is RunOutcome.LighterWeek -> "Лёгкая неделя: тренировка короче, шаг тот же."
         is RunOutcome.TempoPace ->
             if (o.softer) "Темповый бег был очень тяжёлым, и темп не держался. Теперь темповые пробежки на ${o.seconds} с/км спокойнее."
-            else if (o.seconds > 0) "Темповый бег дался легко и в темпе, ты подрос. Теперь темп всего на ${o.seconds} с/км спокойнее расчётного."
+            else if (o.seconds > 0) "Темповый бег дался легко и в темпе. Теперь темп всего на ${o.seconds}\u00A0с/км спокойнее расчётного."
             else "Темповый бег дался легко и в темпе. Темп снова как по расчёту."
         RunOutcome.TooFastRepeat -> "Отрезки были заметно быстрее нужного. Повторим этот шаг, держи время круга или темп на км."
         RunOutcome.TooFast -> "Отрезки были быстрее нужного, поэтому шаг вперёд только один. Держи время круга."

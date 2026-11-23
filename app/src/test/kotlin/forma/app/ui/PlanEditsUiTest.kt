@@ -30,6 +30,7 @@ import forma.app.ui.theme.Looks
 import forma.core.model.Catalog
 import forma.core.model.Experience
 import forma.core.model.Goal
+import forma.core.model.LoadKind
 import forma.core.model.Profile
 import forma.core.model.RunLevel
 import kotlinx.coroutines.runBlocking
@@ -175,5 +176,40 @@ class PlanEditsUiTest {
         compose.onNodeWithText("Поставить паузу").performClick()
         settle()
         assertTrue(runBlocking { repo.store.settingsNow().pauseUntil } != null)
+    }
+
+    /**
+     * The rows give this week's reserve, the number the workout gives, and the line over the sessions takes it from the
+     * first row (23 November: the plan said «оставь 2» for the squat the workout asked to stop with 3 left).
+     */
+    @Test fun theRowsSayThisWeeksReserve() {
+        val repo = repo("ui-plan-reserve")
+        val t = runBlocking { repo.store.programNow()!!.templates.first() }
+        // One session done: the weights are known, so the rows say a reserve (none while a weight is being found).
+        runBlocking {
+            val id = repo.startLift(t.id)
+            repo.planOf(repo.db.workouts().get(id)!!)!!.items.forEach { item ->
+                repeat(item.prescription.sets) { repo.logSet(id, item, item.prescription.weight ?: 20.0, item.prescription.reps, 2) }
+            }
+            repo.finishLift(id, 7)
+        }
+        val plan = runBlocking { repo.liftPlan(t.id, repo.today()) }
+        val item = plan.items.sortedBy { it.position }
+            .first { !it.prescription.calibrate && Catalog[it.exerciseId].load != LoadKind.TIMED && it.prescription.rir > 0 }
+        val reserve = item.prescription.rir
+        // The cycle's first week: a rep more in reserve than the plan's own number, which the row used to say.
+        assertTrue(reserve != item.slot.rir, "this week $reserve, the plan's own ${item.slot.rir}")
+        show(repo, Navigator(Screen.Plan)) { PlanScreen() }
+        fun row() = compose.onAllNodes(hasText(item.name) and hasText("· оставь $reserve ·", substring = true)).fetchSemanticsNodes().isNotEmpty()
+        fun legend() = compose.onAllNodesWithText("«Оставь $reserve»: стоп, когда можешь ещё $reserve.", substring = true).fetchSemanticsNodes().isNotEmpty()
+        // The plans are built in the background.
+        runCatching {
+            compose.waitUntil(10_000) {
+                shadowOf(Looper.getMainLooper()).idle()
+                row() && legend()
+            }
+        }
+        assertTrue(row(), "«${item.name}» says «оставь $reserve»")
+        assertTrue(legend(), "the line over the sessions says «Оставь $reserve»")
     }
 }

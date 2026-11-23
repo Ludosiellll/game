@@ -26,8 +26,10 @@ import forma.app.data.TrainingRepository
 import forma.app.ui.screens.DayScreen
 import forma.app.ui.screens.HistoryScreen
 import forma.app.ui.screens.NextToday
+import forma.app.ui.screens.PlanScreen
 import forma.app.ui.screens.ProgressScreen
 import forma.app.ui.screens.TodayScreen
+import forma.app.ui.screens.moodWords
 import forma.app.ui.theme.F
 import forma.app.ui.theme.FormaTheme
 import forma.app.ui.theme.Looks
@@ -50,6 +52,7 @@ import org.robolectric.annotation.GraphicsMode
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /** Denis's week on the main screen and its days: the day's feeling kept, done sessions as done, missed and caught up. */
 @RunWith(AndroidJUnit4::class)
@@ -166,7 +169,8 @@ class WeekDoneUiTest {
         show(repo) { TodayScreen() }
         compose.onNodeWithText("Вместо пропущенной во вт", substring = true, ignoreCase = true).assertExists()
         compose.onNodeWithText("Разбор тренировки", ignoreCase = true).performScrollTo()
-        compose.onAllNodesWithText("Сегодня день восстановления").assertCountEquals(0)
+        // Not a rest day: the day trained on shows as done, no rest card.
+        compose.onAllNodesWithText("Сегодня отдых").assertCountEquals(0)
         // In the week: Monday's run missed (a hollow dot), Wednesday done off plan.
         compose.onAllNodesWithContentDescription("пропущено").assertCountEquals(1)
         compose.onAllNodesWithContentDescription("сделано вне плана").assertCountEquals(1)
@@ -218,5 +222,72 @@ class WeekDoneUiTest {
         settle()
         compose.onAllNodesWithText("Тренированность")[0].assertExists()
         compose.onAllNodesWithText("Форма").assertCountEquals(0)
+    }
+
+    /**
+     * A rest day says so once, and training off the plan is offered once, in the row under the day (23 November: «Отдых»
+     * over «Сегодня день восстановления», «Пробежка» «Силовая» in the card and «Свободный бег» «Другая силовая» under it).
+     */
+    @Test fun aRestDaySaysItOnce() {
+        val repo = repo()
+        at(monday.plusDays(2))
+        show(repo) { TodayScreen() }
+        compose.onNodeWithText("Сегодня отдых").assertExists()
+        compose.onAllNodesWithText("Пробежка", ignoreCase = true).assertCountEquals(0)
+        compose.onAllNodesWithText("Свободный бег", ignoreCase = true).assertCountEquals(1)
+        // No gym session today: nothing for «другая» to be other than.
+        compose.onAllNodesWithText("Силовая", ignoreCase = true).assertCountEquals(1)
+        compose.onAllNodesWithText("Другая силовая", ignoreCase = true).assertCountEquals(0)
+    }
+
+    /** «Другая силовая» only beside a gym session of the day: Monday holds a run only, Tuesday the gym. */
+    @Test fun anotherGymSessionOnlyBesideOne() {
+        val repo = repo()
+        at(monday)
+        show(repo) { TodayScreen() }
+        compose.onAllNodesWithText("Другая силовая", ignoreCase = true).assertCountEquals(0)
+        compose.onAllNodesWithText("Силовая", ignoreCase = true).assertCountEquals(1)
+        at(monday.plusDays(1))
+        show(repo) { TodayScreen() }
+        compose.onAllNodesWithText("Другая силовая", ignoreCase = true).assertCountEquals(1)
+    }
+
+    /**
+     * Минимализм: the line about the day under the rule gives way once the day's feeling is said, and comes back with it
+     * unset (23 November: «Силы есть, можно в полную» stood over «Сегодня полегче» and «Сегодня выздоравливаем»).
+     */
+    @Test fun theDaysLineGivesWayToTheFeeling() {
+        val repo = repo()
+        at(monday.plusDays(1))
+        compose.setContent {
+            CompositionLocalProvider(LocalRepo provides repo, LocalNav provides Navigator(Screen.Today), LocalSettings provides Settings()) {
+                FormaTheme(Looks.byId("minimal")) { Box(Modifier.fillMaxSize().background(F.c.bg)) { TodayScreen() } }
+            }
+        }
+        settle()
+        // No sessions yet: the first weeks' line.
+        val line = moodWords(null)
+        compose.onNodeWithText(line).assertExists()
+        compose.onNodeWithText("Так себе").performScrollTo().performClick()
+        settle()
+        compose.onAllNodesWithText(line).assertCountEquals(0)
+        compose.onNodeWithText("Болею").performScrollTo().performClick()
+        settle()
+        compose.onAllNodesWithText(line).assertCountEquals(0)
+        compose.onNodeWithText("Болею").performScrollTo().performClick()
+        settle()
+        compose.onNodeWithText(line).assertExists()
+    }
+
+    /** «Почему так» on the plan: one line, the notes a tap away (23 November: eleven lines between the week and the gym). */
+    @Test fun thePlansWhyIsATapAway() {
+        val repo = repo()
+        val why = forma.core.plan.Scheduler.shown(runBlocking { repo.store.programNow()!! }.week.notes)
+        assertTrue(why.isNotEmpty(), "Denis's week has notes")
+        show(repo, Navigator(Screen.Plan)) { PlanScreen() }
+        compose.onAllNodesWithText("• ${why.first()}").assertCountEquals(0)
+        compose.onNodeWithText("Почему так ›").performScrollTo().performClick()
+        settle()
+        compose.onNodeWithText("• ${why.first()}").assertExists()
     }
 }

@@ -32,10 +32,13 @@ import forma.app.ui.screens.WorkoutScreen
 import forma.app.ui.theme.F
 import forma.app.ui.theme.FormaTheme
 import forma.app.ui.theme.Looks
+import forma.core.model.Catalog
 import forma.core.model.Experience
 import forma.core.model.Goal
 import forma.core.model.Profile
 import forma.core.model.RunLevel
+import forma.core.strength.DoneSet
+import forma.core.strength.Progression
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Rule
@@ -45,6 +48,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -114,7 +118,12 @@ class WorkoutPanelUiTest {
         assertTrue(texts("Главное упражнение дня").isNotEmpty())
         compose.onNodeWithText("Подход сделан").performClick()
         settle()
-        assertTrue(texts("Следующий подход:").isNotEmpty(), "the next set is said")
+        // The verdict on the set, as the app works it out: the next set's numbers are in the fields under it, not said again.
+        val item = runBlocking { repo.planOf(repo.db.workouts().get(id)!!)!!.items.first() }
+        val done = setsOf(repo, id).map { DoneSet(it.weight, it.reps, it.rir) }
+        val ns = assertNotNull(Progression.nextSet(Catalog[item.exerciseId], item.prescription, done, profile.bodyWeightKg))
+        assertTrue(texts(Texts.nextSet(Catalog[item.exerciseId], ns)).isNotEmpty(), "the next set is said")
+        assertTrue(texts("Следующий подход:").isEmpty(), "its numbers are not said again over the fields")
         compose.onRoot().captureRoboImage("build/shots/carbon-workout-next.png")
     }
 

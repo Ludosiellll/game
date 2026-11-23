@@ -102,8 +102,8 @@ private data class Fields(val weight: Double, val reps: Int, val rir: Int?, val 
 
 /**
  * What "Отменить" takes back: the set just logged ([setId]) or the one just deleted ([deleted]), at [position] of the
- * exercise [key]; the fields as they were before it, the rest it started, and the "Дальше — …" hint it put on the next
- * exercise ([nextKey], with what was there before).
+ * exercise [key]; the fields as they were before it, the rest it started, and the "…: все подходы сделаны. Дальше …" hint
+ * it put on the next exercise ([nextKey], with what was there before).
  */
 private data class Undo(
     val text: String, val at: Long, val position: Int, val key: String, val before: Fields,
@@ -221,7 +221,8 @@ fun WorkoutScreen(workoutId: Long) {
     }
 
     val inputs = rememberSaveable(saver = InputsSaver) { mutableStateMapOf() }
-    // What to do next, said after every set (and where the next exercise starts) — not only when the weight changes.
+    // Why the next set is as it is, said after every set (and where the next exercise starts) — not only when the weight
+    // changes. Its numbers are in the fields under it.
     val advice = rememberSaveable(saver = AdviceSaver) { mutableStateMapOf() }
     // Warm-up sets ticked off ("position:exercise:i") or skipped ("…:skip"): not working sets, so not in the log or the progression.
     val warmMarks = rememberSaveable(saver = listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<String>, String>({ it.toList() }, { it.toMutableStateList() })) { mutableStateListOf() }
@@ -453,12 +454,17 @@ fun WorkoutScreen(workoutId: Long) {
                             "${Texts.startWith(ex, inp.weight)}, стоп, когда можешь ещё ${p.rir} (не больше 15 раз).",
                             F.c.accent, Ic.info,
                         )
-                        // «Прошлый раз 80 кг × 8, 7, 6.» alone: what changed since is in the fields, and the summary said it.
+                        // «Прошлый раз 80 кг × 8 · 85 кг × 6, 5.» alone: what changed since is in the fields, and the summary
+                        // said it. Each weight with the sets done at it, as the summary writes them (23 November: the heaviest
+                        // weight with every rep after it showed 8 reps at 85 that never happened). Plain, with no arrow: a miss
+                        // shows in the reps. A lighter session says so, or «72,5» next to today's «82,5» reads as +10 kg at once.
                         last != null -> {
-                            val s = last.first.joinToString(", ") { it.reps.toString() }
-                            val wDone = last.first.maxOf { it.weight }
-                            val text = if (ex.load == LoadKind.TIMED) "Прошлый раз $s с." else "Прошлый раз ${Texts.weightReps(ex, wDone, s)}."
-                            Hint(text, if ((last.second?.outcome?.let { Texts.tone(it) } ?: 0) < 0) F.c.warn else F.c.strength)
+                            val done = setsLine(ex, last.first.map { it.weight to it.reps })
+                            val lighter = last.second?.outcome == forma.core.strength.Outcome.Deload
+                            Text(
+                                if (lighter) "Прошлый раз была тренировка полегче: $done." else "Прошлый раз $done.",
+                                style = T.secondary(14.sp),
+                            )
                         }
                     }
                     // Help is a band or the gravitron, and not every gym has one: what to do without it.
@@ -532,10 +538,6 @@ fun WorkoutScreen(workoutId: Long) {
                     }
                 }
 
-                // What the "+" set is for, under the sets it follows.
-                if (plusSet) {
-                    Hint(lastSetRule(item.prescription), F.c.strength, Ic.info)
-                }
                 Spacer(Modifier.height(4.dp))
             }
 
@@ -547,10 +549,11 @@ fun WorkoutScreen(workoutId: Long) {
                     Hairline()
                     if (rest != null) {
                         val leftMs = rest.endAt - now
-                        // While the current exercise has sets left it comes next, else the next one with sets left.
+                        // While the current exercise has sets left it comes next, else the next one with sets left. Named
+                        // only when it is another exercise: the one on the screen is in its title and chip already.
                         val next = if (n < planned) item else nextOpen(plan.items, item.position, ::count)
                         RestBar(
-                            leftMs, (leftMs.toFloat() / rest.totalMs).coerceIn(0f, 1f), next?.name,
+                            leftMs, (leftMs.toFloat() / rest.totalMs).coerceIn(0f, 1f), next?.takeIf { it.position != item.position }?.name,
                             onMinus = { forma.app.ui.RestTimer.adjust(context, -15_000, settings.beeps, settings.vibration) },
                             onPlus = { forma.app.ui.RestTimer.adjust(context, 15_000, settings.beeps, settings.vibration) },
                             onSkip = { forma.app.ui.RestTimer.stop() },
@@ -561,7 +564,7 @@ fun WorkoutScreen(workoutId: Long) {
                         if (blocked && !hintOff) {
                             Column {
                                 Text(
-                                    "Чтобы слышать конец отдыха с выключенным экраном, разреши уведомления и точные будильники.",
+                                    "Чтобы слышать конец отдыха с выключенным экраном, разреши уведомления и будильники.",
                                     style = T.secondary(12.sp),
                                 )
                                 Row {
@@ -589,8 +592,12 @@ fun WorkoutScreen(workoutId: Long) {
                     advice[keyOf(item)]?.let { (text, change) ->
                         Hint(text, when { change > 0 -> F.c.good; change < 0 -> F.c.warn; else -> F.c.strength }, when { change > 0 -> Ic.up; change < 0 -> Ic.down; else -> Ic.info })
                     }
+                    // The «+» set's rule, its own line right above its label, whenever it is the next set: the advice above
+                    // can be gone (after «Отменить», an edit, back to the exercise), and the scroll above is out of view
+                    // while resting (23 November: it sat under the logged sets, behind this panel).
+                    if (plusSet) Hint(lastSetRule(item.prescription), F.c.strength, Ic.info)
                     SectionLabel(
-                        if (n < planned) "Подход ${n + 1} из $planned" + (if (plusSet) " · ${item.prescription.reps}+" else "") else "Дополнительный подход",
+                        if (n < planned) "Подход ${n + 1} из $planned" else "Дополнительный подход",
                         color = F.c.strength,
                     )
                     val timed = ex.load == LoadKind.TIMED
@@ -618,7 +625,8 @@ fun WorkoutScreen(workoutId: Long) {
                         val weightUnit = when {
                             inp.weight < 0 -> "помощь, кг"
                             ex.load == LoadKind.BODYWEIGHT_PLUS -> "доп. кг"
-                            ex.perHand -> "кг ×2"
+                            // Not «кг ×2»: next to the reps it read as «× 2 reps».
+                            ex.perHand -> "кг в руке"
                             else -> "кг"
                         }
                         // Sized for "102,5" and the longest unit this exercise can show, not for today's number.
@@ -668,11 +676,12 @@ fun WorkoutScreen(workoutId: Long) {
                         } else {
                             advice.remove(key)
                             if (nx != null) {
-                                val nxEx = exerciseOf(nx.exerciseId, stored, nx)
                                 nextKey = keyOf(nx)
                                 nextBefore = advice[nextKey]
-                                // Where the exercise stands in the day is under «Зачем и какие мышцы», not in the way between sets.
-                                advice[nextKey] = recordText + "«${logged.name}» сделано. Дальше — ${nx.name}: ${Texts.prescription(nxEx, nx.prescription)}." to 0
+                                // The next one named once, with no numbers and no dash: its numbers are in the fields and its
+                                // header, where it stands in the day under «Зачем и какие мышцы». Named at all because the scroll
+                                // stays where it was, so its title and chip can be out of view.
+                                advice[nextKey] = recordText + "${logged.name}: все подходы сделаны. Дальше ${inSentence(nx.name)}." to 0
                             } else if (record != null) {
                                 // The very last set of the session: no next set or exercise to say it with, so it stays here.
                                 advice[key] = recordText.trim() to 1
@@ -686,8 +695,9 @@ fun WorkoutScreen(workoutId: Long) {
                             logged.slot.restSec, doneSet.reps, doneSet.rir, logged.prescription.rir, ex.compound, plan.deload, 0, logged.restOwn,
                             target = if (logged.prescription.calibrate) null else logged.prescription.reps,
                         )
-                        if (ns != null && ex.load != LoadKind.TIMED) {
+                        if (ns != null && ex.load != LoadKind.TIMED && !settings.autoRest) {
                             // «Отдых 2:20.» without the reasons: «2:20: был запас» read as a time, and the verdict before it says it.
+                            // Only with no timer: the rest bar counts the same time down above this line.
                             advice[key] = (advice[key]?.first ?: "") + " Отдых ${Ru.clock(restAdvice.sec)}." to ns.change
                         }
                         val startsRest = settings.autoRest && !lastOfAll
@@ -1149,24 +1159,35 @@ private fun NoteDialog(value: String, name: String, onDismiss: () -> Unit, onSav
 }
 
 /**
- * The prescription in one plain line: «72,5 кг, 3 по 8. Стоп, когда можешь ещё 2.» The last set's own rule (a «+» set:
- * on past the reps, stop with [forma.core.strength.Prescription.topRir] left) is said once, under the sets
+ * The prescription in one plain line: «72,5 кг, 3 по 8. Стоп, когда можешь ещё 2.», dumbbells «По 14 кг, 3 по 10.» (as the
+ * set rows say «по 14 кг × 10»: «14 кг ×2, 3 по 10» read as two reps). The last set's own rule (a «+» set: on past the
+ * reps, stop with [forma.core.strength.Prescription.topRir] left) is said once, in the panel above that set's label
  * ([lastSetRule]). 23 November: the line said «в последнем сколько сможешь» — read in the gym as «to failure» — while the
  * hint under the sets said «Остановись, когда сможешь ещё 2».
  */
 fun prescriptionLine(ex: forma.core.model.Exercise, p: forma.core.strength.Prescription): String {
     if (ex.load == LoadKind.TIMED) return "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")} по ${p.reps} с."
-    val weight = p.weight?.let { Texts.weight(ex, it) } ?: "Вес подберём"
+    val weight = p.weight?.let { w ->
+        if (ex.perHand && ex.load == LoadKind.EXTERNAL) "По ${Ru.kg(w)} кг" else Texts.weight(ex, w)
+    } ?: "Вес подберём"
     val sets = if (p.calibrate) "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" else "${p.sets} по ${p.reps}"
     val reserve = when {
         p.calibrate -> ""
         p.rir <= 0 -> " До отказа."
         else -> " Стоп, когда можешь ещё ${p.rir}."
     }
-    return "$weight, $sets.$reserve"
+    // A sentence from its first letter: «Свой вес, 3 по 8.», «Помощь 15 кг, 3 по 8.»
+    return "$weight, $sets.$reserve".replaceFirstChar { it.uppercase() }
 }
 
-/** The last («+») set's rule, said once: «Последний: после 8 продолжай, стоп, когда можешь ещё 1.» */
+/**
+ * The last («+») set's rule, said once: «Последний подход: после 8 продолжай, стоп, когда можешь ещё 1.» Two left only on
+ * legs with a hard run within two days, so «Скоро тяжёлый бег.» then is true.
+ */
 fun lastSetRule(p: forma.core.strength.Prescription): String =
-    "Последний: после ${p.reps} продолжай, стоп, когда можешь ещё ${p.topRir}." +
-        if (p.topRir >= 2) " Не до предела: впереди тяжёлый бег." else ""
+    "Последний подход: после ${p.reps} продолжай, стоп, когда можешь ещё ${p.topRir}." +
+        if (p.topRir >= 2) " Скоро тяжёлый бег." else ""
+
+/** An exercise's name inside a sentence: «Дальше жим штанги лёжа.» A name that starts with capitals («EZ-…») stays. */
+private fun inSentence(name: String): String =
+    if (name.length > 1 && name[1].isLowerCase()) name.replaceFirstChar { it.lowercase() } else name

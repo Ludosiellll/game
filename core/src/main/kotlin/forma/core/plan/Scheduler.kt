@@ -205,6 +205,14 @@ object Scheduler {
      */
     fun reworded(note: String): String = OLD_WORDS.fold(note) { s, (old, new) -> s.replace(old, new) }
 
+    /**
+     * The notes of a stored week as the plan shows them: in today's words ([reworded]), without the count of rest days
+     * that weeks laid out before 23 November still hold (the week's own «Отдых» rows say it).
+     */
+    fun shown(notes: List<String>): List<String> = notes.map { reworded(it) }.filterNot { it.startsWith(REST_DAYS) }
+
+    private const val REST_DAYS = "Дней полного отдыха"
+
     private val OLD_WORDS = listOf(
         ": между ними есть день на восстановление." to ".",
         "Накануне интервалов и длинной пробежки нет тренировки ног, так что бежать будет легче." to "Накануне тяжёлого бега нет тренировки ног.",
@@ -217,6 +225,11 @@ object Scheduler {
         " В день ног — сначала зал" to " В день ног сначала зал",
         " В день верха с лёгким бегом — сначала зал" to " В день верха с лёгким бегом сначала зал",
         " Сильнее ты становишься как раз во время отдыха." to "",
+        // 23 November, second pass: the gym first and then the run first in one note (and its words before 25 October).
+        "В дни «зал + лёгкий бег» сначала зал. Если можешь разнести, бег утром, а зал через 6 часов и больше." to
+            "В дни «зал + лёгкий бег» сначала зал, потом бег. Можно и разнести: бег утром, зал через 6\u00A0часов и больше.",
+        "В дни «силовая + лёгкий бег» за один заход — сначала силовая. Если можешь разнести, бег утром, зал через 6+ часов." to
+            "В дни «зал + лёгкий бег» сначала зал, потом бег. Можно и разнести: бег утром, зал через 6\u00A0часов и больше.",
     )
 
     private fun legs(s: PlannedSession?, templates: List<Template>): Boolean =
@@ -325,11 +338,10 @@ object Scheduler {
                     easyAfterUpper -> " В день верха с лёгким бегом сначала зал, потом бег."
                     else -> ""
                 }
-                else -> "В дни «зал + лёгкий бег» сначала зал. Если можешь разнести, бег утром, а зал через 6 часов и больше."
+                else -> "В дни «зал + лёгкий бег» сначала зал, потом бег. Можно и разнести: бег утром, зал через 6\u00A0часов и больше."
             }
         }
-        val rest = slots.count { it.lift == null && it.run == null }
-        if (rest > 0) out += "Дней полного отдыха: $rest."
+        // No count of the rest days: the week shows them (23 November).
         return out
     }
 

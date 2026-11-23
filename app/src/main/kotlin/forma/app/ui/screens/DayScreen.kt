@@ -147,12 +147,14 @@ fun DayScreen(date: LocalDate) {
 @Composable
 private fun NotOnItsDayCard(s: PlannedSession, p: Program, later: WorkoutEntity?, canCatchUp: Boolean, thisWeek: Boolean, easy: Boolean = false, onToday: () -> Unit) {
     val color = if (s.isRun) F.c.endurance else F.c.strength
+    val title = sessionTitle(s, p)
     FCard(gap = 10.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // The kind over the title, unless the title is the kind itself («Тяжёлый бег» twice in one card).
+        if (kindLabel(s) != title) Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(if (s.isRun) Ic.run else Ic.dumbbell, null, tint = color, modifier = Modifier.size(18.dp))
             Text(forma.app.ui.theme.labelText("  ${kindLabel(s)}"), style = T.label().copy(color = color), modifier = Modifier.weight(1f))
         }
-        Text(sessionTitle(s, p), style = T.title(22.sp))
+        Text(title, style = T.title(22.sp))
         if (later != null) {
             DoneLaterLine(later)
             if (later.kind == forma.app.data.Kind.LIFT) DoneLiftDetails(later, max = 3) else DoneRunDetails(later)
@@ -317,8 +319,10 @@ private fun focusWhy(f: Focus, hardRun: Boolean): String = when (f) {
 }
 
 /**
- * Where the lifting cycle is in the week of [date]: the week of the block and what it asks, the same words as the plan's
- * cycle card. [reactive]: the Monday of a lighter week the app set itself (weights stepping back).
+ * Where the lifting cycle is in the week of [date]: the week of the block and how it differs, the same words as the plan's
+ * cycle card. The reserve is said as a fact, never as a number to add: the plan's rows and the workout give this week's
+ * own (23 November: «оставляй на 1 повтор больше», added once more to the workout's «ещё 3», made 4). [reactive]: the
+ * Monday of a lighter week the app set itself (weights stepping back).
  */
 internal fun cycleWords(p: Program, date: LocalDate, reactive: Long?, moved: Long? = null): Pair<Int, String>? {
     if (p.blockWeeks <= 0) return null
@@ -328,13 +332,13 @@ internal fun cycleWords(p: Program, date: LocalDate, reactive: Long?, moved: Lon
     return pos to when {
         moved != null && d in moved until moved + 7 ->
             "лёгкая неделя сдвинулась на следующую, потому что в этом цикле много пропусков. " +
-                if (off < 0) "Эта неделя самая тяжёлая в цикле, оставляй на 1 повтор меньше." else "Эта неделя обычная."
+                if (off < 0) "Эта неделя самая тяжёлая в цикле, запас в подходах чуть меньше обычного." else "Эта неделя обычная."
         pos == p.blockWeeks && reactive != null && d in reactive until reactive + 7 ->
             "лёгкая неделя раньше плана, потому что веса пошли назад. Вдвое меньше подходов и вес на 10 % легче, потом новый цикл."
         pos == p.blockWeeks -> "лёгкая неделя. Вдвое меньше подходов и вес на 10 % легче. Потом новый цикл с тех же весов."
         reactive != null && d in reactive - 7 until reactive -> "обычная неделя. Следующая будет лёгкой, потому что веса пошли назад."
-        off > 0 -> "начало цикла. В каждом подходе оставляй на 1 повтор больше."
-        off < 0 -> "самая тяжёлая неделя цикла. Оставляй на 1 повтор меньше, следующая неделя будет лёгкой."
+        off > 0 -> "запас в подходах чуть больше обычного."
+        off < 0 -> "самая тяжёлая неделя цикла, запас в подходах чуть меньше обычного. Следующая неделя лёгкая."
         else -> "обычная неделя."
     }
 }

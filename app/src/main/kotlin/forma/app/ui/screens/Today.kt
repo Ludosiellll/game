@@ -159,7 +159,9 @@ fun TodayScreen() {
             ) {
                 Box(Modifier.fillMaxWidth().height(3.dp).background(F.c.text))
                 Spacer(Modifier.height(8.dp))
-                Text(moodWords(zone), style = T.body(20.sp, FontWeight.ExtraBold))
+                // Once the person has said «Так себе» or «Болею», that answer and its card speak for the day (23 November:
+                // «можно в полную» stood over «Сегодня полегче»).
+                if (feel != Feel.LOW && feel != Feel.SICK) Text(moodWords(zone), style = T.body(20.sp, FontWeight.ExtraBold))
                 if (planned > 0) Text("$doneCount из $planned ${Ru.plural(planned, "тренировки", "тренировок", "тренировок")} на этой неделе", style = T.secondary(13.sp))
             }
         }
@@ -227,7 +229,7 @@ fun TodayScreen() {
             todays.isEmpty() -> {
                 afterSick?.let { AfterSickNote(it) { askNotSick = true } }
                 RestCard(
-                    week, today, p, catchUp, onFree = { nav.push(Screen.RunSetup(repo.freeRun(me?.lapMeters), null)) }, onOther = { pickTemplate = true },
+                    week, today, p, catchUp,
                     onCatchUp = { s ->
                         scope.launch {
                             if (s.kind == SessionKind.LIFT) startLift(s.templateId!!, false)
@@ -332,9 +334,13 @@ fun TodayScreen() {
             )
         }
 
+        // Training off the plan, any day (the rest day's card has no buttons of its own): «Другая» only next to a gym
+        // session planned today.
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GhostButton("Свободный бег", { nav.push(Screen.RunSetup(repo.freeRun(me?.lapMeters), null)) }, Modifier.weight(1f))
-            if (p.templates.isNotEmpty()) GhostButton("Другая силовая", { pickTemplate = true }, Modifier.weight(1f))
+            if (p.templates.isNotEmpty()) GhostButton(
+                if (todays.any { it.kind == SessionKind.LIFT }) "Другая силовая" else "Силовая", { pickTemplate = true }, Modifier.weight(1f),
+            )
         }
         // Not sure what something means or what to do: the coach answers with the person's own training.
         GhostButton("Спросить тренера", { nav.tab(Screen.Coach()) }, Modifier.fillMaxWidth())
@@ -659,7 +665,7 @@ private fun RunCard(
 @Composable
 private fun RestCard(
     week: List<DayItem>, today: LocalDate, program: Program, catchUp: CatchUp.Suggestion?,
-    onFree: () -> Unit, onOther: () -> Unit, onCatchUp: (PlannedSession) -> Unit,
+    onCatchUp: (PlannedSession) -> Unit,
 ) {
     val next = week.firstOrNull { it.date.isAfter(today) && it.planned.isNotEmpty() }
     if (catchUp != null) {
@@ -684,15 +690,11 @@ private fun RestCard(
             )
         }
     }
+    // Said once: training off the plan is the screen's own row below (23 November: «Пробежка» and «Силовая» here, «Свободный
+    // бег» and «Другая силовая» under it, the same two things twice).
     FCard {
-        SectionLabel("Отдых")
-        Text("Сегодня день восстановления", style = T.title(22.sp))
+        Text("Сегодня отдых", style = T.title(22.sp))
         if (next == null) Text("На этой неделе тренировок больше нет.", style = T.secondary(14.sp))
-        Text("Хочешь, потренируйся вне плана.", style = T.secondary(13.sp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GhostButton("Пробежка", onFree, Modifier.weight(1f))
-            GhostButton("Силовая", onOther, Modifier.weight(1f))
-        }
     }
     NextPlannedCard(today)
 }
@@ -911,7 +913,8 @@ private fun LoopCard() {
 fun moodWords(zone: forma.core.load.LoadStory.Zone?): String = when (zone) {
     // The first weeks: too few sessions to say how fresh.
     null -> "Только начинаем, первые недели спокойно"
-    forma.core.load.LoadStory.Zone.FRESH -> "Силы есть, можно в полную"
+    // The zone's own name: a fact that holds on a rest day and a pause too, not an order to go all out.
+    forma.core.load.LoadStory.Zone.FRESH -> "Силы есть"
     forma.core.load.LoadStory.Zone.BALANCE -> "Обычный день, всё по плану"
     forma.core.load.LoadStory.Zone.BUILDING -> "Неделя тяжёлая, всё по плану"
     forma.core.load.LoadStory.Zone.REST -> "Накопилась усталость"
