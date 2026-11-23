@@ -176,3 +176,150 @@ fun RangeBar(value: Double, max: Double, bandFrom: Double, bandTo: Double, color
         if (vw > 0) drawRoundRect(color, Offset.Zero, Size(vw, size.height), r)
     }
 }
+
+/**
+ * One measure over time, read in two seconds (23 November: «графики перегруженные и непонятные»): one line in the text
+ * colour, the latest point an accent dot with its value beside it, at most one reference line named at its end, no grid,
+ * no fill, no y-axis. Points sit by date between [from] and [to] (epoch days), so a gap of weeks looks like one. [dots]:
+ * the raw measurements under a smoothed line (body weight), small and muted. [invert]: lower is better (lap seconds) —
+ * drawn higher, so up is better on every chart. [minSpan]: the least range of values the height stands for, so a few
+ * tenths of noise do not fill it.
+ */
+@Composable
+fun TrendChart(
+    points: List<forma.core.analytics.Point>,
+    from: Long,
+    to: Long,
+    description: String,
+    modifier: Modifier = Modifier,
+    dots: List<forma.core.analytics.Point> = emptyList(),
+    endLabel: String? = null,
+    reference: Double? = null,
+    referenceLabel: String? = null,
+    invert: Boolean = false,
+    minSpan: Double = 0.0,
+    startLabel: String? = null,
+    endXLabel: String = "сейчас",
+    height: Dp = 116.dp,
+) {
+    val measurer = rememberTextMeasurer()
+    val muted = F.c.text3
+    val ink = F.c.text
+    val dotColor = F.c.strength
+    val ring = F.c.bg
+    val small = TextStyle(fontFamily = F.type.text, fontSize = 11.sp, color = muted)
+    val label = TextStyle(fontFamily = F.type.text, fontSize = 12.sp, color = ink)
+    Canvas(modifier.fillMaxWidth().height(height).semantics { contentDescription = description }) {
+        if (points.isEmpty() && dots.isEmpty()) return@Canvas
+        val values = points.map { it.value } + dots.map { it.value } + listOfNotNull(reference)
+        var lo = values.min()
+        var hi = values.max()
+        if (hi - lo < minSpan) { val mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2 }
+        if (hi - lo < 1e-6) { lo -= 1; hi += 1 }
+        val pad = (hi - lo) * 0.12
+        lo -= pad; hi += pad
+        val xBand = 16.dp.toPx()
+        val top = 14.dp.toPx()
+        val h = size.height - xBand - top
+        val left = 4.dp.toPx()
+        // Room on the right for the labels that sit there, measured: a clipped «цель 45,1 с» says nothing.
+        val endW = endLabel?.let { measurer.measure(it, label).size.width + 9.dp.toPx() } ?: 0f
+        val refW = referenceLabel?.let { measurer.measure(it, small).size.width + 6.dp.toPx() } ?: 0f
+        val right = maxOf(endW, refW, 12.dp.toPx()) + 4.dp.toPx()
+        val w = size.width - left - right
+        val span = (to - from).coerceAtLeast(1).toFloat()
+        fun x(day: Long) = left + w * ((day - from).coerceIn(0, to - from) / span)
+        fun y(v: Double): Float {
+            val f = ((v - lo) / (hi - lo)).toFloat()
+            return top + h * (if (invert) f else 1 - f)
+        }
+        if (reference != null) {
+            val ry = y(reference)
+            drawLine(muted.copy(alpha = 0.7f), Offset(left, ry), Offset(left + w, ry), strokeWidth = 1.dp.toPx())
+            referenceLabel?.let {
+                val l = measurer.measure(it, small)
+                drawText(l, topLeft = Offset(left + w + 6.dp.toPx(), (ry - l.size.height / 2f).coerceIn(0f, size.height - xBand - l.size.height)))
+            }
+        }
+        dots.forEach { drawCircle(muted, radius = 2.5.dp.toPx(), center = Offset(x(it.epochDay), y(it.value))) }
+        if (points.size >= 2) {
+            val path = Path()
+            points.forEachIndexed { i, p -> if (i == 0) path.moveTo(x(p.epochDay), y(p.value)) else path.lineTo(x(p.epochDay), y(p.value)) }
+            drawPath(path, ink, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        points.lastOrNull()?.let { p ->
+            val c = Offset(x(p.epochDay), y(p.value))
+            drawCircle(ring, radius = 6.dp.toPx(), center = c)
+            drawCircle(dotColor, radius = 4.dp.toPx(), center = c)
+            endLabel?.let {
+                val l = measurer.measure(it, label)
+                val ly = (c.y - l.size.height / 2f).coerceIn(0f, size.height - xBand - l.size.height)
+                drawText(l, topLeft = Offset((c.x + 9.dp.toPx()).coerceAtMost(size.width - l.size.width.toFloat()), ly))
+            }
+        }
+        startLabel?.let { drawText(measurer.measure(it, small), topLeft = Offset(left, size.height - xBand + 2.dp.toPx())) }
+        val e = measurer.measure(endXLabel, small)
+        drawText(e, topLeft = Offset(left + w - e.size.width, size.height - xBand + 2.dp.toPx()))
+    }
+}
+
+/**
+ * Weeks side by side, one bar each (at most 20 dp wide), past weeks muted; [current]: the last one is under way — drawn
+ * as an outline and named «идёт», never a bare small number; [usual]: a hairline named «обычная» at the person's usual
+ * week; [spikes]: weeks far over the usual, the only colour on the chart, named «скачок».
+ */
+@Composable
+fun WeekBars(
+    values: List<Double>,
+    description: String,
+    modifier: Modifier = Modifier,
+    current: Boolean = true,
+    usual: Double? = null,
+    spikes: Set<Int> = emptySet(),
+    startLabel: String? = null,
+    height: Dp = 112.dp,
+) {
+    val measurer = rememberTextMeasurer()
+    val muted = F.c.text3
+    val ink = F.c.text
+    val warn = F.c.warn
+    val small = TextStyle(fontFamily = F.type.text, fontSize = 11.sp, color = muted)
+    Canvas(modifier.fillMaxWidth().height(height).semantics { contentDescription = description }) {
+        if (values.isEmpty()) return@Canvas
+        val xBand = 16.dp.toPx()
+        // Room above the tallest bar for its word («скачок», «идёт»).
+        val top = 20.dp.toPx()
+        val right = measurer.measure("обычная", small).size.width + 10.dp.toPx()
+        val h = size.height - xBand - top
+        val w = size.width - right
+        val hi = max(values.max(), usual ?: 0.0).takeIf { it > 0 } ?: 1.0
+        val n = values.size
+        val slot = w / n
+        val bw = min(20.dp.toPx(), slot * 0.6f)
+        val r = CornerRadius(4.dp.toPx())
+        values.forEachIndexed { i, v ->
+            val bh = (v / hi * h).toFloat().coerceAtLeast(if (v > 0) 2.dp.toPx() else 0f)
+            val x = i * slot + (slot - bw) / 2
+            val last = i == n - 1
+            when {
+                last && current -> drawRoundRect(ink, Offset(x, top + h - bh), Size(bw, max(bh, 2.dp.toPx())), r, style = Stroke(1.5.dp.toPx()))
+                i in spikes -> drawRoundRect(warn, Offset(x, top + h - bh), Size(bw, bh), r)
+                else -> drawRoundRect(muted, Offset(x, top + h - bh), Size(bw, bh), r)
+            }
+            val tag = when { last && current -> "идёт"; i in spikes -> "скачок"; else -> null }
+            tag?.let {
+                val l = measurer.measure(it, small.copy(color = if (i in spikes && !(last && current)) warn else muted))
+                drawText(l, topLeft = Offset((x + bw / 2 - l.size.width / 2).coerceIn(0f, size.width - l.size.width), (top + h - bh - l.size.height - 2.dp.toPx()).coerceAtLeast(0f)))
+            }
+        }
+        if (usual != null && usual > 0) {
+            val uy = (top + h - usual / hi * h).toFloat()
+            drawLine(ink.copy(alpha = 0.55f), Offset(0f, uy), Offset(w, uy), strokeWidth = 1.dp.toPx())
+            val l = measurer.measure("обычная", small)
+            drawText(l, topLeft = Offset(w + 6.dp.toPx(), uy - l.size.height / 2f))
+        }
+        startLabel?.let { drawText(measurer.measure(it, small), topLeft = Offset(0f, size.height - xBand + 2.dp.toPx())) }
+        val e = measurer.measure("эта неделя", small)
+        drawText(e, topLeft = Offset((w - slot / 2 - e.size.width / 2).coerceAtMost(size.width - e.size.width), size.height - xBand + 2.dp.toPx()))
+    }
+}

@@ -164,4 +164,16 @@ class PlanEditsUiTest {
         assertTrue(moved(), "«${last.name}» is asked to go first, above «${first.name}»: ${shown().filter { n -> plan.items.any { it.name == n } }}")
         assertTrue(compose.onAllNodesWithText("Свой порядок упражнений", substring = true).fetchSemanticsNodes().isNotEmpty(), "the screen says the order is the person's own")
     }
+
+    /** 23 November: one tap on «1 неделя» paused the plan and restarted the cycle. Now it asks first. */
+    @Test fun aPauseIsAskedBeforeItStarts() {
+        val repo = repo("ui-plan-pause")
+        show(repo, Navigator(Screen.Plan)) { PlanScreen() }
+        compose.onNodeWithText(forma.core.text.Ru.weeks(1)).performScrollTo().performClick()
+        settle()
+        assertEquals(null, runBlocking { repo.store.settingsNow().pauseUntil })
+        compose.onNodeWithText("Поставить паузу").performClick()
+        settle()
+        assertTrue(runBlocking { repo.store.settingsNow().pauseUntil } != null)
+    }
 }

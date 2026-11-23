@@ -19,11 +19,11 @@ import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import forma.app.ui.theme.F
 import forma.app.ui.theme.T
@@ -36,8 +36,19 @@ import forma.core.model.Muscle
  * figures are an anatomical muscle map ([FRONT_SHAPES], [BACK_SHAPES]; MIT, see BodyShapes.kt): Denis, 23 November —
  * «некрасивая модель человека … чтобы была такая же красивая как будто с книги по человеческому телу».
  */
+/** How a muscle group did against its week: below it, within it, over it. */
+enum class Tone { LOW, OK, HIGH }
+
 @Composable
-fun BodyMap(level: Map<Muscle, Float>, modifier: Modifier = Modifier, selected: Set<Muscle> = emptySet(), onTap: ((Muscle) -> Unit)? = null, description: String = "Карта мышц", labels: Boolean = true) {
+fun BodyMap(
+    level: Map<Muscle, Float>,
+    modifier: Modifier = Modifier,
+    selected: Set<Muscle> = emptySet(),
+    onTap: ((Muscle) -> Unit)? = null,
+    description: String = "Карта мышц",
+    labels: Boolean = true,
+    tones: Map<Muscle, Tone> = emptyMap(),
+) {
     val figures = remember {
         listOf(FRONT_OUTLINE to FRONT_SHAPES, BACK_OUTLINE to BACK_SHAPES).map { (outline, shapes) ->
             PathParser().parsePathString(outline).toPath() to shapes.map { it to PathParser().parsePathString(it.d).toPath() }
@@ -49,6 +60,11 @@ fun BodyMap(level: Map<Muscle, Float>, modifier: Modifier = Modifier, selected: 
     val skin = if (F.c.dark) Color(0xFF2B2B2B) else Color(0xFFDCDCD8)
     val idle = if (F.c.dark) Color(0xFF3B3B3B) else Color(0xFFC8C8C3)
     val hot = F.c.strength
+    // Three steps of one hue, never a blend with the grey (a blend came out a muddy brown at a few sets): checked with the
+    // dataviz ordinal validator against the unlit muscle in both modes (23 November).
+    val low = if (F.c.dark) hot else Color(0xFFE44919)
+    val ok = if (F.c.dark) hot else Color(0xFFE44919)
+    val high = if (F.c.dark) Color(0xFFFFA156) else Color(0xFFA52014)
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Canvas(
             Modifier.fillMaxWidth().aspectRatio(W * 2 / H).semantics { contentDescription = description }.let { m ->
@@ -72,10 +88,23 @@ fun BodyMap(level: Map<Muscle, Float>, modifier: Modifier = Modifier, selected: 
                             drawPath(outline, body)
                             drawPath(outline, line, style = Stroke(width = 1.5f / s))
                             parts.forEach { (shape, p) ->
+                                // Few sets: the muscle drawn as at rest, ringed in the colour — a figure mostly «few» early in a
+                                // week must not look like a map of injuries.
+                                if (shape.muscle != null && shape.muscle !in selected && tones[shape.muscle] == Tone.LOW) {
+                                    drawPath(p, idle)
+                                    drawPath(p, low, style = Stroke(width = 1.6.dp.toPx() / s))
+                                    return@forEach
+                                }
                                 val c = when {
                                     shape.muscle == null -> if (shape.flesh) idle else skin
                                     shape.muscle in selected -> hot
-                                    else -> lerp(idle, hot, (level[shape.muscle] ?: 0f).coerceIn(0f, 1f))
+                                    tones[shape.muscle] == Tone.LOW -> low
+                                    tones[shape.muscle] == Tone.OK -> ok
+                                    tones[shape.muscle] == Tone.HIGH -> high
+                                    // A plain level (a session's muscles in the program builder): worked a little, or worked.
+                                    (level[shape.muscle] ?: 0f) >= 0.25f -> hot
+                                    (level[shape.muscle] ?: 0f) > 0f -> low
+                                    else -> idle
                                 }
                                 drawPath(p, c)
                             }

@@ -27,9 +27,13 @@ class RunHowTest {
     @Test fun goalPaceRepsSayHowManyAndTheLapRange() {
         val w = RunPlan.onTrack(RunPlan.goalPace(st, goal, 230), 230)
         val how = RunHow.short(w)
-        assertTrue(how.startsWith("Разминка 12:00, ${w.reps} × "), how)
-        assertTrue(Regex("круг \\d\\d–\\d\\d с").containsMatchIn(how), how)
-        assertTrue("отдых" in how, how)
+        // Reps of one lap read as laps (23 November: «6 × 1 круг — круг 45–46 с»).
+        assertTrue(how.startsWith("Разминка 12:00, ${w.reps} кругов по "), how)
+        assertTrue(Regex("по \\d\\d(,\\d)?–\\d\\d(,\\d)? с").containsMatchIn(how), how)
+        assertTrue("отдых" in how && "—" !in how, how)
+        // Longer reps: how many, and the lap time to keep.
+        val longer = RunHow.short(RunPlan.onTrack(RunPlan.goalPace(st.copy(goalStage = 5), goal, 230), 230))
+        assertTrue(Regex("\\d × \\d круга?, круг \\d\\d").containsMatchIn(longer), longer)
     }
 
     @Test fun theTrialSaysEvenFirstThenFaster() {

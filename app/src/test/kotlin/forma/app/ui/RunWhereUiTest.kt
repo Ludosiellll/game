@@ -78,11 +78,11 @@ class RunWhereUiTest {
             }
         }
         settle()
-        assertTrue(texts("Стадион, круг 230 м").isNotEmpty())
+        assertTrue(texts("Круг 230 м. Жми «Круг»").isNotEmpty())
         compose.onNodeWithText("Улица", ignoreCase = true).performClick()
         settle()
         // On the road: no lap button banner, the targets in minutes a km.
-        assertTrue(texts("Стадион, круг 230 м").isEmpty())
+        assertTrue(texts("Круг 230 м. Жми «Круг»").isEmpty())
         assertTrue(texts("мин/км").isNotEmpty())
     }
 }

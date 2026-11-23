@@ -234,9 +234,9 @@ class RunFieldUiTest {
         RunSession.gpsEnabled = false
         RunSession.publish(60_000)
         show(repo) { RunActiveScreen() }
-        // The headset's button works with the screen off too: said on the screen, not found out on the line. The volume
-        // keys stay the volume (turned down twice, they made a lap of 6 s).
-        assertTrue(texts("Круг можно отметить и кнопкой на наушниках.").isNotEmpty())
+        // The headset's button works with the screen off too: said once, before the run (23 November: said on every run
+        // screen, forever). The volume keys stay the volume (turned down twice, they made a lap of 6 s).
+        assertTrue(texts("кнопкой на наушниках").isEmpty())
         assertTrue(texts("громкост").isEmpty())
         // Outside a rep too the skip is held, not tapped: the phone is in the hand, and a tap in the cool-down ended the run.
         assertTrue(texts("удерживай").isNotEmpty())
@@ -402,5 +402,12 @@ class RunFieldUiTest {
         // 52 km in half an hour is no run.
         assertNull(boardDistance("52", 30 * 60))
         assertNull(boardDistance("", 30 * 60))
+    }
+
+    @Test fun theHeadsetButtonIsSaidBeforeTheRun() {
+        val repo = repo("ui-field-key-setup")
+        val easy = runBlocking { repo.runFor(SessionKind.RUN_EASY, repo.today()) }
+        show(repo) { forma.app.ui.screens.RunSetupScreen(easy, SessionKind.RUN_EASY) }
+        assertTrue(texts("кнопкой на наушниках").isNotEmpty())
     }
 }

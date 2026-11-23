@@ -230,7 +230,7 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { locationOff = false },
             title = { Text("Геолокация выключена") },
-            text = { Text("Без неё GPS не посчитает круги, старт и дистанцию. Включи её в настройках и вернись к «Старту».") },
+            text = { Text("Без неё не посчитается дистанция. Круги и старт и так по нажатию «Круг». Включи геолокацию в настройках и вернись к «Старту».") },
             confirmButton = {
                 androidx.compose.material3.TextButton({
                     locationOff = false
@@ -306,7 +306,16 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
                 open.firstOrNull { runCatching { context.startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess }
             }
         }
-        if (workout.note.isNotEmpty()) Text(workout.note, style = T.body(16.sp))
+        // The run in one line first; the plan's note a tap away.
+        if (!workout.isOpenEnded) Text(forma.app.ui.RunHow.short(workout), style = T.body(17.sp, FontWeight.SemiBold))
+        if (workout.note.isNotEmpty()) {
+            var how by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+            Text(
+                if (how) "Скрыть" else "Как бежать ›", style = T.body(15.sp, FontWeight.SemiBold).copy(color = F.c.accent),
+                modifier = Modifier.clickable(onClickLabel = if (how) "Скрыть" else "Как бежать") { how = !how }.padding(vertical = 4.dp),
+            )
+            if (how) Text(workout.note, style = T.body(15.sp).copy(color = F.c.text2))
+        }
         if (!workout.isOpenEnded) {
             FCard {
                 Row {
@@ -352,13 +361,12 @@ private fun RunSetupBody(workout: RunWorkout, ready: Boolean, where: (@Composabl
         }
         val track = workout.lapMeters != null
         if (track) {
+            // Laps and starts are the presses (GPS gives the distance, the pace and the loop's length).
             Banner(
-                "Стадион, круг ${workout.lapMeters} м. " +
-                    // Laps and starts are the presses (GPS gives the distance, the pace and the loop's length).
-                    "Жми «Круг», когда пересекаешь линию, и на старте каждого отрезка: круг засчитывается только по нажатию. " +
-                        "Приложение скажет время круга и в темпе ли ты. " +
-                        // The pacer beeps only in reps of laps (RunTimeline: Cue.LapMark).
-                        (if (workout.reps > 0) "Писк — момент, когда ты должен быть на линии. " else "") + "Кнопка «Круг» есть и в уведомлении.",
+                // A headset's button works with the screen off too (HeadsetLap): said here once, not on every run screen.
+                "Круг ${workout.lapMeters} м. Жми «Круг» на каждой линии и на старте отрезка, можно и кнопкой на наушниках." +
+                    // The pacer beeps only in reps of laps (RunTimeline: Cue.LapMark).
+                    (if (workout.reps > 0) " На писке будь на линии." else ""),
                 F.c.endurance, icon = Ic.info,
             )
         }
@@ -788,40 +796,11 @@ fun RunActiveScreen() {
                     style = T.secondary(14.sp),
                 )
             }
-            // A headset's button works with the screen off too (HeadsetLap). The volume keys stay the volume: pressed twice
-            // to turn the voice down, they made a lap of a few seconds.
-            if (lapM != null && !finished) Text("Круг можно отметить и кнопкой на наушниках.", style = T.secondary(13.sp))
         }
 
         Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (lapM != null && !finished) {
-                val running = u.state == RunTracker.State.RUNNING
-                val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-                // The lock guards everything but this button: it is what the runner needs on the line.
-                val on = running
-                Box(
-                    Modifier.fillMaxWidth().height(84.dp).clip(RoundedCornerShape(if (F.shape.pill) 42.dp else F.shape.radius))
-                        .background(if (on) F.c.accent else F.c.surface2)
-                        .semantics { contentDescription = "Круг" }
-                        .combinedClickable(enabled = on, role = Role.Button, onClickLabel = "Отметить круг на линии", onClick = {
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                            RunService.send(context, RunService.ACTION_LAP)
-                        }),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(if (waiting) "СТАРТ" else "КРУГ", style = T.body(28.sp, FontWeight.ExtraBold).copy(color = if (on) F.c.onAccent else F.c.text3, letterSpacing = 3.sp))
-                        Text(
-                            when {
-                                !running -> "на паузе"
-                                waiting -> "жми, когда побежишь"
-                                else -> "жми на линии"
-                            },
-                            style = T.body(12.sp, FontWeight.SemiBold).copy(color = if (on) F.c.onAccent else F.c.text3),
-                        )
-                    }
-                }
-            }
+            // On a stadium «Круг» is the lowest and largest, the pause and the stop above it, small and dark (23 November: a
+            // white pause circle 12 dp under the white lap bar looked alike in glare; a thumb landing low paused instead).
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                     if (!w.isOpenEnded && seg != null) {
@@ -850,10 +829,10 @@ fun RunActiveScreen() {
                 // On a stadium the pause sits right under the lap button: a slip of the finger must not stop the plan.
                 val holdPause = lapM != null && !paused
                 val toggle = { RunService.send(context, if (paused) RunService.ACTION_RESUME else RunService.ACTION_PAUSE) }
-                val tint = if (locked) F.c.text3 else if (F.c.dark) F.c.bg else Color.White
+                val tint = if (locked) F.c.text3 else if (lapM != null) F.c.text else if (F.c.dark) F.c.bg else Color.White
                 Box(
-                    Modifier.size(96.dp).clip(if (F.shape.pill) CircleShape else RoundedCornerShape(F.shape.radius))
-                        .background(if (locked) F.c.surface2 else F.c.endurance)
+                    Modifier.size(if (lapM != null) 72.dp else 96.dp).clip(if (F.shape.pill) CircleShape else RoundedCornerShape(F.shape.radius))
+                        .background(if (locked || lapM != null) F.c.surface2 else F.c.endurance)
                         .semantics { contentDescription = if (paused) "Продолжить" else "Пауза" }
                         .combinedClickable(
                             enabled = !locked, role = Role.Button,
@@ -882,6 +861,34 @@ fun RunActiveScreen() {
                             "Стоп\nудерживай", Modifier.padding(horizontal = 8.dp),
                             style = T.body(12.sp, FontWeight.Bold).copy(color = if (locked) F.c.text3 else F.c.bad, lineHeight = 1.15.em, textAlign = TextAlign.Center),
                             maxLines = 2, autoSize = TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = 12.sp, stepSize = 0.5.sp),
+                        )
+                    }
+                }
+            }
+            if (lapM != null && !finished) {
+                val running = u.state == RunTracker.State.RUNNING
+                val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+                // The lock guards everything but this button: it is what the runner needs on the line.
+                val on = running
+                Box(
+                    Modifier.fillMaxWidth().height(108.dp).clip(RoundedCornerShape(if (F.shape.pill) 42.dp else F.shape.radius))
+                        .background(if (on) F.c.accent else F.c.surface2)
+                        .semantics { contentDescription = "Круг" }
+                        .combinedClickable(enabled = on, role = Role.Button, onClickLabel = "Отметить круг на линии", onClick = {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            RunService.send(context, RunService.ACTION_LAP)
+                        }),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("КРУГ", style = T.body(28.sp, FontWeight.ExtraBold).copy(color = if (on) F.c.onAccent else F.c.text3, letterSpacing = 3.sp))
+                        Text(
+                            when {
+                                !running -> "на паузе"
+                                waiting -> "жми, когда побежишь"
+                                else -> "жми на линии"
+                            },
+                            style = T.body(12.sp, FontWeight.SemiBold).copy(color = if (on) F.c.onAccent else F.c.text3),
                         )
                     }
                 }

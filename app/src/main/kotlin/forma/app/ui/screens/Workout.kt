@@ -535,13 +535,7 @@ fun WorkoutScreen(workoutId: Long) {
 
                 // What the "+" set is for, under the sets it follows.
                 if (plusSet) {
-                    Hint(
-                        "Последний подход — ${item.prescription.reps}+: сделай ${item.prescription.reps} и продолжай, пока идёт чисто. " +
-                            (if (item.prescription.topRir >= 2) "Остановись, когда сможешь ещё 2: впереди тяжёлый бег. "
-                            else "Остановись, когда сможешь ещё 1: ") +
-                            (if (item.prescription.topRir >= 2) "Веса будут расти так же." else "по лишним повторам видно, сколько прибавить."),
-                        F.c.strength, Ic.info,
-                    )
+                    Hint(lastSetRule(item.prescription), F.c.strength, Ic.info)
                 }
                 Spacer(Modifier.height(4.dp))
             }
@@ -644,10 +638,11 @@ fun WorkoutScreen(workoutId: Long) {
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                PrimaryButton("Подход сделан", {
+                // The set logged: one action for «Подход сделан» and for a set past the plan.
+                val logSet: () -> Unit = logSet@{
                     // A double tap of a sweaty finger is one set, not two.
                     val tap = android.os.SystemClock.elapsedRealtime()
-                    if (tap - lastLogAt < 1500) return@PrimaryButton
+                    if (tap - lastLogAt < 1500) return@logSet
                     lastLogAt = tap
                     // The advice reads the reserve on the person's own scale; the set is saved as rated.
                     val doneSet = DoneSet(inp.weight, inp.reps, forma.core.strength.RirScale.correct(inp.rir, rirBias))
@@ -707,7 +702,14 @@ fun WorkoutScreen(workoutId: Long) {
                         )
                         if (nx != null) current = nx.position
                     }
-                }, Modifier.fillMaxWidth(), color = if (F.type.mega) F.c.accent else F.c.strength, textColor = if (F.type.mega) F.c.onAccent else F.c.onData, icon = Ic.check)
+                }
+                // Every planned set of the session done (23 November: «Завершить» sat in a top bar that scrolls away, and the big
+                // button still said «Подход сделан»; the session was left open): the main action is to finish, a set more stays.
+                val sessionDone = n >= planned && nextOpen(plan.items, item.position, ::count) == null
+                if (sessionDone) {
+                    PrimaryButton("Закончить тренировку", { finishing = true }, Modifier.fillMaxWidth(), color = if (F.type.mega) F.c.accent else F.c.strength, textColor = if (F.type.mega) F.c.onAccent else F.c.onData, icon = Ic.check)
+                    GhostButton("Ещё подход", logSet, Modifier.fillMaxWidth(), height = 48.dp)
+                } else PrimaryButton("Подход сделан", logSet, Modifier.fillMaxWidth(), color = if (F.type.mega) F.c.accent else F.c.strength, textColor = if (F.type.mega) F.c.onAccent else F.c.onData, icon = Ic.check)
             }
         }
     }
@@ -909,10 +911,11 @@ private fun RestBar(leftMs: Long, fraction: Float, next: String?, onMinus: () ->
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(labelText(if (over) "Отдых окончен" else "Отдых"), style = T.label().copy(color = F.c.text))
-                    NumText(clock, style = T.number(26.sp).copy(color = if (over) F.c.warn else F.c.text))
+                    // Past the time: said, not warned about — rest is the person's own (23 November).
+                    NumText(clock, style = T.number(26.sp).copy(color = if (over) F.c.text2 else F.c.text))
                 }
                 Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(F.c.line)) {
-                    Box(Modifier.fillMaxWidth(if (over) 1f else fraction).height(4.dp).background(if (over) F.c.warn else F.c.strength))
+                    Box(Modifier.fillMaxWidth(if (over) 1f else fraction).height(4.dp).background(if (over) F.c.text3 else F.c.strength))
                 }
                 if (next != null) Text("дальше: $next", style = T.secondary(12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -923,10 +926,10 @@ private fun RestBar(leftMs: Long, fraction: Float, next: String?, onMinus: () ->
         return
     }
     Row(m.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Ring(if (over) 1f else fraction, if (over) F.c.warn else F.c.strength, Modifier.size(40.dp), stroke = 4.dp)
+        Ring(if (over) 1f else fraction, if (over) F.c.text3 else F.c.strength, Modifier.size(40.dp), stroke = 4.dp)
         Column(Modifier.weight(1f)) {
             Text(labelText(if (over) "Отдых окончен" else "Отдых"), style = T.label())
-            NumText(clock, style = T.number(22.sp).copy(color = if (over) F.c.warn else F.c.text))
+            NumText(clock, style = T.number(22.sp).copy(color = if (over) F.c.text2 else F.c.text))
             if (next != null) Text("далее: $next", style = T.secondary(11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (!over) SmallButton("−15", onMinus)
@@ -1149,18 +1152,24 @@ private fun NoteDialog(value: String, name: String, onDismiss: () -> Unit, onSav
 }
 
 /**
- * The prescription in one plain line: «72,5 кг, 3 подхода по 8, в последнем сколько сможешь. Заканчивай подход, когда
- * можешь ещё 1 раз.»
+ * The prescription in one plain line: «72,5 кг, 3 по 8. Стоп, когда можешь ещё 2.» The last set's own rule (a «+» set:
+ * on past the reps, stop with [forma.core.strength.Prescription.topRir] left) is said once, under the sets
+ * ([lastSetRule]). 23 November: the line said «в последнем сколько сможешь» — read in the gym as «to failure» — while the
+ * hint under the sets said «Остановись, когда сможешь ещё 2».
  */
 fun prescriptionLine(ex: forma.core.model.Exercise, p: forma.core.strength.Prescription): String {
     if (ex.load == LoadKind.TIMED) return "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")} по ${p.reps} с."
     val weight = p.weight?.let { Texts.weight(ex, it) } ?: "Вес подберём"
-    val sets = "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" + if (p.calibrate) "" else " по ${p.reps}"
-    val top = if (p.top && !p.calibrate) ", в последнем сколько сможешь" else ""
+    val sets = if (p.calibrate) "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" else "${p.sets} по ${p.reps}"
     val reserve = when {
         p.calibrate -> ""
         p.rir <= 0 -> " До отказа."
-        else -> " Заканчивай подход, когда можешь ещё ${p.rir} ${Ru.plural(p.rir, "раз", "раза", "раз")}."
+        else -> " Стоп, когда можешь ещё ${p.rir}."
     }
-    return "$weight, $sets$top.$reserve"
+    return "$weight, $sets.$reserve"
 }
+
+/** The last («+») set's rule, said once: «Последний: после 8 продолжай, стоп, когда можешь ещё 1.» */
+fun lastSetRule(p: forma.core.strength.Prescription): String =
+    "Последний: после ${p.reps} продолжай, стоп, когда можешь ещё ${p.topRir}." +
+        if (p.topRir >= 2) " Не до предела: впереди тяжёлый бег." else ""

@@ -209,4 +209,28 @@ class WorkoutPanelUiTest {
             RestTimer.stop()
         }
     }
+
+    /**
+     * 23 November, a lifter's walk through a session: after the last planned set the big button still said «Подход сделан»
+     * and «Завершить» sat in a top bar that scrolls away — the session was left open. Now finishing is the main button,
+     * and a set more is still a tap away.
+     */
+    @Test fun afterTheLastPlannedSetFinishingIsTheMainButton() {
+        val repo = repo("panel-finish")
+        val id = start(repo)
+        val plan = runBlocking { repo.planOf(repo.db.workouts().get(id)!!)!! }
+        // Everything but the last set of the last exercise.
+        runBlocking {
+            plan.items.forEachIndexed { i, item ->
+                val n = if (i == plan.items.lastIndex) item.prescription.sets - 1 else item.prescription.sets
+                repeat(n) { repo.logSet(id, item, item.prescription.weight ?: 20.0, item.prescription.reps, 2) }
+            }
+        }
+        show(repo, id)
+        compose.onNodeWithText("Подход сделан").performClick()
+        settle()
+        compose.onNodeWithText("Закончить тренировку", ignoreCase = true).assertExists()
+        compose.onNodeWithText("Ещё подход", ignoreCase = true).assertExists()
+        assertTrue(compose.onAllNodesWithText("Подход сделан").fetchSemanticsNodes().isEmpty())
+    }
 }

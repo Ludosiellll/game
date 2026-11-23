@@ -23,7 +23,7 @@ object RunHow {
             RunType.FREE -> "Как захочется: время, дистанция и круги запишутся."
             RunType.EASY, RunType.LONG -> {
                 val run = w.segments.firstOrNull { it.kind == SegmentKind.RUN }
-                listOfNotNull("${w.workSeconds / 60} мин спокойно, чтобы можно было говорить", run?.pace?.let(::notFaster)).joinToString(" · ")
+                listOfNotNull("${w.workSeconds / 60} мин спокойно", run?.pace?.let(::notFaster)).joinToString(" · ")
             }
             RunType.RUN_WALK -> {
                 val run = w.segments.filter { it.kind == SegmentKind.RUN }
@@ -36,8 +36,20 @@ object RunHow {
                 val first = work.firstOrNull() ?: return w.note
                 val same = work.all { it.laps == first.laps && it.seconds == first.seconds }
                 val len = first.laps?.let { Ru.laps(it) } ?: Ru.clock(first.seconds)
-                val reps = if (same) "${work.size} × $len" else "${work.size} ${Ru.plural(work.size, "отрезок", "отрезка", "отрезков")}"
-                val target = first.pace?.let { " — ${range(it)}" } ?: ""
+                // Reps of one lap read as laps: «6 кругов по 45–45,5 с»; longer ones as reps with the lap time to keep.
+                val oneLap = same && first.laps == 1.0
+                val reps = when {
+                    oneLap -> "${work.size} ${Ru.plural(work.size, "круг", "круга", "кругов")}"
+                    same -> "${work.size} × $len"
+                    else -> "${work.size} ${Ru.plural(work.size, "отрезок", "отрезка", "отрезков")}"
+                }
+                val target = first.pace?.let { p ->
+                    when {
+                        lapM != null && oneLap -> " по ${Ru.lapRange(Track.lapSec(p.fast.toDouble(), lapM), Track.lapSec(p.slow.toDouble(), lapM))}"
+                        lapM != null -> ", ${range(p)}"
+                        else -> " в темпе ${Ru.pace(p.fast.toDouble())}–${Ru.pace(p.slow.toDouble())} /км"
+                    }
+                } ?: ""
                 val r = rest.firstOrNull()?.let { ", отдых ${Ru.clock(it.seconds)}" } ?: ""
                 val warm = w.segments.firstOrNull { it.kind == SegmentKind.WARMUP }?.let { "Разминка ${Ru.clock(it.seconds)}, " } ?: ""
                 "$warm$reps$target$r"

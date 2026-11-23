@@ -478,12 +478,26 @@ private fun PauseControl() {
                     "будут легче. Если пауза на неделю или дольше, цикл начнётся заново.",
                 style = T.secondary(14.sp),
             )
+            // Asked first (23 November: one tap paused the plan and restarted the cycle, a curious tap included).
+            var asking by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<Int?>(null) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(1, 2, 3).forEach { w ->
-                    forma.app.ui.components.Chip(Ru.weeks(w), false, {
-                        scope.launch { repo.pause(today, today.plusDays(w * 7L - 1)) }
-                    }, Modifier.weight(1f), kind = forma.app.ui.components.ChipKind.ACTION)
+                    forma.app.ui.components.Chip(Ru.weeks(w), false, { asking = w }, Modifier.weight(1f), kind = forma.app.ui.components.ChipKind.ACTION)
                 }
+            }
+            asking?.let { w ->
+                val until = today.plusDays(w * 7L - 1)
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { asking = null },
+                    title = { Text("Пауза на ${Ru.weeks(w)}?") },
+                    text = { Text("До ${shortDate(until)} тренировки не ждут. Потом цикл начнётся заново, первые тренировки будут легче.") },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton({ asking = null; scope.launch { repo.pause(today, until) } }) {
+                            Text("Поставить паузу", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent))
+                        }
+                    },
+                    dismissButton = { androidx.compose.material3.TextButton({ asking = null }) { Text("Отмена", style = T.body(15.sp)) } },
+                )
             }
         }
     }

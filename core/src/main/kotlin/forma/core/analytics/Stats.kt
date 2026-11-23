@@ -128,11 +128,7 @@ object Stats {
         if (byEx.isEmpty()) return emptyList()
         val first = byEx.minOf { it.first().epochDay }
         val last = byEx.maxOf { it.last().epochDay }
-        fun valueOn(s: List<Point>, day: Long): Double? {
-            val upTo = s.filter { it.epochDay <= day }
-            if (upTo.isEmpty() || day - upTo.last().epochDay > ACTIVE_DAYS) return null
-            return upTo.takeLast(2).filter { upTo.last().epochDay - it.epochDay <= ACTIVE_DAYS }.maxOf { it.value }
-        }
+        fun valueOn(s: List<Point>, day: Long): Double? = liftOn(s, day)
         val out = mutableListOf<Point>()
         var day = monday(LocalDate.ofEpochDay(first)).plusDays(6).toEpochDay()
         var index = 100.0
@@ -148,6 +144,39 @@ object Stats {
             day += 7
         }
         return out
+    }
+
+    /**
+     * An exercise's one-rep estimate on [day] as the index takes it: the better of its last two sessions up to then, of the
+     * last four weeks; null without a session in them.
+     */
+    fun liftOn(series: List<Point>, day: Long): Double? {
+        val upTo = series.filter { it.epochDay <= day }
+        if (upTo.isEmpty() || day - upTo.last().epochDay > ACTIVE_DAYS) return null
+        return upTo.takeLast(2).filter { upTo.last().epochDay - it.epochDay <= ACTIVE_DAYS }.maxOf { it.value }
+    }
+
+    /**
+     * An exercise now and its change since [fromDay], by the index's own rule ([liftOn]) — so a row never says less while
+     * the index says more because its last session was a light one (23 November: «+5 %» over nine rows of «▼»). The start
+     * is its value on [fromDay], or its first session after it when it was not done in the four weeks before. Null without
+     * a session to compare.
+     */
+    fun liftChange(series: List<Point>, fromDay: Long, today: Long): Pair<Double, Double>? {
+        val now = liftOn(series, today) ?: return null
+        val start = liftOn(series, fromDay) ?: series.firstOrNull { it.epochDay > fromDay }?.value ?: return null
+        return now to now - start
+    }
+
+    /**
+     * The strength index from [fromDay] on, in percent of its value then: the last week at or before it is the start
+     * (0 %); a shorter history starts at its first week. Empty without an index.
+     */
+    fun indexSince(index: List<Point>, fromDay: Long): List<Point> {
+        if (index.isEmpty()) return emptyList()
+        val at = index.indexOfLast { it.epochDay <= fromDay }.coerceAtLeast(0)
+        val base = index[at].value.takeIf { it > 0 } ?: return emptyList()
+        return index.drop(at).map { Point(it.epochDay, (it.value / base - 1) * 100) }
     }
 
     /** Change of the last value against the first, in percent; null when there is nothing to compare. */

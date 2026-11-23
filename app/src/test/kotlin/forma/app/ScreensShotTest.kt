@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -473,12 +474,13 @@ class ScreensShotTest {
             }
         }
         settle()
-        compose.onAllNodesWithText("Путь к цели")[0].performScrollTo()
+        // The running section: the answer, the chart of rep laps; then its details — trials and sessions as lists.
+        compose.onAllNodesWithText("Средний круг в отрезках", substring = true)[0].performScrollTo()
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-goalpath.png")
-        compose.onAllNodesWithText("в темпе", substring = true).fetchSemanticsNodes().size.let { n ->
-            compose.onAllNodesWithText("в темпе", substring = true)[n - 1].performScrollTo()
-        }
+        compose.onNodeWithText("Подробнее о беге ›").performScrollTo().performClick()
+        settle()
+        compose.onNodeWithText("Контрольные").performScrollTo()
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-goalpath2.png")
     }
