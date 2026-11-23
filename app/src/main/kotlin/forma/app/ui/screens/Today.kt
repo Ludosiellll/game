@@ -107,7 +107,7 @@ fun TodayScreen() {
         scope.launch { repo.updateSettings { it.withFeel(today, f) } }
     }
     val catchUp by produceState<CatchUp.Suggestion?>(null, week, settings, today) { value = repo.catchUp(today) }
-    // Being sick lately changes the day's sessions and the trial; «Оказалось, не болел» changes them back on this screen.
+    // Being sick lately changes the day's sessions and the trial; «Снять отметку «Болею»» changes them back on this screen.
     val sick = repo.sickEnd(settings, today)
     val trialOn by produceState<LocalDate?>(null, program, today, week, sick) { value = repo.trialDay(today) }
     // Back from being sick: the first runs easy, the first gym session lighter — said above the day's sessions.
@@ -265,9 +265,16 @@ fun TodayScreen() {
         LoopCard()
         RecountCard()
         PicksInvite()
-        // The same window as «Прогресс» opens on: eight weeks, the change since the week before them.
-        val strength = remember(rows, bw, today) {
-            Stats.indexSince(Stats.strengthIndex(rows, bw), today.minusWeeks(8).toEpochDay()).takeIf { it.size >= 2 }?.last()?.value
+        // The same window as «Прогресс» opens on: eight weeks, the change since the week before them — or since the first
+        // week of a shorter history, said with its date as there.
+        val window = today.minusWeeks(8).toEpochDay()
+        val index = remember(rows, bw, today) { Stats.indexSince(Stats.strengthIndex(rows, bw), window) }
+        val strength = index.takeIf { it.size >= 2 }?.last()?.value
+        val strengthSince = when {
+            strength == null && rows.isNotEmpty() && rows.maxOf { it.epochDay } <= window -> "перерыв"
+            strength == null -> "после 2 недель"
+            index.first().epochDay > window -> "с ${shortDate(java.time.LocalDate.ofEpochDay(index.first().epochDay))}"
+            else -> "за 8 недель"
         }
         fun toProgress(tab: Int) {
             progressTabRequest = tab
@@ -298,7 +305,7 @@ fun TodayScreen() {
             )
             if (aim?.lifts == false) weekTile()
             else StatTile(
-                "Сила", strength?.let { Ru.pct(it) } ?: "—", if (strength == null) "после 2 недель" else "за 8 недель",
+                "Сила", strength?.let { Ru.pct(it) } ?: "—", strengthSince,
                 F.c.strength, Modifier.weight(1f).clickable(onClickLabel = "Прогресс силы") { toProgress(0) },
             )
             // The time over the goal's distance (5 km without one), as «Прогресс» gives it: from a trial, or the estimate
@@ -358,10 +365,10 @@ fun TodayScreen() {
     if (askNotSick) {
         AlertDialog(
             onDismissRequest = { askNotSick = false },
-            title = { Text("Оказалось, не болел?", style = T.title(20.sp)) },
+            title = { Text("Снять отметку «Болею»?", style = T.title(20.sp)) },
             text = {
                 Text(
-                    "Уберём отметку «Болею» и паузу. Эти дни станут обычными пропусками. " +
+                    "Пауза тоже снимется, эти дни станут обычными пропусками. " +
                         "Бег и зал сразу пойдут по плану.",
                     style = T.secondary(15.sp),
                 )
@@ -370,7 +377,7 @@ fun TodayScreen() {
                 TextButton({
                     askNotSick = false
                     scope.launch { repo.notSick(today) }
-                }) { Text("Да, не болел", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                }) { Text("Снять", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
             },
             dismissButton = { TextButton({ askNotSick = false }) { Text("Отмена", style = T.body(15.sp)) } },
             containerColor = F.c.surface,
@@ -729,7 +736,7 @@ private fun FeelRow(feel: Feel, tired: Boolean, onPick: (Feel) -> Unit) {
         }
         val text = when {
             feel == Feel.LOW -> "Сегодня полегче: в силовой вдвое меньше подходов и вес на 10 % легче, бег только лёгкий."
-            feel == Feel.UNSET && tired -> "Последние дни были тяжёлыми. Плохо спал или нет сил? Выбери «Так себе»."
+            feel == Feel.UNSET && tired -> "Последние дни были тяжёлыми. Если сил нет или сон был плохой, выбери «Так себе»."
             else -> null
         }
         if (text != null) Text(text, style = T.secondary(13.sp))
@@ -757,7 +764,7 @@ private fun SickCard(today: LocalDate, onTrainAnyway: () -> Unit, onPause: () ->
 @Composable
 private fun AfterSickNote(text: String, onNotSick: () -> Unit) {
     Banner(text, F.c.warn)
-    GhostButton("Оказалось, не болел", onNotSick, Modifier.fillMaxWidth())
+    GhostButton("Снять отметку «Болею»", onNotSick, Modifier.fillMaxWidth())
 }
 
 @Composable
@@ -772,7 +779,7 @@ private fun PauseCard(until: LocalDate, restarts: Boolean, onNotSick: (() -> Uni
         )
         GhostButton("Вернуться сегодня", onBack, Modifier.fillMaxWidth())
         // A pause from «Болею» that turned out to be nothing: its days are ordinary skipped days.
-        if (onNotSick != null) GhostButton("Оказалось, не болел", onNotSick, Modifier.fillMaxWidth())
+        if (onNotSick != null) GhostButton("Снять отметку «Болею»", onNotSick, Modifier.fillMaxWidth())
     }
 }
 
@@ -833,7 +840,7 @@ private fun PicksInvite() {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton("Выбрать", { nav.push(Screen.MyExercises) }, Modifier.weight(1f))
-            GhostButton("Не сейчас", { scope.launch { repo.updateSettings { it.copy(hintsSeen = it.hintsSeen + PICKS_SEEN) } } }, Modifier.weight(1f))
+            GhostButton("Не сейчас", { scope.launch { repo.updateSettings { it.copy(hintsSeen = it.hintsSeen + PICKS_SEEN) } } }, Modifier.weight(1f), height = 54.dp)
         }
     }
 }
@@ -868,7 +875,7 @@ private fun RecountCard() {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton("Пересчитать", { scope.launch { repo.recountLaps(old); tick++ } }, Modifier.weight(1f))
-            GhostButton("Не надо", { scope.launch { repo.updateSettings { it.copy(hintsSeen = it.hintsSeen + key) } } }, Modifier.weight(1f))
+            GhostButton("Не надо", { scope.launch { repo.updateSettings { it.copy(hintsSeen = it.hintsSeen + key) } } }, Modifier.weight(1f), height = 54.dp)
         }
     }
 }
@@ -895,7 +902,7 @@ private fun LoopCard() {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton("Поставить ${seen.meters}\u00A0м", { scope.launch { repo.setLapMeters(seen.meters) } }, Modifier.weight(1f))
-            GhostButton("Оставить ${seen.set}\u00A0м", { scope.launch { repo.keepLapLength() } }, Modifier.weight(1f))
+            GhostButton("Оставить ${seen.set}\u00A0м", { scope.launch { repo.keepLapLength() } }, Modifier.weight(1f), height = 54.dp)
         }
     }
 }
@@ -907,6 +914,6 @@ fun moodWords(zone: forma.core.load.LoadStory.Zone?): String = when (zone) {
     forma.core.load.LoadStory.Zone.FRESH -> "Силы есть, можно в полную"
     forma.core.load.LoadStory.Zone.BALANCE -> "Обычный день, всё по плану"
     forma.core.load.LoadStory.Zone.BUILDING -> "Неделя тяжёлая, всё по плану"
-    forma.core.load.LoadStory.Zone.REST -> "Ты подустал"
+    forma.core.load.LoadStory.Zone.REST -> "Накопилась усталость"
     forma.core.load.LoadStory.Zone.DETRAINING -> "Был перерыв, начни спокойно"
 }

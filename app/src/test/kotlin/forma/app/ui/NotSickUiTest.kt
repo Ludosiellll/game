@@ -86,12 +86,12 @@ class NotSickUiTest {
             settle()
             compose.onAllNodesWithText("Отдыхаем до", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("Оказалось, не болел", ignoreCase = true).performScrollTo().performClick()
+        compose.onNodeWithText("Снять отметку «Болею»", ignoreCase = true).performScrollTo().performClick()
         compose.onNodeWithText("Отмена").performClick()
         settle()
         compose.onNodeWithText("Отдыхаем до", substring = true).assertExists()
-        compose.onNodeWithText("Оказалось, не болел", ignoreCase = true).performScrollTo().performClick()
-        compose.onNodeWithText("Да, не болел").performClick()
+        compose.onNodeWithText("Снять отметку «Болею»", ignoreCase = true).performScrollTo().performClick()
+        compose.onNodeWithText("Снять").performClick()
         // The pause is gone: Saturday as planned, no easy return after it.
         compose.waitUntil(10_000) {
             settle()

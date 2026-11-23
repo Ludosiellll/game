@@ -447,7 +447,7 @@ internal fun LapLengthCard(set: Int?, measured: Int?) {
     FCard(gap = 8.dp, outline = if (done) null else F.c.accent) {
         SectionLabel("Длина круга", color = if (done) F.c.good else F.c.accent)
         if (done) {
-            Text("Круг — $measured\u00A0м. Время на круг и дистанция теперь считаются от него.", style = T.body(15.sp))
+            Text("Круг — $measured\u00A0м.", style = T.body(15.sp))
         } else {
             Text(
                 "По GPS твой круг ≈ $measured\u00A0м, а в настройках $set\u00A0м. Поэтому цели круга на $pct\u00A0% " +
@@ -706,7 +706,8 @@ fun RunActiveScreen() {
                     when {
                         w.isOpenEnded -> "с начала"
                         over -> "сверх плана +${Ru.clock(u.overSec)} · «Стоп», когда хватит"
-                        waiting -> CoachText.startWhere(w, tl.index + 1) + ". Побежишь, жми «Круг»."
+                        // The tile says «отсчёт с нажатия» and the lap button «жми, когда побежишь»: here only where to stand.
+                        waiting -> CoachText.startWhere(w, tl.index + 1)
                         race -> "время забега · на финише жми «Круг»"
                         seg?.kind == SegmentKind.RECOVERY -> "осталось отдыха"
                         else -> "осталось в отрезке"
@@ -748,7 +749,7 @@ fun RunActiveScreen() {
                     val nextRep = if (shown?.kind == SegmentKind.RECOVERY) w.segments.drop(shownIndex + 1).firstOrNull { it.kind == SegmentKind.WORK } else null
                     val tileTarget = target ?: nextRep?.pace
                     StatTile(
-                        if (nextRep != null && target == null) "Следующий круг" else "Цель круга",
+                        "Цель круга",
                         tileTarget?.let { Ru.lapRange(Track.lapSec(it.fast.toDouble(), lapM), Track.lapSec(it.slow.toDouble(), lapM)) } ?: "—",
                         when {
                             nextRep != null && target == null -> "в следующем отрезке"
@@ -941,7 +942,6 @@ internal fun trialSeconds(text: String, meters: Int): Int? {
     return t.takeIf { it > 0 && it / (meters / 1000.0) in forma.core.run.RunPlan.PLAUSIBLE_PACE }
 }
 
-/** "в темпе", "быстро", "медленно" for a lap with a target; empty without one. */
 /**
  * How far a lap was off its target, to put in the number: «· +1» slower, «· −1» quicker, nothing on it (23 November: the
  * verdict was a grey word and a colour, lost in sun and to colour blindness).
@@ -959,6 +959,7 @@ private fun lapOff(l: Lap): String {
     return " · " + (if (r > 0) "+" else "−") + Ru.one(kotlin.math.abs(r)).removeSuffix(",0")
 }
 
+/** "в темпе", "быстро", "медленно" for a lap with a target; empty without one. */
 private fun lapVerdict(l: Lap): String = when (l.verdict) {
     0 -> "в темпе"
     -1 -> "быстро"
@@ -1179,12 +1180,12 @@ fun RunDoneScreen(workoutId: Long) {
                 Text(
                     when {
                         testTime.isNotBlank() && typed == null -> "Не похоже на время забега. Впиши минуты и секунды через двоеточие, например 5:52."
-                        result.testSeconds != null && tracker.laps.any { it.rough } -> "Время по кнопке «Круг» и GPS. Круг без нажатия засчитан примерно (±2–3 с). Если засекалось вручную, поправь."
-                        result.testSeconds != null && tracker.laps.any { it.auto } -> "Время по GPS: круги засчитаны на линии стадиона, до нескольких десятых. Если засекалось вручную, поправь."
-                        result.testSeconds != null -> "Время по кнопке «Круг». Если засекалось вручную, поправь."
+                        result.testSeconds != null && tracker.laps.any { it.rough } -> "Время по кнопке «Круг» и GPS. Круг без нажатия засчитан примерно (±2–3 с). Если есть время с секундомера, поправь."
+                        result.testSeconds != null && tracker.laps.any { it.auto } -> "Время по GPS: круги засчитаны на линии стадиона, до нескольких десятых. Если есть время с секундомера, поправь."
+                        result.testSeconds != null -> "Время по кнопке «Круг». Если есть время с секундомера, поправь."
                         // Read as the plan will read it: on the loop GPS measured when the lap length set is off.
                         else -> (forma.core.run.RunPlan.onMeasuredLoop(w, result)?.let { (lw, lr) -> forma.core.run.RunPlan.held(lw, lr) } ?: forma.core.run.RunPlan.held(w, result))?.let { h ->
-                            "Форма посчитается по первым ${h.meters.roundToInt()} м (${Ru.clock(h.seconds.roundToInt())}). Если весь забег засекался вручную, впиши время."
+                            "Форма посчитается по первым ${h.meters.roundToInt()} м (${Ru.clock(h.seconds.roundToInt())}). Если есть время с секундомера, впиши его."
                         } ?: "Впиши время с секундомера, иначе форму не посчитать."
                     },
                     style = T.secondary(13.sp).copy(color = if (testTime.isNotBlank() && typed == null) F.c.warn else F.c.text2),
@@ -1226,7 +1227,7 @@ fun RunDoneScreen(workoutId: Long) {
                 Text(
                     when {
                         reps > w.reps -> "Больше плана. Если было не тяжелее задуманного, в следующий раз прибавим сильнее."
-                        reps == w.reps -> "Ровно по плану. Было больше, нажми «+»."
+                        reps == w.reps -> "Ровно по плану. Если было больше, нажми «+»."
                         else -> "Меньше плана. Повторим эту тренировку."
                     },
                     style = T.secondary(13.sp),

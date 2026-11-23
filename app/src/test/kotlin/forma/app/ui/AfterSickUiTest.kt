@@ -89,13 +89,13 @@ class AfterSickUiTest {
         }
         compose.onNodeWithText("Лёгкий бег", substring = true).assertExists()
         // It was nothing after all: taken back, the day goes by the plan.
-        compose.onNodeWithText("Оказалось, не болел", ignoreCase = true).performScrollTo().performClick()
-        compose.onNodeWithText("Да, не болел").performClick()
+        compose.onNodeWithText("Снять отметку «Болею»", ignoreCase = true).performScrollTo().performClick()
+        compose.onNodeWithText("Снять").performClick()
         compose.waitUntil(10_000) {
             settle()
             compose.onAllNodesWithText("После болезни", substring = true).fetchSemanticsNodes().isEmpty()
         }
-        compose.onNodeWithText("Оказалось, не болел", ignoreCase = true).assertDoesNotExist()
+        compose.onNodeWithText("Снять отметку «Болею»", ignoreCase = true).assertDoesNotExist()
         // Monday's run as planned again, on the same screen.
         compose.onNodeWithText("Лёгкий бег", substring = true).assertDoesNotExist()
         kotlin.test.assertTrue(Feel.SICK.name !in runBlocking { repo.store.settingsNow() }.feels.values)

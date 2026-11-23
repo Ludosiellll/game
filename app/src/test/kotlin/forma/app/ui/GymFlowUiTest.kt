@@ -344,6 +344,9 @@ class GymFlowUiTest {
             repo.db.state().upsertSlot(SlotStateEntity(slot.key, ex.id, 80.0, slot.repMin, 0, 0, 3, 1L, false, 0, null, null))
         }
         show(repo) { ExerciseScreen(ex.id) }
+        // The table of weights for a number of reps sits under its fold.
+        compose.onNodeWithText("Сколько раз смогу с весом", substring = true).performScrollTo().performClick()
+        settle()
         val three = floor(OneRm.loadFor(101.0, 3) / 5.0 + 1e-9) * 5.0
         assertTrue(texts(Texts.weight(ex, three)).isNotEmpty(), "rounded down to the 5 kg step")
         assertTrue(texts("Для ${slot.repMin}–${slot.repMax} повторов").single().contains("«${t.title}»"))

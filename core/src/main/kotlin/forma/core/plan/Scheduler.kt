@@ -199,6 +199,26 @@ object Scheduler {
         return WeekPlan(plan, notes(chosen, templates, aim.normalized()))
     }
 
+    /**
+     * A note of a week laid out before its words were made plain (23 November), said as [notes] says it now: the notes are
+     * stored with the plan, and laying the week out again could move its days.
+     */
+    fun reworded(note: String): String = OLD_WORDS.fold(note) { s, (old, new) -> s.replace(old, new) }
+
+    private val OLD_WORDS = listOf(
+        ": между ними есть день на восстановление." to ".",
+        "Накануне интервалов и длинной пробежки нет тренировки ног, так что бежать будет легче." to "Накануне тяжёлого бега нет тренировки ног.",
+        "Длинная пробежка — в выходной" to "Длинная пробежка в выходной",
+        "Главное — разнести тяжёлые ноги и тяжёлый бег хотя бы на 6 часов, а лучше на сутки." to
+            "Тренировку ног и тяжёлый бег разноси хотя бы на 6 часов, лучше на сутки.",
+        "Тяжёлый бег — в дни верха тела:" to "Тяжёлый бег идёт в дни верха тела:",
+        " Ноги — в день лёгкого бега." to " Тренировка ног в день лёгкого бега.",
+        " Руки и спину бег почти не утомляет." to "",
+        " В день ног — сначала зал" to " В день ног сначала зал",
+        " В день верха с лёгким бегом — сначала зал" to " В день верха с лёгким бегом сначала зал",
+        " Сильнее ты становишься как раз во время отдыха." to "",
+    )
+
     private fun legs(s: PlannedSession?, templates: List<Template>): Boolean =
         s != null && s.kind == SessionKind.LIFT && (templates.firstOrNull { it.id == s.templateId }?.legs ?: true)
 

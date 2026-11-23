@@ -49,7 +49,8 @@ object Texts {
 
     /** Why it stands where it does in the order: said after [roleLine] and a space, one sentence with it. */
     fun orderWhy(role: forma.core.strength.SlotRole, ex: Exercise): String = when (role) {
-        forma.core.strength.SlotRole.MAIN -> "идёт первым, пока силы свежие."
+        // «в начале», not «первым»: most days have two main lifts (squat and bench), and the second is not first.
+        forma.core.strength.SlotRole.MAIN -> "идёт в начале, пока силы свежие."
         forma.core.strength.SlotRole.SECONDARY -> "идёт после главного."
         forma.core.strength.SlotRole.ACCESSORY -> "идёт в конце" + if (ex.compound) " и добирает подходы." else ": усталость ему почти не мешает."
     }
@@ -98,29 +99,29 @@ object Texts {
     fun outcome(o: Outcome, ex: Exercise?): String = when (o) {
         is Outcome.Calibrated -> "Рабочий вес подобран: ${target(ex, o.weight, o.reps)}."
         is Outcome.AddReps ->
-            if (ex?.load == LoadKind.TIMED) "Всё выдержал. Теперь ${o.to} с."
+            if (ex?.load == LoadKind.TIMED) "Все подходы по ${o.from} с получились. Теперь ${o.to} с."
             else "Все повторы сделаны. Теперь ${target(ex, o.weight, o.to)}."
         is Outcome.LowerReps ->
-            if (ex?.load == LoadKind.TIMED) "Два раза подряд не удержал ${o.from} с. Теперь ${o.to} с."
+            if (ex?.load == LoadKind.TIMED) "Два раза подряд не получилось удержать ${o.from} с. Теперь ${o.to} с."
             else "Повторов не хватило. Теперь ${target(ex, o.weight, o.to)} вместо ${o.from}."
         is Outcome.AddWeight -> "Все повторы сделаны. Теперь ${target(ex, o.to, o.reps)} (+${Ru.kg(o.to - o.from)} кг)."
         is Outcome.Jump -> "Было очень легко. Сразу ${target(ex, o.to, o.reps)} (+${Ru.kg(o.to - o.from)} кг)."
         is Outcome.Hold -> when (o.reason) {
             HoldReason.NEAR_MISS -> "Почти получилось. Снова ${target(ex, o.weight, o.reps)}."
-            HoldReason.FIRST_MISS -> "Не добрал повторы. Снова ${target(ex, o.weight, o.reps)}."
+            HoldReason.FIRST_MISS -> "Повторов не хватило. Снова ${target(ex, o.weight, o.reps)}."
             HoldReason.FEWER_SETS -> "Сделаны не все подходы. Снова ${target(ex, o.weight, o.reps)}."
-            HoldReason.LIGHTER -> "Вес был легче плана, снова ${target(ex, o.weight, o.reps)}. Нет такого веса в зале? Поставь шаг веса: «План» → упражнение."
+            HoldReason.LIGHTER -> "Вес был легче плана. Снова ${target(ex, o.weight, o.reps)}. Нет такого веса в зале? Поставь шаг веса: «План» → упражнение."
             HoldReason.CONSOLIDATE -> "Всё сделано, но на пределе. Снова ${target(ex, o.weight, o.reps)}."
             HoldReason.NOT_THE_WEIGHT -> "Меньший вес не помог. Оставляем ${target(ex, o.weight, o.reps)}."
             HoldReason.STOPPED_EARLY -> "Запас ещё был, а повторов меньше плана. Снова ${target(ex, o.weight, o.reps)}, сделай все повторы."
-            HoldReason.INTRO -> "Первая неделя цикла, недобор не в счёт. Снова ${target(ex, o.weight, o.reps)}."
+            HoldReason.INTRO -> "В первую неделю цикла недобор не в счёт. Снова ${target(ex, o.weight, o.reps)}."
             HoldReason.AT_TOP -> "Это максимум по плану, держим ${target(ex, o.weight, o.reps)}. Хочешь расти дальше? Замени на вариант сложнее."
             HoldReason.TAPER -> "Перед днём цели подходов меньше, вес тот же. После него продолжим с ${target(ex, o.weight, o.reps)}."
             HoldReason.TEST -> "Проверка максимума засчитана. Дальше прежний план: ${target(ex, o.weight, o.reps)}."
         }
         is Outcome.Reduce -> "Вес оказался тяжёлым. Теперь ${target(ex, o.to, o.reps)} (−${Ru.kg(o.from - o.to)} кг)."
         is Outcome.Reset -> "Три тренировки без роста. Теперь легче: ${target(ex, o.to, o.reps)}."
-        Outcome.NotDone -> "Не делал, план тот же."
+        Outcome.NotDone -> "Не сделано, план тот же."
         Outcome.Deload -> "Лёгкая неделя. Потом продолжим с тех же весов."
     }
 
@@ -168,7 +169,7 @@ object Texts {
         }
         is RunOutcome.LighterWeek -> "Лёгкая неделя: тренировка короче, шаг тот же."
         is RunOutcome.TempoPace ->
-            if (o.softer) "Темповый бег был очень тяжёлым, и темп не держался. Теперь темп темповых на ${o.seconds} с/км спокойнее."
+            if (o.softer) "Темповый бег был очень тяжёлым, и темп не держался. Теперь темповые пробежки на ${o.seconds} с/км спокойнее."
             else if (o.seconds > 0) "Темповый бег дался легко и в темпе, ты подрос. Теперь темп всего на ${o.seconds} с/км спокойнее расчётного."
             else "Темповый бег дался легко и в темпе. Темп снова как по расчёту."
         RunOutcome.TooFastRepeat -> "Отрезки были заметно быстрее нужного. Повторим этот шаг, держи время круга или темп на км."
@@ -184,7 +185,7 @@ object Texts {
         RunOutcome.PaceUnknown -> "Темп не измерен: кругов нет. На стадионе жми «Круг» на каждой линии."
         is RunOutcome.LoopShorter -> "Круг по GPS около ${o.loop} м, а в настройках ${o.set} м. Круги посчитаны по ${o.loop} м. " +
             "Поставь длину круга, и план будет по настоящему кругу."
-        is RunOutcome.TestDoubtful -> "Контрольный дал бы форму ${Ru.one(o.vdot)}, слишком далеко от твоей. Похоже на опечатку или сбой, он не засчитан. Следующий контрольный через две недели."
+        is RunOutcome.TestDoubtful -> "Контрольный дал бы форму ${Ru.one(o.vdot)}, слишком далеко от твоей. Похоже на опечатку или сбой, поэтому он не засчитан. Следующий контрольный через две недели."
         RunOutcome.TestNotCounted -> "Круги пропущены, а время не вписано, поэтому контрольный не засчитан. Следующий через две недели."
         is RunOutcome.TestFromPart ->
             if (o.finished && o.capped) "Первые ${o.meters} м ты держал темп (${Ru.clock(o.seconds)}), потом сильно сбавил. Форма посчитана с учётом этого."

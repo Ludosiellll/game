@@ -116,7 +116,9 @@ class MusclesWeekUiTest {
                 FormaTheme(Looks.minimalDark) { Box(Modifier.fillMaxSize().background(F.c.bg)) { ProgressScreen() } }
             }
         }
-        settle()
+        // The plan of the week's days comes from the database, a query at a time: waited for, not a fixed pause.
+        compose.waitUntil(120_000) { settle(1); compose.onAllNodesWithText("Мышцы за 7 дней").fetchSemanticsNodes().isNotEmpty() }
+        settle(5)
         compose.onNodeWithText("Мышцы за 7 дней").performScrollTo()
         val wrong = listOf("Меньше плана почти везде", "Меньше плана:", "Мало:").filter {
             compose.onAllNodesWithText(it, substring = true).fetchSemanticsNodes().isNotEmpty()

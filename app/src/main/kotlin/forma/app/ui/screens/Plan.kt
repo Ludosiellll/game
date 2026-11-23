@@ -140,7 +140,7 @@ fun PlanScreen() {
 
         if (p.week.notes.isNotEmpty()) {
             SectionLabel("Почему так")
-            p.week.notes.forEach { Text("• $it", style = T.secondary(14.sp)) }
+            p.week.notes.forEach { Text("• ${forma.core.plan.Scheduler.reworded(it)}", style = T.secondary(14.sp)) }
         }
 
         SectionLabel("Силовые")
@@ -417,7 +417,7 @@ private fun PlanExerciseDialog(
                 }
                 Text(
                     if (rs != plannedRest) "В плане ${Ru.clock(plannedRest)}. Свой отдых будет одинаковым после любого подхода."
-                    else "Это среднее: после тяжёлого подхода отдых дольше, после лёгкого короче. Выберешь своё время, отдых всегда будет таким.",
+                    else "Это среднее: после тяжёлого подхода отдых дольше, после лёгкого короче. Если выберешь своё время, отдых всегда будет таким.",
                     style = T.secondary(12.sp),
                 )
                 val chosen = st
