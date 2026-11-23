@@ -223,8 +223,8 @@ class GymFlowUiTest {
         show(repo) { LiftDoneScreen(id) }
         assertTrue(texts("Сделано").isNotEmpty())
         val reps = first.prescription.reps
-        // The weight once for the sets at it, the number and its unit kept on one line.
-        assertTrue(texts(Texts.weightReps(Catalog[first.exerciseId], weightOf(first), "$reps, $reps").replace(" кг", "\u00A0кг")).isNotEmpty())
+        // The weight once for the sets at it, the number, its unit and «×» kept on one line.
+        assertTrue(texts(Texts.weightReps(Catalog[first.exerciseId], weightOf(first), "$reps, $reps").replace(" кг", "\u00A0кг").replace(" × ", "\u00A0×\u00A0")).isNotEmpty())
     }
 
     /** A plank to the stopwatch: "Засечь время", get into position, then the seconds count. */

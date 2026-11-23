@@ -24,7 +24,7 @@ class SetsLineTest {
         assertEquals("помощь 15 кг × 8, 7", plain(setsLine(Catalog["pullup"], listOf(-15.0 to 8, -15.0 to 7))))
         assertEquals("30 с, 25 с", plain(setsLine(Catalog["plank"], listOf(0.0 to 30, 0.0 to 25))))
         // A line that wraps never leaves «кг» alone at the start of the next.
-        assertEquals("72,5\u00A0кг × 6, 6", setsLine(squat, listOf(72.5 to 6, 72.5 to 6)))
+        assertEquals("72,5\u00A0кг\u00A0×\u00A06, 6", setsLine(squat, listOf(72.5 to 6, 72.5 to 6)))
     }
 
     @Test fun dumbbellsInThePlanLineAreSaidPerHand() {

@@ -156,7 +156,8 @@ internal fun setsLine(ex: Exercise?, sets: List<Pair<Double, Int>>): String {
         }
         runs.joinToString(" · ") { run -> Texts.weightReps(ex, run.first().first, run.joinToString(", ") { it.second.toString() }) }
     }
-    return line.replace(SET_UNIT, "$1\u00A0$2")
+    // «72,5 кг × 6, 6» stays whole up to its first comma: «кг ×» left alone at a line's end read as unfinished.
+    return line.replace(SET_UNIT, "$1\u00A0$2").replace(" × ", "\u00A0×\u00A0")
 }
 
 /** [setsLine] of one exercise's logged sets. */
