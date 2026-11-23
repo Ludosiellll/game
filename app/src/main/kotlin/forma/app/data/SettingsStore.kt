@@ -124,6 +124,14 @@ data class Settings(
     val coachLong: CoachTerm? = null,
     /** An easy run the coach put on the day [CoachTerm.until] (off the plan): [CoachTerm.value] minutes, 0 — the plan's length. */
     val coachRunToday: CoachTerm? = null,
+    /** What the person asked the coach for that it could not do, dated: read by the developer (it syncs with the settings). */
+    val coachWishes: List<String> = emptyList(),
+    /** The person's own order of a session's exercises: template id → the plan's exercise ids, first to last. */
+    val order: Map<String, List<String>> = emptyMap(),
+    /** Weekdays (1–7) whose hard run is an easy one until a day (epoch day, inclusive): the coach's, at the person's wish. */
+    val easyRunDays: Map<Int, Long> = emptyMap(),
+    /** A run the coach made for one day (its own reps, off the ladders): shown on that day until a run is done. */
+    val coachRun: CoachRun? = null,
 ) {
     /** [ex] on this gym's weights: the person's own step, going from its first weight when the stack starts at one. */
     fun onSteps(ex: forma.core.model.Exercise): forma.core.model.Exercise =
@@ -162,6 +170,10 @@ data class Settings(
         const val PAST_PAUSES = 30
     }
 }
+
+/** A run the coach made for [day] (epoch day): [workout] as it will be run. */
+@Serializable
+data class CoachRun(val day: Long, val workout: forma.core.run.RunWorkout)
 
 /** A change of the coach's that lasts until [until] (epoch day, inclusive): [value] as the change says. */
 @Serializable

@@ -221,7 +221,8 @@ class CoachLeversGoalsTest {
 
     @Test fun theDeclarationsStillFit() {
         val names = CoachActions.declarations.map { ((it as JsonObject)["name"] as JsonPrimitive).content }
-        assertTrue(names.size <= 40)
+        // The server takes up to 60 (MAX_TOOLS in the coach function).
+        assertTrue(names.size <= 60)
         for (d in CoachActions.declarations) {
             val o = d as JsonObject
             assertTrue(((o["description"] as JsonPrimitive).content).length <= 800, o["name"].toString())

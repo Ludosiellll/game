@@ -46,6 +46,8 @@ data class RunWorkout(
     val targetPace: PaceRange? = null,
     /** An easy run done for a hard one missed earlier in the week that could not be today ([forma.core.plan.CatchUp]). */
     val instead: Boolean = false,
+    /** Made by the coach at the runner's wish ([RunPlan.custom]): it counts as a run and moves no ladder. */
+    val custom: Boolean = false,
 ) {
     /** Work reps (WORK segments) in the plan. */
     val reps: Int get() = segments.count { it.kind == SegmentKind.WORK }

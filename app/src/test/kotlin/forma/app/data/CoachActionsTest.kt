@@ -79,7 +79,8 @@ class CoachActionsTest {
     @Test fun theDeclarationsFitWhatGeminiTakes() {
         val names = CoachActions.declarations.map { ((it as JsonObject)["name"] as JsonPrimitive).content }
         assertEquals(names.size, names.toSet().size)
-        assertTrue(names.size <= 40)
+        // The server takes up to 60 (MAX_TOOLS in the coach function).
+        assertTrue(names.size <= 60)
         for (d in CoachActions.declarations) {
             val o = d as JsonObject
             assertTrue(((o["name"] as JsonPrimitive).content).matches(Regex("^[a-z_]{1,40}$")))

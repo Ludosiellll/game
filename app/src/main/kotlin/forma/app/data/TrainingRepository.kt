@@ -906,7 +906,7 @@ class TrainingRepository(
             item(t.slots.size + j, overrides(addedSpec(id), settings, key), key).copy(planId = id, addedForGood = true)
         }
         val why = if (deload && !forceDeload && liftAfterSick(date) && !ProgramGenerator.isDeloadWeek(program, date)) SICK_LIFT else null
-        val items = warmUps(inOrder(own + extra, goal?.exerciseId))
+        val items = warmUps(inOrder(own + extra, goal?.exerciseId, settings.order[t.id]))
         val test = goal?.date == date.toEpochDay() && !unwell
         return LiftPlan(t.id, t.title, if (test) testOn(items, goal!!) else items, deload, why)
     }
@@ -968,12 +968,19 @@ class TrainingRepository(
      * multi-joint before isolation; otherwise the plan's own order. An exercise added by hand takes its place by what it
      * is, not the end of the list. Positions stay as they are (they key swaps and sets).
      */
-    private fun inOrder(items: List<LiftItem>, goalLift: String? = null): List<LiftItem> = items.withIndex().sortedWith(
-        compareBy<IndexedValue<LiftItem>> { it.value.slot.role.ordinal }
-            .thenBy { if (it.value.exerciseId == goalLift) 0 else 1 }
-            .thenBy { if (Catalog[it.value.exerciseId].compound) 0 else 1 }
-            .thenBy { it.index },
-    ).map { it.value }
+    private fun inOrder(items: List<LiftItem>, goalLift: String? = null, own: List<String>? = null): List<LiftItem> {
+        val base = items.withIndex().sortedWith(
+            compareBy<IndexedValue<LiftItem>> { it.value.slot.role.ordinal }
+                .thenBy { if (it.value.exerciseId == goalLift) 0 else 1 }
+                .thenBy { if (Catalog[it.value.exerciseId].compound) 0 else 1 }
+                .thenBy { it.index },
+        ).map { it.value }
+        // The person's own order ([Settings.order], by the plan's exercise ids): those named first, as named; the rest
+        // after them as the app would have them.
+        if (own.isNullOrEmpty()) return base
+        val rank = own.withIndex().associate { it.value to it.index }
+        return base.withIndex().sortedWith(compareBy({ rank[it.value.planId ?: it.value.exerciseId] ?: Int.MAX_VALUE }, { it.index })).map { it.value }
+    }
 
     /** Exercises added to template [templateId] for good that can still be done (an own exercise may be archived). */
     fun addedTo(templateId: String, settings: Settings): List<String> =
@@ -1939,6 +1946,12 @@ class TrainingRepository(
      */
     /** [minutes]: an easy run of this length (the coach's run of the day); the plan's caps still hold. */
     suspend fun runFor(kind: SessionKind, date: LocalDate = today(), light: Boolean = false, road: Boolean = false, trial: Boolean? = null, minutes: Int? = null): RunWorkout {
+        // A hard run day made easy for a while at the person's wish ([Settings.easyRunDays]): the day's easy run, counted
+        // for the hard one.
+        if (kind == SessionKind.RUN_QUALITY) easedUntil(store.settingsNow(), date)?.let { until ->
+            val e = runFor(SessionKind.RUN_EASY, date, light, road, trial, minutes)
+            return e.copy(note = "По твоей просьбе в этот день лёгкий бег вместо тяжёлого — до ${Ru.date(LocalDate.ofEpochDay(until))}. " + e.note)
+        }
         // A due trial goes on its own day ([trialDay]): not on a hard day too soon after the legs.
         @Suppress("NAME_SHADOWING") val trial = trial ?: (kind != SessionKind.RUN_QUALITY || trialDay(date) == date)
         val saved = store.runStateNow()
@@ -2314,6 +2327,9 @@ class TrainingRepository(
         return trialDay(date) != fresh
     }
 
+    /** The day until which [date]'s weekday has an easy run for its hard one ([Settings.easyRunDays]); null — as planned. */
+    fun easedUntil(settings: Settings, date: LocalDate): Long? = settings.easyRunDays[date.dayOfWeek.value]?.takeIf { date.toEpochDay() <= it }
+
     /**
      * A test calibrates paces. Without a goal: when they are unknown, and again every 8 weeks. With a goal the paces come
      * from the estimate of the fitness until a trial is counted, so no trial is due just because none was run: it comes
@@ -2348,7 +2364,7 @@ class TrainingRepository(
         if (!st.canRunContinuously) return null
         val goal = store.profileNow()?.runGoal
         val hard = (0 until 14).map { from.plusDays(it.toLong()) }.filter { d ->
-            if (paused(settings, d) || !needsTest(st, d, goal)) return@filter false
+            if (paused(settings, d) || !needsTest(st, d, goal) || easedUntil(settings, d) != null) return@filter false
             // Not within a week of being sick, nor while the runs after it are still easy.
             if (sickEnd(settings, d)?.let { d.toEpochDay() - it <= SICK_NO_TRIAL_DAYS } == true || easyAfterSick(d) > 0) return@filter false
             // Not the first run after more than a week without running: a trial is not run cold.

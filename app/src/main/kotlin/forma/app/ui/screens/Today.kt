@@ -202,6 +202,12 @@ fun TodayScreen() {
                 }
             }
         }
+        // The coach's own run for today (its reps, off the ladders), until a run is done today.
+        settings.coachRun?.takeIf { it.day == today.toEpochDay() && todayItem?.done.orEmpty().none { w -> w.kind == forma.app.data.Kind.RUN } }?.let { r ->
+            val lap = me?.lapMeters
+            val w = if (lap != null) forma.core.run.RunPlan.onTrack(r.workout, lap) else r.workout
+            CoachOwnRunCard(w, replaces = todays.any { it.isRun }) { nav.push(Screen.RunSetup(w, todays.firstOrNull { it.isRun }?.kind ?: SessionKind.RUN_EASY)) }
+        }
         when {
             repo.paused(settings, today) -> {
                 PauseCard(
@@ -690,6 +696,20 @@ private fun CoachRunCard(minutes: Int, onStart: () -> Unit) {
         SectionLabel("От тренера", color = F.c.endurance)
         Text(if (minutes > 0) "Лёгкий бег · $minutes мин" else "Лёгкий бег", style = T.title(22.sp))
         Text("Вне плана, по твоей просьбе. Спокойно, чтобы можно было говорить, без ускорений.", style = T.secondary(14.sp))
+        PrimaryButton("Начать", onStart, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData)
+    }
+}
+
+/** A run the coach made for today at the person's wish ([forma.app.data.CoachRun]). */
+@Composable
+private fun CoachOwnRunCard(w: forma.core.run.RunWorkout, replaces: Boolean, onStart: () -> Unit) {
+    FCard(outline = F.c.endurance) {
+        SectionLabel("От тренера", color = F.c.endurance)
+        Text(w.title.substringAfter(" · "), style = T.title(22.sp))
+        Text(
+            (if (replaces) "Вместо сегодняшней пробежки по плану, по твоей просьбе." else "Вне плана, по твоей просьбе.") + " Засчитывается, шаги плана не двигает.",
+            style = T.secondary(14.sp),
+        )
         PrimaryButton("Начать", onStart, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData)
     }
 }

@@ -149,6 +149,8 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
     val roadRun by androidx.compose.runtime.produceState<RunWorkout?>(null, road) {
         value = when {
             !road -> null
+            // The coach's own run is kept as it is run on the road: on a stadium its reps are laps.
+            workout.custom -> repo.store.settingsNow().coachRun?.workout ?: workout
             kind == null -> repo.freeRun(null)
             else -> repo.runFor(kind, today, light = workout.light, road = true)
         }

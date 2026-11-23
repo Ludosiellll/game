@@ -52,6 +52,30 @@ internal const val COACH_RULES = """## Как решает приложение
 - После «Болею»: 2 пробежки лёгкие, контрольного нет неделю, первая силовая облегчённая. После перерыва больше недели первая пробежка лёгкая.
 - Оценка тяжести (1–10) после тренировки решает следующую: её можно исправить."""
 
+/**
+ * Where things are done by hand, by the keys of `open_screen`: the coach points here (a button to the screen) instead of
+ * making a place up. Denis, 5 November: the coach sent him to «План → день → настройка отрезков», which does not exist.
+ */
+internal const val COACH_MAP = """## Что где в приложении (это человек делает сам; кнопку «Открыть» на экран даёт open_screen по ключу)
+- today «Сегодня»: «Начать» тренировку дня; «Как ты сегодня?» (хорошо, так себе, болею); пропущенная тренировка недели; карточка пробежки от тренера.
+- plan «План»: неделя по дням (нажать день — что, зачем и почему в этот день); ниже упражнения каждой тренировки (нажать упражнение: заменить, подходы, повторы, отдых, шаг веса, первый вес тренажёра, убрать), «Добавить упражнение», «Пауза», «Идеальный план», «Мои упражнения».
+- progress «Прогресс»: вкладки «Сила», «Бег» (форма, темпы, прогноз, путь к цели), «Нагрузка» (свежесть, недели), «Тело» (вес, карта мышц).
+- history «История»: все тренировки и пробежки; открыть тренировку — «Изменить оценку», поправить круги пробежки, «Удалить из истории».
+- exercises «Упражнения»: поиск упражнения, как делать, своё упражнение.
+- my_exercises «Мои упражнения»: что нравится и что не хочу делать, где занимаюсь.
+- ideal_plan «Идеальный план»: что приложение предлагает поменять в зальном плане, по пунктам.
+- friends «Люди и друзья»: чужие тренировки и программы, сообщения, взять программу друга.
+- body «Вес тела»: записать вес, график.
+- cloud «Облако и резервная копия»: вход, синхронизация, копия в файл, удалить аккаунт.
+- profile «Цель, дни и данные»: анкета (для чего зал и бег, дни, длина тренировки, опыт), цель по бегу, круг стадиона, вес, рост, год рождения.
+- gym_goal «Цель в зале»: упражнение, вес, дата.
+- settings «Оформление и звук»: оформление, голос, сигналы, вибрация, GPS, автопауза, таймер отдыха, не гасить экран, выгрузка тренировок в файл.
+- calculators «Калькуляторы»: вес на 1 раз, блины, разминка, темп, прогноз, пульс.
+- help «Как пользоваться»: знакомство, словарь, показать подсказки снова.
+- На экране силовой тренировки: вес и повторы подхода, запас, «Подход сделан», таймер отдыха, заменить, пропустить или добавить упражнение.
+- На экране пробежки: «Круг» на линии стадиона, пауза, закончить; после — оценка тяжести; «Бегал без телефона — внести».
+Других экранов и настроек нет. Чего нет ни здесь, ни среди функций — того приложение не умеет: скажи это прямо и запиши пожелание (wish)."""
+
 /** The research the rules stand on (as in the project's notes), for the coach's "why". */
 internal const val COACH_RESEARCH = """## Исследования, на которых стоят правила
 - Запас повторов (RIR) как мера усилия — Helms и др., 2016/2018. «N+» подход — APRE, Mann и др., 2010.
@@ -204,6 +228,7 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
         appendLine()
         appendLine("## Как устроено приложение")
         SCREENS.forEach { (name, text) -> appendLine("- $name: $text") }
+        appendLine(COACH_MAP)
         appendLine("## Словарь приложения")
         GLOSSARY.forEach { (word, text) -> appendLine("- $word: $text") }
     }
@@ -370,7 +395,12 @@ private suspend fun changes(repo: TrainingRepository, today: LocalDate): String 
     val terms = listOfNotNull(
         s.coachStrides?.takeIf { it.on(today) }?.let { "ускорений после лёгкого — ${it.value}, до ${Ru.date(LocalDate.ofEpochDay(it.until))}" },
         s.coachLong?.takeIf { it.on(today) }?.let { "последний лёгкий бег недели — длинный, до ${Ru.date(LocalDate.ofEpochDay(it.until))}" },
-    )
+        s.coachRun?.takeIf { it.day == today.toEpochDay() }?.let { "на сегодня своя пробежка (run_custom): «${it.workout.title.substringAfter(" · ")}»" },
+    ) + s.easyRunDays.filterValues { it >= today.toEpochDay() }.map { (d, until) ->
+        "${listOf("пн", "вт", "ср", "чт", "пт", "сб", "вс")[d - 1]}: вместо тяжёлого бега лёгкий, до ${Ru.date(LocalDate.ofEpochDay(until))} (ease_run_day)"
+    } + s.order.map { (t, ids) ->
+        "свой порядок упражнений в «${repo.store.programNow()?.templates?.firstOrNull { it.id == t }?.title ?: t}»: ${ids.joinToString(", ")} (move_exercise … reset — вернуть)"
+    } + (if (s.coachWishes.isEmpty()) emptyList() else listOf("пожелания разработчику уже записаны: " + s.coachWishes.takeLast(8).joinToString("; ") { it.substringAfter(": ") }))
     val log = repo.store.coachLogNow().takeLast(12)
     if (terms.isEmpty() && log.isEmpty()) return@buildString
     appendLine("## Твои изменения")

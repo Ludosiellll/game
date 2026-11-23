@@ -174,7 +174,8 @@ class CoachProfileTest {
     /** Every function fits what the server takes (a bigger one is dropped there without a word), set_profile too. */
     @Test fun everyFunctionFitsTheServer() {
         val all = CoachActions.declarations
-        assertTrue(all.size <= 40, "${all.size} functions")
+        // The server takes up to 60 (MAX_TOOLS in the coach function).
+        assertTrue(all.size <= 60, "${all.size} functions")
         assertTrue(all.any { it.jsonObject["name"]!!.jsonPrimitive.content == CoachActions.PROFILE })
         for (f in all) {
             val o = f.jsonObject

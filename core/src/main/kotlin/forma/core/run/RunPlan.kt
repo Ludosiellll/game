@@ -271,6 +271,27 @@ data class RunAfter(val state: RunState, val outcomes: List<RunOutcome>)
 @Serializable
 data class RunCaps(val easyMax: Int, val longMax: Int)
 
+/**
+ * A run of the coach's own making, as asked for («хочу сегодня 8 по 200»): [reps] of [workSec] seconds or [workMeters]
+ * metres at [pace], [restSec] of jog between them, easy running before and after.
+ */
+data class CustomRun(
+    val reps: Int,
+    val workSec: Int?,
+    val workMeters: Int?,
+    val pace: Pace,
+    val restSec: Int,
+    val warmupMin: Int,
+    val cooldownMin: Int,
+) {
+    /** What a rep is run at: the app's own paces for the runner's fitness ([FREE]: by feel, no pace). */
+    enum class Pace(val ru: String, val rpe: Int) {
+        EASY("лёгкий темп", 4), TEMPO("темповый темп", 7), INTERVAL("темп интервалов", 8), RACE("темп забега", 8), FAST("быстрый темп", 8), FREE("по ощущениям", 6);
+
+        val hard: Boolean get() = this != EASY
+    }
+}
+
 /** A tempo run's reps: [reps] × [workSec] at threshold, [restSec] of easy jog between them. */
 @Serializable
 data class TempoShape(val reps: Int, val workSec: Int, val restSec: Int) {
@@ -664,6 +685,58 @@ object RunPlan {
         val work = ((own.workSec * 1.6) / 30).roundToInt() * 30
         if (work >= to.workSec) return null
         return TempoShape(max(2, (to.total.toDouble() / work).roundToInt()), work, max(60, to.restSec))
+    }
+
+    /** The pace of a rep of [c] for this runner, s/km (the middle and the half-width of its range); null by feel or with no fitness known. */
+    private fun customPace(state: RunState, goal: RunGoal?, pace: CustomRun.Pace): Pair<Double, Int>? {
+        val p = paces(state) ?: return null
+        return when (pace) {
+            CustomRun.Pace.EASY -> (p.easy.fast + p.easy.slow) / 2.0 to (p.easy.slow - p.easy.fast) / 2
+            CustomRun.Pace.TEMPO -> p.threshold + state.tempoSoft.toDouble() to 5
+            CustomRun.Pace.INTERVAL -> p.interval.toDouble() to 4
+            // The race pace of the form now (a step toward the goal's), or the repetition pace without a goal.
+            CustomRun.Pace.RACE -> (goal?.let { stepPace(state, it) } ?: p.repetition.toDouble()) to 3
+            CustomRun.Pace.FAST -> p.repetition.toDouble() to 5
+            CustomRun.Pace.FREE -> null
+        }
+    }
+
+    /** Seconds a rep of [c] lasts: as given, or its metres at its pace; null when metres are given and no pace is known. */
+    fun customRepSeconds(state: RunState, goal: RunGoal?, c: CustomRun): Int? =
+        c.workSec ?: c.workMeters?.let { m -> customPace(state, goal, c.pace)?.let { (it.first * m / 1000.0).roundToInt() } }
+
+    /**
+     * A run of the coach's own making ([CustomRun]): easy running, its reps with a jog between, easy running again. Paced
+     * from the runner's fitness like the plan's runs; on a stadium its reps become whole laps ([onTrack]). It counts as a
+     * run and moves no ladder ([RunWorkout.custom]). Null when a rep's length cannot be told (metres with no pace known).
+     */
+    fun custom(state: RunState, goal: RunGoal?, c: CustomRun, lapMeters: Int? = null): RunWorkout? {
+        val sec = customRepSeconds(state, goal, c) ?: return null
+        val p = paces(state)
+        val range = customPace(state, goal, c.pace)?.let { (mid, half) -> PaceRange((mid - half).roundToInt(), (mid + half).roundToInt()) }
+        val length = c.workMeters?.let { "$it м" } ?: (if (sec % 60 == 0 || sec >= 120) "${minutes((sec / 30.0).roundToInt() * 30)} мин" else "$sec с")
+        val w = if (c.reps == 1 && c.pace == CustomRun.Pace.EASY) {
+            RunWorkout(
+                RunType.EASY, "От тренера · лёгкий бег $length", listOf(Segment(SegmentKind.RUN, sec, range)),
+                "Пробежка от тренера по твоей просьбе. Беги так, чтобы мог говорить целыми фразами.", targetRpe = 4, custom = true,
+            )
+        } else {
+            val segs = mutableListOf<Segment>()
+            if (c.warmupMin > 0) segs += Segment(SegmentKind.WARMUP, c.warmupMin * 60, p?.easy)
+            repeat(c.reps) { i ->
+                segs += Segment(SegmentKind.WORK, sec, range)
+                if (i < c.reps - 1 && c.restSec > 0) segs += Segment(SegmentKind.RECOVERY, c.restSec, p?.easy)
+            }
+            if (c.cooldownMin > 0) segs += Segment(SegmentKind.COOLDOWN, c.cooldownMin * 60, p?.easy)
+            val note = "Пробежка от тренера по твоей просьбе: отрезки — ${c.pace.ru}" + (range?.let { ", ${Ru.pace(it.fast.toDouble())}–${Ru.pace(it.slow.toDouble())} на км" } ?: "") +
+                (if (c.restSec > 0 && c.reps > 1) ", между ними ${Ru.clock(c.restSec)} трусцой или шагом." else ".") +
+                " Она засчитывается как пробежка, но шаги плана не двигает." + (if (state.estimated && range != null) " Темп примерный: форма оценена по цели и по тому, как идут пробежки." else "")
+            RunWorkout(
+                if (c.pace == CustomRun.Pace.TEMPO) RunType.TEMPO else RunType.INTERVALS,
+                "От тренера · " + (if (c.reps == 1) length else "${c.reps} × $length"), segs, note, targetRpe = c.pace.rpe, custom = true,
+            )
+        }
+        return if (lapMeters != null) onTrack(w, lapMeters) else w
     }
 
     /** «5», «2,5»: a rep's minutes as said. */
@@ -1184,8 +1257,8 @@ object RunPlan {
         if (offset > 0 && w.type != RunType.TEST && w.type != RunType.FREE && (w.type != RunType.RUN_WALK || done)) out += RunOutcome.OwnScale(offset)
         // Easy runs and run/walk done in full set the scale (both meant light to moderate); a lighter one for a bad day too.
         if ((w.type == RunType.EASY || w.type == RunType.RUN_WALK) && done) s = s.copy(easyRpes = (state.easyRpes + r.rpe).takeLast(8))
-        // A run made lighter for a bad day counts as running, but moves no ladder.
-        if (w.light) return RunAfter(s, out)
+        // A run made lighter for a bad day counts as running, but moves no ladder; nor does one of the coach's own making.
+        if (w.light || w.custom) return RunAfter(s, out)
         when (w.type) {
             // Running without a break already (a run/walk session saved late, for a day before the graduation): it moves
             // nothing — the ladder is done, and a session done in full must not put the runner back on it.

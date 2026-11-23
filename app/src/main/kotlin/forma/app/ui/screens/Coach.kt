@@ -286,10 +286,11 @@ private fun ActCard(msgId: Long, index: Int, act: CoachChatAct, log: List<CoachL
         Modifier.padding(start = 12.dp), gap = 8.dp, padding = PaddingValues(14.dp),
         outline = when { pending -> F.c.accent; done -> F.c.good.copy(alpha = 0.6f); else -> null },
     ) {
+        val open = act.call.name == forma.app.data.CoachActions.OPEN
         SectionLabel(
             when (state) {
                 CoachActState.PENDING -> "Предлагаю изменить"
-                CoachActState.DONE -> "Сделано"
+                CoachActState.DONE -> if (open) "Где это в приложении" else "Сделано"
                 CoachActState.UNDONE -> "Возвращено как было"
                 CoachActState.DECLINED -> "Не стал менять"
                 CoachActState.REFUSED -> "Не получилось"
@@ -309,7 +310,10 @@ private fun ActCard(msgId: Long, index: Int, act: CoachChatAct, log: List<CoachL
                 }, Modifier.weight(1f), enabled = !working)
                 GhostButton("Не надо", { run { CoachTalk.decline(repo, msgId, index) } }, Modifier.weight(1f))
             }
-            CoachActState.DONE -> if (log.firstOrNull { it.id == act.logId }?.undo != null) GhostButton("Вернуть как было", {
+            CoachActState.DONE -> if (open) {
+                val nav = forma.app.ui.LocalNav.current
+                PrimaryButton("Открыть", { openScreen(nav, (act.call.args["screen"] as? kotlinx.serialization.json.JsonPrimitive)?.content) }, Modifier.fillMaxWidth())
+            } else if (log.firstOrNull { it.id == act.logId }?.undo != null) GhostButton("Вернуть как было", {
                 run { if (runCatching { CoachTalk.undo(repo, msgId, index) }.getOrDefault(false) != true) note = "Уже не вернуть: после этого всё изменилось." }
             }, Modifier.fillMaxWidth())
             else -> Unit
@@ -358,18 +362,21 @@ private fun PanelCard(p: Panel, notes: List<String>, log: List<CoachLogEntry>) {
             Panel.ABOUT -> {
                 SectionLabel("Как это работает")
                 Text(
-                    "Тренер — ИИ (Gemini от Google). Он видит твой план, тренировки, бег, самочувствие и правила приложения, " +
-                        "на которых строятся тренировки.",
+                    "Тренер — ИИ. Он видит твой план, тренировки, бег, самочувствие и правила приложения, " +
+                        "на которых строятся тренировки. Проси своими словами: он сам подберёт, что и как поменять.",
                     style = T.body(14.sp),
                 )
                 Text(
                     "Сам меняет: самочувствие на сегодня, короткую паузу, оценку тренировки, длину лёгкого бега (раз в неделю), ускорения, " +
-                        "длинный бег, шаг веса под твой зал. Каждое такое изменение можно вернуть, пока его не сдвинула " +
-                        "тренировка. Больше 6 изменений в день сам не делает.",
+                        "длинный бег, шаг веса под твой зал, темпы бега спокойнее, лёгкий бег вместо тяжёлого, лёгкую пробежку на сегодня, " +
+                        "контрольный забег (поставить или отложить), настройки звука и оформления, вес тела. Каждое такое изменение можно " +
+                        "вернуть, пока его не сдвинула тренировка. Больше 6 изменений в день сам не делает.",
                     style = T.body(14.sp),
                 )
                 Text(
-                    "Только после «Принять»: рабочий вес, «Болею», пауза на неделю и больше, упражнения, подходы, повторы, отдых, цель, стадион. " +
+                    "Только после «Принять»: рабочий вес, «Болею», пауза на неделю и больше, упражнения, их порядок, подходы, повторы, отдых, " +
+                        "цель, стадион, разгрузочная неделя, своя тяжёлая пробежка на сегодня, темпы бега быстрее. " +
+                        "Чего сделать не может — скажет прямо, покажет кнопкой, где это делается руками, и запишет пожелание. " +
                         "Пределы приложения ИИ не обойдёт: лёгкий бег растёт не больше чем на 15 % в неделю, а сократить его больше чем на 10 % " +
                         "сам не может; вес — не больше чем на 25 % за раз, в пределах расчётного максимума и не ниже 85 % лучшего за 8 недель.",
                     style = T.body(14.sp),
@@ -479,5 +486,27 @@ fun CoachReviewCard(workoutId: Long, title: String, day: LocalDate) {
             }
         }
         if (text != null) GhostButton("Обсудить с тренером", { nav.push(Screen.Coach("Давай обсудим мою тренировку ${Ru.date(day)} «$title».", workoutId)) }, Modifier.fillMaxWidth())
+    }
+}
+
+/** The screen of the coach's «Открыть» button ([forma.app.data.CoachActions.SCREENS]). */
+internal fun openScreen(nav: forma.app.ui.Navigator, key: String?) {
+    when (key?.lowercase()) {
+        "today" -> nav.tab(Screen.Today)
+        "plan" -> nav.tab(Screen.Plan)
+        "progress" -> nav.tab(Screen.Progress)
+        "history" -> nav.push(Screen.History)
+        "exercises" -> nav.push(Screen.Library())
+        "my_exercises" -> nav.push(Screen.MyExercises)
+        "ideal_plan" -> nav.push(Screen.IdealPlan)
+        "friends" -> nav.push(Screen.Friends)
+        "body" -> nav.push(Screen.Body)
+        "cloud" -> nav.push(Screen.Cloud)
+        "profile" -> nav.push(Screen.Profile)
+        "gym_goal" -> nav.push(Screen.GymGoal)
+        "settings" -> nav.push(Screen.Settings)
+        "calculators" -> nav.push(Screen.Calculators)
+        "help" -> nav.push(Screen.Help)
+        else -> Unit
     }
 }

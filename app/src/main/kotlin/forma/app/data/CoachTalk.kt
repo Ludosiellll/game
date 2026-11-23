@@ -113,10 +113,31 @@ object CoachTalk {
             val reply = api.askCoach(history(repo.store.coachChatNow()), context(), CoachActions.declarations)
             // «Новый разговор» while the answer was on its way: the talk it answers is gone, and so are its changes.
             if (repo.store.coachChatNow().none { it.id == mine.id }) return CoachChatMsg(nextId(repo), false, reply.text)
-            val acts = change { reply.calls.map { act(repo, it) } }
+            var acts = change { reply.calls.map { act(repo, it) } }
             // What the app did goes first (a long answer is cut at its end on the way to the model), and words of the model
             // dressed as the app's are dropped: only the app says what was done.
-            val text = reply.text.lines().filterNot { it.trimStart().startsWith("[Приложение") }.joinToString("\n").trim()
+            fun own(t: String) = t.lines().filterNot { it.trimStart().startsWith("[Приложение") }.joinToString("\n").trim()
+            var text = own(reply.text)
+            // A change the app could not make (out of its limits, the wrong day): the coach is told why and gets one more
+            // go — to put the call right or to say it plainly — before the person sees «Не получилось» (Denis,
+            // 23 November: «хочу чтобы она буквально любой запрос понимала»). Once: no loop.
+            val refused = acts.filter { it.state == CoachActState.REFUSED }
+            if (refused.isNotEmpty()) {
+                val told = "[Приложение] Не сделано: " + refused.joinToString("; ") { "${it.call.name} — ${it.text}" } +
+                    ". Исправь вызов по причине (другие числа, другой день, другая функция) или коротко объясни человеку. Уже сделанное не повторяй."
+                val turns = history(repo.store.coachChatNow()) + CoachTurn(CoachTurn.MODEL, (note(acts) + text).trim().ifBlank { "…" }) + CoachTurn(CoachTurn.USER, told)
+                val again = runCatching { api.askCoach(turns, context(), CoachActions.declarations) }.getOrNull()
+                if (again != null && repo.store.coachChatNow().any { it.id == mine.id }) {
+                    // A call it makes again as it was (made already, or waiting for «Принять») is not made twice.
+                    fun bare(c: CoachCall) = c.name to kotlinx.serialization.json.JsonObject(c.args - "why")
+                    val kept = acts.filter { it.state != CoachActState.REFUSED }.map { bare(it.call) }
+                    val more = change { again.calls.filter { bare(it) !in kept }.map { act(repo, it) } }
+                    val second = own(again.text)
+                    // What the second go put right is not shown as failed; what it left unsaid stays on the cards.
+                    if (more.isNotEmpty() || second.isNotBlank()) acts = acts.filter { it.state != CoachActState.REFUSED } + more
+                    if (second.isNotBlank()) text = if (acts.any { it.state != CoachActState.REFUSED } && text.isNotBlank() && more.isEmpty()) "$text\n\n$second" else second
+                }
+            }
             val said = (note(acts) + text).trim()
             val msg = CoachChatMsg(nextId(repo), false, text, acts, said)
             repo.store.editCoachChat { it + msg }
@@ -135,7 +156,9 @@ object CoachTalk {
         val c = runCatching { CoachActions.prepare(repo, call) }.getOrElse { return CoachChatAct(call, "Не получилось разобрать изменение.", null, CoachActState.REFUSED) }
         return when (c) {
             is CoachActions.Refused -> CoachChatAct(call, c.why, null, CoachActState.REFUSED)
-            is CoachActions.Ready -> if (c.mode == CoachActions.Mode.CONFIRM) CoachChatAct(call, c.text, c.why, CoachActState.PENDING)
+            // A button to a screen changes nothing: shown, not kept among the changes.
+            is CoachActions.Ready -> if (call.name == CoachActions.OPEN) CoachChatAct(call, c.text, c.why, CoachActState.DONE)
+            else if (c.mode == CoachActions.Mode.CONFIRM) CoachChatAct(call, c.text, c.why, CoachActState.PENDING)
             else runCatching { CoachActions.make(repo, c) }.getOrNull()
                 ?.let { CoachChatAct(call, c.text, c.why, CoachActState.DONE, it.id) }
                 ?: CoachChatAct(call, "Не получилось: ${c.text}", c.why, CoachActState.REFUSED)

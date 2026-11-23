@@ -80,6 +80,28 @@ object CoachActions {
     const val TEMPO = "set_tempo"
     const val TRIAL = "set_trial"
     const val RUN_PACE = "set_run_pace"
+    const val RUN_STEP = "set_run_step"
+    const val WISH = "wish"
+    const val APP = "set_app_setting"
+    const val BODY_WEIGHT = "log_body_weight"
+    const val OPEN = "open_screen"
+    const val LIGHTER = "set_lighter_week"
+    const val ORDER = "move_exercise"
+    const val EASE_DAY = "ease_run_day"
+    const val RUN_CUSTOM = "run_custom"
+
+    /** The screens [OPEN] can show, by their key: the name said to the person. */
+    val SCREENS = linkedMapOf(
+        "today" to "Сегодня", "plan" to "План", "progress" to "Прогресс", "history" to "История", "exercises" to "Упражнения",
+        "my_exercises" to "Мои упражнения", "ideal_plan" to "Идеальный план", "friends" to "Люди и друзья", "body" to "Вес тела",
+        "cloud" to "Облако и резервная копия", "profile" to "Цель, дни и данные", "gym_goal" to "Цель в зале",
+        "settings" to "Оформление и звук", "calculators" to "Калькуляторы", "help" to "Как пользоваться",
+    )
+    private val APP_FLAGS = linkedMapOf(
+        "voice" to "Голосовые подсказки", "beeps" to "Звуковые сигналы", "vibration" to "Вибрация", "gps" to "GPS по умолчанию",
+        "auto_rest" to "Таймер отдыха", "keep_screen_on" to "Не гасить экран", "auto_pause" to "Автопауза на остановках",
+    )
+    private const val MAX_WISHES = 40
     const val STRIDES = "set_strides"
     const val LONG = "long_easy_run"
     const val STEP = "set_weight_step"
@@ -169,6 +191,32 @@ object CoachActions {
         fn(RUN_PACE, "Темпы бега спокойнее или быстрее — когда человек говорит, что бег по темпу слишком тяжёлый или слишком лёгкий. Сдвигает форму, от которой идут ВСЕ темпы (лёгкий, темповый, интервалы, отрезки, контрольный): один шаг — примерно 2 % темпа, около 1–1,5 с на круге 200 м. easier приложение делает сразу, harder человек подтверждает. Одна тяжёлая тренировка — не повод делать быстрее.",
             Param("change", "string", "easier — спокойнее, harder — быстрее", values = listOf("easier", "harder")),
             Param("steps", "integer", "1 или 2; не сказано — 1", required = false))
+        fn(RUN_STEP, "Шаг тяжёлой пробежки легче или тяжелее на одну ступень лестницы приложения: race_pace — отрезки в темпе цели, intervals — интервалы, tempo — темповый (свой темповый меняется через set_tempo). Когда человек говорит, что отрезки слишком длинные, их слишком много или наоборот мало. easier — сразу, harder — человек подтверждает. Темп при этом не меняется (для темпа — set_run_pace).",
+            Param("kind", "string", "race_pace, intervals или tempo", values = listOf("race_pace", "intervals", "tempo")),
+            Param("change", "string", "easier — на ступень легче, harder — на ступень тяжелее", values = listOf("easier", "harder")))
+        fn(WISH, "Записать пожелание разработчику приложения: то, что человек попросил, а ты сделать не смог (нет такой функции, приложение этого не умеет). Одной фразой — что он хотел получить. Сначала всё равно помоги тем, что есть.",
+            Param("text", "string", "что человек хотел, до $NOTE_LEN знаков"))
+        fn(APP, "Настройка приложения (как в «Ещё → Оформление и звук»): voice — голос на пробежке, beeps — звуковые сигналы, vibration — вибрация, gps — GPS на улице по умолчанию, auto_rest — таймер отдыха сам после подхода, keep_screen_on — не гасить экран на тренировке, auto_pause — автопауза на остановках (value: on или off); look — оформление (value: ${forma.app.ui.theme.Looks.all.joinToString(", ") { "${it.id} — ${it.name}" }}).",
+            Param("key", "string", "какая настройка", values = APP_FLAGS.keys.toList() + "look"),
+            Param("value", "string", "on или off; для look — id оформления"))
+        fn(BODY_WEIGHT, "Записать вес тела человека сегодня (кг), когда он его называет: попадёт в график «Вес тела» и в расчёты упражнений с весом тела.",
+            Param("kg", "number", "кг, 30–250"))
+        fn(OPEN, "Показать человеку кнопку «Открыть» на экран приложения — когда что-то делается только руками или он спрашивает, где это найти. Только экраны из списка: других в приложении нет.",
+            Param("screen", "string", SCREENS.entries.joinToString(", ") { "${it.key} — «${it.value}»" }, values = SCREENS.keys.toList()))
+        fn(LIGHTER, "Разгрузочная (лёгкая) неделя — в зале вдвое меньше подходов и вес на 10 % легче, бег короче: this — сделать лёгкой эту неделю (устал, не восстановился, просит разгрузку), next — следующую, skip — эта неделя лёгкая по плану, а человек её не хочет: блок начинается заново, лёгкая придёт в его конце. Человек подтверждает кнопкой.",
+            Param("when", "string", "this — эта неделя, next — следующая, skip — отменить лёгкую на этой неделе", values = listOf("this", "next", "skip")))
+        fn(ORDER, "Порядок упражнений в силовой тренировке: поставить упражнение первым, последним или на место N (изменение плана; человек подтверждает). Сам порядок приложение строит так: главные упражнения первыми, пока силы свежие, одиночные — в конце; reset — вернуть порядок приложения.",
+            exercise, Param("place", "string", "first — первым, last — последним, номер места (1, 2, 3 …) или reset — порядок приложения"), session)
+        fn(EASE_DAY, "В этот день недели вместо тяжёлого бега — лёгкий, на weeks недель (0 — вернуть тяжёлый). Когда тяжёлых пробежек слишком много, ноги не успевают восстановиться, болят голени — или человек хочет один тяжёлый бег в неделю. Делается сразу, можно вернуть.",
+            Param("day", "string", "день недели: пн, вт, ср, чт, пт, сб или вс"), Param("weeks", "integer", "0–$MAX_WEEKS"))
+        fn(RUN_CUSTOM, "Своя пробежка на СЕГОДНЯ, какой нет в плане: reps отрезков по work_sec секунд (или work_m метров) в темпе pace, между ними rest_sec трусцой; до и после — лёгкий бег. Примеры: «8 по 200 быстро через минуту» — reps 8, work_m 200, pace fast, rest_sec 60; «20 минут спокойно» — reps 1, work_sec 1200, pace easy; «фартлек 6 по 2 минуты» — reps 6, work_sec 120, pace interval, rest_sec 120. Темп отрезков даёт приложение по форме человека; на стадионе отрезки станут целыми кругами. Заменяет сегодняшнюю пробежку плана, засчитывается, шаги плана не двигает. Тяжёлую человек подтверждает; тяжёлая не ставится рядом с другим тяжёлым бегом и в день ног. Для постоянных изменений — set_tempo, set_run_step, set_easy_run_minutes.",
+            Param("reps", "integer", "сколько отрезков, 1–20 (1 — один непрерывный бег)"),
+            Param("work_sec", "integer", "секунд в отрезке, 20–3600; или укажи work_m", required = false),
+            Param("work_m", "integer", "метров в отрезке, 100–10000; или укажи work_sec", required = false),
+            Param("pace", "string", "easy — лёгкий, tempo — темповый (тяжело, но держишь), interval — интервальный, race — темп забега на цель, fast — быстрый (короткие отрезки), free — по ощущениям", values = listOf("easy", "tempo", "interval", "race", "fast", "free")),
+            Param("rest_sec", "integer", "отдых между отрезками, секунды, 0–600; не сказано — 90", required = false),
+            Param("warmup_min", "integer", "разминка лёгким бегом, минут, 0–20; не сказано — 10 (для лёгкого бега 0)", required = false),
+            Param("cooldown_min", "integer", "заминка, минут, 0–15; не сказано — 5 (для лёгкого бега 0)", required = false))
         fn(STRIDES, "Сколько ускорений после лёгкого бега в дни, когда они есть в плане, на weeks недель (0 — без ускорений).",
             Param("count", "integer", "0–8 (пока бег новый — до 6)"), Param("weeks", "integer", "1–$MAX_WEEKS"))
         fn(LONG, "Последний лёгкий бег недели — длинный лёгкий, на weeks недель (0 — отменить). Длина длинного растёт по правилам приложения: до часа, в день с залом — до 45 мин.",
@@ -722,6 +770,243 @@ object CoachActions {
                     repo.store.setRunState(next)
                     repo.changed()
                     CoachCall("undo_run_pace", args("est" to now.estimated, "old" to from, "expect" to to))
+                }
+            }
+            RUN_STEP -> {
+                val kind = a.str("kind")
+                val up = when (a.str("change")) { "easier" -> false; "harder" -> true; else -> return no("Не сказано: легче (easier) или тяжелее (harder).") }
+                val profile = repo.store.profileNow()
+                val goal = profile?.runGoal
+                val lap = profile?.lapMeters
+                val st = forma.core.run.RunPlan.estimated(repo.store.runStateNow(), goal)
+                if (!st.canRunContinuously) return no("Пока бег чередуется с ходьбой: тяжёлых пробежек ещё нет.")
+                fun onLap(w: forma.core.run.RunWorkout) = if (lap != null) forma.core.run.RunPlan.onTrack(w, lap) else w
+                val (cur, size, title) = when (kind) {
+                    "race_pace" -> {
+                        if (goal?.middleDistance != true) return no("Отрезки в темпе цели есть только с целью до 3 км.")
+                        Triple(st.goalStage, forma.core.run.RunPlan.goalLadderSize) { i: Int -> forma.core.run.RunPlan.goalPace(st.copy(goalStage = i), goal, lap).title }
+                    }
+                    "intervals" -> Triple(st.intervalStage, forma.core.run.RunPlan.intervalLadderSize) { i: Int -> onLap(forma.core.run.RunPlan.intervals(st.copy(intervalStage = i))).title }
+                    "tempo" -> {
+                        if (st.tempoOwn != null) return no("Темповый сейчас свой (${tempoText(st.tempoOwn!!)}): он меняется через set_tempo.")
+                        Triple(st.tempoStage, forma.core.run.RunPlan.tempoLadderSize) { i: Int -> onLap(forma.core.run.RunPlan.tempo(st.copy(tempoStage = i))).title }
+                    }
+                    else -> return no("Какая пробежка: race_pace, intervals или tempo.")
+                }
+                val next = cur + if (up) 1 else -1
+                if (next < 0) return no("Это и так первая ступень. Если тяжело — сделай темпы спокойнее (set_run_pace easier)" + (if (kind == "tempo") " или короче отрезки (set_tempo)." else "."))
+                if (next >= size) return no("Это и так последняя ступень.")
+                either(!up, "«${title(cur)}» → «${title(next)}». Дальше ступени снова меняются по тому, как идут пробежки.") {
+                    val now = repo.store.runStateNow()
+                    repo.store.setRunState(
+                        when (kind) {
+                            "race_pace" -> now.copy(goalStage = next, goalFails = 0)
+                            "intervals" -> now.copy(intervalStage = next, intervalFails = 0)
+                            else -> now.copy(tempoStage = next, tempoFails = 0)
+                        },
+                    )
+                    repo.changed()
+                    CoachCall("undo_run_step", args("kind" to kind, "old" to cur, "expect" to next))
+                }
+            }
+            WISH -> {
+                val text = a.str("text")?.take(NOTE_LEN) ?: return no("Не сказано, что записать.")
+                if (s.coachWishes.any { norm(it.substringAfter(": ")) == norm(text) }) return no("Это пожелание уже записано.")
+                val line = "$today: $text"
+                auto("Записал пожелание для разработчика: «$text».") {
+                    repo.updateSettings { it.copy(coachWishes = (it.coachWishes + line).takeLast(MAX_WISHES)) }
+                    CoachCall("undo_wish", args("text" to line))
+                }
+            }
+            APP -> {
+                val key = a.str("key")?.lowercase() ?: return no("Не сказано, какая настройка.")
+                val value = a.str("value")?.lowercase() ?: return no("Не сказано значение.")
+                if (key == "look") {
+                    val look = forma.app.ui.theme.Looks.all.firstOrNull { it.id == value || norm(it.name) == norm(value) }
+                        ?: return no("Оформление — одно из: ${forma.app.ui.theme.Looks.all.joinToString(", ") { it.id }}.")
+                    if (s.look == look.id) return no("Оформление и так «${look.name}».")
+                    return auto("Оформление: «${look.name}».") {
+                        val old = repo.store.settingsNow().look
+                        repo.updateSettings { it.copy(look = look.id) }
+                        CoachCall("undo_app", args("key" to "look", "old" to old, "expect" to look.id))
+                    }
+                }
+                val name = APP_FLAGS[key] ?: return no("Такой настройки нет. Есть: ${APP_FLAGS.keys.joinToString(", ")}, look.")
+                val on = when (value) { "on", "true", "да", "вкл" -> true; "off", "false", "нет", "выкл" -> false; else -> return no("Значение — on или off.") }
+                if (flag(s, key) == on) return no("«$name» и так ${if (on) "включено" else "выключено"}.")
+                auto("$name: ${if (on) "включено" else "выключено"}.") {
+                    repo.updateSettings { setFlag(it, key, on) }
+                    CoachCall("undo_app", args("key" to key, "old" to (!on).toString(), "expect" to on.toString()))
+                }
+            }
+            BODY_WEIGHT -> {
+                val kg = a.num("kg")?.takeIf { it in 30.0..250.0 } ?: return no("Вес тела — от 30 до 250 кг.")
+                val old = repo.store.profileNow()?.bodyWeightKg ?: return no("Нет анкеты.")
+                val w = (kg * 10).roundToInt() / 10.0
+                // A typo (83 for 73) would move every body-weight exercise: a change of more than a tenth waits for the person.
+                either(abs(w - old) <= old * 0.10, "Вес тела сегодня: ${Ru.kg(w)} кг" + (if (abs(w - old) > 1e-9) " (было ${Ru.kg(old)})." else ".")) {
+                    repo.logBodyWeight(w)
+                    CoachCall("undo_body", args("old" to old, "expect" to w))
+                }
+            }
+            OPEN -> {
+                val key = a.str("screen")?.lowercase() ?: return no("Не сказано, какой экран.")
+                val name = SCREENS[key] ?: return no("Такого экрана нет. Есть: ${SCREENS.keys.joinToString(", ")}.")
+                auto("«$name»") { null }
+            }
+            LIGHTER -> {
+                val program = repo.store.programNow() ?: return no("Нет плана.")
+                val state = repo.store.liftStateNow()
+                val monday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+                fun reactiveOn(m: LocalDate) = state.reactiveDeloadStart == m.toEpochDay()
+                fun lighter(p: forma.core.plan.Program, m: LocalDate) = ProgramGenerator.isDeloadWeek(p, m) || reactiveOn(m)
+                fun week(m: LocalDate) = "${Ru.date(m)} – ${Ru.date(m.plusDays(6))}"
+                fun nextLighter(p: forma.core.plan.Program, from: LocalDate) = (0..12).map { from.plusWeeks(it.toLong()) }.firstOrNull { ProgramGenerator.isDeloadWeek(p, it) }
+                val (next, text, clearReactive) = when (a.str("when")) {
+                    "this", "next" -> {
+                        val m = if (a.str("when") == "this") monday else monday.plusWeeks(1)
+                        if (lighter(program, m)) return no((if (m == monday) "Эта неделя" else "Следующая неделя") + " и так лёгкая.")
+                        val p = ProgramGenerator.lighterWeekAt(program, m)
+                        Triple(p, "Лёгкая неделя — ${week(m)}: в зале вдвое меньше подходов и вес на 10 % легче, бег короче. Потом начнётся новый блок" +
+                            (nextLighter(p, m.plusWeeks(1))?.let { ", следующая лёгкая — ${week(it)}." } ?: "."), false)
+                    }
+                    "skip" -> {
+                        if (!lighter(program, monday)) return no("Эта неделя и так не лёгкая" + (nextLighter(program, monday)?.let { ": лёгкая по плану — ${week(it)}." } ?: "."))
+                        // The block starts again with this week: the lighter week comes at its end.
+                        val p = program.copy(startEpochDay = monday.toEpochDay())
+                        Triple(p, "Эта неделя — обычная, без разгрузки. Блок начинается заново" + (nextLighter(p, monday)?.let { ": лёгкая неделя — ${week(it)}." } ?: "."), true)
+                    }
+                    else -> return no("Не сказано: this, next или skip.")
+                }
+                confirm(text) {
+                    val p0 = repo.store.programNow()!!
+                    val l0 = repo.store.liftStateNow()
+                    repo.store.setProgram(p0.copy(startEpochDay = next.startEpochDay))
+                    if (clearReactive && l0.reactiveDeloadStart == monday.toEpochDay()) repo.store.setLiftState(l0.copy(reactiveDeloadStart = null))
+                    repo.changed()
+                    CoachCall("undo_lighter", args("start" to p0.startEpochDay, "reactive" to l0.reactiveDeloadStart, "expect" to next.startEpochDay))
+                }
+            }
+            ORDER -> {
+                val q = a.str("exercise") ?: return no("Не сказано, какое упражнение.")
+                val place = a.str("place")?.lowercase() ?: return no("Не сказано, на какое место.")
+                val found = find(places(repo), q, a.str("session")).distinctBy { it.templateId to it.planId }
+                if (found.isEmpty()) return no("«$q» нет в плане.")
+                if (found.map { it.templateId }.distinct().size > 1) return no("«${name(found.first().exerciseId)}» есть в нескольких тренировках (${found.joinToString(", ") { it.title }}): скажи, в какой (session).")
+                val at = found.first()
+                val now = repo.liftPlan(at.templateId, today).items.map { it.planId ?: it.exerciseId }
+                val own = s.order[at.templateId]
+                if (place == "reset") {
+                    if (own == null) return no("В «${at.title}» и так порядок приложения.")
+                    return confirm("«${at.title}»: порядок упражнений снова как ставит приложение (главные первыми).") {
+                        val old = repo.store.settingsNow().order[at.templateId]
+                        repo.updateSettings { it.copy(order = it.order - at.templateId) }
+                        CoachCall("undo_order", args("template" to at.templateId, "old" to old?.let { l -> JsonArray(l.map { JsonPrimitive(it) }) }))
+                    }
+                }
+                val from = now.indexOf(at.planId).takeIf { it >= 0 } ?: return no("«${name(at.exerciseId)}» сейчас нет в тренировке «${at.title}».")
+                val to = when (place) {
+                    "first" -> 0
+                    "last" -> now.lastIndex
+                    else -> place.toIntOrNull()?.takeIf { it in 1..now.size }?.minus(1) ?: return no("Место — first, last или номер от 1 до ${now.size}.")
+                }
+                if (to == from) return no("«${name(at.exerciseId)}» и так на этом месте.")
+                val order = now.toMutableList().also { it.add(to, it.removeAt(from)) }
+                val names = order.map { id -> places(repo).firstOrNull { it.templateId == at.templateId && it.planId == id }?.let { name(it.exerciseId) } ?: name(id) }
+                confirm("«${at.title}»: «${name(at.exerciseId)}» — ${if (to == 0) "первым" else if (to == now.lastIndex) "последним" else "на место ${to + 1}"}. Порядок: " +
+                    names.mapIndexed { i, n -> "${i + 1}) $n" }.joinToString(", ") + ". Разминка подстроится под новый порядок.") {
+                    val old = repo.store.settingsNow().order[at.templateId]
+                    repo.updateSettings { it.copy(order = it.order + (at.templateId to order)) }
+                    CoachCall("undo_order", args(
+                        "template" to at.templateId, "old" to old?.let { l -> JsonArray(l.map { JsonPrimitive(it) }) }, "expect" to JsonArray(order.map { JsonPrimitive(it) }),
+                    ))
+                }
+            }
+            EASE_DAY -> {
+                val day = a.str("day")?.let { weekDays(it) }?.singleOrNull() ?: return no("День недели — один: пн, вт, ср, чт, пт, сб или вс.")
+                val w = a.int("weeks")?.takeIf { it in 0..MAX_WEEKS } ?: return no("Срок — от 0 до $MAX_WEEKS недель.")
+                val program = repo.store.programNow() ?: return no("Нет плана.")
+                val dayName = listOf("понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье")[day - 1]
+                if (program.week.on(day).none { it.kind == SessionKind.RUN_QUALITY }) return no("В $dayName тяжёлого бега по плану нет.")
+                val was = s.easyRunDays[day]?.takeIf { it >= today.toEpochDay() }
+                if (w == 0 && was == null) return no("В $dayName тяжёлый бег и так по плану.")
+                val until = today.plusWeeks(w.toLong()).minusDays(1)
+                auto(if (w == 0) "В $dayName снова тяжёлый бег по плану." else "В $dayName вместо тяжёлого бега — лёгкий, на ${weeks(w)}, до ${Ru.date(until)}. Потом тяжёлый вернётся сам.") {
+                    val old = repo.store.settingsNow().easyRunDays[day]
+                    repo.updateSettings { if (w == 0) it.copy(easyRunDays = it.easyRunDays - day) else it.copy(easyRunDays = it.easyRunDays + (day to until.toEpochDay())) }
+                    CoachCall("undo_ease_day", args("day" to day, "old" to old, "expect" to if (w == 0) null else until.toEpochDay()))
+                }
+            }
+            RUN_CUSTOM -> {
+                val pace = forma.core.run.CustomRun.Pace.entries.firstOrNull { it.name.lowercase() == a.str("pace")?.lowercase() }
+                    ?: return no("Темп — easy, tempo, interval, race, fast или free.")
+                val reps = a.int("reps")?.takeIf { it in 1..20 } ?: return no("Отрезков — от 1 до 20.")
+                val sec = a["work_sec"]?.let { a.int("work_sec")?.takeIf { v -> v in 20..3600 } ?: return no("Отрезок — от 20 секунд до часа.") }
+                val meters = a["work_m"]?.let { a.int("work_m")?.takeIf { v -> v in 100..10000 } ?: return no("Отрезок — от 100 м до 10 км.") }
+                if (sec == null && meters == null) return no("Не сказана длина отрезка: секунды (work_sec) или метры (work_m).")
+                val easy = pace == forma.core.run.CustomRun.Pace.EASY
+                val rest = a["rest_sec"]?.let { a.int("rest_sec")?.takeIf { v -> v in 0..600 } ?: return no("Отдых — от 0 до 600 секунд.") } ?: if (reps > 1) 90 else 0
+                val warm = a["warmup_min"]?.let { a.int("warmup_min")?.takeIf { v -> v in 0..20 } ?: return no("Разминка — от 0 до 20 минут.") } ?: if (easy && reps == 1) 0 else 10
+                val cool = a["cooldown_min"]?.let { a.int("cooldown_min")?.takeIf { v -> v in 0..15 } ?: return no("Заминка — от 0 до 15 минут.") } ?: if (easy && reps == 1) 0 else 5
+                val profile = repo.store.profileNow()
+                val goal = profile?.runGoal
+                val program = repo.store.programNow() ?: return no("Нет плана.")
+                val st = forma.core.run.RunPlan.estimated(forma.core.run.RunPlan.withBreak(repo.store.runStateNow(), today.toEpochDay()), goal)
+                if (!st.canRunContinuously) return no("Пока бег чередуется с ходьбой: пробежки ведёт лестница приложения.")
+                if (repo.paused(s, today)) return no("Сейчас пауза в плане.")
+                if (s.feelOn(today) == forma.app.data.Feel.SICK) return no("Сегодня отмечено «Болею»: бегать не нужно.")
+                if (repo.db.workouts().allDone().any { it.kind == Kind.RUN && it.epochDay == today.toEpochDay() }) return no("Сегодня пробежка уже сделана.")
+                val spec = forma.core.run.CustomRun(reps, if (meters != null) null else sec, meters, pace, rest, warm, cool)
+                val each = forma.core.run.RunPlan.customRepSeconds(st, goal, spec)
+                    ?: return no("Темпа пока нет, поэтому метры не перевести во время: задай отрезок в секундах (work_sec).")
+                val work = reps * each
+                val planned = program.week.on(today.dayOfWeek.value)
+                val hard = pace.hard && !(pace == forma.core.run.CustomRun.Pace.FREE && reps == 1)
+                if (hard) {
+                    // The minutes of hard running in one session: what the plan's own hardest sessions hold, no more.
+                    val most = when (pace) {
+                        forma.core.run.CustomRun.Pace.TEMPO -> 25 * 60
+                        forma.core.run.CustomRun.Pace.INTERVAL, forma.core.run.CustomRun.Pace.FREE -> 16 * 60
+                        else -> 10 * 60
+                    }
+                    if (work > most) return no("В таком темпе за одну пробежку — не больше ${most / 60} минут работы, а здесь ${(work + 30) / 60}. Сделай меньше отрезков или короче.")
+                    if (st.returnEasy > 0 || forma.core.run.RunPlan.breakDays(repo.store.runStateNow(), today.toEpochDay()) != null) return no("После перерыва первые пробежки — лёгкие: тяжёлую пока не ставим.")
+                    if (repo.easyAfterSick(today) > 0) return no("После болезни первые пробежки — лёгкие.")
+                    if (s.feelOn(today) == forma.app.data.Feel.LOW) return no("Сегодня отмечено «Так себе»: бег только лёгкий.")
+                    if (planned.any { it.kind == SessionKind.LIFT && program.templates.firstOrNull { t -> t.id == it.templateId }?.legs == true }) {
+                        return no("Сегодня в зале ноги: тяжёлый бег в такой день не ставим.")
+                    }
+                    val own = planned.any { it.kind == SessionKind.RUN_QUALITY }
+                    fun hardOn(d: LocalDate) = program.week.on(d.dayOfWeek.value).any { it.kind == SessionKind.RUN_QUALITY } && repo.easedUntil(s, d) == null && !repo.paused(s, d)
+                    val doneHard = repo.db.workouts().allDone().any { w -> w.kind == Kind.RUN && w.epochDay == today.toEpochDay() - 1 && (w.rpe ?: 0) >= 7 }
+                    if (!own && (hardOn(today.plusDays(1)) || hardOn(today.minusDays(1)) || doneHard)) {
+                        return no("Рядом (вчера или завтра) уже стоит тяжёлый бег: два тяжёлых дня подряд не ставим. Могу поставить лёгкую пробежку (pace easy) или эту — в день тяжёлого бега по плану.")
+                    }
+                } else {
+                    val cap = ProgramGenerator.runCaps(program, goal?.middleDistance == true).easyMax
+                    val longest = st.longestRecent(today.toEpochDay() + 1)
+                    val limit = listOfNotNull(cap, longest?.let { (it * 1.10).toInt().coerceAtLeast(st.easyMinutes) }, 60).min()
+                    if (work > limit * 60) return no("Лёгкий бег сегодня — до $limit мин: " + if (limit == cap) "это потолок под твою цель." else "не длиннее 110 % самой длинной пробежки за месяц.")
+                    if (work < 10 * 60) return no("Лёгкий бег — не короче 10 минут.")
+                }
+                val lap = profile?.lapMeters
+                val w = forma.core.run.RunPlan.custom(st, goal, spec) ?: return no("Не получилось собрать пробежку.")
+                val shown = if (lap != null) forma.core.run.RunPlan.onTrack(w, lap) else w
+                val instead = planned.firstOrNull { it.isRun }?.let { repo.runFor(it.kind, today).title }
+                val paceText = shown.segments.firstOrNull { it.kind == forma.core.run.SegmentKind.WORK || it.kind == forma.core.run.SegmentKind.RUN }?.let { seg ->
+                    seg.lapSec?.let { "круг за ${Ru.lap(it)}" } ?: seg.pace?.let { "${Ru.pace(it.fast.toDouble())}–${Ru.pace(it.slow.toDouble())} /км" }
+                }
+                val text = "Пробежка на сегодня: «${shown.title.substringAfter(" · ")}»" +
+                    (if (warm > 0 || cool > 0) " (разминка $warm мин, заминка $cool мин" + (if (reps > 1 && rest > 0) ", отдых ${Ru.clock(rest)}" else "") + ")" else "") +
+                    ", ${pace.ru}" + (paceText?.let { ": $it" } ?: "") + ". " +
+                    (instead?.let { "Вместо «$it» по плану. " } ?: "Вне плана. ") + "Шаги плана она не двигает. На экране «Сегодня» — «Начать»."
+                either(!hard, text) {
+                    val old = repo.store.settingsNow().coachRun
+                    val run = CoachRun(today.toEpochDay(), w)
+                    repo.updateSettings { it.copy(coachRun = run) }
+                    CoachCall("undo_run_custom", args(
+                        "old" to old?.let { AppJson.encodeToJsonElement(CoachRun.serializer(), it) }, "expect" to AppJson.encodeToJsonElement(CoachRun.serializer(), run),
+                    ))
                 }
             }
             RUN_TODAY -> {
@@ -1483,6 +1768,66 @@ object CoachActions {
                 val id = a.long("workout")!!
                 if (repo.db.workouts().get(id)?.rpe != a.int("expect")) false else { repo.setRating(id, a.int("rpe")!!); true }
             }
+            "undo_lighter" -> {
+                val p = repo.store.programNow() ?: return false
+                val start = (a["start"] as? JsonPrimitive)?.content?.toLongOrNull() ?: return false
+                if (p.startEpochDay != (a["expect"] as? JsonPrimitive)?.content?.toLongOrNull()) false
+                else {
+                    repo.store.setProgram(p.copy(startEpochDay = start))
+                    (a["reactive"] as? JsonPrimitive)?.content?.toLongOrNull()?.let { r -> repo.store.setLiftState(repo.store.liftStateNow().copy(reactiveDeloadStart = r)) }
+                    repo.changed()
+                    true
+                }
+            }
+            "undo_order" -> {
+                val t = a.str("template") ?: return false
+                fun list(key: String) = (a[key] as? JsonArray)?.map { (it as JsonPrimitive).content }
+                val now = repo.store.settingsNow().order[t]
+                if (now != list("expect")) false
+                else { repo.updateSettings { s -> list("old")?.let { s.copy(order = s.order + (t to it)) } ?: s.copy(order = s.order - t) }; true }
+            }
+            "undo_ease_day" -> {
+                val day = a.int("day") ?: return false
+                val expect = (a["expect"] as? JsonPrimitive)?.content?.toLongOrNull()
+                val old = (a["old"] as? JsonPrimitive)?.content?.toLongOrNull()
+                if (repo.store.settingsNow().easyRunDays[day] != expect) false
+                else { repo.updateSettings { s -> if (old == null) s.copy(easyRunDays = s.easyRunDays - day) else s.copy(easyRunDays = s.easyRunDays + (day to old)) }; true }
+            }
+            "undo_run_custom" -> {
+                fun run(key: String) = (a[key] as? JsonObject)?.let { AppJson.decodeFromJsonElement(CoachRun.serializer(), it) }
+                if (repo.store.settingsNow().coachRun != run("expect")) false
+                else { repo.updateSettings { it.copy(coachRun = run("old")) }; true }
+            }
+            "undo_run_step" -> {
+                val now = repo.store.runStateNow()
+                val old = a.int("old")
+                val expect = a.int("expect")
+                val cur = when (a.str("kind")) { "race_pace" -> now.goalStage; "intervals" -> now.intervalStage; else -> now.tempoStage }
+                if (old == null || cur != expect) false
+                else {
+                    repo.store.setRunState(when (a.str("kind")) { "race_pace" -> now.copy(goalStage = old); "intervals" -> now.copy(intervalStage = old); else -> now.copy(tempoStage = old) })
+                    repo.changed()
+                    true
+                }
+            }
+            "undo_wish" -> {
+                val line = a.str("text")
+                if (line == null || line !in repo.store.settingsNow().coachWishes) false
+                else { repo.updateSettings { it.copy(coachWishes = it.coachWishes - line) }; true }
+            }
+            "undo_app" -> {
+                val key = a.str("key") ?: return false
+                val s = repo.store.settingsNow()
+                if (key == "look") {
+                    if (s.look != a.str("expect")) false else { repo.updateSettings { it.copy(look = a.str("old") ?: it.look) }; true }
+                } else {
+                    if (flag(s, key) != (a.str("expect") == "true")) false else { repo.updateSettings { setFlag(it, key, a.str("old") == "true") }; true }
+                }
+            }
+            "undo_body" -> {
+                val old = a.num("old")
+                if (old == null || repo.store.profileNow()?.bodyWeightKg != a.num("expect")) false else { repo.logBodyWeight(old); true }
+            }
             "undo_trial" -> {
                 val now = repo.store.runStateNow()
                 val expectUntil = (a["expect_until"] as? JsonPrimitive)?.content?.toLongOrNull()
@@ -1789,6 +2134,18 @@ object CoachActions {
         "sets" -> s.sets[key]?.let { JsonPrimitive(it) }
         "reps" -> ints(s.reps[key])
         else -> s.rest[key]?.let { JsonPrimitive(it) }
+    }
+
+    private fun flag(s: Settings, key: String): Boolean? = when (key) {
+        "voice" -> s.voice; "beeps" -> s.beeps; "vibration" -> s.vibration; "gps" -> s.gps
+        "auto_rest" -> s.autoRest; "keep_screen_on" -> s.keepScreenOn; "auto_pause" -> s.autoPause
+        else -> null
+    }
+
+    private fun setFlag(s: Settings, key: String, on: Boolean): Settings = when (key) {
+        "voice" -> s.copy(voice = on); "beeps" -> s.copy(beeps = on); "vibration" -> s.copy(vibration = on); "gps" -> s.copy(gps = on)
+        "auto_rest" -> s.copy(autoRest = on); "keep_screen_on" -> s.copy(keepScreenOn = on); "auto_pause" -> s.copy(autoPause = on)
+        else -> s
     }
 
     private fun tempoShape(e: JsonElement?): forma.core.run.TempoShape? =

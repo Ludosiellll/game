@@ -72,7 +72,9 @@ class CoachTalkTest {
         )
         val msg = CoachTalk.ask(repo, api, "  мне нравится бегать долго  ") { "сводка" }
         // The functions offered went with the question.
-        assertEquals(CoachActions.declarations, api.asked.single().second)
+        // (Asked twice: a call the app could not make gives the coach one more go.)
+        assertEquals(2, api.asked.size)
+        assertEquals(CoachActions.declarations, api.asked.first().second)
         val chat = repo.store.coachChatNow()
         assertEquals(listOf(true, false), chat.map { it.mine })
         assertEquals("мне нравится бегать долго", chat.first().text)
