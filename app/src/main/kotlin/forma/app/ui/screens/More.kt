@@ -57,7 +57,7 @@ fun MoreScreen() {
                 icon = Ic.cloud, iconTint = F.c.accent,
             ) { nav.push(Screen.Cloud) }
             Hairline()
-            ListRow("Цель, дни и данные", "Поменяешь — план пересчитается", icon = Ic.user, iconTint = F.c.text2) { nav.push(Screen.Profile) }
+            ListRow("Цель, дни и данные", "По ним строится план", icon = Ic.user, iconTint = F.c.text2) { nav.push(Screen.Profile) }
             Hairline()
             ListRow("Оформление и звук", "Стиль, голос, вибрация, выгрузка для разбора", icon = Ic.gear, iconTint = F.c.text2) { nav.push(Screen.Settings) }
             Hairline()
@@ -80,7 +80,7 @@ fun MoreScreen() {
             if (forma.app.BuildConfig.SELF_UPDATE) ListRow(
                 "Обновления",
                 when {
-                    update is forma.app.update.Updater.State.Available -> "Есть новая версия — нажми, чтобы обновить"
+                    update is forma.app.update.Updater.State.Available -> "Есть новая версия · нажми, чтобы обновить"
                     checking -> "Проверяю…"
                     checked == forma.app.update.Updater.Checked.LATEST -> "У тебя последняя версия · сборка $build"
                     checked == forma.app.update.Updater.Checked.FAILED -> "Не получилось проверить: нет связи. Нажми ещё раз"
@@ -98,8 +98,8 @@ fun MoreScreen() {
             else ListRow("Версия", "Сборка ${forma.app.BuildConfig.VERSION_CODE} · обновляется через Google Play", icon = Ic.up, iconTint = F.c.text2) {}
         }
         Text(
-            if (cloud?.email != null) "Данные хранятся на телефоне, копия — в облаке."
-            else "Данные есть только на этом телефоне. Чтобы не потерять историю при смене телефона, включи облако или сохраняй копию в файл. Всё это — в разделе «Облако и резервная копия».",
+            if (cloud?.email != null) "Данные хранятся на телефоне, копия в облаке."
+            else "Данные есть только на этом телефоне. Чтобы не потерять историю при смене телефона, включи облако или сохраняй копию в файл.",
             style = T.secondary(13.sp),
         )
     }

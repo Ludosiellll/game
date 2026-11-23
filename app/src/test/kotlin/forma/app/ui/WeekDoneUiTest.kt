@@ -213,6 +213,9 @@ class WeekDoneUiTest {
         val p = runBlocking { repo.store.programNow()!! }
         runBlocking { lift(repo, p.week.on(2).first { it.kind == SessionKind.LIFT }.templateId!!, monday.plusDays(1)) }
         show(repo, Navigator(Screen.Progress)) { ProgressScreen(initialTab = 2) }
+        // The section comes into view with its details shut; they open on «Подробнее о нагрузке».
+        compose.onNodeWithText("Подробнее о нагрузке ›").performScrollTo().performClick()
+        settle()
         compose.onAllNodesWithText("Тренированность")[0].assertExists()
         compose.onAllNodesWithText("Форма").assertCountEquals(0)
     }

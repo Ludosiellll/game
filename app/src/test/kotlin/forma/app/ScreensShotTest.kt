@@ -474,8 +474,9 @@ class ScreensShotTest {
             }
         }
         settle()
-        // The running section: the answer, the chart of rep laps; then its details — trials and sessions as lists.
-        compose.onAllNodesWithText("Средний круг в отрезках", substring = true)[0].performScrollTo()
+        // The running section: the answer, the chart of rep laps and the step to the trial under it; then its details —
+        // trials and sessions as lists.
+        compose.onAllNodesWithText("до контрольного забега", substring = true)[0].performScrollTo()
         settle()
         compose.onRoot().captureRoboImage("build/shots/carbon-goalpath.png")
         compose.onNodeWithText("Подробнее о беге ›").performScrollTo().performClick()

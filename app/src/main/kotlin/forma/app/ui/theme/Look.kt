@@ -137,10 +137,13 @@ object Looks {
             good = Color(0xFF1F8A4C), warn = Color(0xFFC46A00), bad = Color(0xFFD7372B), dark = false,
         ),
         Shape(radius = 14.dp, radiusSmall = 10.dp, border = 0.dp, pill = true, flat = true),
-        Typo(Fonts.interDisplay, FontWeight.Black, Fonts.inter, Fonts.inter, FontWeight.ExtraBold, capsLabels = true, capsTitles = false, bigNumberScale = 1.1f, mega = true),
+        Typo(Fonts.interDisplay, FontWeight.Black, Fonts.inter, Fonts.inter, FontWeight.ExtraBold, capsLabels = false, capsTitles = false, bigNumberScale = 1.1f, mega = true),
     )
 
-    /** Минимализм, тёмный: the same on black. */
+    /**
+     * Минимализм, тёмный: the same on black. Both keep their huge capital titles (Denis's choice, 30 October) and say the
+     * small labels and buttons in ordinary letters: spaced capitals on every label read as machine-made (23 November).
+     */
     val minimalDark = Look(
         "minimal_dark", "Минимализм тёмный", "Чёрный, крупные заголовки, линии вместо карточек",
         Palette(
@@ -151,7 +154,7 @@ object Looks {
             good = Color(0xFF4CD787), warn = Color(0xFFF2B84B), bad = Color(0xFFFF5C5C), dark = true,
         ),
         Shape(radius = 14.dp, radiusSmall = 10.dp, border = 0.dp, pill = true, flat = true),
-        Typo(Fonts.interDisplay, FontWeight.Black, Fonts.inter, Fonts.inter, FontWeight.ExtraBold, capsLabels = true, capsTitles = false, bigNumberScale = 1.1f, mega = true),
+        Typo(Fonts.interDisplay, FontWeight.Black, Fonts.inter, Fonts.inter, FontWeight.ExtraBold, capsLabels = false, capsTitles = false, bigNumberScale = 1.1f, mega = true),
     )
 
     val all = listOf(minimalDark, minimal, carbon, light, poster, tone)

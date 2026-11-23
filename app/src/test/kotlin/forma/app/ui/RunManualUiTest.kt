@@ -123,7 +123,7 @@ class RunManualUiTest {
         val easy = runBlocking { repo.runFor(SessionKind.RUN_EASY, repo.today()) }
         val nav = Navigator(Screen.Today)
         show(repo, nav) { RunSetupScreen(easy, SessionKind.RUN_EASY) }
-        compose.onNodeWithText("Бегал без телефона", substring = true, ignoreCase = true).performScrollTo().performClick()
+        compose.onNodeWithText("пробежку без телефона", substring = true, ignoreCase = true).performScrollTo().performClick()
         settle()
         assertEquals(Screen.RunManual(easy), nav.current)
     }

@@ -1143,7 +1143,7 @@ object CoachActions {
                 val best = repo.recentBest(ex.id, today.toEpochDay(), -1L)
                 if (best != null && (old == null || w < old)) {
                     val floor = OneRm.loadFor(best, row?.reps ?: p.tuned.repMin, p.tuned.rir) * 0.85
-                    if (next < floor - 1e-6) return no("Ниже 85 % того, что ты поднимал последние 8 недель — так приложение вес не снижает. При боли или болезни лучше «Так себе» или пауза.")
+                    if (next < floor - 1e-6) return no("Ниже 85 % веса последних 8 недель: так приложение вес не снижает. При боли или болезни лучше «Так себе» или пауза.")
                 }
                 // The reps to aim for at the new weight, as the engine sets them when it moves a weight itself.
                 val reps = stat?.let { st ->

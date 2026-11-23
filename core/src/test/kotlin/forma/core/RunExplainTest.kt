@@ -82,7 +82,7 @@ class RunExplainTest {
             Lap(sec, w.segments.first { it.lapSec != null }.lapSec!! - 0.5, w.segments.first { it.lapSec != null }.lapSec!! + 0.5, 1, 1, rep)
         }
         val review = RunReview.of(RunReview.Run(w, laps, rpe = 9, durationSec = 1800), goal)
-        val how = review.first { it.title == "Как пробежал" }
+        val how = review.first { it.title == "Как прошла пробежка" }
         assertTrue("3 из 8 в темпе" in how.text && "быстрее — 3" in how.text && "медленнее — 2" in how.text, how.text)
         assertTrue("Последний отрезок медленнее первого" in how.text, how.text)
         assertEquals(-1, how.tone)
@@ -114,7 +114,7 @@ class RunExplainTest {
         assertTrue("в темпе цели (медленнее не больше чем на 3 %) и с оценкой до 8 — следующий шаг" in full, full)
         assertTrue("облегчённая неделя" in RunExplain.of(RunPlan.intervals(state, cutback = true), goal).next)
         assertTrue("обычной длины" in RunExplain.of(RunPlan.easy(state), goal).next)
-        assertTrue("не до конца" in RunExplain.of(RunPlan.long(state), goal).next)
+        assertTrue("не закончена" in RunExplain.of(RunPlan.long(state), goal).next)
         // A trial resets the paces of training, not the goal's own; the 12 minutes are measured by their distance.
         val trial = RunExplain.of(RunPlan.goalTest(state, goal, 230), goal).purpose
         assertTrue("По времени" in trial && "Темп цели не меняется" in trial && "примерные" !in trial, trial)
@@ -126,7 +126,7 @@ class RunExplainTest {
         val eight = RunReview.of(RunReview.Run(early, rpe = 8), goal).first { it.title == "Тяжесть" }
         assertTrue("тяжелее задуманной (7), но шаг вперёд засчитывается до 8" in eight.text, eight.text)
         // Run/walk not finished: no promise of a repeat (a second miss goes a week back).
-        val walk = RunReview.of(RunReview.Run(RunPlan.runWalk(RunState()), completed = 0.6), goal).first { it.title == "Как пробежал" }
+        val walk = RunReview.of(RunReview.Run(RunPlan.runWalk(RunState()), completed = 0.6), goal).first { it.title == "Как прошла пробежка" }
         assertTrue("когда пробежишь её целиком" in walk.text, walk.text)
     }
 
@@ -147,15 +147,15 @@ class RunExplainTest {
     @Test fun anEasyRunTooFastIsSaidSo() {
         val w = RunPlan.onTrack(RunPlan.easy(state), 230)
         val limit = w.segments.first().pace!!.fast
-        val fast = RunReview.of(RunReview.Run(w, rpe = 6, avgPace = limit - 30.0), goal).first { it.title == "Как пробежал" }
+        val fast = RunReview.of(RunReview.Run(w, rpe = 6, avgPace = limit - 30.0), goal).first { it.title == "Как прошла пробежка" }
         assertEquals(-1, fast.tone)
         assertTrue("быстрее лёгкого" in fast.text, fast.text)
         val ok = RunReview.of(RunReview.Run(w, rpe = 4, avgPace = limit + 20.0), goal)
-        assertEquals(1, ok.first { it.title == "Как пробежал" }.tone)
+        assertEquals(1, ok.first { it.title == "Как прошла пробежка" }.tone)
         assertEquals("Оценка 4 — легко, как и должно быть.", ok.first { it.title == "Тяжесть" }.text)
         assertTrue(ok.first { it.title == "Восстановление" }.text.startsWith("Такой бег проходит за сутки"))
         // On a stadium but no laps pressed (GPS only, or entered by hand): the pace a km, against the limit a km.
-        val gps = RunReview.of(RunReview.Run(w, rpe = 4, avgPace = limit - 30.0), goal).first { it.title == "Как пробежал" }
+        val gps = RunReview.of(RunReview.Run(w, rpe = 4, avgPace = limit - 30.0), goal).first { it.title == "Как прошла пробежка" }
         assertTrue("/км" in gps.text && "на круг" !in gps.text, gps.text)
     }
 
@@ -163,16 +163,16 @@ class RunExplainTest {
         val w = RunPlan.goalTest(state, goal, 230)
         val lapSec = w.segments.first { it.laps != null }.lapSec!!
         val laps = listOf(Lap(lapSec / 2, rep = 1, part = 0.5)) + (1..6).map { Lap(if (it <= 3) 52.0 else 55.0, rep = 1) }
-        val how = RunReview.of(RunReview.Run(w, laps, rpe = 10, trial = 1495 to 348), goal).first { it.title == "Как пробежал" }
+        val how = RunReview.of(RunReview.Run(w, laps, rpe = 10, trial = 1495 to 348), goal).first { it.title == "Как прошла пробежка" }
         assertTrue("1495 м за 5:48" in how.text && "до цели 5:30 — ещё 20 с" in how.text.lowercase(), how.text)
         assertTrue("Вторая половина медленнее" in how.text, how.text)
-        val done = RunReview.of(RunReview.Run(w, rpe = 10, trial = 1495 to 328), goal).first { it.title == "Как пробежал" }
+        val done = RunReview.of(RunReview.Run(w, rpe = 10, trial = 1495 to 328), goal).first { it.title == "Как прошла пробежка" }
         assertEquals(1, done.tone)
         // 1495 m in 5:29 is 5:30.1 over 1500 m: the plan did not count the goal reached, and neither does the debrief.
-        val close = RunReview.of(RunReview.Run(w, rpe = 10, trial = 1495 to 329, goalReached = false), goal).first { it.title == "Как пробежал" }
+        val close = RunReview.of(RunReview.Run(w, rpe = 10, trial = 1495 to 329, goalReached = false), goal).first { it.title == "Как прошла пробежка" }
         assertTrue("ещё 1 с" in close.text && "Это цель" !in close.text, close.text)
         assertNotNull(RunReview.of(RunReview.Run(RunPlan.easy(state)), goal).firstOrNull { it.title == "Что это даёт телу" })
-        assertTrue(RunReview.of(RunReview.Run(RunPlan.easy(state)), goal).none { it.title == "Как пробежал" }, "nothing measured, nothing judged")
+        assertTrue(RunReview.of(RunReview.Run(RunPlan.easy(state)), goal).none { it.title == "Как прошла пробежка" }, "nothing measured, nothing judged")
         assertEquals(RunType.TEST, w.type)
     }
 }

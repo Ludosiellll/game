@@ -348,7 +348,8 @@ fun WorkoutScreen(workoutId: Long) {
                     GhostButton("Завершить", { finishing = true }, height = 48.dp)
                 }
                 ScreenHint(Hints.WORKOUT, Hints.WORKOUT_TEXT)
-                if (plan.deload) Banner(plan.why ?: "Разгрузка — лёгкая неделя: меньше подходов и вес легче. Не доводи до отказа.", F.c.warn)
+                // «Тренировка полегче», not «Лёгкая неделя»: the same banner shows on a «Так себе» day and on legs 0–3 days before a race.
+                if (plan.deload) Banner(plan.why ?: "Тренировка полегче: меньше подходов, вес легче. Не доводи до отказа.", F.c.warn)
 
                 // Exercise switcher.
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -406,7 +407,7 @@ fun WorkoutScreen(workoutId: Long) {
                             Pill(if (p.calibrate) "${p.sets} ${Ru.plural(p.sets, "подход", "подхода", "подходов")}" else "${p.sets} × ${p.reps}")
                             if (p.top) Pill("последний ${p.reps}+")
                         } else Pill("${p.sets} × ${p.reps} с", filled = true)
-                        if (!p.calibrate) Pill("запас ${p.rir}")
+                        if (!p.calibrate) Pill("оставь ${p.rir}")
                     }
                     // The person's own note on the exercise: the seat, the grip — what is forgotten from one week to the next.
                     if (note != null) {
@@ -439,36 +440,34 @@ fun WorkoutScreen(workoutId: Long) {
                     val last = lastReport
                     when {
                         p.phase == forma.core.strength.Phase.TEST -> Hint(
-                            "Проверка максимума — день цели. После разминки попытки по 1 разу: " +
+                            "Проверка максимума. После разминки по 1 разу: " +
                                 p.attempts.orEmpty().joinToString(", потом ") { Texts.weight(ex, it) } +
-                                ". Между ними 3–5 минут, со страховкой. Отмечай только взятую попытку; первая пошла тяжело или не вышла — на этом всё, жми «Закончить». План упражнения от проверки не меняется.",
+                                ". Между попытками 3–5 минут, со страховкой. Отмечай только взятую попытку. Если первая пошла тяжело или не вышла, на этом проверка закончена.",
                             F.c.accent, Ic.info,
                         )
                         p.phase == forma.core.strength.Phase.TAPER -> Hint(
-                            "Подводка к цели: подходов вдвое меньше, вес тот же, без «+». Сила не уходит, а свежесть к дню цели копится.",
+                            "Перед проверкой максимума: подходов вдвое меньше, вес тот же, без «+».",
                             F.c.accent, Ic.info,
                         )
                         p.calibrate -> Hint(
-                            "Подбираем рабочий вес. Начни с ${Texts.weight(ex, inp.weight)}. Делай повторы чисто и остановись, " +
-                                "когда сможешь ещё ${p.rir} (максимум 15). После подхода подскажу вес." +
-                                if (p.rir >= 3) " Первый раз — два подхода с запасом: тело привыкает к движению, мышцы меньше заболят." else "",
+                            "${Texts.startWith(ex, inp.weight)}, стоп, когда можешь ещё ${p.rir} (не больше 15 раз).",
                             F.c.accent, Ic.info,
                         )
+                        // «Прошлый раз 80 кг × 8, 7, 6.» alone: what changed since is in the fields, and the summary said it.
                         last != null -> {
                             val s = last.first.joinToString(", ") { it.reps.toString() }
                             val wDone = last.first.maxOf { it.weight }
-                            val text = if (ex.load == LoadKind.TIMED) "Прошлый раз: $s с." else "Прошлый раз ${Texts.weightReps(ex, wDone, s)}."
-                            val why = last.second?.outcome?.let { " " + Texts.outcome(it, ex) } ?: ""
-                            Hint(text + why, if ((last.second?.outcome?.let { Texts.tone(it) } ?: 0) < 0) F.c.warn else F.c.strength)
+                            val text = if (ex.load == LoadKind.TIMED) "Прошлый раз $s с." else "Прошлый раз ${Texts.weightReps(ex, wDone, s)}."
+                            Hint(text, if ((last.second?.outcome?.let { Texts.tone(it) } ?: 0) < 0) F.c.warn else F.c.strength)
                         }
                     }
                     // Help is a band or the gravitron, and not every gym has one: what to do without it.
                     if (ex.assisted && (p.weight ?: 0.0) < 0) {
                         val pull = ex.pattern == forma.core.model.Pattern.VERTICAL_PULL
                         Hint(
-                            "Помощь — это гравитрон или резинка. Нет их — замени упражнение: " +
-                                (if (pull) "тяга верхнего блока тренирует" else "обратные отжимания от скамьи тренируют") + " то же. " +
-                                "Когда сможешь 5 раз сам, без помощи, план её уберёт.",
+                            "Помощь — это гравитрон или резинка. Если их нет, " +
+                                (if (pull) "подойдёт тяга верхнего блока" else "подойдут обратные отжимания от скамьи") + ". " +
+                                "Когда сможешь 5 раз без помощи, план её уберёт.",
                             F.c.accent, Ic.info,
                         )
                     }
@@ -487,7 +486,7 @@ fun WorkoutScreen(workoutId: Long) {
                                 SectionLabel("Разминка", Modifier.weight(1f))
                                 TextButton({ warmMarks.add(skipKey) }) { Text("Без разминки", style = T.body(14.sp, FontWeight.Bold).copy(color = F.c.accent)) }
                             }
-                            Text("Перед рабочими подходами, на вес в плане не влияет. Отмечай касанием.", style = T.secondary(12.sp))
+                            Text("Отмечай касанием.", style = T.secondary(12.sp))
                             item.warmups.forEachIndexed { i, s ->
                                 val key = "${keyOf(item)}:$i"
                                 val ticked = key in warmMarks
@@ -522,7 +521,7 @@ fun WorkoutScreen(workoutId: Long) {
                             ) {
                                 NumText("${i + 1}", style = T.number(16.sp).copy(color = F.c.text2), modifier = Modifier.width(32.dp))
                                 NumText(Texts.weightReps(ex, s.weight, s.reps), style = T.number(18.sp).copy(color = if (F.type.mega) F.c.text2 else F.c.text), modifier = Modifier.weight(1f))
-                                if (s.rir != null) Text("запас ${if (s.rir >= 5) "5+" else s.rir}", style = T.secondary(13.sp), modifier = Modifier.padding(end = 10.dp))
+                                if (s.rir != null) Text("ещё ${if (s.rir >= 5) "5+" else s.rir}", style = T.secondary(13.sp), modifier = Modifier.padding(end = 10.dp))
                                 // Minimal: a done set is a grey line with a plain tick.
                                 if (F.type.mega) Icon(Ic.check, null, tint = F.c.text3, modifier = Modifier.size(18.dp))
                                 else Box(Modifier.size(24.dp).clip(CircleShape).background(F.c.strength), contentAlignment = Alignment.Center) {
@@ -562,7 +561,7 @@ fun WorkoutScreen(workoutId: Long) {
                         if (blocked && !hintOff) {
                             Column {
                                 Text(
-                                    "Чтобы слышать конец отдыха даже с выключенным экраном, разреши уведомления и точные будильники.",
+                                    "Чтобы слышать конец отдыха с выключенным экраном, разреши уведомления и точные будильники.",
                                     style = T.secondary(12.sp),
                                 )
                                 Row {
@@ -633,7 +632,7 @@ fun WorkoutScreen(workoutId: Long) {
                         StepperGroup(listOf(weightSlot, repsSlot))
                     }
                     if (!timed) {
-                        Text("Сколько ещё повторов мог сделать?", style = T.secondary(12.sp))
+                        Text("Сколько повторов ещё оставалось?", style = T.secondary(12.sp))
                         RirChips(inp.rir) { inp.rir = it }
                     }
                 }
@@ -658,7 +657,7 @@ fun WorkoutScreen(workoutId: Long) {
                         val closes = n + 1 >= planned
                         val nx = if (closes) nextOpen(plan.items, logged.position, ::count) else null
                         val recordText = record?.let {
-                            "Рекорд! " + if (ex.load == LoadKind.EXTERNAL) "Вес на 1 раз — около ${Texts.oneRm(ex, it)}. " else "Сильнее, чем когда-либо. "
+                            "Рекорд! " + if (ex.load == LoadKind.EXTERNAL) "Около ${Texts.oneRm(ex, it)} на 1 раз. " else ""
                         } ?: ""
                         var nextKey: String? = null
                         var nextBefore: Pair<String, Int>? = null
@@ -672,8 +671,8 @@ fun WorkoutScreen(workoutId: Long) {
                                 val nxEx = exerciseOf(nx.exerciseId, stored, nx)
                                 nextKey = keyOf(nx)
                                 nextBefore = advice[nextKey]
-                                advice[nextKey] = recordText + "«${logged.name}» сделано. Дальше — ${nx.name}: ${Texts.prescription(nxEx, nx.prescription)}. " +
-                                    Texts.roleLine(nx.slot.role, nxEx) + " " + Texts.orderWhy(nx.slot.role, nxEx) to 0
+                                // Where the exercise stands in the day is under «Зачем и какие мышцы», not in the way between sets.
+                                advice[nextKey] = recordText + "«${logged.name}» сделано. Дальше — ${nx.name}: ${Texts.prescription(nxEx, nx.prescription)}." to 0
                             } else if (record != null) {
                                 // The very last set of the session: no next set or exercise to say it with, so it stays here.
                                 advice[key] = recordText.trim() to 1
@@ -688,9 +687,8 @@ fun WorkoutScreen(workoutId: Long) {
                             target = if (logged.prescription.calibrate) null else logged.prescription.reps,
                         )
                         if (ns != null && ex.load != LoadKind.TIMED) {
-                            val why = forma.core.strength.RestAdvice.words(restAdvice)
-                            advice[key] = (advice[key]?.first ?: "") +
-                                " Отдых ${Ru.clock(restAdvice.sec)}" + (if (why.isNotEmpty() && restAdvice.sec != logged.slot.restSec) ": $why." else ".") to ns.change
+                            // «Отдых 2:20.» without the reasons: «2:20: был запас» read as a time, and the verdict before it says it.
+                            advice[key] = (advice[key]?.first ?: "") + " Отдых ${Ru.clock(restAdvice.sec)}." to ns.change
                         }
                         val startsRest = settings.autoRest && !lastOfAll
                         if (startsRest) {
@@ -765,8 +763,7 @@ fun WorkoutScreen(workoutId: Long) {
             hasSets = sets.isNotEmpty(),
             notStarted = plan.items.filter { count(it.position) == 0 }.map { it.name },
             endNote = if (lastSetAt != null && end != nowMs) {
-                "Последний подход был в ${timeOfDay(lastSetAt)}. Время тренировки считаю до ${timeOfDay(end)}, " +
-                    "чтобы пауза не добавила лишней нагрузки."
+                "Последний подход был в ${timeOfDay(lastSetAt)}. Время тренировки считаю до ${timeOfDay(end)}."
             } else null,
             onDismiss = { finishing = false },
             onCancelWorkout = {
@@ -930,7 +927,7 @@ private fun RestBar(leftMs: Long, fraction: Float, next: String?, onMinus: () ->
         Column(Modifier.weight(1f)) {
             Text(labelText(if (over) "Отдых окончен" else "Отдых"), style = T.label())
             NumText(clock, style = T.number(22.sp).copy(color = if (over) F.c.text2 else F.c.text))
-            if (next != null) Text("далее: $next", style = T.secondary(11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (next != null) Text("дальше: $next", style = T.secondary(11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (!over) SmallButton("−15", onMinus)
         SmallButton("+15", onPlus)
@@ -1006,7 +1003,7 @@ private fun FinishDialog(
         text = {
             if (hasSets) {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Оцени всю тренировку от 1 до 10. По оценке считаются нагрузка и усталость.", style = T.secondary(14.sp))
+                    Text("От 1 до 10.", style = T.secondary(14.sp))
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         (1..5).forEach { v -> Chip("$v", rpe == v, { rpe = v }, Modifier.weight(1f), minWidth = 0.dp) }
                     }
@@ -1020,7 +1017,7 @@ private fun FinishDialog(
                     )
                     if (notStarted.isNotEmpty()) {
                         Text(
-                            "Не начаты: ${notStarted.joinToString(", ")}. Их веса в следующий раз будут те же.",
+                            "Не начаты: ${notStarted.joinToString(", ")}.",
                             style = T.secondary(13.sp).copy(color = F.c.warn),
                         )
                     }
@@ -1082,7 +1079,7 @@ private fun EditSetDialog(s: SetEntity, ex: forma.core.model.Exercise, onDismiss
                 if (load != LoadKind.TIMED) SignedWeightField(weight, { weight = it }, ex.assisted, help, { help = it })
                 NumberField(reps, { reps = it }, if (load == LoadKind.TIMED) "Секунды" else "Повторы", keyboard = androidx.compose.ui.text.input.KeyboardType.Number)
                 if (load != LoadKind.TIMED) {
-                    Text("Сколько ещё мог?", style = T.secondary(13.sp))
+                    Text("Сколько ещё оставалось?", style = T.secondary(13.sp))
                     RirChips(rir) { rir = it }
                 }
                 Text(
@@ -1142,7 +1139,7 @@ private fun NoteDialog(value: String, name: String, onDismiss: () -> Unit, onSav
         title = { Text("Заметка", style = T.title(20.sp)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextInput(text, { text = it }, "К «$name» — будет в каждой тренировке", placeholder = "сиденье 4, хват шире", maxLength = 80)
+                TextInput(text, { text = it }, "Будет в каждой тренировке, где есть «$name»", placeholder = "сиденье 4, хват шире", maxLength = 80)
                 if (value.isNotEmpty()) Text("Пустая заметка удаляется.", style = T.secondary(12.sp))
             }
         },

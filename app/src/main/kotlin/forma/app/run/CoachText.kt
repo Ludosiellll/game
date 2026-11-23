@@ -35,8 +35,8 @@ object CoachText {
                     w.type == RunType.TEST -> "Контрольный отрезок"
                     w.type == RunType.GOAL_PACE -> if (works.size > 1) "Отрезок $n из ${works.size}" else "Отрезок"
                     w.type == RunType.TEMPO -> if (works.size > 1) "Темповый отрезок $n из ${works.size}" else "Темповый отрезок"
-                    works.size > 1 -> "Ускорение $n из ${works.size}"
-                    else -> "Ускорение"
+                    works.size > 1 -> "Отрезок $n из ${works.size}"
+                    else -> "Отрезок"
                 }
             }
         }
@@ -45,8 +45,8 @@ object CoachText {
     private fun hint(s: Segment): String = when (s.kind) {
         SegmentKind.WARMUP, SegmentKind.COOLDOWN, SegmentKind.RECOVERY -> "Спокойно."
         SegmentKind.WALK -> "Быстрым шагом."
-        SegmentKind.RUN -> "Спокойно, чтобы мог говорить."
-        SegmentKind.WORK -> "Ровно и сильно."
+        SegmentKind.RUN -> "Спокойно, чтобы получалось болтать."
+        SegmentKind.WORK -> "Ровно."
     }
 
     /** [gps]: GPS is on. A rep still starts and a lap still counts only on a press (30 October), with GPS or without. */
@@ -75,16 +75,16 @@ object CoachText {
             is Cue.ToLine -> "Разминка закончена. ${startWhere(w, c.index)}. Побежишь, нажми «Круг»."
             // Explained ahead: a stride is 15 s, at its start there is time only for «пошёл».
             is Cue.StridesAhead -> "Через ${RunTimeline.STRIDES_AHEAD} секунд ускорения: ${RunTimeline.STRIDES} по ${RunTimeline.STRIDE_SEC} секунд, " +
-                "между ними ${RunTimeline.STRIDE_JOG} секунд трусцы. Быстро, но легко, не в полную силу."
+                "между ними ${RunTimeline.STRIDE_JOG} секунд трусцы. Быстро, но не в полную силу."
             is Cue.Stride -> when {
-                c.on && c.n == 1 -> "Первое ускорение — пошёл. Быстро, но легко."
+                c.on && c.n == 1 -> "Первое ускорение, пошёл."
                 c.on -> "Ускорение ${c.n}."
                 c.n < c.of -> "Трусца."
                 else -> "Ускорения сделаны. Трусца."
             }
             is Cue.Countdown, is Cue.LapMark -> null
             is Cue.Finished ->
-                if (w.continuable) "План выполнен. Можешь закончить или бежать дальше: лишнее время тоже засчитается."
+                if (w.continuable) "План выполнен. Можешь закончить или бежать дальше, это тоже засчитается."
                 else "Тренировка закончена. Можно остановиться."
         }
     }
@@ -101,7 +101,7 @@ object CoachText {
         val push = w.testMeters != null && l.fast == null && l.slow != null
         return when (l.verdict) {
             0 -> if (push) "$time. Хорошо, можно прибавить." else "$time. В темпе."
-            -1 -> if (l.closesRep) "$time. Быстрее цели." else "$time. Быстро, спокойнее."
+            -1 -> if (l.closesRep) "$time. Быстрее цели." else "$time. Быстро, сбавь."
             1 -> if (l.closesRep) "$time. Медленнее цели." else if (push) "$time. Прибавь." else "$time. Медленно, чуть прибавь."
             else -> "$time."
         }
@@ -136,10 +136,10 @@ object CoachText {
         val slow = judged.count { it.verdict == 1 }
         return "Кругов в темпе: $on из ${judged.size}." + when {
             fast * 10 >= judged.size * 3 -> " Много быстрых. В следующий раз беги ровнее, по писку."
-            slow * 10 >= judged.size * 3 -> " Много медленных. Темп пока тяжёлый, это нормально."
+            slow * 10 >= judged.size * 3 -> " Много медленных."
             on == judged.size -> " Ровно, как надо."
             else -> ""
-        } + " Подробный разбор — после сохранения."
+        }
     }
 
     /**

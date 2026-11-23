@@ -338,7 +338,7 @@ private fun Intro(first: Boolean) {
     )
     Text("Займёт около 2 минут", style = T.secondary(13.sp).copy(color = F.c.text3))
     if (first && cloud?.configured == true) {
-        Banner("Уже тренировался в Splity (раньше «Форма»)? Войди, и твои данные вернутся из облака", F.c.accent, icon = Ic.cloud) {
+        Banner("Уже есть тренировки в Splity (раньше «Форма»)? Войди, и они вернутся из облака", F.c.accent, icon = Ic.cloud) {
             nav.push(Screen.CloudSignIn(restore = true))
         }
     }

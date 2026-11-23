@@ -11,7 +11,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -59,7 +62,7 @@ import java.time.ZoneId
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [36], qualifiers = "w393dp-h2600dp-xhdpi")
+@Config(sdk = [36], qualifiers = "w393dp-h4200dp-xhdpi")
 class DesignReviewShotsTest {
     @get:Rule val compose = createComposeRule()
 
@@ -67,8 +70,8 @@ class DesignReviewShotsTest {
     private val zone = ZoneId.systemDefault()
     private fun at(d: LocalDate, hour: Int) = d.atTime(hour, 0).atZone(zone).toInstant().toEpochMilli()
 
-    private fun settle() {
-        repeat(8) {
+    private fun settle(rounds: Int = 8) {
+        repeat(rounds) {
             Thread.sleep(150)
             shadowOf(Looper.getMainLooper()).idle()
             compose.waitForIdle()
@@ -179,8 +182,17 @@ class DesignReviewShotsTest {
         )
         for ((name, s) in screens) {
             screen = s
-            settle()
+            // «Прогресс» asks the plan of the week's days from the database, one query at a time.
+            settle(if (name.startsWith("progress")) 30 else 8)
             compose.onRoot().captureRoboImage("build/shots/review-$name.png")
         }
+        // Its details, each opened in place.
+        screen = { forma.app.ui.screens.ProgressScreen(0) }
+        settle(30)
+        listOf("Подробнее о беге ›", "Подробнее о нагрузке ›", "Подходы по мышцам ›").forEach {
+            compose.onNodeWithText(it).performScrollTo().performClick()
+            settle()
+        }
+        compose.onRoot().captureRoboImage("build/shots/review-progress-open.png")
     }
 }

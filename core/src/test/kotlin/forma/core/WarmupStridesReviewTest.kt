@@ -78,7 +78,7 @@ class WarmupStridesReviewTest {
 
     @Test fun theTrialLeadsItsDebrief() {
         val items = RunReview.of(RunReview.Run(stadium, trial = 1500 to 328, strides = List(4) { 5.4 }, jog = 2.8), goal)
-        assertEquals("Как пробежал", items.first().title, items.joinToString { it.title })
+        assertEquals("Как прошла пробежка", items.first().title, items.joinToString { it.title })
         assertTrue(items.any { it.title == "Ускорения" })
     }
 

@@ -14,19 +14,19 @@ class RunHowTest {
 
     @Test fun anEasyRunOnTheStadiumSaysTheLapNotToBeat() {
         val w = RunPlan.onTrack(RunPlan.easy(st), 230)
-        val how = RunHow.short(w)
+        val how = RunHow.short(w).replace('\u00A0', ' ')
         assertTrue(how.startsWith("25 мин спокойно"), how)
         assertTrue("круг не быстрее" in how, how)
     }
 
     @Test fun anEasyRunOnTheRoadSaysThePace() {
-        val how = RunHow.short(RunPlan.easy(st))
+        val how = RunHow.short(RunPlan.easy(st)).replace('\u00A0', ' ')
         assertTrue("/км" in how && "круг" !in how, how)
     }
 
     @Test fun goalPaceRepsSayHowManyAndTheLapRange() {
         val w = RunPlan.onTrack(RunPlan.goalPace(st, goal, 230), 230)
-        val how = RunHow.short(w)
+        val how = RunHow.short(w).replace('\u00A0', ' ')
         // Reps of one lap read as laps (23 November: «6 × 1 круг — круг 45–46 с»).
         assertTrue(how.startsWith("Разминка 12:00, ${w.reps} кругов по "), how)
         assertTrue(Regex("по \\d\\d(,\\d)?–\\d\\d(,\\d)? с").containsMatchIn(how), how)
@@ -37,9 +37,9 @@ class RunHowTest {
     }
 
     @Test fun theTrialSaysEvenFirstThenFaster() {
-        val how = RunHow.short(RunPlan.goalTest(st, goal, 230))
+        val how = RunHow.short(RunPlan.goalTest(st, goal, 230)).replace('\u00A0', ' ')
         assertTrue(how.startsWith("В полную силу, но ровно: первые круги по"), how)
-        assertEquals("12 минут как можно дальше, ровно, без рывка в начале", RunHow.short(RunPlan.test(st)))
+        assertEquals("12 минут как можно дальше, ровно, без рывка в начале", RunHow.short(RunPlan.test(st)).replace('\u00A0', ' '))
     }
 }
 

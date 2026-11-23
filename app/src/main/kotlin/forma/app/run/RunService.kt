@@ -179,7 +179,7 @@ class RunService : Service() {
             Press.OffLine -> return
             // A rep's start (or a free run's); in a warm-up or a jog only the laps count from here.
             Press.Start -> coach?.speak(
-                if (t.workout.isOpenEnded || t.timeline(now()).segment?.kind == SegmentKind.WORK) "Старт." else "Круги — отсюда.", now = true,
+                if (t.workout.isOpenEnded || t.timeline(now()).segment?.kind == SegmentKind.WORK) "Старт." else "Круги считаю отсюда.", now = true,
             )
             // The lap GPS had timed and said seconds ago: nothing new to say.
             is Press.Timed -> {}

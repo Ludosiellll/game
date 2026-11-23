@@ -84,7 +84,7 @@ class UpdateReceiver : BroadcastReceiver() {
 
         /** A failed install in words. */
         fun why(status: Int): String = when (status) {
-            PackageInstaller.STATUS_FAILURE_ABORTED -> "Установка отменена. Нажми «Обновить», когда будешь готов."
+            PackageInstaller.STATUS_FAILURE_ABORTED -> "Установка отменена. Нажми «Обновить», когда будет удобно."
             PackageInstaller.STATUS_FAILURE_STORAGE -> "Не хватает места на телефоне для обновления."
             PackageInstaller.STATUS_FAILURE_CONFLICT, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE ->
                 "Телефон не принял обновление: оно не подходит к установленной версии."

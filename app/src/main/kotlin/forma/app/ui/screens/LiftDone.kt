@@ -36,7 +36,6 @@ import forma.app.ui.theme.T
 import forma.app.ui.theme.titleText
 import forma.core.model.Catalog
 import forma.core.text.Ru
-import kotlin.math.roundToInt
 
 @Composable
 fun LiftDoneScreen(workoutId: Long) {
@@ -65,7 +64,7 @@ fun LiftDoneScreen(workoutId: Long) {
                     Text("Новый рекорд силы", style = T.title(18.sp))
                 }
                 records.forEach { r ->
-                    Text("${r.name}: вес на 1 раз — около ${Texts.oneRm(Catalog.find(r.exerciseId), r.e1rm ?: 0.0)}", style = T.body(15.sp))
+                    Text("${r.name}: около ${Texts.oneRm(Catalog.find(r.exerciseId), r.e1rm ?: 0.0)} на 1 раз", style = T.body(15.sp))
                 }
             }
         }
@@ -105,7 +104,7 @@ fun LiftDoneScreen(workoutId: Long) {
                 }
             }
         }
-        Text("Нагрузка тренировки: ${summary.load.roundToInt()}. Это твоя оценка × минуты. По ней считаются форма, усталость и «Свежесть».", style = T.secondary(13.sp))
+        // No «Нагрузка тренировки: 345. Это твоя оценка × минуты…» here: the number is in «История», how it adds up in «Прогресс».
         CoachReviewCard(workout.id, workout.title, java.time.LocalDate.ofEpochDay(workout.epochDay))
         NextToday { nav.tab(Screen.Today) }
     }

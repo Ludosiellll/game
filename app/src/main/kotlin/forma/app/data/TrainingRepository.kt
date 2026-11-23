@@ -1966,7 +1966,7 @@ class TrainingRepository(
         // Back from being sick: the first runs easy, no reps and no strides, whatever the day holds.
         val sickLeft = easyAfterSick(date)
         val sickNote = "После болезни начинаем мягко: ещё $sickLeft ${Ru.plural(sickLeft, "лёгкая пробежка", "лёгкие пробежки", "лёгких пробежек")}, " +
-            "без отрезков и ускорений. Беги так, чтобы мог говорить. Станет хуже — остановись и отметь «Болею»: здоровье важнее плана. "
+            "без отрезков и ускорений. Беги так, чтобы получалось говорить. Станет хуже — остановись и отметь «Болею»: здоровье важнее плана. "
         val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when {
             toRace != null && toRace in 1..2 -> RunPlan.easy(st.copy(easyMinutes = minOf(st.easyMinutes, 20)), strides = 4).let {
                 it.copy(note = "До забега ${toRace} ${Ru.plural(toRace.toInt(), "день", "дня", "дней")}: только размяться, без усталости. " + it.note)
@@ -2628,6 +2628,36 @@ class TrainingRepository(
     fun setRows(): Flow<List<SetRow>> = combine(db.sets().observeAllDone(), db.workouts().observeHistory()) { sets, ws ->
         val day = ws.associate { it.id to it.epochDay }
         sets.mapNotNull { s -> day[s.workoutId]?.let { SetRow(s.workoutId, it, s.exerciseId, s.weight, s.reps, s.rir, s.targetReps) } }
+    }
+
+    /**
+     * The sets the plan asked of each muscle group over [from]..[to]: the lifting sessions of those days as each day has
+     * them (half the sets in a lighter week, the taper's, the person's own exercises), none on a day paused or marked
+     * «Болею»; counted as the done ones are — whole for the groups an exercise works first, half for those it helps. A
+     * review on 23 November: seven days against a whole template week told someone on plan «Меньше плана почти везде» on
+     * every gym day before the session and all through a lighter week. Empty without a program.
+     */
+    suspend fun plannedSets(from: LocalDate, to: LocalDate): Map<forma.core.model.Muscle, Double> {
+        val program = store.programNow() ?: return emptyMap()
+        if (store.profileNow() == null) return emptyMap()
+        val settings = store.settingsNow()
+        val out = forma.core.model.Muscle.entries.associateWith { 0.0 }.toMutableMap()
+        var d = from
+        while (!d.isAfter(to)) {
+            val off = settings.pausedOn(d) || settings.feels[d.toEpochDay()] == Feel.SICK.name
+            for (s in program.week.on(d.dayOfWeek.value)) {
+                val id = s.templateId
+                if (off || s.kind != SessionKind.LIFT || id == null || program.templates.none { it.id == id }) continue
+                for (item in liftPlan(id, d).items) {
+                    val ex = Catalog.find(item.exerciseId) ?: continue
+                    val sets = item.prescription.sets.toDouble()
+                    ex.primary.forEach { out[it] = out.getValue(it) + sets }
+                    ex.secondary.forEach { out[it] = out.getValue(it) + sets * 0.5 }
+                }
+            }
+            d = d.plusDays(1)
+        }
+        return out
     }
 
     /** Body weight on a given day: the last logged value up to that day. */

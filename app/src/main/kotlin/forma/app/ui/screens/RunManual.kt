@@ -130,7 +130,7 @@ fun RunManualScreen(workout: RunWorkout) {
             return@ScrollScreen
         }
         Text(
-            "Бегал с часами или секундомером, без телефона? Впиши, что они показали. План сдвинется так же, как после пробежки с телефоном.",
+            "Пробежка с часами или секундомером, без телефона? Впиши, что они показали. План сдвинется так же, как после пробежки с телефоном.",
             style = T.secondary(14.sp),
         )
         SectionLabel("Когда")
@@ -156,12 +156,12 @@ fun RunManualScreen(workout: RunWorkout) {
             )
         }
         if (cooper) {
-            NumberField(testKm, { testKm = it }, "Сколько пробежал за 12 минут", "км", placeholder = "2,6")
+            NumberField(testKm, { testKm = it }, "Дистанция за 12 минут", "км", placeholder = "2,6")
             if (testBad) Text("За 12 минут пробегают от 0,8 до 5,5 км — проверь число.", style = T.secondary(13.sp).copy(color = F.c.warn))
             else if (testKm.isBlank()) Text("Без дистанции тест не засчитается.", style = T.secondary(13.sp).copy(color = F.c.warn))
         }
         if (repsKind) {
-            SectionLabel("Сколько отрезков сделал")
+            SectionLabel("Сколько отрезков получилось")
             Stepper(
                 "$reps", "из ${workout.reps}", { reps = (reps - 1).coerceAtLeast(0) }, { reps = (reps + 1).coerceAtMost(workout.reps + 4) },
                 Modifier.fillMaxWidth(), minusLabel = "Меньше отрезков", plusLabel = "Больше отрезков",
@@ -189,7 +189,7 @@ fun RunManualScreen(workout: RunWorkout) {
             // A line of lap times: longer than a number field takes.
             TextInput(
                 lapsText, { lapsText = it },
-                if (repsKind) "Или каждый круг отрезков по порядку, секунды" else "Круги по порядку (если засекал), секунды",
+                if (repsKind) "Или каждый круг отрезков по порядку, секунды" else "Круги по порядку (если засекались), секунды",
                 placeholder = "52 51 53", maxLength = 400,
             )
             val repLaps = laps.filter { it.rep != null }

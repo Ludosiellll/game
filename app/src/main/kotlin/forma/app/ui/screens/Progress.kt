@@ -84,8 +84,8 @@ private const val WEEKS = 8
  * «Прогресс» as one page of answers (23 November, Denis: «графики … перегруженные и непонятные»; a review counted 35
  * blocks in four tabs for four questions). Each section opens with its answer in large type — stronger, faster, where the
  * weight is going, how hard the weeks are — then one chart over the same eight weeks, then «Подробнее» with what the old
- * tabs showed. [initialTab]: the section to bring into view (0 strength, 1 running, 2 load, 3 weight); the load one opens
- * with its details, as the tile on «Сегодня» that sends there asks about them.
+ * tabs showed. [initialTab]: the section to bring into view (0 strength, 1 running, 2 load, 3 weight), its details shut:
+ * the answer and the chart first, as everywhere on the page.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -102,15 +102,15 @@ fun ProgressScreen(initialTab: Int = 0) {
     ScrollScreen(gap = 20.dp) {
         FitTitle(titleText("Прогресс"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         if (first != null) Text(
-            (if (first > from) "С ${shortDate(LocalDate.ofEpochDay(first))}" else "$WEEKS недель") +
-                " · $inWindow ${Ru.plural(inWindow, "тренировка", "тренировки", "тренировок")}",
+            "$inWindow ${Ru.plural(inWindow, "тренировка", "тренировки", "тренировок")} " +
+                if (first > from) "с ${shortDate(LocalDate.ofEpochDay(first))}" else "за $WEEKS недель",
             style = T.secondary(14.sp),
         )
         Alerts(today)
         Column(Modifier.bringIntoViewRequester(requesters[0]), verticalArrangement = Arrangement.spacedBy(12.dp)) { StrengthSection(today, from) }
         Column(Modifier.bringIntoViewRequester(requesters[1]), verticalArrangement = Arrangement.spacedBy(12.dp)) { RunSection(today, from) }
         Column(Modifier.bringIntoViewRequester(requesters[3]), verticalArrangement = Arrangement.spacedBy(12.dp)) { WeightSection(today, from) }
-        Column(Modifier.bringIntoViewRequester(requesters[2]), verticalArrangement = Arrangement.spacedBy(12.dp)) { LoadSection(today, open = section == 2) }
+        Column(Modifier.bringIntoViewRequester(requesters[2]), verticalArrangement = Arrangement.spacedBy(12.dp)) { LoadSection(today) }
         MusclesSection(today)
         // Not progress: the export sits a tap away at the bottom.
         if (workouts.isNotEmpty()) { Hairline(); More("Выгрузить тренировки в файл") { ReportCard() } }
@@ -153,13 +153,33 @@ private fun Alerts(today: LocalDate) {
     lines.forEach { Text(it, style = T.body(15.sp, FontWeight.SemiBold).copy(color = F.c.warn)) }
 }
 
-/** Sets a week for one muscle group as a row: its name and how many against the plan's. */
+/**
+ * A row: a name (and a [note] under it), its number, and beside it a change or a note in a column of its own; [onClick]:
+ * what the row opens.
+ */
 @Composable
-private fun SetsRow(name: String, value: String, change: String?) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(name, style = T.body(15.sp), modifier = Modifier.weight(1f))
+private fun SetsRow(name: String, value: String, change: String?, note: String? = null, onClick: (() -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth().let { m -> if (onClick == null) m else m.clickable(onClickLabel = "Открыть: $name", onClick = onClick) }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(name, style = T.body(15.sp))
+            note?.let { Text(it, style = T.secondary(12.sp)) }
+        }
         NumText(value, style = T.number(16.sp))
-        if (change != null) Text(change, style = T.secondary(13.sp), modifier = Modifier.width(64.dp).padding(start = 10.dp))
+        if (change != null) Text(change, style = T.secondary(13.sp), maxLines = 1, softWrap = false, modifier = Modifier.width(84.dp).padding(start = 10.dp))
+    }
+}
+
+/** A run of a list: its date, what was run (muted), the number that counts. */
+@Composable
+private fun RunRow(epochDay: Long, what: String?, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(shortDate(LocalDate.ofEpochDay(epochDay)), style = T.body(15.sp), modifier = Modifier.weight(1f))
+        what?.let { Text(it, style = T.secondary(13.sp), modifier = Modifier.padding(end = 12.dp)) }
+        NumText(value, style = T.number(16.sp))
     }
 }
 
@@ -172,23 +192,26 @@ private fun StrengthSection(today: LocalDate, from: Long) {
     val profile by repo.store.profile.collectAsState(initial = null)
     if (rows.isEmpty() && profile?.aim?.lifts == false) return
     if (rows.isEmpty()) {
-        Answer("Сила", "Пока нет силовых", "После первой силовой здесь будет, как растут веса.")
+        Answer("Сила", "Пока нет силовых", "После первой силовой здесь будет видно, как растут веса.")
         return
     }
     val index = remember(rows, bw) { Stats.indexSince(Stats.strengthIndex(rows, bw), from) }
     val change = index.lastOrNull()?.value
-    val weeks = if (index.size >= 2) ((index.last().epochDay - index.first().epochDay + 6) / 7).toInt().coerceAtLeast(1) else 0
-    Answer(
-        "Сила",
-        if (index.size >= 2 && change != null) "${if (change >= 0) "+" else "−"}${kotlin.math.abs(change).roundToInt()} % за $weeks ${Ru.plural(weeks, "неделю", "недели", "недель")}"
-        else "Первая неделя",
-        "Вес на 1 раз в среднем по всем упражнениям.",
-    )
-    if (index.size >= 2) TrendChart(
-        index, index.first().epochDay, today.toEpochDay(), "Сила за $weeks недель: ${change?.roundToInt()} %",
-        endLabel = "${if ((change ?: 0.0) >= 0) "+" else "−"}${kotlin.math.abs(change ?: 0.0).roundToInt()} %",
-        reference = 0.0, referenceLabel = "старт", minSpan = 10.0, startLabel = shortDate(LocalDate.ofEpochDay(index.first().epochDay)),
-    )
+    val lastLift = rows.maxOf { it.epochDay }
+    // Since a date, not «за N недель»: the index starts on the Sunday before the window, and a count of weeks came out
+    // 7 or 9 under a header of 8.
+    val since = index.firstOrNull()?.let { shortDate(LocalDate.ofEpochDay(it.epochDay)) }
+    when {
+        index.size >= 2 && change != null -> {
+            Answer("Сила", Ru.pct(change), "С $since, в среднем по упражнениям")
+            TrendChart(
+                index, index.first().epochDay, today.toEpochDay(), "Сила с $since: ${Ru.pct(change)}",
+                endLabel = Ru.pct(change), reference = 0.0, minSpan = 10.0, startLabel = since,
+            )
+        }
+        lastLift <= from -> Answer("Сила", "Перерыв", "Последняя силовая ${shortDate(LocalDate.ofEpochDay(lastLift))}.")
+        else -> Answer("Сила", "Первая неделя", "Рост будет виден со второй недели.")
+    }
     // The lifts by how often they were done in the window, multi-joint first: the main ones.
     val lifts = remember(rows, bw, from) {
         rows.filter { it.epochDay > from }.groupBy { it.exerciseId }.mapNotNull { (id, r) ->
@@ -196,24 +219,34 @@ private fun StrengthSection(today: LocalDate, from: Long) {
             Triple(ex, r.map { it.workoutId }.distinct().size, liftRow(ex, rows.filter { it.exerciseId == id }, bw, from, today.toEpochDay()))
         }.filter { it.third != null }.sortedWith(compareBy({ if (it.first.compound) 0 else 1 }, { -it.second }))
     }
-    lifts.take(3).forEach { (ex, _, row) -> SetsRow(ex.name, row!!.first, row.second) }
-    if (lifts.size > 3) More("Все упражнения") { lifts.drop(3).forEach { (ex, _, row) -> SetsRow(ex.name, row!!.first, row.second) } }
+    if (lifts.isNotEmpty()) Text("Вес на 1 раз", style = T.secondary(13.sp))
+    @Composable fun lift(ex: forma.core.model.Exercise, row: Pair<String, String?>) =
+        SetsRow(ex.name, row.first, row.second, note = "на одну гантель".takeIf { ex.perHand }) { nav.push(Screen.Exercise(ex.id)) }
+    lifts.take(3).forEach { (ex, _, row) -> lift(ex, row!!) }
+    if (lifts.size > 3) More("Все упражнения") { lifts.drop(3).forEach { (ex, _, row) -> lift(ex, row!!) } }
+    // The reserve read with a correction: said where the weights it chooses are seen (decision of 13 October: nothing changes silently).
+    val bias by produceState(0, rows) { value = repo.rirBias() }
+    if (bias > 0) Text("Ты обычно называешь запас на $bias больше, чем есть. Веса подбираются с учётом этого.", style = T.secondary(13.sp))
     if (profile?.liftGoal != null) GymGoalCard()
     else Text(
-        "Цель в зале ›", style = T.body(15.sp, FontWeight.SemiBold).copy(color = F.c.accent),
+        "Поставить цель в зале ›", style = T.body(15.sp, FontWeight.SemiBold).copy(color = F.c.accent),
         modifier = Modifier.clickable(onClickLabel = "Поставить цель в зале") { nav.push(Screen.GymGoal) }.padding(vertical = 6.dp),
     )
     val outgrew by produceState(false, rows) { value = repo.outgrewNovice() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     if (outgrew) FCard(gap = 6.dp) {
         Text("Ты уже не новичок", style = T.title(18.sp))
-        Text("Основные упражнения перестали расти от тренировки к тренировке. Дальше лучше план среднего уровня: недели циклами, с лёгкой в конце.", style = T.body(14.sp))
+        Text(
+            "Основные упражнения перестали расти от тренировки к тренировке. Дальше лучше план среднего уровня: циклы по " +
+                "несколько недель, последняя неделя в цикле лёгкая.",
+            style = T.body(14.sp),
+        )
         GhostButton("Перейти на средний уровень", { scope.launch { repo.setExperience(forma.core.model.Experience.INTERMEDIATE) } }, Modifier.fillMaxWidth())
     }
 }
 
 /**
- * One exercise as a row: its one-rep estimate now and the change over the window, by the index's own rule
+ * One exercise as a row: its one-rep estimate now and the change over the window with its unit, by the index's own rule
  * ([Stats.liftChange]); a hold in seconds. Null when it was not done in the last four weeks.
  */
 private fun liftRow(ex: forma.core.model.Exercise, rows: List<SetRow>, bw: (Long) -> Double, from: Long, today: Long): Pair<String, String?>? {
@@ -230,11 +263,8 @@ private fun liftRow(ex: forma.core.model.Exercise, rows: List<SetRow>, bw: (Long
         else -> "${kg(now)} кг"
     }
     val shown = if (timed) delta.roundToInt().toDouble() else (delta * 2).roundToInt() / 2.0
-    val change = when {
-        shown == 0.0 -> "="
-        timed -> (if (shown > 0) "+" else "−") + "${kotlin.math.abs(shown).roundToInt()} с"
-        else -> (if (shown > 0) "+" else "−") + kg(kotlin.math.abs(shown))
-    }
+    val sign = if (shown > 0) "+" else if (shown < 0) "−" else ""
+    val change = if (timed) "$sign${kotlin.math.abs(shown).roundToInt()} с" else "$sign${kg(kotlin.math.abs(shown))} кг"
     return value to change
 }
 
@@ -249,92 +279,147 @@ private fun RunSection(today: LocalDate, from: Long) {
     val goal = profile?.runGoal
     val lapM = profile?.lapMeters
     if (goal == null && profile?.finish == null && runs.isEmpty()) return
-    profile?.finish?.let { meters ->
-        Answer("Бег", "Пробежать ${goalDistance(meters)}")
-        FinishCard(meters, st, runs)
-        return
-    }
-    if (st != null && !st.canRunContinuously) {
-        Answer("Бег", "Бег с ходьбой", "Неделя ${st.walkStage / 3 + 1} из 9. В конце 30 минут без остановки.")
-        return
-    }
     val dayOf = workouts.associate { it.id to it.epochDay }
+    val finish = profile?.finish
+    if (finish != null || (st != null && !st.canRunContinuously)) {
+        FinishAnswer(finish, st, runs)
+        RunWeeks(runs, dayOf, today)
+        return
+    }
     val path = remember(workouts, runs, goal?.meters) { goal?.let { forma.app.data.GoalProgress.of(workouts, runs, it.meters) } }
-    if (goal != null) {
-        val forecast = st?.fitness?.let { Vdot.predictSeconds(it, goal.meters.toDouble()) }
-        val best = path?.trials?.minOfOrNull { it.goalSeconds }
-        val now = best?.let { b -> forecast?.let { minOf(it, b) } ?: b } ?: forecast
-        val gap = now?.let { (it - goal.seconds).roundToInt() }
-        Answer(
-            "Бег · " + if (goal.meters <= 3000) "${goal.meters} м" else goalDistance(goal.meters),
-            now?.let { (if (st?.estimated == true && best == null) "≈ " else "") + Ru.clock(it.roundToInt()) } ?: "Цель ${Ru.clock(goal.seconds)}",
-            gap?.let { g -> "Цель ${Ru.clock(goal.seconds)}" + if (g <= 0) ", по силам" else ", ещё " + if (g < 60) "$g с" else Ru.clock(g) },
-        )
-    } else Answer("Бег", "${Ru.one(runs.filter { (dayOf[it.workoutId] ?: 0) > today.toEpochDay() - 28 }.sumOf { it.distanceM ?: 0.0 } / 1000)} км за 4 недели")
     // The reps at the goal's pace, session by session: the one measured answer to «am I faster?».
     val sessions = path?.sessions.orEmpty().filter { it.epochDay > from }
-    if (goal != null && goal.middleDistance && lapM != null) {
-        val target = forma.core.run.Track.lapSec(goal.pace, lapM)
-        fun lap(s: forma.app.data.GoalProgress.Session) = s.paceSecKm * lapM / 1000.0
+    val target = if (goal != null && goal.middleDistance && lapM != null) forma.core.run.Track.lapSec(goal.pace, lapM) else null
+    fun lap(s: forma.app.data.GoalProgress.Session) = s.paceSecKm * lapM!! / 1000.0
+    val forecast = goal?.let { g -> st?.fitness?.let { Vdot.predictSeconds(it, g.meters.toDouble()) } }
+    var forecastSaid = false
+    if (goal != null) {
+        val dist = if (goal.meters <= 3000) "${goal.meters} м" else goalDistance(goal.meters)
+        val trial = path?.trials?.filter { it.epochDay > from }?.minByOrNull { it.goalSeconds }
+        fun left(sec: Double) = (sec - goal.seconds).roundToInt().let { g -> if (g < 60) "$g с" else Ru.clock(g) }
+        // What was run first — the best trial of the window, then the laps of the reps at the goal's pace; the forecast
+        // only before either, said as one (a review on 23 November: «≈ 6:26» was the starting guess from the goal itself,
+        // unmoved in eight weeks, over a chart of laps getting faster).
         when {
-            sessions.size >= 2 -> {
-                TrendChart(
-                    sessions.map { Point(it.epochDay, lap(it)) }, sessions.first().epochDay, today.toEpochDay(),
-                    "Средний круг в отрезках к цели, последний ${lapTenth(lap(sessions.last()))}",
-                    endLabel = lapTenth(lap(sessions.last())), reference = target, referenceLabel = "цель ${Ru.nobreak(lapTenth(target))}",
-                    invert = true, minSpan = 4.0, startLabel = shortDate(LocalDate.ofEpochDay(sessions.first().epochDay)),
+            trial != null -> {
+                val reached = trial.goalSeconds <= goal.seconds + 0.5
+                Answer(
+                    "Бег · лучший контрольный на $dist", Ru.clock(trial.goalSeconds.roundToInt()),
+                    "Цель ${Ru.clock(goal.seconds)}" +
+                        if (reached) " взята ${shortDate(LocalDate.ofEpochDay(trial.epochDay))}." else ", осталось ${left(trial.goalSeconds)}.",
+                    color = if (reached) F.c.good else F.c.text,
                 )
-                Text("Средний круг в отрезках «Темп цели».", style = T.secondary(13.sp))
             }
-            sessions.size == 1 -> Text("Средний круг в отрезках: ${lapTenth(lap(sessions.last()))}, цель ${lapTenth(target)}.", style = T.body(15.sp))
-            else -> Text("Отрезков к цели пока не было.", style = T.secondary(14.sp))
+            target != null && sessions.isNotEmpty() -> Answer(
+                "Бег · $dist за ${Ru.clock(goal.seconds)}", "Круг ${lapTenth(lap(sessions.last()))}",
+                "В отрезках в темпе цели. Нужно ${lapTenth(target)}.",
+            )
+            forecast != null -> {
+                forecastSaid = true
+                Answer(
+                    "Бег · прогноз на $dist", "≈ ${Ru.clock(forecast.roundToInt())}",
+                    "Цель ${Ru.clock(goal.seconds)}" + if (forecast <= goal.seconds + 0.5) ", по силам." else ", осталось ${left(forecast)}.",
+                )
+            }
+            else -> Answer("Бег", "$dist за ${Ru.clock(goal.seconds)}", "Прогноз появится после первых пробежек.")
         }
-    } else KmWeeks(runs, dayOf, today)
-    More("Подробнее о беге") { RunDetails(st, goal, lapM, path, runs, dayOf, today, chartShown = goal != null && goal.middleDistance && lapM != null) }
+    } else {
+        val window = runs.filter { (dayOf[it.workoutId] ?: 0) > from }
+        val km = window.sumOf { it.distanceM ?: 0.0 } / 1000
+        Answer(
+            "Бег", if (km > 0) "${Ru.one(km)} км" else "${window.sumOf { it.movingSec } / 60} мин",
+            "За $WEEKS недель, ${window.size} ${Ru.plural(window.size, "пробежка", "пробежки", "пробежек")}",
+        )
+    }
+    if (target != null) {
+        if (sessions.size >= 2) TrendChart(
+            sessions.map { Point(it.epochDay, lap(it)) }, sessions.first().epochDay, today.toEpochDay(),
+            "Средний круг в отрезках в темпе цели, последний ${lapTenth(lap(sessions.last()))}, нужно ${lapTenth(target)}",
+            endLabel = lapTenth(lap(sessions.last())), reference = target, referenceLabel = "цель ${Ru.nobreak(lapTenth(target))}",
+            invert = true, minSpan = 4.0, startLabel = shortDate(LocalDate.ofEpochDay(sessions.first().epochDay)),
+        )
+        if (sessions.isEmpty()) Text("За $WEEKS недель отрезков в темпе цели не было.", style = T.secondary(14.sp))
+        st?.let { LadderLine(it, today) }
+    } else RunWeeks(runs, dayOf, today)
+    More("Подробнее о беге") {
+        RunDetails(st, goal, lapM, path, runs, dayOf, today, forecast.takeUnless { forecastSaid }, weeks = target != null)
+    }
 }
 
-/** Kilometres a week over the window, this week as «идёт». */
+/** Where the reps at the goal's pace are on the way to the trial: the step of the ladder, or the trial next. */
 @Composable
-private fun KmWeeks(runs: List<forma.app.data.RunEntity>, dayOf: Map<Long, Long>, today: LocalDate) {
+private fun LadderLine(st: forma.core.run.RunState, today: LocalDate) {
+    val day = today.toEpochDay()
+    // A trial tried lately (stopped, not counted) comes again only two weeks after it.
+    val again = st.lastTrialTryDay?.plus(14)?.takeIf { it > day }
+    Text(
+        when {
+            st.testSoon && again == null -> "Следующая тяжёлая пробежка: контрольный забег."
+            st.testSoon -> "Контрольный забег не раньше ${shortDate(LocalDate.ofEpochDay(again!!))}."
+            else -> "Шаг ${st.goalStage + 1} из ${RunPlan.goalLadderSize} до контрольного забега."
+        },
+        style = T.secondary(14.sp),
+    )
+}
+
+/** Kilometres a week over the window, this week last; minutes when the runs have no distance (by time, no GPS). */
+@Composable
+private fun RunWeeks(runs: List<forma.app.data.RunEntity>, dayOf: Map<Long, Long>, today: LocalDate, titled: Boolean = false) {
     val monday = Stats.monday(today).minusWeeks((WEEKS - 1).toLong()).toEpochDay()
     val km = DoubleArray(WEEKS)
+    val min = DoubleArray(WEEKS)
     runs.forEach { r ->
         val d = dayOf[r.workoutId] ?: return@forEach
         val w = ((d - monday) / 7).toInt()
-        if (d >= monday && w in 0 until WEEKS) km[w] += (r.distanceM ?: 0.0) / 1000
+        if (d >= monday && w in 0 until WEEKS) { km[w] += (r.distanceM ?: 0.0) / 1000; min[w] += r.movingSec / 60.0 }
     }
-    if (km.sum() <= 0.0) return
-    WeekBars(km.toList(), "Километры по неделям, на этой неделе ${Ru.one(km.last())}", startLabel = shortDate(LocalDate.ofEpochDay(monday)))
-    Text("Километры по неделям.", style = T.secondary(13.sp))
+    val useKm = km.sum() > 0.0
+    if (!useKm && min.sum() <= 0.0) return
+    val what = if (useKm) "Километры по неделям" else "Минуты по неделям"
+    if (titled) Text(what, style = T.secondary(14.sp))
+    WeekBars(
+        (if (useKm) km else min).toList(),
+        "$what, на этой неделе " + if (useKm) Ru.one(km.last()) else min.last().roundToInt().toString(),
+        startLabel = shortDate(LocalDate.ofEpochDay(monday)),
+    )
 }
 
-/** What the running tab showed, as lists: trials, the last sessions of reps, the paces of the plan, kilometres. */
+/** What the running tab showed, as lists: the forecast when not said above, trials, sessions of reps, paces, the weeks. */
 @Composable
 private fun RunDetails(
     st: forma.core.run.RunState?, goal: forma.core.model.RunGoal?, lapM: Int?, path: forma.app.data.GoalProgress.Result?,
-    runs: List<forma.app.data.RunEntity>, dayOf: Map<Long, Long>, today: LocalDate, chartShown: Boolean,
+    runs: List<forma.app.data.RunEntity>, dayOf: Map<Long, Long>, today: LocalDate, forecast: Double?, weeks: Boolean,
 ) {
+    if (goal != null && forecast != null) {
+        val dist = if (goal.meters <= 3000) "${goal.meters} м" else goalDistance(goal.meters)
+        SetsRow("Прогноз на $dist", (if (st?.estimated == true) "≈ " else "") + Ru.clock(forecast.roundToInt()), null)
+        if (st?.estimated == true) Text("Это оценка по цели и пробежкам. Уточнится после контрольного забега.", style = T.secondary(13.sp))
+    }
     path?.trials?.takeIf { it.isNotEmpty() && goal != null }?.let { trials ->
-        Text("Контрольные", style = T.secondary(14.sp))
+        // On a track the trial is run in whole laps (1435 m on 205 m): the time run, and the time over the goal distance.
+        val laps = trials.any { it.meters != goal!!.meters }
+        Text(if (laps) "Контрольные, время на ${goal!!.meters} м" else "Контрольные", style = T.secondary(14.sp))
         trials.takeLast(4).reversed().forEach { t ->
-            SetsRow(shortDate(LocalDate.ofEpochDay(t.epochDay)), Ru.clock(t.goalSeconds.roundToInt()), if (t.meters != goal!!.meters) "${t.meters} м" else null)
+            RunRow(t.epochDay, if (t.meters != goal!!.meters) "${Ru.clock(t.seconds)} за ${t.meters} м" else null, Ru.clock(t.goalSeconds.roundToInt()))
         }
     }
     if (goal != null && lapM != null) path?.sessions?.takeIf { it.isNotEmpty() }?.let { sessions ->
-        Text("Отрезки «Темп цели»", style = T.secondary(14.sp))
+        Text("Отрезки в темпе цели, средний круг", style = T.secondary(14.sp))
         sessions.takeLast(4).reversed().forEach { s ->
-            SetsRow(shortDate(LocalDate.ofEpochDay(s.epochDay)), lapTenth(s.paceSecKm * lapM / 1000.0), if (s.judged > 0) "${s.onPace}/${s.judged}" else null)
+            RunRow(s.epochDay, if (s.judged > 0) "${s.onPace} из ${s.judged} в темпе" else null, lapTenth(s.paceSecKm * lapM / 1000.0))
         }
     }
     st?.fitness?.let { v ->
         val p = PaceTable.forVdot(v)
         Text(if (lapM != null) "Темпы плана, круг $lapM м" else "Темпы плана, мин/км", style = T.secondary(14.sp))
-        fun show(secKm: Double) = if (lapM != null) lapTenth(forma.core.run.Track.lapSec(secKm, lapM)) else Ru.pace(secKm)
-        SetsRow("Лёгкий", "${show(p.easy.fast.toDouble())}–${show(p.easy.slow.toDouble())}", null)
-        SetsRow("Темповый", show(p.threshold.toDouble()), null)
-        SetsRow("Интервалы", show(p.interval.toDouble()), null)
+        // Whole seconds, as the run screen says them.
+        fun lap(secKm: Double) = forma.core.run.Track.lapSec(secKm, lapM!!)
+        fun one(secKm: Double) = if (lapM != null) Ru.lap(lap(secKm)) else Ru.pace(secKm)
+        SetsRow("Лёгкий", if (lapM != null) Ru.lapRange(lap(p.easy.fast.toDouble()), lap(p.easy.slow.toDouble())) else "${Ru.pace(p.easy.fast.toDouble())}–${Ru.pace(p.easy.slow.toDouble())}", null)
+        SetsRow("Темповый", one(p.threshold.toDouble()), null)
+        SetsRow("Интервалы", one(p.interval.toDouble()), null)
     }
-    if (chartShown) KmWeeks(runs, dayOf, today)
+    if (weeks) RunWeeks(runs, dayOf, today, titled = true)
 }
 
 @Composable
@@ -347,32 +432,36 @@ private fun WeightSection(today: LocalDate, from: Long) {
         GhostButton("Записать вес", { nav.push(Screen.Body) }, Modifier.fillMaxWidth(), height = 52.dp)
         return
     }
-    val all = remember(list) { list.map { Point(it.epochDay, it.kg) } }
+    val all = remember(list) { list.map { Point(it.epochDay, it.kg) }.sortedBy { it.epochDay } }
     val trend = remember(all) { BodyTrend.trend(all) }
     val rate = remember(all, today) { BodyTrend.perWeek(all, today.toEpochDay()) }
     val now = trend.last().value
+    val last = all.last()
+    // The big number is the smoothed weight (one weigh-in is ±0,5 kg of water); the weigh-in itself is said under it, as
+    // «Записать вес» lists it — else a 74,45 typed comes back as 74,1 with nothing saying why.
     Answer(
-        "Вес тела", "${Ru.one(now)} кг",
-        when {
-            rate == null -> "Мало замеров, чтобы сказать, куда идёт."
-            kotlin.math.abs(rate) < 0.1 -> "Стоит на месте."
-            else -> "${if (rate > 0) "+" else "−"}${Ru.one(kotlin.math.abs(rate))} кг в неделю"
-        },
+        "Вес тела, в среднем", "${Ru.one(now)} кг",
+        listOf(
+            when {
+                rate == null -> "Пока мало замеров, чтобы понять, куда идёт вес."
+                kotlin.math.abs(rate * 4) < 0.2 -> "Стоит на месте."
+                else -> "${if (rate > 0) "+" else "−"}${Ru.one(kotlin.math.abs(rate * 4))}\u00A0кг за 4 недели."
+            },
+            "Последний замер ${Ru.kg(last.value)}\u00A0кг" +
+                if (today.toEpochDay() - last.epochDay > 14) ", ${shortDate(LocalDate.ofEpochDay(last.epochDay))}." else ".",
+        ).joinToString(" "),
     )
     val shownTrend = trend.filter { it.epochDay > from }
     val shownDots = all.filter { it.epochDay > from }
-    if (shownDots.size >= 2) {
-        TrendChart(
-            shownTrend, shownDots.first().epochDay, today.toEpochDay(), "Вес тела, тренд ${Ru.one(now)} кг",
-            dots = shownDots, endLabel = Ru.one(now), minSpan = 3.0, startLabel = shortDate(LocalDate.ofEpochDay(shownDots.first().epochDay)),
-        )
-        Text("Линия сглаживает скачки между замерами.", style = T.secondary(13.sp))
-    }
+    if (shownDots.size >= 2) TrendChart(
+        shownTrend, shownDots.first().epochDay, today.toEpochDay(), "Вес тела, в среднем ${Ru.one(now)} кг, последний замер ${Ru.kg(last.value)} кг",
+        dots = shownDots, endLabel = "${Ru.one(now)} кг", minSpan = 3.0, startLabel = shortDate(LocalDate.ofEpochDay(shownDots.first().epochDay)),
+    )
     GhostButton("Записать вес", { nav.push(Screen.Body) }, Modifier.fillMaxWidth(), height = 52.dp)
 }
 
 @Composable
-private fun LoadSection(today: LocalDate, open: Boolean) {
+private fun LoadSection(today: LocalDate) {
     val repo = LocalRepo.current
     val loads by remember { repo.dailyLoads() }.collectAsState(initial = emptyMap())
     val story by remember(today) { repo.loadStory(today) }.collectAsState(initial = null)
@@ -381,15 +470,19 @@ private fun LoadSection(today: LocalDate, open: Boolean) {
     Answer("Нагрузка", moodWords(st.zone))
     val weeks = st.weeks.takeLast(WEEKS)
     val current = weeks.lastOrNull()?.monday == Stats.monday(today)
+    val usual = st.usualWeek
     if (weeks.isNotEmpty()) WeekBars(
-        weeks.map { it.load }, "Нагрузка по неделям", current = current, usual = st.usualWeek,
-        spikes = weeks.indices.filter { weeks[it].level == LoadStory.Level.SPIKE && !(current && it == weeks.lastIndex) }.toSet(),
+        weeks.map { it.load }, "Нагрузка по неделям", current = current, usual = usual,
+        // A spike against the line drawn as well as against the weeks before it: a week as tall as «обычная» is none.
+        spikes = weeks.indices.filter { i ->
+            !(current && i == weeks.lastIndex) && weeks[i].level == LoadStory.Level.SPIKE && usual != null && weeks[i].load > usual * 1.3
+        }.toSet(),
         startLabel = shortDate(weeks.first().monday),
     )
-    More("Как считаем", open = open) { LoadDetails(today) }
+    More("Подробнее о нагрузке") { LoadDetails(today) }
 }
 
-/** The old load tab: the three numbers, fitness against fatigue, freshness and the rest line, the weeks, the units. */
+/** The old load tab: the three numbers, freshness and the rest line, the dips, the weeks, the units. */
 @Composable
 private fun LoadDetails(today: LocalDate) {
     val repo = LocalRepo.current
@@ -409,15 +502,6 @@ private fun LoadDetails(today: LocalDate) {
             if (st.history) Metric3("Свежесть", Ru.pct(now.formPct), zoneColor(LoadStory.zone(now.formPct, line)), Modifier.weight(1f))
             else Metric3("Свежесть", "—", F.c.text3, Modifier.weight(1f))
         }
-        LineChart(
-            listOf(Series(last.map { it.fitness }, F.c.endurance), Series(last.map { it.fatigue }, F.c.load, width = 2.dp)),
-            xLabels = listOf(shortDate(last.first().date), shortDate(last.last().date)), description = "Тренированность и усталость за 8 недель",
-        )
-        Text(
-            (if (F.type.mega) "Толстая линия — тренированность, тонкая серая — усталость." else "Синяя линия — тренированность, оранжевая — усталость.") +
-                " Если усталость выше, ты нагружаешься больше привычного.",
-            style = T.secondary(12.sp),
-        )
         // The three words explained a tap away: on the screen they were three long paragraphs.
         var explain by rememberSaveable { mutableStateOf(false) }
         Text(
@@ -431,19 +515,18 @@ private fun LoadDetails(today: LocalDate) {
         }
     }
     if (st.history) {
-        SectionLabel("Свежесть и твоя линия отдыха")
+        Text("Свежесть и линия отдыха", style = T.secondary(14.sp))
         FCard(gap = 6.dp) {
             // From two weeks after the first session: before that freshness is not yet a number to read.
             val from = loads.filter { it.value > 0 }.keys.minOrNull()?.plusDays(14)
             val fresh = last.filter { from != null && !it.date.isBefore(from) }.ifEmpty { last.takeLast(1) }
             LineChart(
                 listOf(Series(fresh.map { it.formPct }, F.c.accent)), height = 110.dp, reference = line,
-                xLabels = listOf(shortDate(fresh.first().date), shortDate(fresh.last().date)), description = "Свежесть по дням, линия — линия отдыха",
+                xLabels = listOf(shortDate(fresh.first().date), shortDate(fresh.last().date)), description = "Свежесть по дням, серая линия — линия отдыха",
             )
-            Text("Серая линия — ${Ru.pct(line)}. Если свежесть ниже неё, нужен отдых.", style = T.secondary(12.sp))
             Text(LoadExplain.personal(st.personal), style = T.body(14.sp))
         }
-        SectionLabel("Когда был нужен отдых")
+        Text("Когда был нужен отдых", style = T.secondary(14.sp))
         FCard(gap = 6.dp) {
             if (st.dips.isEmpty()) Text(LoadExplain.noDips(8), style = T.body(14.sp))
             else st.dips.reversed().forEachIndexed { i, d ->
@@ -453,7 +536,7 @@ private fun LoadDetails(today: LocalDate) {
         }
     }
     val cur = st.weeks.lastOrNull()
-    if (cur != null) SectionLabel("Недели")
+    if (cur != null) Text("Нагрузка по неделям", style = T.secondary(14.sp))
     if (cur != null) FCard(gap = 6.dp) {
         LoadExplain.usual(st)?.let { Text(it, style = T.secondary(12.sp)) }
         // The last three weeks; the rest a tap away.
@@ -491,92 +574,87 @@ private fun LoadDetails(today: LocalDate) {
 }
 
 /**
- * The week on the body: the person lit by how each group did against the plan's sets a week for it — few, as planned,
- * many (three steps of one colour), groups the plan does not train left unlit when not trained. One line says which.
+ * The week on the body: what got its sets by the plan for the same days lit, the rest at rest; one line says which. Today's
+ * session counts once it is done — until then the week is the seven days to yesterday, which still hold last week's
+ * session of this weekday.
  */
 @Composable
 private fun MusclesSection(today: LocalDate) {
     val repo = LocalRepo.current
     val rows by remember { repo.setRows() }.collectAsState(initial = emptyList())
+    val workouts by remember { repo.db.workouts().observeHistory() }.collectAsState(initial = emptyList())
     val program by repo.store.program.collectAsState(initial = null)
     val profile by repo.store.profile.collectAsState(initial = null)
-    val week = remember(rows, today) { Stats.setsLast7Days(rows, today) }
+    val liftToday = program?.week?.on(today.dayOfWeek.value)?.any { it.kind == forma.core.plan.SessionKind.LIFT } == true
+    val doneToday = workouts.any { it.epochDay == today.toEpochDay() && it.kind == Kind.LIFT }
+    val end = if (liftToday && !doneToday) today.minusDays(1) else today
+    val week = remember(rows, end) { Stats.setsLast7Days(rows, end) }
     if (week.values.none { it > 0 }) return
-    val planned = remember(program) { program?.let { forma.core.plan.Accents.weekly(it) }.orEmpty() }
+    val planned by produceState<Map<Muscle, Double>?>(null, program, end, rows) { value = repo.plannedSets(end.minusDays(6), end) }
+    val plan = planned ?: return
+    val hasPlan = plan.values.any { it > 0 }
     val band = setsTarget(profile?.aim?.lift)
     val tones = Muscle.entries.mapNotNull { m ->
         val v = week[m] ?: 0.0
-        val plan = planned[m] ?: 0.0
-        val low = if (plan > 0) plan * 0.75 else 0.0
-        val high = maxOf(plan, band.second) * 1.25
+        val p = plan[m] ?: 0.0
         when {
-            v <= 0.0 && plan <= 0.0 -> null
-            v < low || (v <= 0.0) -> m to Tone.LOW
-            v > high -> m to Tone.HIGH
+            v <= 0.0 && p <= 0.0 -> null
+            v < p * 0.75 -> m to Tone.LOW
+            v > maxOf(p, band.second) * 1.25 -> m to Tone.HIGH
             else -> m to Tone.OK
         }
     }.toMap()
     val few = tones.filterValues { it == Tone.LOW }.keys
     val many = tones.filterValues { it == Tone.HIGH }.keys
+    fun names(set: Set<Muscle>) = set.joinToString(", ") { it.ru.lowercase() }
+    fun groups(n: Int) = "$n ${Ru.plural(n, "группа", "группы", "групп")} мышц из ${tones.size}"
     Answer(
         "Мышцы за 7 дней",
         when {
+            !hasPlan -> "В работе ${tones.size} ${Ru.plural(tones.size, "группа", "группы", "групп")} мышц"
             few.isEmpty() && many.isEmpty() -> "Всё по плану"
-            // Most of the body short of the plan is a week with fewer sessions, not lagging muscles.
-            few.size > 3 -> "Меньше плана почти везде"
-            few.isNotEmpty() -> "Мало: " + few.joinToString(", ") { it.ru.lowercase() }
-            many.size > 3 -> "Больше плана почти везде"
-            else -> "Много: " + many.joinToString(", ") { it.ru.lowercase() }
+            few.size >= 4 && tones.size - few.size <= 2 -> "Меньше плана почти везде"
+            few.size >= 4 -> "Меньше плана: ${groups(few.size)}"
+            few.isNotEmpty() && many.isNotEmpty() -> "Мало: ${names(few)}. Много: ${names(many)}"
+            few.isNotEmpty() -> "Мало: ${names(few)}"
+            many.size >= 4 -> "Больше плана: ${groups(many.size)}"
+            else -> "Много: ${names(many)}"
         },
     )
     forma.app.ui.components.BodyMap(
         emptyMap(), Modifier.fillMaxWidth().padding(horizontal = 24.dp), tones = tones, labels = false,
         description = "Мышцы за 7 дней: " + Muscle.entries.filter { (week[it] ?: 0.0) > 0 }.joinToString(", ") { "${it.ru} ${setsText(week[it]!!)}" },
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-        val dark = F.c.dark
-        val ok = if (dark) F.c.strength else androidx.compose.ui.graphics.Color(0xFFE44919)
-        listOf(
-            Triple("мало", ok, true),
-            Triple("норма", ok, false),
-            Triple("много", if (dark) androidx.compose.ui.graphics.Color(0xFFFFA156) else androidx.compose.ui.graphics.Color(0xFFA52014), false),
-        ).forEach { (name, c, ring) ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                val shape = androidx.compose.foundation.shape.CircleShape
-                Box(Modifier.size(10.dp).then(if (ring) Modifier.border(1.5.dp, c, shape) else Modifier.background(c, shape)))
-                Text(name, style = T.secondary(13.sp))
-            }
-        }
-    }
+    if (hasPlan) forma.app.ui.components.BodyMapLegend()
     More("Подходы по мышцам") {
-        Muscle.entries.filter { (week[it] ?: 0.0) > 0 || (planned[it] ?: 0.0) > 0 }.sortedByDescending { week[it] ?: 0.0 }.forEach { m ->
-            val plan = planned[m] ?: 0.0
-            SetsRow(m.ru, setsText(week[m] ?: 0.0) + if (plan > 0) " из ${setsText(plan)}" else "", null)
+        Muscle.entries.filter { (week[it] ?: 0.0) > 0 || (plan[it] ?: 0.0) > 0 }.sortedByDescending { week[it] ?: 0.0 }.forEach { m ->
+            val p = plan[m] ?: 0.0
+            SetsRow(m.ru, setsText(week[m] ?: 0.0) + if (p > 0) " из ${setsText(p)}" else "", null)
         }
-        Text("Подход засчитан половиной, если мышца в упражнении только помогает.", style = T.secondary(13.sp))
+        Text("Если мышца в упражнении только помогает, подход идёт за половину.", style = T.secondary(13.sp))
     }
 }
 
-private fun Modifier.clickableRow(onClick: () -> Unit) = this.clickable(onClick = onClick)
-
-/** A finish goal (a distance, no time): where the run/walk start is, or how far the longest run has gone. */
+/** A finish goal (a distance, no time) or the run/walk start: where it stands, in the section's one answer. */
 @Composable
-private fun FinishCard(meters: Int, st: forma.core.run.RunState?, runs: List<forma.app.data.RunEntity>) {
+private fun FinishAnswer(meters: Int?, st: forma.core.run.RunState?, runs: List<forma.app.data.RunEntity>) {
     val best = runs.filter { it.type != forma.core.run.RunType.RUN_WALK.name }.mapNotNull { it.distanceM }.maxOrNull()
-    FCard(gap = 6.dp) {
-        Text("Цель", style = T.secondary(13.sp))
-        Text("Пробежать ${goalDistance(meters)}", style = T.title(26.sp).copy(color = F.c.endurance))
-        Text(
-            when {
-                best != null && best >= meters -> "Взята: самая длинная пробежка — ${goalDistance(best.roundToInt())}. " +
-                    "Теперь можно поставить время в профиле, и план пойдёт к нему."
-                st != null && !st.canRunContinuously -> "Сейчас бег с ходьбой: этап ${st.walkStage + 1} из ${RunPlan.walkLadderSize}. " +
-                    "В конце — 30 минут бега без остановки, это примерно 4–5 км."
-                best != null -> "Самая длинная пробежка — ${goalDistance(best.roundToInt())} из ${goalDistance(meters)}. Длинная пробежка недели растёт понемногу."
-                else -> "Длинная пробежка недели растёт понемногу. Пробегай её спокойно, чтобы мог говорить."
-            },
-            style = T.body(14.sp).let { if (best != null && best >= meters) it.copy(color = F.c.good) else it },
+    val walking = st != null && !st.canRunContinuously
+    val week = st?.let { it.walkStage / 3 + 1 } ?: 1
+    val end = "В конце 30 минут бега без остановки, это примерно 4–5 км."
+    if (meters == null) {
+        Answer("Бег с ходьбой", "Неделя $week из 9", end)
+        return
+    }
+    val goal = "Пробежать ${goalDistance(meters)}"
+    when {
+        best != null && best >= meters -> Answer(
+            "Бег", goal, "Цель взята: самая длинная пробежка ${goalDistance(best.roundToInt())}. Теперь можно поставить время в профиле, и план пойдёт к нему.",
+            color = F.c.good,
         )
+        walking -> Answer("Бег", goal, "Сейчас бег с ходьбой, неделя $week из 9. $end")
+        best != null -> Answer("Бег", goal, "Самая длинная пробежка ${goalDistance(best.roundToInt())} из ${goalDistance(meters)}. Длинная пробежка недели растёт понемногу.")
+        else -> Answer("Бег", goal, "Длинная пробежка недели растёт понемногу. Беги её спокойно, в разговорном темпе.")
     }
 }
 

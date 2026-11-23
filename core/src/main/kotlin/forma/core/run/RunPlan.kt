@@ -296,7 +296,7 @@ data class CustomRun(
 ) {
     /** What a rep is run at: the app's own paces for the runner's fitness ([FREE]: by feel, no pace). */
     enum class Pace(val ru: String, val rpe: Int) {
-        EASY("лёгкий темп", 4), TEMPO("темповый темп", 7), INTERVAL("темп интервалов", 8), RACE("темп забега", 8), FAST("быстрый темп", 8), FREE("по ощущениям", 6);
+        EASY("лёгкий темп", 4), TEMPO("темп «тяжело, но держишь»", 7), INTERVAL("темп интервалов", 8), RACE("темп забега", 8), FAST("быстрый темп", 8), FREE("по ощущениям", 6);
 
         val hard: Boolean get() = this != EASY
     }
@@ -577,7 +577,7 @@ object RunPlan {
 
     /** An easy or long run paced from [provisionalVdot]: the limit is said to be approximate. */
     fun provisional(w: RunWorkout): RunWorkout =
-        w.copy(note = w.note + " Темп примерный: форма оценена по цели и по тому, как идут пробежки. Контрольного забега ещё не было.")
+        w.copy(note = w.note + " Темп примерный.")
 
     fun runWalk(state: RunState): RunWorkout {
         val stage = state.walkStage.coerceIn(0, WALK_LADDER.lastIndex)
@@ -587,7 +587,7 @@ object RunPlan {
             if (walk > 0) segs += Segment(SegmentKind.WALK, walk)
         }
         segs += Segment(SegmentKind.COOLDOWN, WALK_WARM)
-        val note = "Беги так, чтобы мог говорить. Иди быстрым шагом. Разминка и заминка — ходьба."
+        val note = "Беги спокойно, чтобы получалось болтать. Иди быстрым шагом. Разминка и заминка — ходьба."
         val title = "Бег с ходьбой · неделя ${stage / 3 + 1}, тренировка ${stage % 3 + 1}"
         return RunWorkout(RunType.RUN_WALK, title, segs, note, targetRpe = 6, stage = stage)
     }
@@ -599,9 +599,9 @@ object RunPlan {
     fun easy(state: RunState, cutback: Boolean = false, day: Long? = null, strides: Int = 0): RunWorkout {
         val cap = singleRunCap(state, day)
         val min = scaled(state.easyMinutes, cutback).let { if (cap != null) minOf(it, maxOf(15, cap)) else it }
-        val note = "Беги так, чтобы мог говорить целыми фразами. Медленнее — нормально." + if (strides > 0) {
-            " В конце — $strides ${Ru.plural(strides, "ускорение", "ускорения", "ускорений")} по 80 м, это 15–20 секунд. На стадионе — " +
-                "по прямой. Быстро, но свободно, без напряжения. Между ними иди шагом около минуты, пока дыхание не успокоится."
+        val note = "Спокойно, чтобы получалось болтать." + if (strides > 0) {
+            " В конце $strides ${Ru.plural(strides, "ускорение", "ускорения", "ускорений")} по 80 м (15–20 с), на стадионе по прямой. " +
+                "Быстро, но не в полную силу. Между ними около минуты шагом."
         } else ""
         return RunWorkout(
             RunType.EASY, "Лёгкий бег · $min мин" + if (strides > 0) " + $strides ${Ru.plural(strides, "ускорение", "ускорения", "ускорений")}" else "",
@@ -614,8 +614,8 @@ object RunPlan {
 
     /** The warm-up's strides as the clock runs them before fast running ([RunTimeline.stridesFrom]), for the notes. */
     private val STRIDES_NOTE: String get() =
-        "В конце разминки — ${RunTimeline.STRIDES} ${Ru.plural(RunTimeline.STRIDES, "ускорение", "ускорения", "ускорений")} по " +
-            "${RunTimeline.STRIDE_SEC} с по таймеру, между ними ${RunTimeline.STRIDE_JOG} с трусцы."
+        "В конце разминки ${RunTimeline.STRIDES} ${Ru.plural(RunTimeline.STRIDES, "ускорение", "ускорения", "ускорений")} по " +
+            "${RunTimeline.STRIDE_SEC} с, между ними ${RunTimeline.STRIDE_JOG} с трусцы."
 
     /** The goal race on its day: run as a time trial (its time is the fitness), said as the race. */
     fun race(state: RunState, goal: RunGoal): RunWorkout {
@@ -624,8 +624,7 @@ object RunPlan {
         return t.copy(
             title = "Забег · $name",
             note = "Твой забег: $name за ${Ru.clock(goal.seconds)}. Разминка 12 минут. $STRIDES_NOTE Первую половину беги " +
-                "ровно, в темпе цели, без рывка со старта. Вторую — на сколько хватит сил. После финиша впиши время с табло: по нему " +
-                "пересчитаются темпы.",
+                "ровно, в темпе цели. Вторую — на сколько хватит сил. После финиша впиши время с табло.",
         )
     }
 
@@ -645,7 +644,7 @@ object RunPlan {
         return RunWorkout(
             RunType.LONG, "Длинная пробежка · $min мин",
             listOf(Segment(SegmentKind.RUN, min * 60, paces(state)?.easy)),
-            "Ровно и спокойно, как лёгкий бег. Главное — пробежать всё время, скорость не важна.", targetRpe = 5,
+            "Ровно и спокойно, как лёгкий бег. Пробеги всё время, скорость не важна.", targetRpe = 5,
         )
     }
 
@@ -675,8 +674,8 @@ object RunPlan {
             if (i < n - 1) segs += Segment(SegmentKind.RECOVERY, rest, p?.easy)
         }
         segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
-        val note = "Ускорения тяжёлые, но ровные: последнее не медленнее первого. Между ними — трусца. $STRIDES_NOTE" +
-            if (state.estimated) " Темп примерный: форма оценена по цели и по тому, как идут пробежки." else ""
+        val note = "Отрезки тяжёлые, но ровные: последний не медленнее первого. Отдых трусцой. $STRIDES_NOTE" +
+            if (state.estimated) " Темп примерный." else ""
         return RunWorkout(RunType.INTERVALS, "Интервалы · $n × ${work / 60} мин", segs, note, targetRpe = 8, stage = stage, cutback = cutback && n < n0)
     }
 
@@ -728,7 +727,7 @@ object RunPlan {
         val w = if (c.reps == 1 && c.pace == CustomRun.Pace.EASY) {
             RunWorkout(
                 RunType.EASY, "От тренера · лёгкий бег $length", listOf(Segment(SegmentKind.RUN, sec, range)),
-                "Пробежка от тренера по твоей просьбе. Беги так, чтобы мог говорить целыми фразами.", targetRpe = 4, custom = true,
+                "Спокойно, чтобы получалось болтать.", targetRpe = 4, custom = true,
             )
         } else {
             val segs = mutableListOf<Segment>()
@@ -738,9 +737,9 @@ object RunPlan {
                 if (i < c.reps - 1 && c.restSec > 0) segs += Segment(SegmentKind.RECOVERY, c.restSec, p?.easy)
             }
             if (c.cooldownMin > 0) segs += Segment(SegmentKind.COOLDOWN, c.cooldownMin * 60, p?.easy)
-            val note = "Пробежка от тренера по твоей просьбе: отрезки — ${c.pace.ru}" + (range?.let { ", ${Ru.pace(it.fast.toDouble())}–${Ru.pace(it.slow.toDouble())} на км" } ?: "") +
+            val note = "Отрезки: ${c.pace.ru}" + (range?.let { ", ${Ru.pace(it.fast.toDouble())}–${Ru.pace(it.slow.toDouble())} на км" } ?: "") +
                 (if (c.restSec > 0 && c.reps > 1) ", между ними ${Ru.clock(c.restSec)} трусцой или шагом." else ".") +
-                " Она засчитывается как пробежка, но шаги плана не двигает." + (if (state.estimated && range != null) " Темп примерный: форма оценена по цели и по тому, как идут пробежки." else "")
+                " Эта пробежка план не двигает." + (if (state.estimated && range != null) " Темп примерный." else "")
             RunWorkout(
                 if (c.pace == CustomRun.Pace.TEMPO) RunType.TEMPO else RunType.INTERVALS,
                 "От тренера · " + (if (c.reps == 1) length else "${c.reps} × $length"), segs, note, targetRpe = c.pace.rpe, custom = true,
@@ -782,8 +781,8 @@ object RunPlan {
         }
         segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
         val title = if (n == 1) "Темповый бег · ${minutes(workSec)} мин" else "Темповый бег · $n × ${minutes(workSec)} мин"
-        val note = "Темп «тяжело, но держишь»: пару слов сказать можешь, болтать уже нет." +
-            if (guessed) " Темп примерный: форма оценена по цели и по тому, как идут пробежки. Быстрее не беги: темповый не гонка." else ""
+        val note = "Тяжело, но держишь: пару слов сказать можешь, болтать уже нет." +
+            if (guessed) " Темп примерный, быстрее не беги." else ""
         return RunWorkout(RunType.TEMPO, title, segs, note, targetRpe = 7, stage = stage, cutback = cutback && (n < n0 || workSec < work))
     }
 
@@ -855,21 +854,18 @@ object RunPlan {
         val restWords = Ru.clock(rest)
         val note = if (lapSec != null) {
             val lapRange = Ru.lapRange(Track.lapSec(range.fast.toDouble(), lapMeters), Track.lapSec(range.slow.toDouble(), lapMeters))
-            "Каждый круг — за $lapRange. На ${lapSec.roundToInt()}-й секунде телефон пискнет: в этот момент ты должен быть на линии. " +
-                "Быстрее не надо: на этой дистанции главное — ровный темп. Между отрезками $restWords шагом или трусцой. " +
+            "Круг $lapRange, не быстрее. На писке будь на линии. Между отрезками $restWords шагом или трусцой. " +
                     "$STRIDES_NOTE " +
-                "Жми «Круг» на каждой линии: по кругам приложение решит, что дальше." +
+                "Жми «Круг» на каждой линии." +
                 (work.lastOrNull()?.laps?.takeIf { it % 1.0 != 0.0 }?.let { " Отрезок в ${Ru.laps(it)} начни ${startWords(it % 1.0)}." } ?: "")
         } else {
-            "Отрезки в темпе ${if (pace > goal.pace + 0.5) "ступени" else "цели"}, ${Ru.pace(pace)} на км. Ровно, не быстрее. " +
+            "Отрезки ${if (pace > goal.pace + 0.5) "по" else "в темпе цели,"} ${Ru.pace(pace)} на км. Ровно, не быстрее. " +
                 "Между ними $restWords шагом или трусцой."
         }.let { n ->
             // Far from the goal: the step toward it, said with both times.
             if (pace > goal.pace + 0.5) {
                 "Ступень к цели: пока это темп забега ${goal.meters} м за ${Ru.clock((pace * goal.meters / 1000).roundToInt())} " +
-                    "(цель — ${Ru.clock(goal.seconds)}). " +
-                    (if (state.estimated) "Ступень идёт за тобой: получается с запасом — становится ближе к цели, слишком тяжело — отступает. "
-                    else "После каждого контрольного ступень ближе к цели. ") + n
+                    "(цель — ${Ru.clock(goal.seconds)}). " + n
             } else n
         }
         // Lighter only when it has fewer reps than the full session on this track (whole laps change the count).
@@ -996,14 +992,14 @@ object RunPlan {
         )
         val distance = if (laps != null) "${Ru.laps(laps)} (${meters.roundToInt()} м)" else "${goal.meters} м"
         val note = buildString {
-            append("Контрольный забег: $distance в полную силу, но ровно. $STRIDES_NOTE ")
+            append("$distance в полную силу, но ровно. $STRIDES_NOTE ")
             if (lapSec != null) {
-                append("Первые круги — по ${Ru.lap(lapSec)}, телефон пищит на каждом. Со второй половины прибавь, если есть силы. ")
-                append("Не держишь — сбавь, но добеги: форма посчитается по всему времени, а если начало было заметно быстрее конца — чуть выше. ")
-                if (laps != null && laps % 1.0 != 0.0) append("Старт — ${startWords(laps % 1.0)}. ")
-                append("Жми «Круг» на старте и на каждой линии. Время забега — по последнему кругу.")
+                append("Первые круги по ${Ru.lap(lapSec)}, телефон пищит на каждом. Со второй половины прибавь, если есть силы. ")
+                append("Если не держишь темп, сбавь, но добеги. ")
+                if (laps != null && laps % 1.0 != 0.0) append("Старт ${startWords(laps % 1.0)}. ")
+                append("Жми «Круг» на старте и на каждой линии, последний раз на финише.")
             } else {
-                append("Первую половину беги по ${Ru.pace(pace)} на км, дальше — на сколько хватит сил.")
+                append("Первую половину беги по ${Ru.pace(pace)} на км, дальше на сколько хватит сил.")
             }
         }
         return RunWorkout(
@@ -1073,7 +1069,7 @@ object RunPlan {
                 Segment(SegmentKind.WORK, 12 * 60),
                 Segment(SegmentKind.COOLDOWN, 8 * 60, p?.easy),
             ),
-            "12 минут так быстро, как можешь держать ровно. По дистанции пересчитаю твои темпы.", targetRpe = 9,
+            "12 минут так быстро, как можешь держать ровно.", targetRpe = 9,
         )
     }
 
@@ -1087,7 +1083,7 @@ object RunPlan {
         val w = when {
             state.returnEasy > 0 -> easy(state, cutback).let {
                 val n = state.returnEasy
-                it.copy(note = "После перерыва сначала втягиваемся. Интервалы и темповый бег вернутся через $n " +
+                it.copy(note = "После перерыва тяжёлый бег вернётся через $n " +
                     "${Ru.plural(n, "лёгкую пробежку", "лёгкие пробежки", "лёгких пробежек")}. " + it.note)
             }
             // Tempo twice for every intervals: fading after 800 m is the threshold more than VO2max.
@@ -1170,7 +1166,7 @@ object RunPlan {
         val off = breakDays(state, day) ?: return null
         val weeks = off / 7
         val gap = if (weeks >= 2) Ru.weeks(weeks) else Ru.days(off)
-        return "Перерыв $gap — сегодня короче и спокойнее, чтобы втянуться."
+        return "Перерыв $gap. Сегодня короче и спокойнее."
     }
 
     /**

@@ -379,8 +379,8 @@ fun CloudSignInScreen(restore: Boolean) {
                         restore && repo.isOnboarded() -> { nav.replaceAll(Screen.Today); return@launch }
                         !restore && sync.isSuccess -> { nav.back(); return@launch }
                         else -> result = sync.fold(
-                            { if (restore) "Ты вошёл, но в облаке пока пусто. Заполни профиль, и копия начнёт сохраняться сама." else syncSummary(it) },
-                            { "Ты вошёл, но синхронизация не удалась: ${Cloud.describe(it)}" },
+                            { if (restore) "Вход выполнен, но в облаке пока пусто. Заполни профиль, и копия начнёт сохраняться сама." else syncSummary(it) },
+                            { "Вход выполнен, но синхронизация не удалась: ${Cloud.describe(it)}" },
                         )
                     }
                 }

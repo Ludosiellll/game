@@ -1,5 +1,6 @@
 package forma.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -18,14 +20,11 @@ import forma.app.ui.LocalNav
 import forma.app.ui.LocalRepo
 import forma.app.ui.components.FCard
 import forma.app.ui.components.Hairline
-import forma.app.ui.components.LineChart
-import forma.app.ui.components.SectionLabel
-import forma.app.ui.components.Series
-import forma.app.ui.components.StatTile
 import forma.app.ui.components.TopBar
 import forma.app.ui.components.NumText
 import forma.app.ui.theme.F
 import forma.app.ui.theme.T
+import forma.core.analytics.Point
 import forma.core.analytics.Stats
 import forma.core.model.Catalog
 import forma.core.model.LoadKind
@@ -50,90 +49,29 @@ fun ExerciseScreen(exerciseId: String) {
     val series = remember(rows, bw) { Stats.e1rmSeries(rows, ex, bw) }
     val rec = remember(rows, bw) { Stats.records(rows, ex, bw) }
     val e1rm = stats.firstOrNull { it.exerciseId == exerciseId }?.e1rm
+    val today = forma.app.ui.rememberToday(repo).toEpochDay()
+    // One number for «на 1 раз», by the rule «Прогресс» uses (the better of the last two sessions), and the best ever
+    // (23 November: the screen showed 102,5, 108,5 and 100 for one squat).
+    val now = remember(series, today) { Stats.liftOn(series, today) } ?: e1rm ?: series.lastOrNull()?.value
+    // The line by the same rule at each session: a light week's session does not cut a dip into it.
+    val smooth = remember(series) { series.map { Point(it.epochDay, Stats.liftOn(series, it.epochDay) ?: it.value) } }
     ScrollScreen {
         TopBar(ex.name, "${ex.equipment.ru} · ${ex.primary.joinToString { it.ru.lowercase() }}", onBack = { nav.back() })
-        forma.core.model.Cues.of(ex.id)?.let { cue ->
-            FCard(gap = 4.dp) {
-                Text("Как делать", style = T.secondary(13.sp))
-                Text(cue, style = T.body(15.sp))
-            }
-        }
-        if (ex.load != LoadKind.TIMED && series.isNotEmpty()) {
-            FCard(gap = 4.dp) {
-                Text("Вес на 1 раз, расчёт", style = T.secondary(13.sp))
-                NumText(forma.app.ui.Texts.oneRm(ex, e1rm ?: series.last().value), style = T.number(40.sp).copy(color = F.c.strength))
-                if (series.size >= 2) LineChart(
-                    listOf(Series(series.map { it.value }, F.c.strength, fill = true)),
-                    xLabels = listOf(shortDate(LocalDate.ofEpochDay(series.first().epochDay)), shortDate(LocalDate.ofEpochDay(series.last().epochDay))),
-                    description = "Вес на 1 раз по тренировкам, расчёт",
-                )
-                Text("Точка — лучший подход тренировки: сколько ты поднял бы на 1 раз, с учётом запаса.", style = T.secondary(12.sp))
-            }
-        }
-        if (rec != null) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (ex.load == LoadKind.TIMED) {
-                    // Holds: seconds, not kilograms.
-                    StatTile("Дольше всего", "${rec.mostReps}", "с", F.c.strength, Modifier.weight(1f))
-                } else {
-                    // Dumbbells: the weight of one of the two, as everywhere ("30 кг ×2").
-                    val kg = if (ex.perHand && ex.load == LoadKind.EXTERNAL) "кг ×2" else "кг"
-                    StatTile("На 1 раз", if (rec.bestE1rm > 0) Ru.kg((rec.bestE1rm * 2).roundToInt() / 2.0) else "—", kg, F.c.strength, Modifier.weight(1f))
-                    val (value, unit) = when {
-                        ex.load != LoadKind.BODYWEIGHT_PLUS -> Ru.kg(rec.heaviest) to kg
-                        rec.heaviest > 0 -> "+${Ru.kg(rec.heaviest)}" to "доп. кг"
-                        rec.heaviest < 0 -> Ru.kg(-rec.heaviest) to "помощь, кг"
-                        else -> "0" to "свой вес"
-                    }
-                    StatTile("Тяжелее всего", value, unit, F.c.text, Modifier.weight(1f))
-                }
-                StatTile("Тренировок", "${rec.sessions}", null, F.c.text, Modifier.weight(1f))
-            }
-        }
-        // One target per rep range: the same exercise in 5–8 on one day and 8–12 on another has two, each said with its day.
-        val targets = slots.filter { it.exerciseId == exerciseId && (it.weight != null || ex.load == LoadKind.TIMED) }.sortedByDescending { it.updatedAt }
-        if (targets.isNotEmpty()) {
-            FCard(gap = 4.dp) {
-                SectionLabel("Следующая цель")
-                targets.take(3).forEachIndexed { i, slot ->
-                    if (i > 0) Hairline()
-                    Text(if (ex.load == LoadKind.TIMED) "${slot.reps} с" else forma.app.ui.Texts.weightReps(ex, slot.weight!!, slot.reps), style = T.title(22.sp))
-                    Text(targetWhere(slot.slotKey, ex.load == LoadKind.TIMED, program, settings, repo), style = T.secondary(13.sp))
-                    if (slot.stalls > 0) Text("Без роста: ${slot.stalls} ${Ru.plural(slot.stalls, "тренировка", "тренировки", "тренировок")} подряд. После трёх вес станет на 10 % легче, чтобы снова расти.", style = T.secondary(13.sp))
-                }
-            }
-        }
-        if (e1rm != null && ex.load == LoadKind.EXTERNAL) {
-            SectionLabel("Сколько раз сможешь (расчёт)")
-            FCard(gap = 0.dp) {
-                listOf(1, 3, 5, 8, 10, 12).forEachIndexed { i, r ->
-                    if (i > 0) Hairline()
-                    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
-                        Text("${Ru.reps(r)} до отказа", style = T.body(14.sp), modifier = Modifier.weight(1f))
-                        // Down to the step of this gym (the user's own, else the exercise's): "you can do it" must not
-                        // promise more than the estimate, nor a weight the gym does not have.
-                        val load = OneRm.loadFor(e1rm, r)
-                        val on = settings.onSteps(ex)
-                        NumText(forma.app.ui.Texts.weight(ex, on.floorW(load)), style = T.number(14.sp, FontWeight.Bold))
-                    }
-                }
-            }
-        }
-        if (ex.aliases.isNotEmpty()) Text("Ещё называют: ${ex.aliases.joinToString(", ")}", style = T.secondary(13.sp))
-        val similar = remember(exerciseId) { repo.alternativesFor(exerciseId).take(5) }
-        if (similar.isNotEmpty()) {
-            SectionLabel("Похожие")
-            FCard(gap = 0.dp) {
-                similar.forEachIndexed { i, o ->
-                    if (i > 0) Hairline()
-                    forma.app.ui.components.ListRow(o.name, (o.primary.map { it.ru } + o.equipment.ru).joinToString(" · ")) {
-                        nav.push(forma.app.ui.Screen.Exercise(o.id))
-                    }
-                }
-            }
+        if (ex.load != LoadKind.TIMED && now != null) {
+            Text("Вес на 1 раз", style = T.secondary(14.sp))
+            NumText("≈ " + forma.app.ui.Texts.oneRm(ex, now), style = T.number(40.sp).copy(color = F.c.strength))
+            rec?.bestE1rm?.takeIf { it > now + 0.25 }?.let { Text("Лучший: ${forma.app.ui.Texts.oneRm(ex, it)}", style = T.secondary(14.sp)) }
+            if (smooth.size >= 2) forma.app.ui.components.TrendChart(
+                smooth, smooth.first().epochDay, today, "Вес на 1 раз по тренировкам",
+                endLabel = Ru.kg((smooth.last().value * 2).roundToInt() / 2.0) + " кг", minSpan = 10.0,
+                startLabel = shortDate(LocalDate.ofEpochDay(smooth.first().epochDay)),
+            )
+        } else if (ex.load == LoadKind.TIMED && rec != null) {
+            Text("Дольше всего", style = T.secondary(14.sp))
+            NumText("${rec.mostReps} с", style = T.number(40.sp).copy(color = F.c.strength))
         }
         if (mine.isNotEmpty()) {
-            SectionLabel("Последние тренировки")
+            Text("Последние тренировки", style = T.secondary(14.sp))
             FCard(gap = 0.dp) {
                 mine.groupBy { it.workoutId }.entries.reversed().take(8).forEachIndexed { i, (_, sets) ->
                     if (i > 0) Hairline()
@@ -151,6 +89,53 @@ fun ExerciseScreen(exerciseId: String) {
                             style = T.number(15.sp, FontWeight.SemiBold),
                         )
                     }
+                }
+            }
+        }
+        // One target per rep range: the same exercise in 5–8 on one day and 8–12 on another has two, each said with its day.
+        val targets = slots.filter { it.exerciseId == exerciseId && (it.weight != null || ex.load == LoadKind.TIMED) }.sortedByDescending { it.updatedAt }
+        if (targets.isNotEmpty()) {
+            FCard(gap = 4.dp) {
+                Text("Следующая цель", style = T.secondary(14.sp))
+                targets.take(3).forEachIndexed { i, slot ->
+                    if (i > 0) Hairline()
+                    Text(if (ex.load == LoadKind.TIMED) "${slot.reps} с" else forma.app.ui.Texts.weightReps(ex, slot.weight!!, slot.reps), style = T.title(22.sp))
+                    Text(targetWhere(slot.slotKey, ex.load == LoadKind.TIMED, program, settings, repo), style = T.secondary(13.sp))
+                    if (slot.stalls > 0) Text("Без роста ${slot.stalls} ${Ru.plural(slot.stalls, "тренировку", "тренировки", "тренировок")} подряд.", style = T.secondary(13.sp))
+                }
+            }
+        }
+        // The rest a tap away: how to do it, how many reps a weight allows, the heaviest set, similar exercises.
+        forma.core.model.Cues.of(ex.id)?.let { cue -> Fold("Как делать") { Text(cue, style = T.body(15.sp)) } }
+        if (e1rm != null && ex.load == LoadKind.EXTERNAL) Fold("Сколько раз смогу с весом") {
+            listOf(1, 3, 5, 8, 10, 12).forEachIndexed { i, r ->
+                if (i > 0) Hairline()
+                Row(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
+                    Text("${Ru.reps(r)} до отказа", style = T.body(14.sp), modifier = Modifier.weight(1f))
+                    // Down to the step of this gym (the user's own, else the exercise's): "you can do it" must not
+                    // promise more than the estimate, nor a weight the gym does not have.
+                    val load = OneRm.loadFor(e1rm, r)
+                    val on = settings.onSteps(ex)
+                    NumText(forma.app.ui.Texts.weight(ex, on.floorW(load)), style = T.number(14.sp, FontWeight.Bold))
+                }
+            }
+        }
+        if (rec != null && ex.load != LoadKind.TIMED) {
+            val kg = if (ex.perHand && ex.load == LoadKind.EXTERNAL) " кг ×2" else " кг"
+            val heaviest = when {
+                ex.load != LoadKind.BODYWEIGHT_PLUS -> Ru.kg(rec.heaviest) + kg
+                rec.heaviest > 0 -> "+${Ru.kg(rec.heaviest)} кг"
+                rec.heaviest < 0 -> "помощь ${Ru.kg(-rec.heaviest)} кг"
+                else -> "свой вес"
+            }
+            Text("Тяжелее всего $heaviest · ${rec.sessions} ${Ru.plural(rec.sessions, "тренировка", "тренировки", "тренировок")}", style = T.secondary(14.sp))
+        }
+        val similar = remember(exerciseId) { repo.alternativesFor(exerciseId).take(5) }
+        if (similar.isNotEmpty()) Fold("Похожие упражнения") {
+            similar.forEachIndexed { i, o ->
+                if (i > 0) Hairline()
+                forma.app.ui.components.ListRow(o.name, (o.primary.map { it.ru } + o.equipment.ru).joinToString(" · ")) {
+                    nav.push(forma.app.ui.Screen.Exercise(o.id))
                 }
             }
         }
@@ -182,4 +167,15 @@ private fun targetWhere(slotKey: String, timed: Boolean, program: forma.core.pla
         days.isNotEmpty() -> "$what · ${days.joinToString(", ")}"
         else -> "$what · сейчас такого диапазона в плане нет"
     }
+}
+
+/** A title that opens what is under it, in place. */
+@Composable
+private fun Fold(title: String, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    var open by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    Text(
+        if (open) "$title ▴" else "$title ›", style = T.body(15.sp, FontWeight.SemiBold).copy(color = F.c.accent),
+        modifier = Modifier.clickable(onClickLabel = title) { open = !open }.padding(vertical = 6.dp),
+    )
+    if (open) Column(content = content)
 }

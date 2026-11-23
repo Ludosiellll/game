@@ -112,10 +112,10 @@ fun PrimaryButton(
             Spacer(Modifier.width(10.dp))
         }
         if (F.type.mega) {
-            // Minimal: small letter-spaced capitals on the black pill.
+            // Minimal: the words as they are, bold on the pill (spaced capitals read as machine-made, 23 November).
             Text(
-                text.uppercase(),
-                style = T.body(15.sp, FontWeight.ExtraBold).copy(color = if (enabled) textColor else F.c.text3, letterSpacing = 0.1.em),
+                labelText(text),
+                style = T.body(16.sp, FontWeight.ExtraBold).copy(color = if (enabled) textColor else F.c.text3),
                 maxLines = 1,
             )
             return@Row

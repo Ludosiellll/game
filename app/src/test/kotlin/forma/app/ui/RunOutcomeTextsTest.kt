@@ -9,8 +9,8 @@ import kotlin.test.assertTrue
 class RunOutcomeTextsTest {
     @Test fun aTrialThatGivesTheSameFormSaysSo() {
         val same = Texts.run(RunOutcome.VdotChanged(45.0, 45.0))
-        assertTrue("спокойнее" !in same && "45,0" in same, same)
-        assertEquals("Форма подтвердилась: VDOT 45,0, темпы прежние.", same)
+        assertTrue("спокойнее" !in same, same)
+        assertEquals("Форма подтвердилась, темпы прежние.", same)
         assertTrue("спокойнее" in Texts.run(RunOutcome.VdotChanged(45.0, 44.5)))
         assertTrue("выросла" in Texts.run(RunOutcome.VdotChanged(45.0, 45.5)))
         assertTrue("рассчитаны" in Texts.run(RunOutcome.VdotChanged(null, 45.0)))

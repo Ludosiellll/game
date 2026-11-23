@@ -71,7 +71,7 @@ fun PlanScreen() {
                 Text(cycle.second.replaceFirstChar { it.uppercase() }, style = T.secondary(14.sp))
             } else {
                 Text("Неделя $weekNo", style = T.title(22.sp))
-                Text("Новичку лёгкие недели по графику не нужны. Если веса пойдут назад, приложение само даст лёгкую неделю.", style = T.secondary(14.sp))
+                Text("Новичку лёгкие недели по графику не нужны. Если веса пойдут назад, будет лёгкая неделя.", style = T.secondary(14.sp))
             }
         }
 
@@ -135,7 +135,6 @@ fun PlanScreen() {
                 }
             }
         }
-        Text("Нажми на день, чтобы увидеть тренировку целиком: что делать, зачем и почему в этот день.", style = T.secondary(13.sp))
 
         GhostButton(if (p.templates.isNotEmpty() && p.aim.runs) "Поменять дни зала и бега" else "Поменять дни тренировок", { nav.push(Screen.Profile) }, Modifier.fillMaxWidth(), height = 48.dp)
 
@@ -156,11 +155,11 @@ fun PlanScreen() {
                         val m = picks.dislikes.size
                         Text(
                             if (n + m == 0) "Выбери, что нравится" else listOfNotNull(
-                                n.takeIf { it > 0 }?.let { "нравится: $it" }, m.takeIf { it > 0 }?.let { "не хочу: $it" },
-                            ).joinToString(", ").replaceFirstChar { it.uppercase() },
+                                n.takeIf { it > 0 }?.let { "нравится $it" }, m.takeIf { it > 0 }?.let { "не хочу $it" },
+                            ).joinToString(" · ").replaceFirstChar { it.uppercase() },
                             style = T.body(16.sp, FontWeight.SemiBold),
                         )
-                        Text("Отметь любимые упражнения и те, что не хочешь делать, — план подстроится, основа останется.", style = T.secondary(13.sp))
+                        Text("Отметь любимые упражнения и те, что не хочешь делать. План подстроится.", style = T.secondary(13.sp))
                     }
                     Icon(Ic.chevron, null, tint = F.c.text3, modifier = Modifier.size(18.dp))
                 }
@@ -183,7 +182,7 @@ fun PlanScreen() {
                             },
                             style = T.body(16.sp, FontWeight.SemiBold),
                         )
-                        Text("Что можно улучшить в плане и почему. Поменяется только то, что ты выберешь.", style = T.secondary(13.sp))
+                        Text("Поменяется только то, что ты выберешь.", style = T.secondary(13.sp))
                     }
                     Icon(Ic.chevron, null, tint = F.c.text3, modifier = Modifier.size(18.dp))
                 }
@@ -191,7 +190,7 @@ fun PlanScreen() {
         }
         // Said once above the sessions, not under each of them.
         if (p.templates.isNotEmpty()) Text(
-            "Нажми на упражнение, чтобы поменять подходы, повторы и отдых, заменить его или убрать. «Запас 2» значит: заканчивай подход, когда можешь ещё 2 раза.",
+            "Нажми на упражнение, чтобы изменить его. «Оставь 2»: стоп, когда можешь ещё 2.",
             style = T.secondary(12.sp),
         )
         p.templates.forEach { t -> TemplateCard(t) }
@@ -206,7 +205,7 @@ fun PlanScreen() {
             val gym = it.gymDays
             val run = it.runDays
             Text(
-                if (gym != null && run != null) "Зал: ${days(gym).ifEmpty { "—" }} · бег: ${days(run).ifEmpty { "—" }} · до ${it.sessionMinutes} мин"
+                if (gym != null && run != null) "Зал ${days(gym).ifEmpty { "—" }} · бег ${days(run).ifEmpty { "—" }} · до ${it.sessionMinutes} мин"
                 else "Дни: ${days(it.trainingDays)} · до ${it.sessionMinutes} мин",
                 style = T.secondary(13.sp),
             )
@@ -355,9 +354,9 @@ private fun TemplateCard(t: Template) {
 
 private fun timed(exerciseId: String) = forma.core.model.Catalog.find(exerciseId)?.load == forma.core.model.LoadKind.TIMED
 
-/** "3 × 6–10 · запас 2 · отдых ~2:00" for a plan row (the rest is worked out after each set around it). */
+/** "3 × 6–10 · оставь 2 · отдых ~2:00" for a plan row (the rest is worked out after each set around it). */
 private fun specLine(s: forma.core.strength.SlotSpec, timed: Boolean): String =
-    "${s.sets} × ${s.repMin}–${s.repMax}${if (timed) " с" else ""} · запас ${s.rir} · отдых ~${Ru.clock(s.restSec)}"
+    "${s.sets} × ${s.repMin}–${s.repMax}${if (timed) " с" else ""} · оставь ${s.rir} · отдых ~${Ru.clock(s.restSec)}"
 
 /** Rep ranges to pick from: strength, strength and size, size, size and endurance. */
 private val REP_RANGES = listOf(3 to 5, 5 to 8, 6 to 10, 8 to 12, 10 to 15, 12 to 20)
@@ -406,7 +405,7 @@ private fun PlanExerciseDialog(
                 if (lo != plannedReps.first || hi != plannedReps.second) {
                     Text(
                         "В плане ${plannedReps.first}–${plannedReps.second}." +
-                            if (timed) "" else " Вес под новые повторы приложение посчитает по прошлым подходам. Если их не было, подберём вес в первой тренировке.",
+                            if (timed) "" else " Вес подстроится под новые повторы.",
                         style = T.secondary(12.sp),
                     )
                 }
@@ -417,23 +416,21 @@ private fun PlanExerciseDialog(
                     }
                 }
                 Text(
-                    if (rs != plannedRest) "В плане ${Ru.clock(plannedRest)}. Свой отдых приложение не меняет: он будет одинаковым после любого подхода."
-                    else "Это среднее время. После каждого подхода приложение подстраивает отдых. После тяжёлого подхода и на большом весе " +
-                        "он дольше, а если остался запас — короче. Ещё учитывается, как ты восстанавливаешься в этом упражнении. " +
-                        "Выберешь своё время — отдых всегда будет таким.",
+                    if (rs != plannedRest) "В плане ${Ru.clock(plannedRest)}. Свой отдых будет одинаковым после любого подхода."
+                    else "Это среднее: после тяжёлого подхода отдых дольше, после лёгкого короче. Выберешь своё время, отдых всегда будет таким.",
                     style = T.secondary(12.sp),
                 )
                 val chosen = st
                 if (chosen != null) {
                     // Weights come in the steps a gym really has: with 2.5 kg plates the barbell goes in 5 kg steps.
-                    Text("Шаг веса — как позволяют блины и гантели в твоём зале", style = T.secondary(13.sp))
+                    Text("Шаг веса в твоём зале", style = T.secondary(13.sp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         (listOf(1.0, 2.0, 2.5, 5.0) + defaultStep).distinct().sorted().forEach { v ->
                             forma.app.ui.components.Chip(Ru.kg(v), chosen == v, { st = v }, Modifier.weight(1f), minWidth = 0.dp)
                         }
                     }
                     // A machine stack that starts at a weight: 9, 14, 19 … is a 5 kg step from 9 (machines and cables only).
-                    if (stack || from > 0) Text("Первый вес тренажёра — если вес идёт не с нуля (9, 14, 19 …)", style = T.secondary(13.sp))
+                    if (stack || from > 0) Text("Первый вес тренажёра, если он не с нуля (9, 14, 19 …)", style = T.secondary(13.sp))
                     if (stack || from > 0) forma.app.ui.components.Stepper(
                         if (from > 0) Ru.kg(from) else "0", "кг",
                         onMinus = { from = (from - 1).coerceAtLeast(0.0) }, onPlus = { from = (from + 1).coerceAtMost(100.0) },
@@ -474,8 +471,7 @@ private fun PauseControl() {
             GhostButton("Вернуться сегодня", { scope.launch { repo.resume(today) } }, Modifier.fillMaxWidth())
         } else {
             Text(
-                "Отпуск, поездка или болезнь? Поставь паузу, и пропуски не будут висеть. После паузы первые тренировки " +
-                    "будут легче. Если пауза на неделю или дольше, цикл начнётся заново.",
+                "Уезжаешь или болеешь? Поставь паузу, и пропуски не будут висеть.",
                 style = T.secondary(14.sp),
             )
             // Asked first (23 November: one tap paused the plan and restarted the cycle, a curious tap included).
@@ -489,8 +485,8 @@ private fun PauseControl() {
                 val until = today.plusDays(w * 7L - 1)
                 androidx.compose.material3.AlertDialog(
                     onDismissRequest = { asking = null },
-                    title = { Text("Пауза на ${Ru.weeks(w)}?") },
-                    text = { Text("До ${shortDate(until)} тренировки не ждут. Потом цикл начнётся заново, первые тренировки будут легче.") },
+                    title = { Text("Пауза до ${shortDate(until)}?") },
+                    text = { Text("После паузы цикл начнётся заново, первые тренировки будут легче.") },
                     confirmButton = {
                         androidx.compose.material3.TextButton({ asking = null; scope.launch { repo.pause(today, until) } }) {
                             Text("Поставить паузу", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent))

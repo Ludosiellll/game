@@ -144,7 +144,7 @@ class TrialHeldRepoTest {
             RunReview.Run(w, summary.laps, 9, 1700, null, null, 1435 to 364, 1.0, false, null, summary.strides, summary.jog), denis.runGoal,
         )
         // The trial leads its debrief; the strides come after it.
-        assertEquals("Как пробежал", items.first().title)
+        assertEquals("Как прошла пробежка", items.first().title)
         val review = items.single { it.title == "Ускорения" }
         assertTrue("4 из 4" in review.text, review.text)
     }

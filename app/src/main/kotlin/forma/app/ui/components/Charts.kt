@@ -233,12 +233,28 @@ fun TrendChart(
             val f = ((v - lo) / (hi - lo)).toFloat()
             return top + h * (if (invert) f else 1 - f)
         }
+        val floor = size.height - xBand
+        // The latest value's label first: the reference's name moves off it when the two would print over each other
+        // (a lap a second from the goal, strength a point from the start).
+        val end = points.lastOrNull()?.let { p -> Offset(x(p.epochDay), y(p.value)) }
+        val endText = endLabel?.takeIf { end != null }?.let { measurer.measure(it, label) }
+        val endTop = if (end != null && endText != null) (end.y - endText.size.height / 2f).coerceIn(0f, floor - endText.size.height) else null
         if (reference != null) {
             val ry = y(reference)
             drawLine(muted.copy(alpha = 0.7f), Offset(left, ry), Offset(left + w, ry), strokeWidth = 1.dp.toPx())
             referenceLabel?.let {
                 val l = measurer.measure(it, small)
-                drawText(l, topLeft = Offset(left + w + 6.dp.toPx(), (ry - l.size.height / 2f).coerceIn(0f, size.height - xBand - l.size.height)))
+                val lh = l.size.height.toFloat()
+                var ly = (ry - lh / 2f).coerceIn(0f, floor - lh)
+                if (endTop != null && end != null && endText != null && ly < endTop + endText.size.height && ly + lh > endTop) {
+                    val gap = 2.dp.toPx()
+                    val above = endTop - lh - gap
+                    val below = endTop + endText.size.height + gap
+                    // Away from the point, on the side the line is; where that side has no room, the other.
+                    ly = if (ry <= end.y) { if (above >= 0f) above else below } else { if (below + lh <= floor) below else above }
+                    ly = ly.coerceIn(0f, floor - lh)
+                }
+                drawText(l, topLeft = Offset(left + w + 6.dp.toPx(), ly))
             }
         }
         dots.forEach { drawCircle(muted, radius = 2.5.dp.toPx(), center = Offset(x(it.epochDay), y(it.value))) }
@@ -247,14 +263,11 @@ fun TrendChart(
             points.forEachIndexed { i, p -> if (i == 0) path.moveTo(x(p.epochDay), y(p.value)) else path.lineTo(x(p.epochDay), y(p.value)) }
             drawPath(path, ink, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
-        points.lastOrNull()?.let { p ->
-            val c = Offset(x(p.epochDay), y(p.value))
-            drawCircle(ring, radius = 6.dp.toPx(), center = c)
-            drawCircle(dotColor, radius = 4.dp.toPx(), center = c)
-            endLabel?.let {
-                val l = measurer.measure(it, label)
-                val ly = (c.y - l.size.height / 2f).coerceIn(0f, size.height - xBand - l.size.height)
-                drawText(l, topLeft = Offset((c.x + 9.dp.toPx()).coerceAtMost(size.width - l.size.width.toFloat()), ly))
+        if (end != null) {
+            drawCircle(ring, radius = 6.dp.toPx(), center = end)
+            drawCircle(dotColor, radius = 4.dp.toPx(), center = end)
+            if (endText != null && endTop != null) {
+                drawText(endText, topLeft = Offset((end.x + 9.dp.toPx()).coerceAtMost(size.width - endText.size.width.toFloat()), endTop))
             }
         }
         startLabel?.let { drawText(measurer.measure(it, small), topLeft = Offset(left, size.height - xBand + 2.dp.toPx())) }
@@ -264,9 +277,10 @@ fun TrendChart(
 }
 
 /**
- * Weeks side by side, one bar each (at most 20 dp wide), past weeks muted; [current]: the last one is under way — drawn
- * as an outline and named «идёт», never a bare small number; [usual]: a hairline named «обычная» at the person's usual
- * week; [spikes]: weeks far over the usual, the only colour on the chart, named «скачок».
+ * Weeks side by side on a baseline, one bar each (at most 20 dp wide, rounded at the top only), past weeks muted;
+ * [current]: the last one is under way — in the text colour so far, nothing while it is empty, «эта неделя» under it;
+ * [usual]: a hairline named «обычная» at the person's usual week; [spikes]: weeks far over that line, the only colour on
+ * the chart, named «скачок» (a review on 23 November: a spike measured against another yardstick sat on the line).
  */
 @Composable
 fun WeekBars(
@@ -283,13 +297,15 @@ fun WeekBars(
     val muted = F.c.text3
     val ink = F.c.text
     val warn = F.c.warn
+    val line = F.c.line
     val small = TextStyle(fontFamily = F.type.text, fontSize = 11.sp, color = muted)
     Canvas(modifier.fillMaxWidth().height(height).semantics { contentDescription = description }) {
         if (values.isEmpty()) return@Canvas
         val xBand = 16.dp.toPx()
-        // Room above the tallest bar for its word («скачок», «идёт»).
+        // Room above the tallest bar for its word («скачок»).
         val top = 20.dp.toPx()
-        val right = measurer.measure("обычная", small).size.width + 10.dp.toPx()
+        // Room on the right only for the usual line's name.
+        val right = if (usual != null && usual > 0) measurer.measure("обычная", small).size.width + 10.dp.toPx() else 0f
         val h = size.height - xBand - top
         val w = size.width - right
         val hi = max(values.max(), usual ?: 0.0).takeIf { it > 0 } ?: 1.0
@@ -297,19 +313,21 @@ fun WeekBars(
         val slot = w / n
         val bw = min(20.dp.toPx(), slot * 0.6f)
         val r = CornerRadius(4.dp.toPx())
+        val base = top + h
+        drawLine(line, Offset(0f, base), Offset(w, base), strokeWidth = 1f)
         values.forEachIndexed { i, v ->
-            val bh = (v / hi * h).toFloat().coerceAtLeast(if (v > 0) 2.dp.toPx() else 0f)
+            if (v <= 0) return@forEachIndexed
+            val bh = (v / hi * h).toFloat().coerceAtLeast(2.dp.toPx())
             val x = i * slot + (slot - bw) / 2
-            val last = i == n - 1
-            when {
-                last && current -> drawRoundRect(ink, Offset(x, top + h - bh), Size(bw, max(bh, 2.dp.toPx())), r, style = Stroke(1.5.dp.toPx()))
-                i in spikes -> drawRoundRect(warn, Offset(x, top + h - bh), Size(bw, bh), r)
-                else -> drawRoundRect(muted, Offset(x, top + h - bh), Size(bw, bh), r)
+            val spike = i in spikes && !(current && i == n - 1)
+            val color = when { current && i == n - 1 -> ink; spike -> warn; else -> muted }
+            val bar = Path().apply {
+                addRoundRect(androidx.compose.ui.geometry.RoundRect(x, base - bh, x + bw, base, topLeftCornerRadius = r, topRightCornerRadius = r))
             }
-            val tag = when { last && current -> "идёт"; i in spikes -> "скачок"; else -> null }
-            tag?.let {
-                val l = measurer.measure(it, small.copy(color = if (i in spikes && !(last && current)) warn else muted))
-                drawText(l, topLeft = Offset((x + bw / 2 - l.size.width / 2).coerceIn(0f, size.width - l.size.width), (top + h - bh - l.size.height - 2.dp.toPx()).coerceAtLeast(0f)))
+            drawPath(bar, color)
+            if (spike) {
+                val l = measurer.measure("скачок", small.copy(color = warn))
+                drawText(l, topLeft = Offset((x + bw / 2 - l.size.width / 2).coerceIn(0f, size.width - l.size.width), (base - bh - l.size.height - 2.dp.toPx()).coerceAtLeast(0f)))
             }
         }
         if (usual != null && usual > 0) {
@@ -319,7 +337,9 @@ fun WeekBars(
             drawText(l, topLeft = Offset(w + 6.dp.toPx(), uy - l.size.height / 2f))
         }
         startLabel?.let { drawText(measurer.measure(it, small), topLeft = Offset(0f, size.height - xBand + 2.dp.toPx())) }
-        val e = measurer.measure("эта неделя", small)
-        drawText(e, topLeft = Offset((w - slot / 2 - e.size.width / 2).coerceAtMost(size.width - e.size.width), size.height - xBand + 2.dp.toPx()))
+        if (current) {
+            val e = measurer.measure("эта неделя", small)
+            drawText(e, topLeft = Offset((w - slot / 2 - e.size.width / 2).coerceAtMost(size.width - e.size.width), size.height - xBand + 2.dp.toPx()))
+        }
     }
 }

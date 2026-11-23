@@ -32,7 +32,7 @@ class FreshnessReviewTest {
 
     /**
      * A dip that starts today: «Сегодня» shows e.g. −32 % and «нужен отдых», the story's zone is REST — and the same
-     * brief / «Прогресс» / report then say «За 8 недель ни разу не опускался ниже линии отдыха — нагрузка была по силам».
+     * brief / «Прогресс» / report then say «За 8 недель свежесть ни разу не опускалась ниже линии отдыха: нагрузка была по силам».
      * Two sentences of one section contradict each other; the coach is fed both.
      */
     @Test fun aDipThatStartsTodayIsNotDeniedNextToNeedsRest() {
@@ -46,7 +46,7 @@ class FreshnessReviewTest {
         val dips = if (s.dips.isEmpty()) LoadExplain.noDips(8) else s.dips.joinToString { LoadExplain.dip(it, s.today.formPct) }
         assertTrue("ниже твоей линии отдыха" in zone, zone)
         assertTrue(
-            "ни разу не опускался ниже линии отдыха" !in dips,
+            "ни разу не опускалась ниже линии отдыха" !in dips,
             "«Сегодня»: ${Ru(shown)}, zone: «$zone» — and the dips say: «$dips»",
         )
     }

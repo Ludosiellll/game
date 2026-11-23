@@ -9,7 +9,12 @@ import forma.core.text.Ru
 
 /** How to run a session, in a line: its length, its reps, and the lap time or pace to keep. */
 object RunHow {
-    fun short(w: RunWorkout): String {
+    /** A number and its unit stay on one line: «48–49 с» never leaves «с» alone at the start of the next. */
+    private val UNIT = Regex("(\\d) (с|мин|км|м|/км)(?![а-яё])")
+
+    fun short(w: RunWorkout): String = line(w).replace(UNIT, "$1\u00A0$2")
+
+    private fun line(w: RunWorkout): String {
         val lapM = w.lapMeters
         fun range(p: PaceRange): String =
             if (lapM != null) "круг ${Ru.lapRange(Track.lapSec(p.fast.toDouble(), lapM), Track.lapSec(p.slow.toDouble(), lapM))}"
