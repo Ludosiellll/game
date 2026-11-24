@@ -184,9 +184,12 @@ object ProgramGenerator {
     fun weekIndex(program: Program, date: LocalDate): Int =
         ((date.toEpochDay() - program.startEpochDay).coerceAtLeast(0) / 7).toInt() + 1
 
-    /** 1-based week since the program was made, for "Неделя N": a block started again does not start it over. */
+    /**
+     * 1-based week since the program was made, for "Неделя N": a block started again does not start it over, nor does the
+     * week laid out again ([Program.madeEpochDay]).
+     */
     fun programWeek(program: Program, date: LocalDate): Int {
-        val made = program.createdEpochDay?.let { LocalDate.ofEpochDay(it).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toEpochDay() }
+        val made = (program.madeEpochDay ?: program.createdEpochDay)?.let { LocalDate.ofEpochDay(it).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toEpochDay() }
         return ((date.toEpochDay() - (made ?: program.startEpochDay)).coerceAtLeast(0) / 7).toInt() + 1
     }
 

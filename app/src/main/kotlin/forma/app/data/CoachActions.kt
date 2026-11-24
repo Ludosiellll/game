@@ -518,11 +518,21 @@ object CoachActions {
         /** What a pause or «Болею» changes besides itself, to put back exactly: the pauses, the day's mark, the block, a lighter week. */
         suspend fun before(): JsonObject {
             val now = repo.store.settingsNow()
+            val lift = repo.store.liftStateNow()
             return args(
                 "day" to today.toEpochDay(), "feel" to now.feelOn(today).name,
                 "from" to now.pauseFrom, "until" to now.pauseUntil, "past" to pauses(now.pastPauses),
-                "start" to repo.store.programNow()?.startEpochDay, "deload" to repo.store.liftStateNow().reactiveDeloadStart,
+                "start" to repo.store.programNow()?.startEpochDay, "deload" to lift.reactiveDeloadStart, "asked" to lift.askedDeloadStart,
             )
+        }
+
+        /**
+         * The block and its lighter weeks as a pause or «Болею» left them: «Вернуть» puts each back only while it is still
+         * so — a lighter week set since (asked of the coach, the app's own) or a block moved on since stays.
+         */
+        suspend fun leftNow(): JsonObject {
+            val lift = repo.store.liftStateNow()
+            return args("start" to repo.store.programNow()?.startEpochDay, "deload" to lift.reactiveDeloadStart, "asked" to lift.askedDeloadStart)
         }
 
         return when (call.name) {
@@ -548,18 +558,30 @@ object CoachActions {
                 if (n !in 0..MAX_SICK_PAUSE) return no("Пауза при болезни — от 0 до $MAX_SICK_PAUSE дней.")
                 if (s.feelOn(today) == Feel.SICK) return no("«Болею» сегодня уже отмечено.")
                 val until = today.plusDays(n - 1L)
+                // In a pause already (a holiday): the day is marked and the pause goes on, longer if the illness asks — never a
+                // second pause inside it, whose end the cards would say while the holiday still held the days after it.
+                val held = s.pauseOn(today)
+                val longer = held != null && n > 0 && until.toEpochDay() > held[1]
+                val pauseWords = when {
+                    held == null -> if (n > 0) " и пауза на ${days(n)}, до ${Ru.date(until)}" else ""
+                    longer -> ", пауза продлится до ${Ru.date(until)}"
+                    else -> ", пауза и так до ${Ru.date(LocalDate.ofEpochDay(held[1]))}"
+                }
                 // It changes the next runs and the first gym session: the person says it is today.
-                confirm("«Болею» сегодня" + (if (n > 0) " и пауза на ${days(n)}, до ${Ru.date(until)}" else "") + ". Потом первые пробежки лёгкие, первая силовая — полегче.") {
+                confirm("«Болею» сегодня$pauseWords. Потом первые пробежки лёгкие, первая силовая — полегче.") {
                     val was = before()
                     repo.updateSettings { it.withFeel(today, Feel.SICK) }
-                    if (n > 0) repo.pause(today, until)
+                    if (held == null) {
+                        if (n > 0) repo.pause(today, until)
+                    } else if (longer) repo.pause(LocalDate.ofEpochDay(held[0]), until)
                     val now = repo.store.settingsNow()
-                    CoachCall("undo_sick", JsonObject(was + args("setFrom" to now.pauseFrom, "setUntil" to now.pauseUntil)))
+                    CoachCall("undo_sick", JsonObject(was + args("setFrom" to now.pauseFrom, "setUntil" to now.pauseUntil, "left" to leftNow())))
                 }
             }
             NOT_SICK -> {
                 if (repo.sickEnd(s, today.plusDays(1)) == null) return no("Болезни не отмечено.")
-                confirm("Снять «Болею»: дни болезни станут обычным пропуском, пауза закончится.") { repo.notSick(today); null }
+                // A holiday the illness fell into goes on: only the sickness's own pause ends.
+                confirm("Снять «Болею»: дни болезни станут обычным пропуском" + (if (repo.sickPauseOn(s, today)) ", пауза закончится." else ".")) { repo.notSick(today); null }
             }
             PAUSE -> {
                 val n = a.int("days") ?: return no("Не сказано, на сколько дней.")
@@ -576,7 +598,7 @@ object CoachActions {
                     (if (n >= 7) " Силовой блок начнётся заново с недели возвращения." else ""), risk)) {
                     val was = before()
                     repo.pause(today, until)
-                    CoachCall("undo_pause", JsonObject(was + args("setFrom" to today.toEpochDay(), "setUntil" to until.toEpochDay())))
+                    CoachCall("undo_pause", JsonObject(was + args("setFrom" to today.toEpochDay(), "setUntil" to until.toEpochDay(), "left" to leftNow())))
                 }
             }
             RESUME -> {
@@ -585,7 +607,7 @@ object CoachActions {
                     val was = before()
                     repo.resume(today)
                     val now = repo.store.settingsNow()
-                    CoachCall("undo_resume", JsonObject(was + args("setFrom" to now.pauseFrom, "setUntil" to now.pauseUntil)))
+                    CoachCall("undo_resume", JsonObject(was + args("setFrom" to now.pauseFrom, "setUntil" to now.pauseUntil, "left" to leftNow())))
                 }
             }
             RATE -> {
@@ -861,22 +883,30 @@ object CoachActions {
                 val state = repo.store.liftStateNow()
                 val monday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
                 fun reactiveOn(m: LocalDate) = state.reactiveDeloadStart == m.toEpochDay()
-                fun lighter(p: forma.core.plan.Program, m: LocalDate) = ProgramGenerator.isDeloadWeek(p, m) || reactiveOn(m)
+                fun askedOn(m: LocalDate) = state.askedDeloadStart == m.toEpochDay()
+                fun lighter(p: forma.core.plan.Program, m: LocalDate) = ProgramGenerator.isDeloadWeek(p, m) || reactiveOn(m) || askedOn(m)
                 fun week(m: LocalDate) = "${Ru.date(m)} – ${Ru.date(m.plusDays(6))}"
                 fun nextLighter(p: forma.core.plan.Program, from: LocalDate) = (0..12).map { from.plusWeeks(it.toLong()) }.firstOrNull { ProgramGenerator.isDeloadWeek(p, it) }
-                val (next, text, clearReactive) = when (a.str("when")) {
+                // A novice has no blocks: no new block to speak of after the lighter week, and none starting again.
+                val blocks = program.blockWeeks > 0
+                // [asked]: the week asked for, kept as asked ([LiftState.askedDeloadStart]) — the app does not move it on as
+                // unearned, and without blocks the gym is lighter that week by it; null on skip.
+                val (next, text, asked) = when (a.str("when")) {
                     "this", "next" -> {
                         val m = if (a.str("when") == "this") monday else monday.plusWeeks(1)
                         if (lighter(program, m)) return no((if (m == monday) "Эта неделя" else "Следующая неделя") + " и так лёгкая.")
                         val p = ProgramGenerator.lighterWeekAt(program, m)
-                        Triple(p, "Лёгкая неделя — ${week(m)}: в зале вдвое меньше подходов и вес на 10 % легче, бег короче. Потом начнётся новый блок" +
-                            (nextLighter(p, m.plusWeeks(1))?.let { ", следующая лёгкая — ${week(it)}." } ?: "."), false)
+                        Triple(p, "Лёгкая неделя — ${week(m)}: в зале вдвое меньше подходов и вес на 10 % легче, бег короче." + (
+                            if (!blocks) "" else " Потом начнётся новый блок" + (nextLighter(p, m.plusWeeks(1))?.let { ", следующая лёгкая — ${week(it)}." } ?: ".")
+                            ), m)
                     }
                     "skip" -> {
                         if (!lighter(program, monday)) return no("Эта неделя и так не лёгкая" + (nextLighter(program, monday)?.let { ": лёгкая по плану — ${week(it)}." } ?: "."))
                         // The block starts again with this week: the lighter week comes at its end.
                         val p = program.copy(startEpochDay = monday.toEpochDay())
-                        Triple(p, "Эта неделя — обычная, без разгрузки. Блок начинается заново" + (nextLighter(p, monday)?.let { ": лёгкая неделя — ${week(it)}." } ?: "."), true)
+                        Triple(p, "Эта неделя — обычная, без разгрузки." + (
+                            if (!blocks) "" else " Блок начинается заново" + (nextLighter(p, monday)?.let { ": лёгкая неделя — ${week(it)}." } ?: ".")
+                            ), null)
                     }
                     else -> return no("Не сказано: this, next или skip.")
                 }
@@ -884,9 +914,26 @@ object CoachActions {
                     val p0 = repo.store.programNow()!!
                     val l0 = repo.store.liftStateNow()
                     repo.store.setProgram(p0.copy(startEpochDay = next.startEpochDay))
-                    if (clearReactive && l0.reactiveDeloadStart == monday.toEpochDay()) repo.store.setLiftState(l0.copy(reactiveDeloadStart = null))
+                    // Asked for the week the app had moved its lighter week from (the block mostly missed): it is lighter after
+                    // all, nothing «сдвинулась» from it. Skipped: neither the app's own lighter week of this week nor one asked
+                    // for stays.
+                    val l1 = if (asked != null) l0.copy(
+                        askedDeloadStart = asked.toEpochDay(), deloadMovedFrom = l0.deloadMovedFrom.takeIf { it != asked.toEpochDay() },
+                    ) else l0.copy(
+                        reactiveDeloadStart = l0.reactiveDeloadStart.takeIf { it != monday.toEpochDay() },
+                        askedDeloadStart = l0.askedDeloadStart.takeIf { it != monday.toEpochDay() },
+                    )
+                    if (l1 != l0) repo.store.setLiftState(l1)
                     repo.changed()
-                    CoachCall("undo_lighter", args("start" to p0.startEpochDay, "reactive" to l0.reactiveDeloadStart, "expect" to next.startEpochDay))
+                    // "asked" and "moved" always there (null too): «Вернуть» puts them back as they were, also when there was none.
+                    CoachCall(
+                        "undo_lighter",
+                        args(
+                            "start" to p0.startEpochDay, "reactive" to l0.reactiveDeloadStart, "expect" to next.startEpochDay,
+                            "asked" to (l0.askedDeloadStart?.let { JsonPrimitive(it) } ?: JsonNull),
+                            "moved" to (l0.deloadMovedFrom?.let { JsonPrimitive(it) } ?: JsonNull),
+                        ),
+                    )
                 }
             }
             ORDER -> {
@@ -1761,8 +1808,19 @@ object CoachActions {
                 repo.updateSettings {
                     it.withFeel(day, Feel.valueOf(a.str("feel")!!)).copy(pauseFrom = a.long("from"), pauseUntil = a.long("until"), pastPauses = a.pauses("past"))
                 }
-                a.long("start")?.let { start -> repo.store.programNow()?.let { repo.store.setProgram(it.copy(startEpochDay = start)) } }
-                repo.store.setLiftState(repo.store.liftStateNow().copy(reactiveDeloadStart = a.long("deload")))
+                // The block and its lighter weeks go back only while they are as the change left them: a lighter week set
+                // since (asked of the coach, the app's own) or a block moved on since stays. A change logged before this was
+                // kept puts them back as it always did, and leaves the week asked for (it never knew it) as it is.
+                val left = a["left"] as? JsonObject
+                fun still(key: String, now: Long?) = left == null || left.long(key) == now
+                a.long("start")?.let { start -> repo.store.programNow()?.let { if (still("start", it.startEpochDay)) repo.store.setProgram(it.copy(startEpochDay = start)) } }
+                val lift = repo.store.liftStateNow()
+                repo.store.setLiftState(
+                    lift.copy(
+                        reactiveDeloadStart = if (still("deload", lift.reactiveDeloadStart)) a.long("deload") else lift.reactiveDeloadStart,
+                        askedDeloadStart = if (left != null && still("asked", lift.askedDeloadStart)) a.long("asked") else lift.askedDeloadStart,
+                    ),
+                )
                 repo.changed()
                 true
             }
@@ -1777,6 +1835,10 @@ object CoachActions {
                 else {
                     repo.store.setProgram(p.copy(startEpochDay = start))
                     (a["reactive"] as? JsonPrimitive)?.content?.toLongOrNull()?.let { r -> repo.store.setLiftState(repo.store.liftStateNow().copy(reactiveDeloadStart = r)) }
+                    // The week asked for and the moved lighter week as they were (none too); a change logged before they were
+                    // kept leaves them as they are.
+                    if ("asked" in a) repo.store.setLiftState(repo.store.liftStateNow().copy(askedDeloadStart = a.long("asked")))
+                    if ("moved" in a) repo.store.setLiftState(repo.store.liftStateNow().copy(deloadMovedFrom = a.long("moved")))
                     repo.changed()
                     true
                 }

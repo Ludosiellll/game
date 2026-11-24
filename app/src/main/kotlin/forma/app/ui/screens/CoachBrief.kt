@@ -128,7 +128,7 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
         val clock = if (today == repo.today()) repo.timeNow().let { ", время %d:%02d".format(it.hour, it.minute) } else ""
         appendLine("Сегодня ${WEEKDAY[today.dayOfWeek.value - 1]}, ${Ru.date(today)} ${today.year}$clock.")
         when {
-            paused -> appendLine("Сегодня пауза в плане до ${Ru.date(LocalDate.ofEpochDay(settings.pauseUntil!!))}: тренировок по плану нет.")
+            paused -> appendLine("Сегодня пауза в плане до ${Ru.date(LocalDate.ofEpochDay(settings.pauseOn(today)?.get(1) ?: today.toEpochDay()))}: тренировок по плану нет.")
             feel == Feel.SICK -> appendLine("Сегодня человек отметил «Болею»: тренироваться не нужно, приложение предлагает отдых или паузу.")
             feel == Feel.LOW -> appendLine("Сегодня самочувствие «Так себе»: тренировки дня облегчены — в силовой вдвое меньше подходов и вес на 10 % легче, бег только лёгкий (ниже уже облегчённые).")
             feel == Feel.GOOD -> appendLine("Сегодня самочувствие «Хорошо».")

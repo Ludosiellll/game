@@ -40,10 +40,11 @@ object CatchUp {
      * same kind first (the hard run by the hard run, a lift by its template), then in order (a lift by a lift, whichever
      * template; a run by a run) — as the day shows it. A session done on a day where nothing of its kind was left to do
      * closes another of the week (from [firstDay]): the same session first — the same template, a run of its kind — a
-     * missed one before it, else a later one (done ahead: «Низ» on Friday for Saturday's); then any lift (another
-     * template or a friend's copied workout counts as the gym done) or a hard run for an easy one, missed first. Done
-     * ahead, a later day's session is closed at once: done on its own day after all, the day's own one closes it and the
-     * earlier stays extra. [today] (ISO; 8 — the week is over) is kept for the callers' sake: a day ahead is not waited for.
+     * missed one before it (the last one missed, as [suggest] offers it), else a later one (done ahead: «Низ» on Friday
+     * for Saturday's); then any lift (another template or a friend's copied workout counts as the gym done) or a hard run
+     * for an easy one, missed first. Done ahead, a later day's session is closed at once: done on its own day after all,
+     * the day's own one closes it and the earlier stays extra. [today] (ISO; 8 — the week is over) is kept for the
+     * callers' sake: a day ahead is not waited for.
      */
     @Suppress("UNUSED_PARAMETER")
     fun closes(week: List<Day>, firstDay: Int = 1, today: Int = 8): List<Close> {
@@ -76,8 +77,9 @@ object CatchUp {
         // An easy run started for a hard one missed before it (the app offers that when the hard one cannot be today):
         // it closes that one (Denis, 4 November: Monday's tempo missed, Thursday's ahead — Wednesday's easy run is
         // Monday's, not Saturday's). Only so marked: an easy run with Saturday's lower moved to Friday is Saturday's.
+        // With two missed, the last one: the one the card offered it for («засчитается за четверг», [suggest]).
         fun easier(s: PlannedSession, from: List<Pair<Int, Int>>, instead: Boolean) =
-            if (instead && s.kind == SessionKind.RUN_EASY) from.firstOrNull { planned(it).isHardRun } else null
+            if (instead && s.kind == SessionKind.RUN_EASY) from.lastOrNull { planned(it).isHardRun } else null
         for ((doneDay, doneIndex) in spare.sortedBy { it.first }) {
             val day = week.first { it.day == doneDay }
             val s = day.done[doneIndex]
@@ -86,7 +88,8 @@ object CatchUp {
             // Ahead only from this plan's days: a session of the plan before a mid-week change closes nothing later; nor one
             // done on a pause day — nothing was expected then, it is beyond the plan.
             val ahead = if (doneDay >= firstDay && !week.first { it.day == doneDay }.paused) open.filter { it.first > doneDay } else emptyList()
-            val match = easier(s, before, instead) ?: sameIn(s, before) ?: sameIn(s, ahead) ?: other(s, before) ?: other(s, ahead) ?: continue
+            // The same session missed twice: made up, it is the last one's, as the catch-up card offers it ([suggest]).
+            val match = easier(s, before, instead) ?: sameIn(s, before.asReversed()) ?: sameIn(s, ahead) ?: other(s, before) ?: other(s, ahead) ?: continue
             open.remove(match)
             out += Close(match.first, match.second, doneDay, doneIndex)
         }
@@ -98,8 +101,10 @@ object CatchUp {
         val todayPlan = week.firstOrNull { it.day == today } ?: return null
         if (todayPlan.planned.isNotEmpty() || todayPlan.done.isNotEmpty()) return null
 
-        // Missed: planned before today and not done on its day or caught up on a later one (as the week shows it).
-        val closed = closes(week.filter { it.day <= today }, firstDay, today).map { it.day to it.index }.toSet()
+        // Missed: planned before today and not done on its day or caught up on a later one (as the week shows it). Closed
+        // over the whole week, as the week is shown: a session done ahead closes its own later day («Низ» on Wednesday is
+        // Saturday's), not a missed one of another template.
+        val closed = closes(week, firstDay, today).map { it.day to it.index }.toSet()
         val missed = week.filter { it.day in firstDay until today }.sortedBy { it.day }.flatMap { d ->
             d.planned.withIndex().filter { (d.day to it.index) !in closed }.map { Suggestion(it.value, d.day) }
         }

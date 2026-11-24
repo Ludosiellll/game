@@ -84,8 +84,10 @@ fun PlanScreen() {
         FCard(gap = 0.dp) {
             (1..7).forEach { day ->
                 if (day > 1) Hairline()
-                val sessions = p.week.on(day)
                 val dayDate = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).plusDays(day - 1L)
+                // A pause day holds no sessions (as on «Сегодня» and the day's screen): «Пауза», no session, no how-to.
+                val paused = weekItems.firstOrNull { it.date == dayDate }?.paused == true
+                val sessions = if (paused) emptyList() else p.week.on(day)
                 // A tap opens the day in full: what each session is, what it is for, why on this day.
                 Row(
                     Modifier.fillMaxWidth().clickable(onClickLabel = "Подробнее о дне") { nav.push(Screen.Day(dayDate.toEpochDay())) }
@@ -94,7 +96,7 @@ fun PlanScreen() {
                 ) {
                     Text(DAY_SHORT[day - 1], style = T.body(15.sp, FontWeight.ExtraBold).copy(color = if (sessions.isEmpty()) F.c.text3 else F.c.text), modifier = Modifier.width(40.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        if (sessions.isEmpty()) Text("Отдых", style = T.body(15.sp).copy(color = F.c.text3))
+                        if (sessions.isEmpty()) Text(if (paused) "Пауза" else "Отдых", style = T.body(15.sp).copy(color = F.c.text3))
                         sessions.forEach { s ->
                             // Done this week: said so; a run as it was run (the plan has moved on since), a free run in
                             // the place of a planned one as it is.
@@ -524,8 +526,10 @@ private fun PauseControl() {
     val today = forma.app.ui.rememberToday(repo)
     SectionLabel("Пауза")
     FCard(gap = 10.dp) {
-        if (repo.paused(settings, today)) {
-            Text("Пауза до ${shortDate(java.time.LocalDate.ofEpochDay(settings.pauseUntil!!))}", style = T.title(20.sp))
+        // The end of the pause that holds today (not of a shorter one begun inside it).
+        val pause = settings.pauseOn(today)
+        if (pause != null) {
+            Text("Пауза до ${shortDate(java.time.LocalDate.ofEpochDay(pause[1]))}", style = T.title(20.sp))
             GhostButton("Вернуться сегодня", { scope.launch { repo.resume(today) } }, Modifier.fillMaxWidth())
         } else {
             Text(

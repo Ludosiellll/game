@@ -155,6 +155,16 @@ data class Settings(
     }
 
     /**
+     * The pause that holds [day] as [from, until], the one that lasts longest when two do (a short one begun inside a
+     * holiday by an older version: the holiday goes on after it); null on a day of no pause. The cards say its end.
+     */
+    fun pauseOn(day: java.time.LocalDate): List<Long>? {
+        val d = day.toEpochDay()
+        val last = pauseUntil?.let { listOf(pauseFrom ?: it, it) }
+        return (pastPauses.filter { it.size == 2 } + listOfNotNull(last)).filter { d in it[0]..it[1] }.maxByOrNull { it[1] }
+    }
+
+    /**
      * The settings with a new pause [from]–[until]: the last one is kept among [pastPauses] (the most recent
      * [PAST_PAUSES]) unless the new one covers it.
      */
@@ -274,6 +284,11 @@ data class LiftState(
     val reactiveDeloadStart: Long? = null,
     /** Monday (epoch day) of a planned lighter week moved a week on: the block's weeks were mostly missed ([TrainingRepository.moveUnearnedLighterWeek]). */
     val deloadMovedFrom: Long? = null,
+    /**
+     * Monday (epoch day) of a lighter week the person asked for (the coach's «лёгкая неделя»): it stays where it was asked
+     * — never moved on as one the block did not earn — and the gym is lighter that week without blocks too (a novice).
+     */
+    val askedDeloadStart: Long? = null,
 )
 
 /** One DataStore per file and process (DataStore forbids two instances on the same file). */

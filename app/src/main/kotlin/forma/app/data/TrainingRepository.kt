@@ -332,8 +332,9 @@ class TrainingRepository(
     private fun ownProgram(profile: Profile, own: OwnPlan): Program {
         val program = if (own.program.experience == profile.experience) own.program
         else keepCycle(ProgramGenerator.generate(profile, today()), own.program)
-        // What this week held under the friend's program was never asked of the own one: not "missed".
-        return program.copy(createdEpochDay = today().toEpochDay())
+        // What this week held under the friend's program was never asked of the own one: not "missed". «Неделя N» goes on
+        // from when the own plan was made.
+        return program.copy(createdEpochDay = today().toEpochDay(), madeEpochDay = program.madeEpochDay ?: program.createdEpochDay ?: program.startEpochDay)
     }
 
     /** A beginner who runs 30 minutes now: the profile's level and the week of a runner; the run state stays as it is. */
@@ -361,12 +362,13 @@ class TrainingRepository(
     /**
      * The block goes on: a new week layout does not move where the lifter is in the cycle (a lighter week stays where it
      * was due, a vacation shift stays). Another experience level has another block and starts over. A week laid out
-     * differently counts from today: what it would have had earlier this week was never shown, so it is not "missed".
+     * differently counts from today: what it would have had earlier this week was never shown, so it is not "missed" —
+     * while «Неделя N» goes on from the day the plan was first made ([Program.madeEpochDay]).
      */
     private fun keepCycle(fresh: Program, prev: Program?): Program = when {
         prev == null || prev.experience != fresh.experience -> fresh
-        prev.week.days == fresh.week.days -> fresh.copy(startEpochDay = prev.startEpochDay, createdEpochDay = prev.createdEpochDay)
-        else -> fresh.copy(startEpochDay = prev.startEpochDay)
+        prev.week.days == fresh.week.days -> fresh.copy(startEpochDay = prev.startEpochDay, createdEpochDay = prev.createdEpochDay, madeEpochDay = prev.madeEpochDay)
+        else -> fresh.copy(startEpochDay = prev.startEpochDay, madeEpochDay = prev.madeEpochDay ?: prev.createdEpochDay ?: prev.startEpochDay)
     }
 
     /**
@@ -670,14 +672,15 @@ class TrainingRepository(
             s.pastPauses.filter { it.size == 2 } + listOfNotNull(s.pauseUntil?.let { listOf(s.pauseFrom ?: it, it) })
 
         /**
-         * [s] with the last sickness up to [day] taken back: its «Болею» marks and the pauses begun on them (or with them in)
-         * are gone. The last sickness is the last mark with its pause and the marks and pauses right before it, one free day
-         * between at most; an earlier one stays.
+         * [s] with the last sickness up to [day] taken back: its «Болею» marks and the pauses begun on them are gone. The
+         * last sickness is the last mark with its pause and the marks and pauses right before it, one free day between at
+         * most; an earlier one stays. A holiday the illness fell into (begun before its mark) is no pause of the sickness:
+         * it stays, its days are not made missed.
          */
         fun withoutSickness(s: Settings, day: LocalDate): Settings {
-            val pauses = pausesOf(s)
             var from = Long.MAX_VALUE
             val sick = s.feels.filterValues { it == Feel.SICK.name }.keys.filter { it <= day.toEpochDay() }.sortedDescending()
+            val pauses = pausesOf(s).filter { it[0] in sick }
             for (m in sick) {
                 val with = pauses.filter { m in it[0]..it[1] }
                 if (from != Long.MAX_VALUE && maxOf(m, with.maxOfOrNull { it[1] } ?: m) < from - 2) break
@@ -866,14 +869,19 @@ class TrainingRepository(
         /**
          * [program] with [Program.shared]: its templates as done with [settings] — what a friend copying it gets. The
          * same rules as a session's plan: taken out for good stay out (never all), swaps and own numbers in, added ones after.
+         * With them the weight steps set for their exercises ([Program.steps]): a friend training on the same machines
+         * gets the stacks as they are (Egor, 12.11: «8 кг × 16» planned on Denis's stack of 9, 14, 19).
          */
-        fun shareable(program: Program, settings: Settings): Program = program.copy(
-            shared = program.templates.map { t ->
+        fun shareable(program: Program, settings: Settings): Program {
+            val shared = program.templates.map { t ->
                 val added = addedFor(t.id, settings)
                 val kept = t.slots.filter { it.exerciseId !in settings.removed }.ifEmpty { if (added.isEmpty()) t.slots else emptyList() }
                 t.copy(slots = kept.map { tuned(it, settings) } + added.map { overrides(addedSpec(it), settings, addedKey(t.id, it)) })
-            },
-        )
+            }
+            val ids = shared.flatMap { t -> t.slots.map { it.exerciseId } }.toSet()
+            val steps = settings.steps.filterKeys { it in ids }.mapValues { (id, step) -> listOf(step, settings.stepsFrom[id] ?: 0.0) }
+            return program.copy(shared = shared, steps = steps.ifEmpty { null })
+        }
     }
 
     suspend fun liftPlan(templateId: String, date: LocalDate, forceDeload: Boolean = false): LiftPlan {
@@ -997,8 +1005,11 @@ class TrainingRepository(
 
     private suspend fun deloadOn(date: LocalDate, force: Boolean): Boolean {
         val program = store.programNow() ?: return force
-        val reactive = store.liftStateNow().reactiveDeloadStart
-        return force || ProgramGenerator.isDeloadWeek(program, date) || (reactive != null && date.toEpochDay() in reactive until reactive + 7) ||
+        val lift = store.liftStateNow()
+        fun weekOf(monday: Long?) = monday != null && date.toEpochDay() in monday until monday + 7
+        // The app's own lighter week and one the person asked for are lighter in the gym whatever the block: a novice has
+        // none, and the lighter week asked of the coach promises half the sets and −10 % to them too.
+        return force || ProgramGenerator.isDeloadWeek(program, date) || weekOf(lift.reactiveDeloadStart) || weekOf(lift.askedDeloadStart) ||
             liftAfterSick(date)
     }
 
@@ -1013,11 +1024,14 @@ class TrainingRepository(
         return ends.filter { it >= d - SICK_WINDOW }.maxOrNull()
     }
 
-    /** Whether [day] is in a pause begun on a «Болею» day (or with one in it): the sick card's pause. */
+    /**
+     * Whether [day] is in a pause begun on a «Болею» day: the sick card's pause. A holiday the illness fell into is not
+     * ([withoutSickness] leaves it as it is).
+     */
     fun sickPauseOn(settings: Settings, day: LocalDate): Boolean {
         val d = day.toEpochDay()
         val sick = settings.feels.filterValues { it == Feel.SICK.name }.keys
-        return pausesOf(settings).any { p -> d in p[0]..p[1] && sick.any { it in p[0]..p[1] } }
+        return pausesOf(settings).any { p -> d in p[0]..p[1] && p[0] in sick }
     }
 
     /**
@@ -1034,15 +1048,23 @@ class TrainingRepository(
         onChange()
     }
 
-    /** Runs still to go easy after being sick ([SICK_EASY_RUNS] minus those done since); 0 — none. */
+    /**
+     * Runs still to go easy after being sick ([SICK_EASY_RUNS] minus those done since); 0 — none, and none in a plan
+     * without running (a «Только зал» plan would wait three weeks for runs it never has).
+     */
     suspend fun easyAfterSick(date: LocalDate): Int {
+        if (store.programNow()?.week?.days?.none { d -> d.sessions.any { it.isRun } } == true) return 0
         val end = sickEnd(store.settingsNow(), date) ?: return 0
         val done = db.workouts().allDone().count { it.kind == Kind.RUN && it.epochDay > end && it.epochDay < date.toEpochDay() }
         return (SICK_EASY_RUNS - done).coerceAtLeast(0)
     }
 
-    /** The first gym session after being sick: lighter (fewer sets, lighter weights); the plan does not move. */
+    /**
+     * The first gym session after being sick: lighter (fewer sets, lighter weights); the plan does not move. None in a plan
+     * without the gym (a «Только бег» plan has no first gym session to wait for).
+     */
     suspend fun liftAfterSick(date: LocalDate): Boolean {
+        if (store.programNow()?.week?.days?.none { d -> d.sessions.any { it.kind == SessionKind.LIFT } } == true) return false
         val end = sickEnd(store.settingsNow(), date) ?: return false
         return db.workouts().allDone().none { it.kind == Kind.LIFT && it.epochDay > end && it.epochDay < date.toEpochDay() }
     }
@@ -1322,14 +1344,15 @@ class TrainingRepository(
      * week sheds the fatigue of the block's hard weeks; when fewer than half of them were full (at least [FULL_WEEK] of
      * the plan's load, no day «Болею» or paused), the missed days were rest already: the lighter week moves a week on
      * (the block starts a week later). At the start of the lighter week only: not once its gym has begun, not over a
-     * lighter week the app set after setbacks.
+     * lighter week the app set after setbacks, nor over one the person asked for — someone who has been missing sessions
+     * is the one most likely to ask for an easier week.
      */
     suspend fun moveUnearnedLighterWeek(today: LocalDate = today()) = sessionLock.withLock {
         val program = store.programNow() ?: return@withLock
         if (program.blockWeeks < 2 || !ProgramGenerator.isDeloadWeek(program, today)) return@withLock
         val monday = mondayOf(today)
         val state = store.liftStateNow()
-        if (state.reactiveDeloadStart == monday.toEpochDay()) return@withLock
+        if (state.reactiveDeloadStart == monday.toEpochDay() || state.askedDeloadStart == monday.toEpochDay()) return@withLock
         val ws = db.workouts().allDone()
         val gymBegun = ws.any { it.kind == Kind.LIFT && it.epochDay in monday.toEpochDay()..today.toEpochDay() } ||
             db.workouts().active()?.let { it.kind == Kind.LIFT } == true
@@ -1740,7 +1763,8 @@ class TrainingRepository(
         // At most one lighter week in six: a run of bad days is not a reason to deload again and again.
         // A lighter week just behind (last week) is recovery enough. A longer window blocked it in every week of a
         // 4–5-week block: the reactive deload never came for intermediate and advanced lifters.
-        val recent = state.reactiveDeloadStart?.let { day.toEpochDay() < it + 42 } == true ||
+        // A lighter week the person asked for counts as one too (a novice's has no block to show it).
+        val recent = listOfNotNull(state.reactiveDeloadStart, state.askedDeloadStart).any { day.toEpochDay() < it + 42 } ||
             ProgramGenerator.isDeloadWeek(program, day.minusWeeks(1))
         // Run down by this person's own measure: below their rest line for four days or more (the dip still on).
         val worn = loadStoryNow(day)?.let { st ->
@@ -1851,23 +1875,36 @@ class TrainingRepository(
         val gen = ProgramGenerator.generate(updated, today())
         // One's own program is put aside once: copying from a second person keeps the own one, not the first copy.
         val keep = settings.ownPlan ?: before?.takeIf { it.copiedFrom == null }?.let { OwnPlan.of(profile, it, settings) }
+        // Taken again over a friend's program (the friend's changes, or another friend's): the block and its lighter week
+        // go on as they were, «Неделя N» too (Egor, 14.11: taken again before «Низ», his cycle began anew and the lighter
+        // week of 16.11 was gone). Another experience level has another block and starts over.
+        val again = before?.takeIf { it.copiedFrom != null && it.experience == profile.experience }
         store.setProfile(updated)
         store.setProgram(
             safe.copy(
                 experience = profile.experience, createdEpochDay = today().toEpochDay(), copiedFrom = from.take(40),
                 // One's own gym kept: its block goes on as it was; else the block starts with the copy.
-                blockWeeks = if (part == CopyPart.RUN) ownBefore.blockWeeks else gen.blockWeeks,
-                startEpochDay = if (part == CopyPart.RUN) ownBefore.startEpochDay else gen.startEpochDay,
+                blockWeeks = again?.blockWeeks ?: if (part == CopyPart.RUN) ownBefore.blockWeeks else gen.blockWeeks,
+                startEpochDay = again?.startEpochDay ?: if (part == CopyPart.RUN) ownBefore.startEpochDay else gen.startEpochDay,
+                madeEpochDay = again?.let { it.madeEpochDay ?: it.createdEpochDay ?: it.startEpochDay },
                 runCaps = if (part == CopyPart.ALL) gen.runCaps else safe.runCaps,
                 // The person's notes are about their whole week: with one side taken, the notes of a week like this one.
                 week = if (part == CopyPart.ALL) safe.week else safe.week.copy(notes = gen.week.notes),
+                // Applied to this phone's steps below; the program itself keeps none (its upload writes the steps here).
+                steps = null,
             ),
         )
+        // The machine steps of the exercises taken, as the friend has them (training together: the same stacks, 9, 14, 19 …).
+        val steps = safe.steps.orEmpty()
         // The own edits of the plan belong to the own gym: kept with one's own gym, put aside with it otherwise.
         updateSettings { s ->
             val edits = if (part == CopyPart.RUN) settings.ownPlan?.editsInto(s) ?: s
             else s.copy(swaps = emptyMap(), removed = emptySet(), added = emptyMap(), sets = emptyMap(), reps = emptyMap(), rest = emptyMap(), demoted = emptySet(), pickSwaps = emptySet())
-            edits.copy(ownPlan = keep)
+            edits.copy(
+                ownPlan = keep,
+                steps = edits.steps + steps.mapValues { it.value[0] },
+                stepsFrom = edits.stepsFrom - steps.keys + steps.filterValues { it[1] > 0 }.mapValues { it.value[1] },
+            )
         }
         onChange()
         return true
@@ -1889,19 +1926,37 @@ class TrainingRepository(
         store.editSettings { it.withPause(from.toEpochDay(), until.toEpochDay()) }
         if (until.toEpochDay() - from.toEpochDay() + 1 >= 7) {
             restartBlock(until.plusDays(1))
-            // A week or more away is rest enough: a lighter week the app set before it is not needed any more.
+            // A week or more away is rest enough: a lighter week set before it (the app's own, or one asked for) is not
+            // needed any more.
             val lift = store.liftStateNow()
-            if (lift.reactiveDeloadStart?.let { it + 7 > from.toEpochDay() } == true) store.setLiftState(lift.copy(reactiveDeloadStart = null))
+            fun ahead(monday: Long?) = monday != null && monday + 7 > from.toEpochDay()
+            if (ahead(lift.reactiveDeloadStart) || ahead(lift.askedDeloadStart)) store.setLiftState(
+                lift.copy(
+                    reactiveDeloadStart = lift.reactiveDeloadStart.takeIf { !ahead(it) },
+                    askedDeloadStart = lift.askedDeloadStart.takeIf { !ahead(it) },
+                ),
+            )
         }
         onChange()
     }
 
-    /** Back earlier than planned: the pause ends yesterday. */
+    /**
+     * Back earlier than planned: every pause that holds the day ends yesterday — a short one an older version began inside
+     * a holiday too, or the holiday would go on holding the days ([Settings.pastPauses]).
+     */
     suspend fun resume(day: LocalDate = today()) {
         val s = store.settingsNow()
-        val from = s.pauseFrom ?: return
-        if (!paused(s, day)) return
-        store.editSettings { it.copy(pauseUntil = day.toEpochDay() - 1) }
+        val d = day.toEpochDay()
+        val holding = pausesOf(s).filter { d in it[0]..it[1] }
+        if (holding.isEmpty()) return
+        // Away since the first of them.
+        val from = holding.minOf { it[0] }
+        store.editSettings { st ->
+            st.copy(
+                pauseUntil = st.pauseUntil?.let { u -> if (d in (st.pauseFrom ?: u)..u) d - 1 else u },
+                pastPauses = st.pastPauses.mapNotNull { p -> if (p.size == 2 && d in p[0]..p[1]) listOf(p[0], d - 1).takeIf { p[0] < d } else p },
+            )
+        }
         // A long pause moved the block to the planned week of return: bring it to the actual one.
         val movedAhead = (store.programNow()?.startEpochDay ?: Long.MIN_VALUE) > mondayOf(day).toEpochDay()
         if (day.toEpochDay() - from >= 7 || movedAhead) restartBlock(day)
@@ -2243,7 +2298,9 @@ class TrainingRepository(
         val lift = sessions.firstOrNull { it.kind == SessionKind.LIFT && it.templateId != null } ?: return null
         val templateId = lift.templateId ?: return null
         val feelLow = settings.feelOn(date) == Feel.LOW
-        val w = runFor(run.kind, date, light || feelLow)
+        // The trial as the week shows it: on the next hard day due from today only (the day's run card says so), not on
+        // a later double day that would be the first one counted from itself.
+        val w = runFor(run.kind, date, light || feelLow, trial = trialDay(today()) == date)
         val kind = when (w.type) {
             RunType.TEST -> if (daysToRace(date) == 0L) forma.core.plan.SessionOrder.Run.RACE else forma.core.plan.SessionOrder.Run.TRIAL
             RunType.GOAL_PACE, RunType.INTERVALS, RunType.TEMPO -> forma.core.plan.SessionOrder.Run.HARD
@@ -2684,13 +2741,20 @@ class TrainingRepository(
         if (store.profileNow() == null) return emptyMap()
         val settings = store.settingsNow()
         val out = forma.core.model.Muscle.entries.associateWith { 0.0 }.toMutableMap()
+        // A session done is planned as it was given that day: «Так себе»'s half sets, the coach's sets for the day — not
+        // as the plan would give it now (a «Так себе» gym day read «Мало» for a week). One not done yet: as it would be
+        // given, a «Так себе» day's lighter too.
+        val given = db.workouts().allDone().filter { it.kind == Kind.LIFT && it.epochDay in from.toEpochDay()..to.toEpochDay() }
         var d = from
         while (!d.isAfter(to)) {
             val off = settings.pausedOn(d) || settings.feels[d.toEpochDay()] == Feel.SICK.name
+            val day = d.toEpochDay()
             for (s in program.week.on(d.dayOfWeek.value)) {
                 val id = s.templateId
                 if (off || s.kind != SessionKind.LIFT || id == null || program.templates.none { it.id == id }) continue
-                for (item in liftPlan(id, d).items) {
+                val items = given.firstOrNull { it.epochDay == day && it.templateId == id }?.let { planOf(it) }?.items
+                    ?: liftPlan(id, d, forceDeload = settings.feelOn(d) == Feel.LOW).items
+                for (item in items) {
                     val ex = Catalog.find(item.exerciseId) ?: continue
                     val sets = item.prescription.sets.toDouble()
                     ex.primary.forEach { out[it] = out.getValue(it) + sets }

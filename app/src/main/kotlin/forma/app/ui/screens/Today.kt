@@ -122,12 +122,16 @@ fun TodayScreen() {
 
     val p = program ?: return
     val weekNo = ProgramGenerator.programWeek(p, today)
+    // The app's own lighter week and one asked of the coach are the gym's too, blocks or not (as the sessions are).
     val deload = ProgramGenerator.isDeloadWeek(p, today) ||
-        (liftState.reactiveDeloadStart?.let { today.toEpochDay() in it until it + 7 } == true)
+        listOfNotNull(liftState.reactiveDeloadStart, liftState.askedDeloadStart).any { today.toEpochDay() in it until it + 7 }
     val gym = p.week.days.any { d -> d.sessions.any { it.kind == SessionKind.LIFT } }
     val runs = p.week.days.any { d -> d.sessions.any { it.isRun } }
     val runCutback = runs && ProgramGenerator.isRunCutbackWeek(p, today)
     val todayItem = week.firstOrNull { it.date == today }
+    // The week's count is of this plan's days: the days before it was made (a copy on Thursday, new days mid-week) are
+    // «до начала плана» on the strip, not sessions to do.
+    val planWeek = week.filter { d -> p.createdEpochDay?.let { d.date.toEpochDay() >= it } != false }
 
     ScrollScreen {
         // The same window as on Progress → Нагрузка, so "Свежесть" reads the same number on both screens.
@@ -150,8 +154,8 @@ fun TodayScreen() {
         }
         if (F.type.mega) {
             // Minimal: how the day looks in plain words under a heavy rule, in place of the three figures.
-            val planned = week.sumOf { it.planned.size }
-            val doneCount = week.sumOf { d -> d.planned.count { d.isDone(it) } }
+            val planned = planWeek.sumOf { it.planned.size }
+            val doneCount = planWeek.sumOf { d -> d.planned.count { d.isDone(it) } }
             val zone = form?.let { forma.core.load.LoadStory.zone(it, restLine) }
             Column(
                 Modifier.fillMaxWidth().clickable(onClickLabel = "Нагрузка и свежесть") { progressTabRequest = 2; nav.tab(Screen.Progress) },
@@ -214,9 +218,11 @@ fun TodayScreen() {
         }
         when {
             repo.paused(settings, today) -> {
+                // The pause that holds today: a short one an older version began inside a holiday ended days ago.
+                val pause = settings.pauseOn(today) ?: listOf(today.toEpochDay(), today.toEpochDay())
                 PauseCard(
-                    java.time.LocalDate.ofEpochDay(settings.pauseUntil!!),
-                    restarts = settings.pauseUntil!! - (settings.pauseFrom ?: settings.pauseUntil!!) + 1 >= 7,
+                    java.time.LocalDate.ofEpochDay(pause[1]),
+                    restarts = pause[1] - pause[0] + 1 >= 7,
                     onNotSick = if (repo.sickPauseOn(settings, today)) ({ askNotSick = true }) else null,
                 ) { scope.launch { repo.resume(today) } }
                 // Trained on a pause day anyway: what was done shows, as it counts in the week.
@@ -300,9 +306,9 @@ fun TodayScreen() {
             )
             // Without the gym or without running in the aim, the week's sessions in place of an empty tile.
             val aim = me?.aim
-            val planned = week.sumOf { it.planned.size }
-            val doneCount = week.sumOf { d -> d.planned.count { d.isDone(it) } }
-            val extras = week.sumOf { d -> d.offPlan.count { it.id !in d.catchUps } }
+            val planned = planWeek.sumOf { it.planned.size }
+            val doneCount = planWeek.sumOf { d -> d.planned.count { d.isDone(it) } }
+            val extras = planWeek.sumOf { d -> d.offPlan.count { it.id !in d.catchUps } }
             @Composable fun weekTile() = StatTile(
                 "Неделя", "$doneCount/$planned", if (extras > 0) "+$extras вне плана" else "сделано", F.c.text,
                 Modifier.weight(1f).clickable(onClickLabel = "План недели") { nav.tab(Screen.Plan) },

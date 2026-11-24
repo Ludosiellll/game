@@ -59,6 +59,18 @@ data class Program(
      * Null on programs uploaded before it.
      */
     val shared: List<Template>? = null,
+    /**
+     * The day the plan was first made, for «Неделя N» ([ProgramGenerator.programWeek]): a week laid out again (other
+     * days, the coach's week, a newer planner) keeps it, while [createdEpochDay] — where catch-up starts — moves to that
+     * day. Null: as [createdEpochDay].
+     */
+    val madeEpochDay: Long? = null,
+    /**
+     * The owner's weight steps of the exercises in [shared] — exercise id → [step, the stack's first weight] (a stack 9,
+     * 14, 19 …: [5, 9]) — written on upload with them: a friend who copies the program trains on the same machines. Read
+     * only when copying (the owner's phone keeps its steps in its settings); null on programs uploaded before it.
+     */
+    val steps: Map<String, List<Double>>? = null,
 ) {
     fun template(id: String): Template = templates.first { it.id == id }
 
@@ -84,6 +96,9 @@ data class Program(
         val days = week.days.filter { it.day in 1..7 }.distinctBy { it.day }
         if (days.any { d -> d.sessions.any { it.kind == SessionKind.LIFT && it.templateId !in ids } }) return null
         if (days.all { it.sessions.isEmpty() }) return null
-        return copy(templates = clean, week = week.copy(days = days.map { it.copy(sessions = it.sessions.take(3)) }))
+        // The owner's steps of the exercises left, as a gym has them (a step up to 50 kg, a stack from up to 300 kg).
+        val exercises = clean.flatMap { t -> t.slots.map { it.exerciseId } }.toSet()
+        val gymSteps = steps?.filter { (id, v) -> id in exercises && v.size == 2 && v[0] > 0 && v[0] <= 50 && v[1] >= 0 && v[1] <= 300 }
+        return copy(templates = clean, week = week.copy(days = days.map { it.copy(sessions = it.sessions.take(3)) }), steps = gymSteps)
     }
 }
