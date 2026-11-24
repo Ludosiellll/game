@@ -3,11 +3,16 @@ package forma.app.data
 import android.content.Context
 import android.net.Uri
 import androidx.room.withTransaction
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import forma.core.model.Profile
 import forma.core.plan.Program
 import forma.core.run.RunState
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.encodeToStream
 
 /** Everything the app knows, in one JSON file. */
 @Serializable
@@ -56,16 +61,23 @@ class BackupManager(private val repo: TrainingRepository) {
         }
     }
 
+    /**
+     * The file is every GPS point of every run: megabytes, tens of them after a year. The screen asks on the main thread,
+     * so it is encoded and written elsewhere, straight into the file (no whole text and its bytes in memory at once).
+     */
+    @OptIn(ExperimentalSerializationApi::class)
     suspend fun export(context: Context, uri: Uri, signedIn: String? = null) {
-        val json = AppJson.encodeToString(Backup.serializer(), snapshot(signedIn))
-        context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
-            ?: error("Не удалось открыть файл")
+        val backup = snapshot(signedIn)
+        withContext(Dispatchers.IO) {
+            context.contentResolver.openOutputStream(uri, "wt")?.use { AppJson.encodeToStream(Backup.serializer(), backup, it) }
+                ?: error("Не удалось открыть файл")
+        }
     }
 
-    /** The file's content, read to be confirmed before anything on the phone changes. */
-    fun read(context: Context, uri: Uri): Backup {
-        val text = context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: error("Не удалось прочитать файл")
-        return AppJson.decodeFromString(Backup.serializer(), text)
+    /** The file's content, read to be confirmed before anything on the phone changes; off the main thread, as [export]. */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun read(context: Context, uri: Uri): Backup = withContext(Dispatchers.IO) {
+        context.contentResolver.openInputStream(uri)?.use { AppJson.decodeFromStream(Backup.serializer(), it) } ?: error("Не удалось прочитать файл")
     }
 
     /** A workout in the gym or a run is going on: a restore would wipe it, so it waits. */

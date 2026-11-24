@@ -12,8 +12,11 @@ import forma.core.model.Profile
 import forma.core.plan.Program
 import forma.core.run.RunState
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
@@ -365,7 +368,18 @@ class SettingsStore(context: Context, name: String = "forma") {
     val profile: Flow<Profile?> = read(Keys.profile, Profile.serializer())
     val program: Flow<Program?> = read(Keys.program, Program.serializer())
     val runState: Flow<RunState?> = read(Keys.runState, RunState.serializer())
-    val settings: Flow<Settings> = read(Keys.settings, Settings.serializer()).map { it ?: Settings() }
+
+    /**
+     * The settings as changed in this run while the stored ones are not readable by this version: in memory only, so the
+     * app goes on as usual (a window closed with «Понятно» stays closed) and nothing is written over the stored text.
+     */
+    private val unsaved = MutableStateFlow<Settings?>(null)
+
+    /**
+     * The settings; the defaults when none are stored. Stored but not readable by this version: the defaults with this
+     * run's changes ([unsaved]), never written over the stored text ([editSettings]).
+     */
+    val settings: Flow<Settings> = combine(read(Keys.settings, Settings.serializer()), unsaved) { stored, mine -> stored ?: mine ?: Settings() }
     val liftState: Flow<LiftState> = read(Keys.lift, LiftState.serializer()).map { it ?: LiftState() }
     /** The user's own exercises, removed ones included (their history must still open). */
     val customExercises: Flow<List<Exercise>> = read(Keys.custom, ListSerializer(Exercise.serializer())).map { it.orEmpty() }
@@ -462,16 +476,28 @@ class SettingsStore(context: Context, name: String = "forma") {
     /** Settings changed by [f] in one step: two changes at once (a run saved while its debrief is shown) both stay. */
     suspend fun editSettings(f: (Settings) -> Settings) {
         store.edit { p ->
-            val now = p[Keys.settings]?.let { runCatching { AppJson.decodeFromString(Settings.serializer(), it) }.getOrNull() } ?: Settings()
+            val text = p[Keys.settings]
+            val now = if (text == null) Settings() else runCatching { AppJson.decodeFromString(Settings.serializer(), text) }.getOrElse { e ->
+                // Stored, but not readable by this version (a field of another type after an update). The person's swaps,
+                // notes, pause and the coach's memory are in that text: it stays as it is, not written over with the
+                // defaults the app goes on with, so the cloud gets none of them either (it copies what is stored), and a
+                // version that reads it finds everything. The change lives in memory for this run only.
+                android.util.Log.w(LOG_TAG, "settings not readable by this version: kept as stored, the change is not saved", e)
+                unsaved.update { f(it ?: Settings()) }
+                return@edit
+            }
             p[Keys.settings] = AppJson.encodeToString(Settings.serializer(), f(now))
         }
     }
 
     suspend fun clear() {
         store.edit { it.clear() }
+        unsaved.value = null
     }
 
     companion object {
+        /** The log's tag for what the store refused to do. */
+        const val LOG_TAG = "SettingsStore"
         const val COACH_LOG = 50
         /** Cloud keys of the coach's talk and of its changes. */
         const val COACH_CHAT_DOC = "coach_chat"

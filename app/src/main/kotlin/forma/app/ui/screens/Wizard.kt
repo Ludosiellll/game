@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -177,7 +178,8 @@ fun ProgramWizard(start: Profile, first: Boolean, onBack: (() -> Unit)?, onDone:
         Step.RESULT -> draft.problem
         else -> null
     }
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+    // Above the keyboard too (edge to edge, the window is not made smaller for it): «О тебе» and «Дальше» stay in sight.
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         if (at in questions) StepDots(questions.indexOf(at), questions.size, Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp))
         AnimatedContent(
             at, Modifier.weight(1f).fillMaxWidth(), label = "wizard",

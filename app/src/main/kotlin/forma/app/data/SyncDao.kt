@@ -39,6 +39,13 @@ interface SyncDao {
         clearCursors()
     }
 
+    /**
+     * The workouts still on the phone no longer count as uploaded. Everything else stays: the account mark, the download
+     * cursors, and the rows of workouts deleted on the phone, whose deletion the next sync still takes to the cloud.
+     */
+    @Query("DELETE FROM sync_row WHERE tbl = 'workouts' AND `key` IN (SELECT uid FROM workout)")
+    suspend fun forgetUploadedWorkouts()
+
     // ---- workouts (only finished ones leave the phone) ----
 
     @Query("SELECT * FROM workout WHERE status = 'DONE'") suspend fun doneWorkouts(): List<WorkoutEntity>

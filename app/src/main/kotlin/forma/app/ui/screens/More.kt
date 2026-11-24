@@ -80,7 +80,11 @@ fun MoreScreen() {
             if (forma.app.BuildConfig.SELF_UPDATE) ListRow(
                 "Проверить обновления",
                 when {
-                    update is forma.app.update.Updater.State.Available -> "Есть новая версия, нажми, чтобы обновить"
+                    // Put off with «Позже» after it came (Denis's Redmi: downloaded for the phone's installer): said here, a
+                    // tap brings its window back.
+                    update is forma.app.update.Updater.State.Ready -> "Обновление скачано, нажми, чтобы поставить"
+                    update is forma.app.update.Updater.State.Available || update is forma.app.update.Updater.State.Failed ||
+                        update is forma.app.update.Updater.State.NeedsPermission -> "Есть новая версия, нажми, чтобы обновить"
                     checking -> "Проверяю…"
                     checked == forma.app.update.Updater.Checked.LATEST -> "Это последняя версия"
                     checked == forma.app.update.Updater.Checked.FAILED -> "Не получилось проверить: нет связи. Нажми ещё раз"

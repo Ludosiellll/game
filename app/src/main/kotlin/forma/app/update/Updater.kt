@@ -10,8 +10,15 @@ import android.os.Build
 import androidx.core.content.pm.PackageInfoCompat
 import forma.app.BuildConfig
 import forma.app.data.AppJson
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -43,6 +50,12 @@ data class Update(val versionCode: Long, val notes: List<String>, val apkUrl: St
 object Updater {
     /** The latest release of the repository the builds are published to (no key: the repository is public). */
     const val LATEST = "https://api.github.com/repos/Ludosiellll/game/releases/latest"
+
+    /**
+     * An install with no answer from the system this long is taken as stuck. A silent one ends in seconds, and the
+     * system's «Установить?» shows over the app well before it.
+     */
+    private const val INSTALL_WAIT_MS = 30_000L
 
     /** Where an update stands, for the screen. */
     sealed interface State {
@@ -127,14 +140,22 @@ object Updater {
     /**
      * Asks once a run of the app (or when [force]d — «Проверить обновления»): a newer build becomes [State.Available].
      * No network, a limit hit, an odd answer: [Checked.FAILED], asked again next time; on its own the app says nothing of
-     * it, «Проверить обновления» says how it went.
+     * it, «Проверить обновления» says how it went. [force]d with an update already on its way: its window again.
      */
     suspend fun check(force: Boolean = false, fetch: suspend () -> String? = { get(LATEST) }): Checked {
         // From Google Play: Play updates the app, nothing is fetched from GitHub.
         if (!forma.app.BuildConfig.SELF_UPDATE) return Checked.SKIPPED
         if (checked && !force) return Checked.SKIPPED
         checked = true
-        if (state.value !is State.Idle && state.value !is State.Available) return Checked.SKIPPED
+        val now = state.value
+        // An update on its way already — downloaded for the phone's installer, failed, waiting for the permission — and
+        // put off with «Позже»: asked for by hand, its window comes back as it was, nothing to fetch.
+        if (force && (now is State.Ready || now is State.Failed || now is State.NeedsPermission)) {
+            later.value = false
+            asked.value = true
+            return Checked.NEWER
+        }
+        if (now !is State.Idle && now !is State.Available) return Checked.SKIPPED
         val latest = fetch()?.let(::parse) ?: return Checked.FAILED
         val u = newer(latest)
         if (u != null) {
@@ -168,11 +189,32 @@ object Updater {
     /** The person may install from the app (Android asks it once, in the system's settings). */
     fun canInstall(context: Context): Boolean = context.packageManager.canRequestPackageInstalls()
 
+    /** The update going on (on [scope]): «Отмена» stops its download. */
+    @Volatile private var job: Job? = null
+
     /** «Обновить» from the screen: [update] on the app's own scope, once at a time. */
     fun start(context: Context, u: Update) {
         if (state.value is State.Downloading || state.value is State.Installing) return
+        // Pressed again before the state says so (the last one still starting, or waiting for a stopped download to let
+        // go of its read): the first one goes on.
+        if (job?.isActive == true) return
         val app = context.applicationContext
-        scope.launch { update(app, u) }
+        val before = job
+        // One stopped by «Отмена» may still wait in a read: it ends, and takes its part of the file away, first.
+        job = scope.launch {
+            before?.join()
+            update(app, u)
+        }
+    }
+
+    /**
+     * «Отмена» while downloading (slow mobile data covered the app until the file came): the download stops, its part is
+     * deleted, and the offer is on the screen again with «Обновить» and «Позже».
+     */
+    fun cancel() {
+        val s = state.value as? State.Downloading ?: return
+        job?.cancel()
+        state.value = State.Available(s.update)
     }
 
     /**
@@ -185,8 +227,16 @@ object Updater {
             return
         }
         state.value = State.Downloading(u, 0f)
-        val file = runCatching { download(context, u) { state.value = State.Downloading(u, it) } }.getOrElse {
+        // The progress only while the download is on the screen: once stopped («Отмена»), the offer stays there.
+        val file = runCatching { download(context, u) { p -> state.update { if (it is State.Downloading) State.Downloading(u, p) else it } } }.getOrElse {
+            // Stopped by «Отмена»: nothing went wrong, nothing to say.
+            if (it is CancellationException) throw it
             state.value = State.Failed(u, "Не получилось скачать обновление. Проверь интернет и попробуй ещё раз.")
+            return
+        }
+        // «Отмена» as the last bytes came: nothing is installed.
+        if (!currentCoroutineContext().isActive) {
+            file.delete()
             return
         }
         problem(context, file, u)?.let {
@@ -208,13 +258,29 @@ object Updater {
         session(context, u, ask = false)
     }
 
+    /** How long an install may go without an answer from the system before the window offers the phone's own installer. */
+    internal var installWait = INSTALL_WAIT_MS
+
+    /** The install sessions asked for so far: a wait for an answer acts only for the latest one. */
+    @Volatile private var sessions = 0
+
     /** A session for [file]: silent where Android allows it, or with the system's «Установить?» when [ask]. */
     private fun session(context: Context, u: Update, ask: Boolean) {
         val f = file ?: return
         asking = ask
         confirmShown = false
+        val mine = ++sessions
         runCatching { installer(context, f, ask) }.onFailure {
             state.value = State.Failed(u, "Не получилось начать установку. Открой установщик телефона.", system = true)
+            return
+        }
+        // No answer at all: the system's «Установить?» was not let through while the app was in the background, or it
+        // was left with Home. «Ставлю обновление…» does not stay over every screen with no button: the phone's own
+        // installer is offered with the checked file, and «Позже».
+        scope.launch {
+            delay(installWait)
+            val now = state.value
+            if (sessions == mine && now is State.Installing) state.compareAndSet(now, State.Failed(u, "Установщик не ответил, открой его ещё раз.", system = true))
         }
     }
 
@@ -265,12 +331,18 @@ object Updater {
                     while (true) {
                         val n = input.read(buf)
                         if (n < 0) break
+                        // «Отмена»: stopped between two reads.
+                        ensureActive()
                         out.write(buf, 0, n)
                         read += n
                         if (total > 0) progress((read.toFloat() / total).coerceIn(0f, 1f))
                     }
                 }
             }
+        } catch (e: Throwable) {
+            // Stopped or broken half way: no part of a file is left behind.
+            file.delete()
+            throw e
         } finally {
             c.disconnect()
         }
@@ -336,6 +408,11 @@ object Updater {
         asking = false
         confirmShown = false
         installer = { c, f, ask -> install(c, f, ask) }
+        installWait = INSTALL_WAIT_MS
+        // A wait for an answer or an update left by the test before does not reach into the next one.
+        sessions++
+        job?.cancel()
+        job = null
         later.value = false
         asked.value = false
         state.value = State.Idle

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,6 +50,9 @@ import java.time.LocalDate
 fun ScrollScreen(gap: Dp = 16.dp, bottomInset: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     var m = Modifier.fillMaxSize().statusBarsPadding()
     if (bottomInset) m = m.navigationBarsPadding()
+    // Edge to edge, the window is not made smaller for the keyboard: the screen ends above it, so a field at the bottom
+    // («Рост», «Пульс в покое») and the button under it scroll into the part left visible.
+    m = m.imePadding()
     Column(
         m.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(gap),

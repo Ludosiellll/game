@@ -286,9 +286,7 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
             try {
                 forma.app.data.DataLock.mutex.withLock { c.postgrest.rpc("delete_my_account", JsonObject(emptyMap())) }
             } catch (e: Exception) {
-                // No answer may still mean deleted: nothing on the phone counts as uploaded any more, so a later "replace
-                // with this account's data" warns about every workout instead of wiping them silently.
-                forma.app.data.DataLock.mutex.withLock { repo.db.sync().reset() }
+                afterUnansweredDeletion(repo.db)
                 schedulePeriodic()
                 syncSoon()
                 throw e
@@ -432,6 +430,17 @@ class Cloud(private val context: Context, private val repo: TrainingRepository) 
         private const val WORK_SOON = "forma-sync-soon"
         private const val WORK_PERIODIC = "forma-sync-periodic"
         private const val WORK_MESSAGES = "forma-messages"
+
+        /**
+         * The phone's side of an account deletion without an answer (offline, a timeout, a server error). No answer may
+         * still mean deleted: the workouts on the phone no longer count as uploaded, so a later «Заменить данными этого
+         * аккаунта» warns about every one of them instead of wiping them silently. Nothing else is forgotten: the phone
+         * still knows its account, so the next sync is a normal one (its changes go up first, a workout deleted offline is
+         * deleted in the cloud too), not a first one that would bring the cloud's older plan, settings and progress, and
+         * the deleted workouts, back over the phone's.
+         */
+        internal suspend fun afterUnansweredDeletion(db: forma.app.data.FormaDatabase) =
+            forma.app.data.DataLock.mutex.withLock { db.sync().forgetUploadedWorkouts() }
 
         /** Human text for a failed sync. */
         fun describe(e: Throwable): String = when (e) {

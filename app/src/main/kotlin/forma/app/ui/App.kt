@@ -28,12 +28,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,8 +96,11 @@ val LocalCoachApi = staticCompositionLocalOf<forma.app.sync.CoachApi?> { null }
 fun AppRoot() {
     val repo = LocalRepo.current
     val settings by repo.store.settings.collectAsState(initial = null)
-    var onboarded by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(Unit) { onboarded = repo.isOnboarded() }
+    // Set up as the stored profile and program say now, not once at the start: after the first questionnaire or a copy
+    // brought back from the cloud, the update window and a tap on a message notification work in the same run.
+    val onboarded by remember {
+        kotlinx.coroutines.flow.combine(repo.store.profile, repo.store.program) { profile, program -> profile != null && program != null }
+    }.collectAsState(initial = null)
     val s = settings ?: return
     val ready = onboarded ?: return
     // A first install (the questionnaire still ahead) has nothing new to say: every release so far counts as seen.
@@ -136,13 +137,17 @@ fun AppRoot() {
         androidx.compose.runtime.CompositionLocalProvider(LocalNav provides nav, LocalSettings provides s) {
             BackHandler(enabled = nav.canGoBack) { nav.back() }
             Column(Modifier.fillMaxSize().background(F.c.bg)) {
-                Box(Modifier.weight(1f)) {
+                // Typing (the coach's chat): the keyboard takes the bar's place, the field sits right on it.
+                val bar = nav.current in TABS && !WindowInsets.isImeVisible
+                // No tab bar under the screen (one pushed on top, or the keyboard up): it ends above the system's
+                // navigation bar, where with three-button navigation its last button sat under Back and Home. A screen that
+                // pads for that bar itself is not padded twice: what is padded here is gone from the insets it sees.
+                Box(Modifier.weight(1f).let { if (bar) it else it.navigationBarsPadding() }) {
                     AnimatedContent(targetState = nav.currentEntry, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "screen") { entry ->
                         holder.SaveableStateProvider(entry.id) { ScreenFor(entry.screen) }
                     }
                 }
-                // Typing (the coach's chat): the keyboard takes the bar's place, the field sits right on it.
-                if (nav.current in TABS && !WindowInsets.isImeVisible) BottomBar(nav)
+                if (bar) BottomBar(nav)
             }
             // After an update: what is new, once, over the app — not over a run going on or the first questions.
             val news = unseenReleases(s.newsSeen)

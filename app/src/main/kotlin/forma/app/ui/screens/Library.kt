@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -94,7 +95,9 @@ fun LibraryScreen(mode: LibraryMode) {
     val program by repo.store.program.collectAsState(initial = null)
     fun templateTitle(id: String) = program?.templates?.firstOrNull { it.id == id }?.title ?: "этого дня"
 
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
+    // Above the keyboard while searching (edge to edge, the window is not made smaller for it): the last results scroll
+    // into sight.
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().imePadding(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
         item {
             val (title, subtitle) = when (mode) {
                 LibraryMode.Browse -> "Упражнения" to Catalog.all.size.let { n -> "$n ${forma.core.text.Ru.plural(n, "упражнение", "упражнения", "упражнений")} и их вариации" }

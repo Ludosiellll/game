@@ -146,6 +146,9 @@ fun UpdateDialog(state: Updater.State, onLater: () -> Unit) {
                         }
                         GhostButton("Позже", onLater, Modifier.fillMaxWidth())
                     }
+                    // The window stays while the file comes (nothing can start that the install would close), but slow
+                    // mobile data must not hold the whole app: the download stops and the offer is back.
+                    is Updater.State.Downloading -> GhostButton("Отмена", { Updater.cancel() }, Modifier.fillMaxWidth())
                     else -> {}
                 }
             }
