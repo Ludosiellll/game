@@ -77,6 +77,15 @@ class RunStore(dir: File) {
     private val tmp = File(dir, "run_current.json.tmp")
     private val track = File(dir, "run_current.csv")
 
+    /** The stop of the run the loud notice was posted for ([RunAlerts]): kept across starts of the process. */
+    private val toldFile = File(dir, "run_current.told")
+
+    fun saveTold(stop: String) {
+        runCatching { toldFile.writeText(stop) }
+    }
+
+    fun told(): String? = runCatching { if (toldFile.exists()) toldFile.readText() else null }.getOrNull()
+
     fun saveState(s: SavedRun) {
         tmp.writeText(AppJson.encodeToString(SavedRun.serializer(), s))
         if (!tmp.renameTo(state)) {
@@ -109,6 +118,7 @@ class RunStore(dir: File) {
         state.delete()
         tmp.delete()
         track.delete()
+        toldFile.delete()
     }
 }
 
@@ -168,6 +178,19 @@ object RunSession {
 
     /** A run was going when the app was closed and nothing has carried it on yet: the runner must be told. */
     fun interrupted(): Boolean = tracker != null && restored && gap?.running == true
+
+    /** This stop of the run: its start and its last save before the app was closed (a run carried on is saved anew). */
+    private fun stopKey(): String? = gap?.let { "$startedAtWall:${it.savedAtWall}" }
+
+    /**
+     * The loud notice was posted for this stop already, in this process or an earlier one: every start of the process
+     * reads the run from disk as stopped again (a sync in the background, the messages check every 15 minutes).
+     */
+    internal fun told(): Boolean = stopKey()?.let { it == store?.told() } == true
+
+    internal fun markTold() {
+        stopKey()?.let { store?.saveTold(it) }
+    }
 
     internal fun failStart(reason: String) {
         _startError.value = reason

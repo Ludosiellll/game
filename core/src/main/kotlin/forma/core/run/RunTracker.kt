@@ -811,7 +811,9 @@ class RunTracker(
     fun tick(nowMs: Long): List<RunEvent> {
         if (state != State.RUNNING) return emptyList()
         val sec = (timelineMs(nowMs) / 1000).toInt()
-        if (sec == lastTickSec) return emptyList()
+        // Never back: a pause from a moment already past (the auto-pause stops the clock from when the stop began, six
+        // seconds and more before) sets the plan's clock back, and what was said in those seconds is not said again.
+        if (sec <= lastTickSec) return emptyList()
         val from = lastTickSec
         lastTickSec = sec
         if (workout.isOpenEnded) return emptyList()

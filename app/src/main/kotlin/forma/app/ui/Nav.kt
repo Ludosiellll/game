@@ -20,7 +20,8 @@ sealed interface Screen {
     @Serializable data object ProgramWizard : Screen
     @Serializable data class Workout(val workoutId: Long) : Screen
     @Serializable data class LiftDone(val workoutId: Long) : Screen
-    @Serializable data class RunSetup(val workout: RunWorkout, val kind: SessionKind?) : Screen
+    /** [minutes]: the coach's length of today's easy run, for its road version too (see [forma.app.ui.screens.RunSetupScreen]). */
+    @Serializable data class RunSetup(val workout: RunWorkout, val kind: SessionKind?, val minutes: Int? = null) : Screen
     @Serializable data object RunActive : Screen
     @Serializable data class RunDone(val workoutId: Long) : Screen
     /** A run done without the phone, entered by hand. */

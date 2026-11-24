@@ -27,6 +27,9 @@ object RunAlerts {
     const val CHECK_AFTER_MS = 4_000L
 
     fun interrupted(ctx: Context) {
+        // Once for each stop of a run. Swiped away and the run left to save later, it is not posted again, with its sound,
+        // by every later start of the app in the background (a sync, the messages check every 15 minutes, at night too).
+        if (RunSession.told()) return
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         if (nm.getNotificationChannel(CHANNEL) == null) {
             nm.createNotificationChannel(
@@ -52,7 +55,7 @@ object RunAlerts {
             .setOnlyAlertOnce(true)
             .setContentIntent(open)
             .build()
-        runCatching { nm.notify(INTERRUPTED_ID, n) }
+        if (runCatching { nm.notify(INTERRUPTED_ID, n) }.isSuccess) RunSession.markTold()
     }
 
     fun cancel(ctx: Context) {
@@ -62,7 +65,8 @@ object RunAlerts {
     /**
      * At the start of the process: a run that was going when the app was closed, and a few seconds later still not
      * carried on by the service (it was not brought back, or could not go to the foreground) — the runner is told, unless
-     * the app is on the screen already (it shows the run itself) or the service told them already.
+     * the app is on the screen already (it shows the run itself) or they were told of this stop already (by the service,
+     * or at an earlier start of the app: see [interrupted]).
      */
     fun checkAfterStart(ctx: Context) {
         if (!RunSession.interrupted()) return

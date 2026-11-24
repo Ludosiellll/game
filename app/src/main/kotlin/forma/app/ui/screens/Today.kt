@@ -204,9 +204,11 @@ fun TodayScreen() {
         settings.coachRunToday?.takeIf { it.until == today.toEpochDay() && extra.none { w -> w.kind == forma.app.data.Kind.RUN } && !todays.any { it.isRun } }?.let { t ->
             CoachRunCard(t.value) {
                 scope.launch {
-                    val w = repo.runFor(SessionKind.RUN_EASY, today, minutes = t.value.takeIf { it > 0 })
-                    // A hard run missed this week that cannot be today: this easy one is for it.
-                    nav.push(Screen.RunSetup(if (catchUp?.easy == true) w.copy(instead = true) else w, SessionKind.RUN_EASY))
+                    val minutes = t.value.takeIf { it > 0 }
+                    val w = repo.runFor(SessionKind.RUN_EASY, today, minutes = minutes)
+                    // A hard run missed this week that cannot be today: this easy one is for it. The minutes go along for
+                    // the run's road version, built anew on the setup screen.
+                    nav.push(Screen.RunSetup(if (catchUp?.easy == true) w.copy(instead = true) else w, SessionKind.RUN_EASY, minutes))
                 }
             }
         }

@@ -2698,9 +2698,17 @@ class TrainingRepository(
                 // Less than the laps: only part of the run was counted (the time past the plan left out) — the same part.
                 else -> d * after / before
             }
+            var run: RunEntity = r
             if (kotlin.math.abs(next - (d ?: 0.0)) >= 0.5) {
-                db.runs().insert(r.copy(distanceM = next, avgPace = if (next > 50) r.movingSec / (next / 1000) else r.avgPace))
+                run = run.copy(distanceM = next, avgPace = if (next > 50) r.movingSec / (next / 1000) else r.avgPace)
             }
+            // The reps' laps put right: their pace follows on any run, not only the last one (decided again in
+            // [editRunLaps]) — the History tile, the done card and the debrief's check read it, the average lap the laps.
+            // An older run's decisions stay as they were; its pace is no decision.
+            fun reps(l: List<forma.core.run.Lap>) = l.filter { it.rep != null }.map { Triple(it.rep, it.seconds, it.part) }
+            val pace = if (reps(summary.laps) != reps(laps)) forma.core.run.ManualLaps.repPace(laps, lapM) else null
+            if (pace != null) run = run.copy(workPace = pace)
+            if (run != r) db.runs().insert(run)
         }
         onChange()
     }

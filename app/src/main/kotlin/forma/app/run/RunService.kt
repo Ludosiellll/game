@@ -134,7 +134,10 @@ class RunService : Service() {
             return
         }
         if (!attach()) {
-            RunAlerts.interrupted(this)
+            // Told only of a run that was going: one paused by hand stays paused in the app, nothing stopped behind the
+            // runner's back (as past MAX_GAP_MS above and in RunAlerts.checkNow). Without a record from disk (the service
+            // alone was gone, the process lived on) the run's own state says it.
+            if (gap?.running ?: (t.state == RunTracker.State.RUNNING)) RunAlerts.interrupted(this)
             stopSelf()
             return
         }

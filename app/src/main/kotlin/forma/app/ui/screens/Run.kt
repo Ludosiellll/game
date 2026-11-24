@@ -139,10 +139,10 @@ fun SegmentBar(w: RunWorkout, elapsed: Int, modifier: Modifier = Modifier) {
 
 /**
  * Before the start. A run the plan put on the stadium can be run on the road this time: no laps, the distance and pace
- * by GPS, auto-pause on easy and free runs.
+ * by GPS, auto-pause on easy and free runs. [minutes]: the length the coach gave today's easy run, kept on the road too.
  */
 @Composable
-fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
+fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?, minutes: Int? = null) {
     val repo = LocalRepo.current
     val today = forma.app.ui.rememberToday(repo)
     var road by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
@@ -152,7 +152,9 @@ fun RunSetupScreen(workout: RunWorkout, kind: SessionKind?) {
             // The coach's own run is kept as it is run on the road: on a stadium its reps are laps.
             workout.custom -> repo.store.settingsNow().coachRun?.workout ?: workout
             kind == null -> repo.freeRun(null)
-            else -> repo.runFor(kind, today, light = workout.light, road = true)
+            // The same run off the stadium: an easy run for a missed hard one stays one (saved, it closes that day, not
+            // the week's next easy run), and the coach's easy run keeps the coach's minutes.
+            else -> repo.runFor(kind, today, light = workout.light, road = true, minutes = minutes).copy(instead = workout.instead)
         }
     }
     val lap = workout.lapMeters
@@ -1141,8 +1143,20 @@ fun RunDoneScreen(workoutId: Long) {
             val result = tracker.result(nowMs, rpe)
             FitTitle(titleText("Пробежка закончена"), style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
             // «Стоп» held by mistake: the same run goes on from where it stopped, until it is saved. Not a session that
-            // ended with its plan: it would end again at once.
-            if (tracker.reopenable(nowMs)) {
+            // ended with its plan: it would end again at once. Not while it is being saved (the save clears the run from
+            // under the run screen when it ends), nor once it is in history (a save cut off after the run was stored, the
+            // phone turned): a save of the same start returns the run stored, and what was run after it would be lost.
+            val stored by androidx.compose.runtime.produceState<Boolean?>(null, saving) {
+                // A database that fails here would fail the save too: the run is not in history, it may go on.
+                value = try {
+                    repo.db.workouts().runStartedAt(RunSession.startedAtWall) != null
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            if (tracker.reopenable(nowMs) && !saving && stored == false) {
                 val context = androidx.compose.ui.platform.LocalContext.current
                 GhostButton("Продолжить пробежку", {
                     if (RunSession.reopen(android.os.SystemClock.elapsedRealtime())) {
@@ -1166,7 +1180,10 @@ fun RunDoneScreen(workoutId: Long) {
                         // The reps' own pace: the whole session's, warm-up and rests in it, would read as a failed one.
                         StatTile(repsLabel(repsCount), result.workPace?.let { Ru.pace(it) } ?: "—", "мин/км", F.c.text, Modifier.weight(1f))
                     } else {
-                        StatTile("Темп", tracker.averagePace(nowMs)?.let { Ru.pace(it) } ?: "—", result.cadence?.let { "средний · $it шаг/мин" } ?: "средний", F.c.text, Modifier.weight(1f))
+                        // The pace of the distance and the time beside it, as the run is saved and «История» shows it: on a
+                        // stadium the laps or GPS, whichever saw more — not GPS's metres alone, short on the bends.
+                        val pace = result.distanceM?.takeIf { it > 50 }?.let { result.durationSec / (it / 1000.0) }
+                        StatTile("Темп", pace?.let { Ru.pace(it) } ?: "—", result.cadence?.let { "средний · $it шаг/мин" } ?: "средний", F.c.text, Modifier.weight(1f))
                     }
                 }
             }
