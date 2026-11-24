@@ -415,6 +415,32 @@ class RunTracker(
 
     private var finishedActiveMs = 0L
 
+    /**
+     * A run finished by mistake (the wrong button held: Denis, 24 November, «случайно не ту кнопку удержал и закончил а
+     * продолжить нельзя») taken back before it is saved: paused at the moment it stopped, its laps and plan as they
+     * were; resuming runs the clock on from there.
+     */
+    fun reopen(nowMs: Long) {
+        if (!reopenable(nowMs)) return
+        startedAt = nowMs - finishedActiveMs - pausedTotal
+        pauseStart = nowMs
+        lastFix = null
+        lastSpeed = null
+        speeds.clear()
+        state = State.PAUSED
+    }
+
+    /**
+     * Whether [reopen] can send this finished run on: stopped before its plan was over, or a run that goes on past its
+     * plan (a free run; an easy or long one short of [OVER_PLAN_LIMIT_SEC] past it). A session that ended with its plan,
+     * or the hour past it, would only end again the moment it went on.
+     */
+    fun reopenable(nowMs: Long): Boolean {
+        if (state != State.FINISHED) return false
+        if (workout.isOpenEnded || !timeline(nowMs).finished) return true
+        return workout.continuable && (timelineMs(nowMs) / 1000).toInt() - workout.totalSeconds < OVER_PLAN_LIMIT_SEC
+    }
+
     /** Seconds the runner skipped ahead in the plan (the timeline runs ahead of the clock by this much). */
     private var skipMs = 0L
     private var skippedWorkSec = 0
@@ -1437,6 +1463,9 @@ class RunTracker(
     }
 
     companion object {
+        /** An easy or long run this long past its plan ends by itself: a phone forgotten in a pocket, most likely. */
+        const val OVER_PLAN_LIMIT_SEC = 3600
+
         /** Presses closer than this are one press (a double tap): no lap on a stadium is this short. */
         const val MIN_LAP_MS = 5_000L
 

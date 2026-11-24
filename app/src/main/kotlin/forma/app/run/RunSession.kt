@@ -231,6 +231,22 @@ object RunSession {
         )
     }
 
+    /**
+     * A run stopped by mistake, taken back from its finish screen before it is saved: paused where it stopped
+     * ([RunTracker.reopen]), written to disk at once; [RunService.ACTION_REOPEN] brings it to the foreground again.
+     * False when there is no finished run to take back (saved or thrown away meanwhile).
+     */
+    fun reopen(nowMs: Long): Boolean {
+        val t = tracker ?: return false
+        if (!t.reopenable(nowMs)) return false
+        t.reopen(nowMs)
+        // A pause by hand: steps alone do not set the clock going again, the runner does.
+        autoPaused = false
+        publish(nowMs)
+        save(nowMs)
+        return true
+    }
+
     /** The run was saved or thrown away. */
     fun clear() {
         tracker = null

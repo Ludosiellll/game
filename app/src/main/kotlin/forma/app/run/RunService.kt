@@ -97,6 +97,12 @@ class RunService : Service() {
             ACTION_SKIP -> control { it.skipSegment(now()) }
             ACTION_LAP -> lap()
             ACTION_STOP -> stopRun()
+            // Taken back from the finish screen ([RunSession.reopen]): the paused run in the foreground again.
+            ACTION_REOPEN -> if (attach()) {
+                autoPause.reset()
+                coach?.speak("Пробежка на паузе.")
+                notifyNow()
+            }
         }
         // A control sent to a run that is not going in this service (a restored, paused one) needs no service.
         if (ticker == null) stopSelf(startId)
@@ -289,7 +295,7 @@ class RunService : Service() {
                         coach?.speak("Сверх плана ${Ru.minutes(mark * 5)}. «Стоп», когда хватит.")
                     }
                 }
-                val overLimit = tr.workout.continuable && (tr.timelineMs(now()) / 1000).toInt() - tr.workout.totalSeconds >= 3600
+                val overLimit = tr.workout.continuable && (tr.timelineMs(now()) / 1000).toInt() - tr.workout.totalSeconds >= RunTracker.OVER_PLAN_LIMIT_SEC
                 if (tr.state == RunTracker.State.RUNNING && tr.timeline(now()).finished && !tr.workout.isOpenEnded && (!tr.workout.continuable || overLimit)) {
                     tr.finish(now())
                     RunSession.publish(now())
@@ -584,6 +590,7 @@ class RunService : Service() {
         const val ACTION_PAUSE = "forma.run.PAUSE"
         const val ACTION_RESUME = "forma.run.RESUME"
         const val ACTION_STOP = "forma.run.STOP"
+        const val ACTION_REOPEN = "forma.run.REOPEN"
         const val ACTION_SKIP = "forma.run.SKIP"
         const val ACTION_LAP = "forma.run.LAP"
         const val EXTRA_WORKOUT = "workout"

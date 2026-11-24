@@ -1099,7 +1099,7 @@ fun RunDoneScreen(workoutId: Long) {
         }
     }
     var countExtra by androidx.compose.runtime.saveable.rememberSaveable {
-        mutableStateOf(tracker?.let { (it.timelineMs(android.os.SystemClock.elapsedRealtime()) / 1000).toInt() - it.workout.totalSeconds < 3600 - 60 } ?: true)
+        mutableStateOf(tracker?.let { (it.timelineMs(android.os.SystemClock.elapsedRealtime()) / 1000).toInt() - it.workout.totalSeconds < RunTracker.OVER_PLAN_LIMIT_SEC - 60 } ?: true)
     }
 
     if (workoutId != 0L) {
@@ -1138,6 +1138,17 @@ fun RunDoneScreen(workoutId: Long) {
         if (s == null && tracker != null) {
             val result = tracker.result(nowMs, rpe)
             FitTitle(titleText("Пробежка закончена"), style = T.screenTitle(), modifier = Modifier.padding(top = 12.dp))
+            // «Стоп» held by mistake: the same run goes on from where it stopped, until it is saved. Not a session that
+            // ended with its plan: it would end again at once.
+            if (tracker.reopenable(nowMs)) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                GhostButton("Продолжить пробежку", {
+                    if (RunSession.reopen(android.os.SystemClock.elapsedRealtime())) {
+                        RunService.send(context, RunService.ACTION_REOPEN)
+                        nav.replaceTop(Screen.RunActive)
+                    }
+                }, Modifier.fillMaxWidth(), height = 48.dp)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatTile("Время", Ru.clock(result.durationSec), if (tracker.workout.isOpenEnded) "" else "${(result.completed * 100).roundToInt()}% плана", F.c.text, Modifier.weight(1f))
                 val lapM = tracker.workout.lapMeters
