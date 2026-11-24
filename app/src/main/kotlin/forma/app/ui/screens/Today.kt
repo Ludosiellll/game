@@ -168,7 +168,9 @@ fun TodayScreen() {
         ScreenHint(Hints.TODAY, Hints.TODAY_TEXT)
 
         val a = active
-        if (a != null) Banner("Тренировка «${a.title}» не закончена. Продолжить?", F.c.strength, icon = Ic.dumbbell) { nav.push(Screen.Workout(a.id)) }
+        // Through the same question as the day's card: one left open on another day is asked about with its date, never
+        // opened silently to take today's sets (the audit of November: last Saturday's «Низ · А» got this Saturday's).
+        if (a != null) Banner("Тренировка «${a.title}» не закончена. Продолжить?", F.c.strength, icon = Ic.dumbbell) { startLift(null, false) }
         val r = run
         when {
             r == null -> Unit

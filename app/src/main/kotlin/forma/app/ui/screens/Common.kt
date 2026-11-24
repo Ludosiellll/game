@@ -189,18 +189,23 @@ fun kindLabel(s: PlannedSession): String = when (s.kind) {
 internal fun sameLift(open: forma.app.data.WorkoutEntity, templateId: String, today: LocalDate): Boolean =
     open.templateId == templateId && open.epochDay == today.toEpochDay()
 
-/** A session left open ([open]) when another one was asked for: [templateId], lighter or not ([light]). */
-private data class LiftAsk(val open: forma.app.data.WorkoutEntity, val templateId: String, val light: Boolean)
+/**
+ * A session left open ([open]) when another one was asked for: [templateId], lighter or not ([light]); null when the
+ * one left open itself was asked for (its banner) on a day after its own.
+ */
+private data class LiftAsk(val open: forma.app.data.WorkoutEntity, val templateId: String?, val light: Boolean)
 
 /**
  * Starts the gym session [templateId] for [today] and opens it with [go]: from the main screen, a day of the plan and
  * "Дальше" after a run. One left open of another session or from another day is never taken silently (Tuesday's
  * «Верх Б» must not get Thursday's sets): it is asked about first — go on with it, finish it, or delete it and start.
  * The same session of the same day just opens. One start at a time: a double tap does not open two. The question is a
- * dialog of the screen that calls this.
+ * dialog of the screen that calls this. [templateId] null: the session left open itself, from its banner «… не
+ * закончена. Продолжить?» — today's just opens, one from an earlier day is asked about the same way (go on, finish or
+ * delete), so last Saturday's «Низ · А» does not silently take this Saturday's sets.
  */
 @Composable
-fun rememberLiftStart(today: LocalDate, go: (forma.app.ui.Screen) -> Unit): (templateId: String, light: Boolean) -> Unit {
+fun rememberLiftStart(today: LocalDate, go: (forma.app.ui.Screen) -> Unit): (templateId: String?, light: Boolean) -> Unit {
     val repo = forma.app.ui.LocalRepo.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -227,7 +232,8 @@ fun rememberLiftStart(today: LocalDate, go: (forma.app.ui.Screen) -> Unit): (tem
             title = { Text("«${a.title}» не закончена", style = T.title(20.sp)) },
             text = {
                 Text(
-                    since + "Можно продолжить её, закончить или удалить и начать $title. Если удалить, её подходы пропадут.",
+                    since + (if (templateId == null) "Можно продолжить её, закончить или удалить." else "Можно продолжить её, закончить или удалить и начать $title.") +
+                        " Если удалить, её подходы пропадут.",
                     style = T.secondary(14.sp),
                 )
             },
@@ -245,9 +251,10 @@ fun rememberLiftStart(today: LocalDate, go: (forma.app.ui.Screen) -> Unit): (tem
                         once {
                             forma.app.ui.RestTimer.stopFor(context, a.id)
                             repo.cancelWorkout(a.id)
-                            go(forma.app.ui.Screen.Workout(repo.startLift(templateId, today, forceDeload = light)))
+                            // From the banner nothing else was asked for: the day's own session starts from its card.
+                            if (templateId != null) go(forma.app.ui.Screen.Workout(repo.startLift(templateId, today, forceDeload = light)))
                         }
-                    }) { Text("Удалить и начать", style = T.body(15.sp).copy(color = F.c.bad)) }
+                    }) { Text(if (templateId == null) "Удалить" else "Удалить и начать", style = T.body(15.sp).copy(color = F.c.bad)) }
                 }
             },
         )
@@ -256,7 +263,9 @@ fun rememberLiftStart(today: LocalDate, go: (forma.app.ui.Screen) -> Unit): (tem
         once {
             val a = repo.db.workouts().active()
             when {
-                a == null -> go(forma.app.ui.Screen.Workout(repo.startLift(templateId, today, forceDeload = light)))
+                // The banner's session is gone meanwhile (finished from the coach, deleted): nothing to open.
+                a == null -> if (templateId != null) go(forma.app.ui.Screen.Workout(repo.startLift(templateId, today, forceDeload = light)))
+                templateId == null -> if (a.epochDay < today.toEpochDay()) asked = LiftAsk(a, null, light) else go(forma.app.ui.Screen.Workout(a.id))
                 sameLift(a, templateId, today) -> go(forma.app.ui.Screen.Workout(a.id))
                 else -> asked = LiftAsk(a, templateId, light)
             }

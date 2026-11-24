@@ -205,6 +205,7 @@ fun WorkoutScreen(workoutId: Long) {
     val loaded by remember(workoutId) { repo.db.sets().observeFor(workoutId) }.collectAsState(initial = null)
     val profile by repo.store.profile.collectAsState(initial = null)
     val stored by repo.store.settings.collectAsState(initial = null)
+    val today = forma.app.ui.rememberToday(repo)
     val w = workout ?: return
     val sets = loaded ?: return
     val plan = remember(w.planJson) { repo.planOf(w) } ?: return
@@ -237,23 +238,29 @@ fun WorkoutScreen(workoutId: Long) {
     }
 
     /**
-     * The fields and the hint of [item] after [logged] (its sets so far): the next set as [Progression.nextSet] works it
-     * out from them, or the last set again once the planned ones are done; the plan's start with none.
+     * The next set of [item] after [logged] (its sets so far): its weight and reps as [Progression.nextSet] works them
+     * out, or the last set again once the planned ones are done, with the hint; the plan's start and no hint with none.
      */
-    fun resume(inp: SetInput, item: LiftItem, logged: List<SetEntity>) {
+    fun nextOf(item: LiftItem, logged: List<SetEntity>): Triple<Double, Int, Pair<String, Int>?> {
         val e = exerciseOf(item.exerciseId, stored, item)
-        val last = logged.lastOrNull()
-        inp.rir = null
-        if (last == null) {
-            inp.weight = planStart(item)
-            inp.reps = item.prescription.reps
-            advice.remove(keyOf(item))
-            return
-        }
+        val last = logged.lastOrNull() ?: return Triple(planStart(item), item.prescription.reps, null)
         val ns = Progression.nextSet(e, item.prescription, logged.map(::corrected), bw)
-        inp.weight = ns?.weight ?: last.weight
-        inp.reps = ns?.reps ?: last.reps
-        if (ns != null) advice[keyOf(item)] = Texts.nextSet(e, ns) to ns.change else advice.remove(keyOf(item))
+        return Triple(ns?.weight ?: last.weight, ns?.reps ?: last.reps, ns?.let { Texts.nextSet(e, it) to it.change })
+    }
+
+    /**
+     * The fields and the hint of [item] after [logged] ([nextOf]). After a set put right or deleted ([was]: the sets
+     * before that) the hint follows the sets as they are now, but the fields change only while they still hold what
+     * [was] put there, and a reserve picked stays: «+» pressed for the next set, then the last set rated as its hint
+     * asks, must not bring the old weight back nor clear the reserve picked (the audit of November).
+     */
+    fun resume(inp: SetInput, item: LiftItem, logged: List<SetEntity>, was: List<SetEntity>? = null) {
+        val (weight, reps, hint) = nextOf(item, logged)
+        if (was == null || nextOf(item, was).let { (wasWeight, wasReps) -> wasWeight == inp.weight && wasReps == inp.reps }) {
+            inp.weight = weight
+            inp.reps = reps
+        }
+        if (hint != null) advice[keyOf(item)] = hint else advice.remove(keyOf(item))
     }
 
     fun input(item: LiftItem): SetInput {
@@ -280,6 +287,11 @@ fun WorkoutScreen(workoutId: Long) {
     val ex = exerciseOf(item.exerciseId, stored, item)
     val inp = input(item)
     val note = stored?.notes?.get(item.exerciseId)
+    // The stopwatch of a hold on the exercise shown: when it was started, null while it is not going. Here, not in the
+    // stopwatch: «Подход сделан» pressed in place of «Стоп» takes the seconds held from it (the audit of November: the
+    // plan's 30 s were saved and the stopwatch ran on into the next set), and a turn of the phone keeps it. Another
+    // exercise starts with none.
+    var holdFrom by rememberSaveable(keyOf(item)) { mutableStateOf<Long?>(null) }
 
     // The rest goes on (and beeps) while the library or another screen is open on top, and with the screen off.
     val restState by forma.app.ui.RestTimer.rest.collectAsState()
@@ -336,7 +348,12 @@ fun WorkoutScreen(workoutId: Long) {
 
     val notifications = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { askExactAlarms(context) }
+    ) { granted ->
+        // Refused for good (twice, or turned off in the system's settings): the system answers «no» at once and shows
+        // nothing, so the app's notification settings open, the one place left to turn them on (the audit of November:
+        // «Разрешить» opened the alarms' page, or nothing at all).
+        if (!granted && !notificationsAskable(context)) openNotificationSettings(context) else askExactAlarms(context)
+    }
 
     // The set panel stays at the bottom: weight, reps, reserve and "done" are always at hand, the rest is inside it.
     BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -548,6 +565,15 @@ fun WorkoutScreen(workoutId: Long) {
             ) {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Hairline()
+                    // Left open on an earlier day (a set or two, then the stadium and a break): said here, always in view,
+                    // with the way to finish it. Another day's sets must not go into it unnoticed, and the elapsed
+                    // «168:04:10» in the top bar said nothing of it (the audit of November).
+                    if (w.epochDay < today.toEpochDay()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Начата ${shortDate(java.time.LocalDate.ofEpochDay(w.epochDay))}", style = T.body(14.sp, FontWeight.SemiBold), modifier = Modifier.weight(1f))
+                            TextButton({ finishing = true }) { Text("Закончить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+                        }
+                    }
                     if (rest != null) {
                         val leftMs = rest.endAt - now
                         // While the current exercise has sets left it comes next, else the next one with sets left. Named
@@ -617,7 +643,7 @@ fun WorkoutScreen(workoutId: Long) {
                         // A plank held to the stopwatch: the seconds go into the field. A stopwatch of its own for each
                         // exercise at its place: one started on a plank does not carry over to the side plank.
                         androidx.compose.runtime.key(keyOf(item)) {
-                            HoldTimer(item.prescription.reps, settings.beeps, settings.vibration) { inp.reps = max(1, it) }
+                            HoldTimer(item.prescription.reps, holdFrom, settings.beeps, settings.vibration, { holdFrom = it }) { inp.reps = max(1, it) }
                         }
                     } else {
                         // Assisted pull-ups and dips go below zero: negative weight is help from a machine or band.
@@ -652,6 +678,12 @@ fun WorkoutScreen(workoutId: Long) {
                     val tap = android.os.SystemClock.elapsedRealtime()
                     if (tap - lastLogAt < 1500) return@logSet
                     lastLogAt = tap
+                    // A hold still on the stopwatch: its seconds are the set's, as «Стоп» would have put them in the field
+                    // (none while still getting into position), and the stopwatch stops with the set.
+                    holdFrom?.let { from ->
+                        holdFrom = null
+                        heldSeconds(from, System.currentTimeMillis())?.let { inp.reps = max(1, it) }
+                    }
                     // The advice reads the reserve on the person's own scale; the set is saved as rated.
                     val doneSet = DoneSet(inp.weight, inp.reps, forma.core.strength.RirScale.correct(inp.rir, rirBias))
                     val logged = item
@@ -799,14 +831,14 @@ fun WorkoutScreen(workoutId: Long) {
             onSave = { fixed ->
                 editing = null
                 scope.launch { repo.updateSet(fixed) }
-                // The next set follows the sets as they are now.
-                resume(inp, item, mine.map { if (it.id == fixed.id) fixed else it })
+                // The next set follows the sets as they are now; what was typed or picked for it stays.
+                resume(inp, item, mine.map { if (it.id == fixed.id) fixed else it }, was = mine)
             },
             onDelete = {
                 editing = null
                 val before = fieldsOf(item, inp)
                 scope.launch { repo.deleteSet(s.id) }
-                resume(inp, item, mine.filter { it.id != s.id })
+                resume(inp, item, mine.filter { it.id != s.id }, was = mine)
                 undo = Undo("Подход ${at + 1} удалён", System.currentTimeMillis(), item.position, keyOf(item), before, deleted = s)
             },
         )
@@ -841,6 +873,27 @@ private fun askExactAlarms(context: android.content.Context) {
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
         )
     }
+}
+
+/** The activity behind [context]: what Compose hands over can be a wrapper of it. */
+private fun activityOf(context: android.content.Context?): android.app.Activity? = when (context) {
+    is android.app.Activity -> context
+    is android.content.ContextWrapper -> activityOf(context.baseContext)
+    else -> null
+}
+
+/** The system would still show its own question on notifications: refused once at most, not for good. */
+private fun notificationsAskable(context: android.content.Context): Boolean {
+    val activity = activityOf(context) ?: return false
+    return androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(activity, android.Manifest.permission.POST_NOTIFICATIONS)
+}
+
+/** The app's own notification settings; its page in the system's settings where a phone does not open those. */
+private fun openNotificationSettings(context: android.content.Context) {
+    val own = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+    val app = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri())
+    listOf(own, app).firstOrNull { runCatching { context.startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess }
 }
 
 @Composable
@@ -958,13 +1011,14 @@ private fun SmallButton(text: String, onClick: () -> Unit, label: String = text)
 
 /**
  * A hold (plank) to the stopwatch: "3, 2, 1", then the seconds count up, with a signal at [target]; "Стоп" puts the
- * seconds held into the field.
+ * seconds held into the field. [startAt]: when it was started, null while it is not going — kept by the screen, told of
+ * a start or a stop by [onStartAt], so that «Подход сделан» can take the seconds held as well.
  */
 @Composable
-private fun HoldTimer(target: Int, beep: Boolean, vibrate: Boolean, onDone: (Int) -> Unit) {
+private fun HoldTimer(target: Int, startAt: Long?, beep: Boolean, vibrate: Boolean, onStartAt: (Long?) -> Unit, onDone: (Int) -> Unit) {
     val context = LocalContext.current
-    var startAt by remember { mutableStateOf<Long?>(null) }
-    var now by remember { mutableLongStateOf(0L) }
+    // From now, not from 0: a stopwatch still going when the screen comes back (a turn of the phone) shows its time at once.
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val s = startAt
     LaunchedEffect(s) {
         var signalled = false
@@ -978,27 +1032,30 @@ private fun HoldTimer(target: Int, beep: Boolean, vibrate: Boolean, onDone: (Int
         }
     }
     if (s == null) {
-        GhostButton("Засечь время", { now = System.currentTimeMillis(); startAt = now }, Modifier.fillMaxWidth(), height = 48.dp)
+        GhostButton("Засечь время", { now = System.currentTimeMillis(); onStartAt(now) }, Modifier.fillMaxWidth(), height = 48.dp)
         return
     }
     val ms = now - s
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (ms < HOLD_LEAD_MS) {
             Text("Приготовься: ${(HOLD_LEAD_MS - ms + 999) / 1000}", style = T.title(20.sp), modifier = Modifier.weight(1f))
-            GhostButton("Отмена", { startAt = null }, height = 44.dp)
+            GhostButton("Отмена", { onStartAt(null) }, height = 44.dp)
         } else {
             val held = ((ms - HOLD_LEAD_MS) / 1000).toInt()
             NumText(
                 "${Ru.clock(held)} из ${Ru.clock(target)}",
                 style = T.number(22.sp).copy(color = if (held >= target) F.c.good else F.c.text), modifier = Modifier.weight(1f),
             )
-            GhostButton("Стоп", { onDone(held); startAt = null }, height = 44.dp, color = F.c.strength)
+            GhostButton("Стоп", { onDone(held); onStartAt(null) }, height = 44.dp, color = F.c.strength)
         }
     }
 }
 
 /** Seconds to get into position before a hold starts counting. */
 private const val HOLD_LEAD_MS = 3_000L
+
+/** Whole seconds held at [now] on a stopwatch started at [startAt], as it shows them; null while still getting into position. */
+private fun heldSeconds(startAt: Long, now: Long): Int? = (now - startAt - HOLD_LEAD_MS).takeIf { it >= 0 }?.let { (it / 1000).toInt() }
 
 /** The effort of the whole session: none chosen until the person picks one (a default would be counted as theirs). */
 @Composable
