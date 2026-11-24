@@ -17,6 +17,7 @@ import forma.core.strength.DoneSet
 import forma.core.strength.Progression
 import forma.core.text.Ru
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
@@ -47,7 +48,7 @@ internal const val COACH_RULES = """## Как решает приложение
 - Контрольный: форма — по всему времени; если отрезок от старта (не меньше половины и 3 минут) человек держал заметно быстрее, а потом сбавил, — по этому отрезку, но не больше чем на 3 VDOT выше всего времени; недобежанный (остановился, пошёл шагом) — оценка по этому отрезку (дошёл до финиша шагом — тоже не больше +3 к времени до финиша), форму только поднимает или ставит, полный контрольный через 2 недели; меньше половины — не засчитан. «Цель достигнута» — только по всему времени.
 - Лёгкий: пробежал целиком и тяжесть до 5 — следующий на 3 мин длиннее; пробежал дольше плана — на половину лишнего (3–8 мин); тяжесть 7+ — на 5 мин короче. Потолок под цель; неделя бега не больше +10 % к прошлой; одна пробежка не длиннее 110 % самой длинной за 30 дней.
 - Длинный: тяжесть до 6 и целиком — растёт на 5–10 мин; 8+ или не добежал — на 5 мин короче.
-- Тяжёлые (отрезки в темпе цели, интервалы, темповый) идут по лестнице: три подряд в темпе — форма +1 (не чаще раза в 4 недели; с целью до 3 км форму меняет только контрольный забег); три неудачи — форма −1. Контрольный забег раз в несколько недель.
+- Тяжёлые (отрезки в темпе цели, интервалы, темповый) идут по лестнице. После засчитанного контрольного: три подряд в темпе — форма +1 (не чаще раза в 4 недели; с целью до 3 км форму меняет только следующий контрольный), три неудачи — форма −1. Пока засчитанного контрольного нет, форма — оценка и меняется по тренировкам (выше), контрольный не обязателен.
 - Темповый: до первого контрольного темп отрезков примерный, от цели. Отрезки по времени меряются по кругам, нажатым внутри них (первый круг отрезка не считается: он не от линии). Слишком тяжело (меньше 60 % и тяжесть 8+) — следующий те же минуты кусками вдвое короче (3 × 5 → 6 × 2,5); получилось — отрезки растут к шагу плана (6 × 2,5 → 4 × 4 → 3 × 5). Свой темповый (set_tempo) — до шага плана так же. Какой темповый сейчас — в строке «Шаги лестниц».
 - Ускорения: после лёгкого бега в неделю с тяжёлым бегом, 4 (6, когда бег регулярный), секунд по 10, по прямой (на маленьком стадионе прямая около 50 м, ускорение в повороте сильнее грузит одну ногу) — быстро, но расслабленно и ровно, не в полную силу: скорость и техника без усталости.
 - После «Болею»: 2 пробежки лёгкие, контрольного нет неделю, первая силовая облегчённая. После перерыва больше недели первая пробежка лёгкая.
@@ -58,7 +59,7 @@ internal const val COACH_RULES = """## Как решает приложение
  * making a place up. Denis, 5 November: the coach sent him to «План → день → настройка отрезков», which does not exist.
  */
 internal const val COACH_MAP = """## Что где в приложении (это человек делает сам; кнопку «Открыть» на экран даёт open_screen по ключу)
-- today «Сегодня»: «Начать» тренировку дня; «Как ты сегодня?» (хорошо, так себе, болею); пропущенная тренировка недели; карточка пробежки от тренера.
+- today «Сегодня»: «Начать» тренировку дня; «Как ты сегодня?» (хорошо, так себе, болею); пропущенная тренировка недели; карточка пробежки от тренера; внизу в любой день «Силовая» (любая силовая плана; «Другая силовая», когда сегодня своя) и «Свободный бег». Не успевает в свой день — пусть сделает силовую или лёгкий бег в другой день этой недели этими кнопками, дни плана не меняются: сделанное заранее засчитывается за свой день, пропущенное приложение само предложит в свободный день недели.
 - plan «План»: неделя по дням (нажать день — что, зачем и почему в этот день); ниже упражнения каждой тренировки (нажать упражнение: заменить, подходы, повторы, отдых, шаг веса, первый вес тренажёра, убрать), «Добавить упражнение», «Пауза», «Идеальный план», «Мои упражнения».
 - progress «Прогресс»: одна страница сверху вниз. «Сила»: изменение за 8 недель, основные упражнения (нажать — история упражнения), «Поставить цель в зале». «Бег»: лучший контрольный или средний круг в отрезках в темпе цели, шаг до контрольного; «Подробнее о беге» — прогноз, контрольные, отрезки, темпы плана. «Вес тела» (средний и последний замер). «Нагрузка» по неделям; «Подробнее о нагрузке» — тренированность, усталость, свежесть, недели. «Мышцы за 7 дней» на фигуре. Внизу выгрузка тренировок в файл.
 - history «История»: все тренировки и пробежки; открыть тренировку — «Изменить оценку», поправить круги пробежки, «Удалить из истории».
@@ -77,7 +78,11 @@ internal const val COACH_MAP = """## Что где в приложении (эт
 - На экране пробежки: «Круг» на линии стадиона, пауза, закончить; после — оценка тяжести; «Внести пробежку без телефона».
 Других экранов и настроек нет. Чего нет ни здесь, ни среди функций — того приложение не умеет: скажи это прямо и запиши пожелание (wish)."""
 
-/** The research the rules stand on (as in the project's notes), for the coach's "why". */
+/**
+ * The research the rules stand on (as in the project's notes), for the coach's "why". Nothing on calf work: Denis declined
+ * calf raises twice («нет возвращать не надо», 24 November), and a line ending in «2–3 подхода подъёмов на носки» had the
+ * coach suggest them again.
+ */
 internal const val COACH_RESEARCH = """## Исследования, на которых стоят правила
 - Запас повторов (RIR) как мера усилия — Helms и др., 2016/2018. «N+» подход — APRE, Mann и др., 2010.
 - Рост силы за ~12 недель: ≈+40 % у нетренированных, +20 % у тренированных, +10 % у продвинутых (ACSM, 2009).
@@ -87,8 +92,7 @@ internal const val COACH_RESEARCH = """## Исследования, на кот�
 - Без тренировок VO2max падает ≈7 % за 2–3 недели и ≈15 % к 8–12 неделям (Coyle и др., 1984).
 - 1500 м — около 84 % аэробной работы (Spencer и Gastin, 2001): база и порог важнее быстрых кругов.
 - Ровная раскладка выгоднее рывка в начале на дистанциях длиннее ~2 минут (Abbiss и Laursen, 2008).
-- Бег мешает силовой тем больше, чем чаще и дольше (Wilson и др., 2012).
-- Икры (камбаловидная и икроножная) — главные мышцы толчка в беге на обычных скоростях (Dorn и др., 2012); слабые икры — риск перегрузки ахилла (Mahieu и др., 2006). Присед и жим ногами их почти не нагружают. Практический минимум для бегуна без них в плане — 2–3 подхода подъёмов на носки 1–2 раза в неделю (это совет, не число из исследования)."""
+- Бег мешает силовой тем больше, чем чаще и дольше (Wilson и др., 2012)."""
 
 private val WEEKDAY = listOf("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
 
@@ -103,19 +107,31 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
     // What of today is done or going on: the person asks «я начал?», and the plan alone does not say.
     val active = repo.db.workouts().active()
     val doneToday = repo.db.workouts().allDone().filter { it.epochDay == today.toEpochDay() }
+    // A session of today done on a day before it this week (Saturday's «Низ» on Friday) counts for today, as «Сегодня»
+    // says: the coach read «ещё не начата» and told to do it again (the audit of 24 November).
+    val todayItem = if (paused) null else repo.weekFlow(today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)))
+        .first().firstOrNull { it.date == today }
+    fun ahead(s: forma.core.plan.PlannedSession) = todayItem?.doneLaterFor(s)?.takeIf { it.epochDay < today.toEpochDay() }
+    fun aheadWords(w: forma.app.data.WorkoutEntity, other: Boolean) =
+        " — сделано заранее, ${onDayFull(LocalDate.ofEpochDay(w.epochDay).dayOfWeek)}" + (if (other) " («${w.title}»)" else "") +
+            ": засчитано за сегодня (можно ещё раз вне плана)"
     val todayLines = if (paused) emptyList() else program?.week?.on(today.dayOfWeek.value).orEmpty().map { s ->
         if (s.kind == SessionKind.LIFT) {
+            val early = ahead(s)
             val state = when {
                 active?.kind == Kind.LIFT && active.templateId == s.templateId -> " — НАЧАТА, идёт сейчас (раздел «Идёт сейчас»)"
                 doneToday.any { it.kind == Kind.LIFT && it.templateId == s.templateId } -> " — сделана сегодня"
+                early != null -> aheadWords(early, early.templateId != s.templateId)
                 else -> " — ещё не начата"
             }
             val plan = runCatching { repo.liftPlan(s.templateId!!, today, forceDeload = light) }.getOrNull()
             val going = active?.kind == Kind.LIFT && active.templateId == s.templateId
-            "- Силовая «${plan?.title ?: s.templateId}»$state" + if (going) "" else (plan?.let { p -> ": " + p.items.joinToString("; ") { "${it.name} ${it.prescription.sets}×${it.prescription.reps}" + (it.prescription.weight?.let { w -> " ${Ru.kg(w)} кг" } ?: "") } } ?: "")
+            "- Силовая «${plan?.title ?: s.templateId}»$state" + if (going || early != null) "" else (plan?.let { p -> ": " + p.items.joinToString("; ") { "${it.name} ${it.prescription.sets}×${it.prescription.reps}" + (it.prescription.weight?.let { w -> " ${Ru.kg(w)} кг" } ?: "") } } ?: "")
         } else {
             val w = runCatching { repo.runFor(s.kind, today, light) }.getOrNull()
-            "- Бег «${w?.title}»" + (if (doneToday.any { it.kind == Kind.RUN }) " — пробежка сегодня уже есть" else "") + ": ${w?.note.orEmpty()}"
+            val early = ahead(s)?.takeIf { doneToday.none { d -> d.kind == Kind.RUN } }
+            if (early != null) "- Бег «${w?.title}»" + aheadWords(early, early.templateId != w?.type?.name)
+            else "- Бег «${w?.title}»" + (if (doneToday.any { it.kind == Kind.RUN }) " — пробежка сегодня уже есть" else "") + ": ${w?.note.orEmpty()}"
         }
     }
     val easyLeft = repo.easyAfterSick(today)
@@ -183,6 +199,18 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             val gym = days { it.kind == SessionKind.LIFT }
             val run = days { it.isRun }
             appendLine("Неделя: " + (if (gym.isEmpty()) "без зала" else "зал — ${gym.joinToString(", ")}") + "; " + (if (run.isEmpty()) "без бега" else "бег — ${run.joinToString(", ")}") + ".")
+        }
+        // The block's week as «План» says it, and the next lighter week: the report gives the day the plan was made, which
+        // a new layout of the days moves while the block stays (the audit of 24 November: «когда разгрузка?»).
+        program?.takeIf { it.templates.isNotEmpty() }?.let { p ->
+            val lift = repo.store.liftStateNow()
+            cycleWords(p, today, lift.reactiveDeloadStart, lift.deloadMovedFrom)?.let { (n, words) ->
+                val monday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+                val lighter = (1..p.blockWeeks).map { monday.plusWeeks(it.toLong()) }
+                    .firstOrNull { ProgramGenerator.isDeloadWeek(p, it) || lift.reactiveDeloadStart == it.toEpochDay() }
+                appendLine("Цикл зала, как на «Плане»: неделя $n из ${p.blockWeeks} — $words" +
+                    (lighter?.let { " Следующая лёгкая неделя — ${Ru.dates(it, it.plusDays(6))}." } ?: ""))
+            }
         }
         appendLine()
         appendLine("## Цели человека — каждое изменение сверяй с ними")
@@ -349,13 +377,26 @@ private suspend fun running(repo: TrainingRepository, today: LocalDate): String 
     val program = repo.store.programNow() ?: return@buildString
     if (program.week.days.none { d -> d.sessions.any { it.isRun } }) return@buildString
     val profile = repo.store.profileNow()
-    val st = repo.runStateToGo(profile?.runGoal)
+    val saved = repo.runStateToGo(profile?.runGoal)
+    // As «Сегодня» and the plan go by it: after more than a week without running the runs are shorter, the fitness and the
+    // paces lower. The brief gave the numbers from before the break, its own list of runs the shorter ones.
+    val off = forma.core.run.RunPlan.breakDays(saved, today.toEpochDay())
+    val st = forma.core.run.RunPlan.withBreak(saved, today.toEpochDay())
     val caps = ProgramGenerator.runCaps(program, profile?.runGoal?.middleDistance == true)
     appendLine("## Бег сейчас")
+    off?.let { appendLine("- После перерыва ${Ru.days(it)} без бега: длины, форма и темпы ниже уже с учётом перерыва, как на «Сегодня»; первая пробежка лёгкая.") }
     appendLine(
         "- Лёгкий бег ${st.easyMinutes} мин (потолок ${caps.easyMax}), длинный ${st.longMinutes} мин (потолок ${caps.longMax})" +
             (st.longestRecent(today.toEpochDay() + 1)?.let { ", самая длинная за 30 дней $it мин" } ?: "") + ".",
     )
+    // The next easy run as «Сегодня» will start it: the week's +10 % and a day with the gym cut it, and the coach promised
+    // 40 minutes of a run that started at 15 (the audit of 24 November).
+    forma.app.data.CoachActions.nextEasy(repo, today)?.let { e ->
+        appendLine(
+            "- Ближайший лёгкий бег ${Ru.date(e.day)}: ${e.minutes} мин" + (e.why?.let { " ($it)" } ?: "") +
+                (e.weekCap?.let { "; недельный предел (+10 % к прошлым неделям) в этот день — до $it мин" } ?: "") + ".",
+        )
+    }
     forma.core.run.RunPlan.estimated(st, profile?.runGoal).let { known ->
         known.fitness?.let { v ->
             appendLine(if (known.estimated) "- Форма бега (VDOT) ≈ ${Ru.one(v)} — оценка по цели и по тому, как идут пробежки: контрольного забега не было, и он не обязателен. От неё все темпы."
@@ -371,9 +412,14 @@ private suspend fun running(repo: TrainingRepository, today: LocalDate): String 
                 (forma.core.run.RunPlan.heldRepPace(st)?.let { " (по тому, что человек держал в отрезках такой длины или длиннее с запасом; не медленнее этого, не быстрее цели)" } ?: " (по форме)") + ".",
         )
     }
+    // The day the plan and «Сегодня» put the trial on ([TrainingRepository.trialDay]), not the flag: after a try that did
+    // not count the flag stays while no trial comes for two weeks, and a trial due by time comes without it.
+    val trialOn = repo.trialDay(today)
+    val putOff = st.noTrialUntil?.takeIf { today.toEpochDay() < it }
     appendLine("- Контрольный забег: " + when {
-        st.noTrialUntil?.let { today.toEpochDay() < it } == true -> "отложен человеком до ${Ru.date(LocalDate.ofEpochDay(st.noTrialUntil!!))}."
-        st.testSoon -> "стоит на следующий тяжёлый день (set_trial skip — отложить)."
+        trialOn != null -> "${WEEKDAY[trialOn.dayOfWeek.value - 1]}, ${Ru.date(trialOn)} (так в плане; set_trial skip — отложить)."
+        putOff != null -> "отложен человеком до ${Ru.date(LocalDate.ofEpochDay(putOff))}."
+        st.testSoon -> "поставлен, но пока его не будет: ${repo.trialWait(today)} (set_trial skip — отложить)."
         else -> "не назначен (set_trial next — поставить, если человек хочет)."
     })
     profile?.runGoal?.let { g -> appendLine("- Цель: ${g.meters} м за ${Ru.clock(g.seconds)}" + (g.date?.let { ", забег ${Ru.date(LocalDate.ofEpochDay(it))}" } ?: "") + ".") }

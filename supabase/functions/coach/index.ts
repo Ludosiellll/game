@@ -16,6 +16,16 @@ const MAX_CALLS = 6;
 /** Questions a person may ask: in ten minutes, and in a day (a chat is a few a minute; a script would be far more). */
 const PER_10_MIN = 30;
 const PER_DAY = 150;
+/**
+ * The phone waits 90 s for the whole answer (COACH_WAIT_MS in the app's Cloud.kt): every provider's try ends within this
+ * budget, so the last one still answers while the phone listens. Each try has its own limit: a provider that stalls (the
+ * reseller's gateway holding a request 60–100 s) no longer takes the turn of the next one.
+ */
+const BUDGET_MS = 80_000;
+/** One DeepSeek try at most. A try that runs out of it is a stall: Gemini answers next, not DeepSeek's second model. */
+const DEEPSEEK_TRY_MS = 25_000;
+/** Kept for Gemini after DeepSeek, whatever DeepSeek does: on a slow day it took 21–46 s (the function's log of 28.10). */
+const GEMINI_KEEP_MS = 50_000;
 
 const SYSTEM = `Ты — тренер в приложении Splity (силовые в зале и бег). Отвечай по-русски, просто и по делу: 2–8 предложений или короткий список, без воды и вступлений. Обращайся на «ты».
 
@@ -136,15 +146,31 @@ function keep(raw: { name: unknown; args: unknown }[], tools: Declaration[]): An
 }
 
 /**
- * DeepSeek (OpenAI chat format): the same instructions, conversation and functions as Gemini gets. Null when it fails
- * (refused, unreachable, the key's limit spent, an empty answer): Gemini answers then. Logged like Gemini's tries.
+ * A signal that ends one try: after [ms], or at once when the phone has gone ([outer], the request's own signal). [done]
+ * clears it once the try is over.
  */
-async function deepseek(key: string, model: string, system: string, turns: Turn[], tools: Declaration[]): Promise<{ answer: Answer; prompt: number; completion: number } | null> {
+function limit(ms: number, outer: AbortSignal): { signal: AbortSignal; done: () => void } {
+  const c = new AbortController();
+  const stop = () => c.abort();
+  const timer = setTimeout(stop, Math.max(0, ms));
+  if (outer.aborted) c.abort();
+  else outer.addEventListener("abort", stop, { once: true });
+  return { signal: c.signal, done: () => { clearTimeout(timer); outer.removeEventListener("abort", stop); } };
+}
+
+/**
+ * DeepSeek (OpenAI chat format): the same instructions, conversation and functions as Gemini gets. Null when it fails
+ * (refused, unreachable, the key's limit spent, an empty answer), "stalled" when it gave no answer within [ms]: Gemini
+ * answers then. Logged like Gemini's tries.
+ */
+async function deepseek(key: string, model: string, system: string, turns: Turn[], tools: Declaration[], ms: number, outer: AbortSignal): Promise<{ answer: Answer; prompt: number; completion: number } | "stalled" | null> {
   const started = Date.now();
+  const t = limit(ms, outer);
   try {
     const res = await fetch(DEEPSEEK_URL, {
       method: "POST",
       headers: { "content-type": "application/json", "authorization": `Bearer ${key}` },
+      signal: t.signal,
       body: JSON.stringify({
         model,
         messages: [
@@ -164,6 +190,8 @@ async function deepseek(key: string, model: string, system: string, turns: Turn[
     console.log(JSON.stringify({ provider: "deepseek", model, status: res.status, ms: Date.now() - started }));
     if (!res.ok) return null;
     const data = await res.json().catch(() => null);
+    // The answer cut off on its way by the try's limit: a stall too.
+    if (data == null && t.signal.aborted) return "stalled";
     const message = data?.choices?.[0]?.message;
     if (!message) return null;
     const text = typeof message.content === "string" ? message.content.trim() : "";
@@ -181,8 +209,11 @@ async function deepseek(key: string, model: string, system: string, turns: Turn[
     const completion = Number(data?.usage?.completion_tokens ?? 0) || 0;
     return text || calls.length > 0 ? { answer: { text, calls }, prompt, completion } : null;
   } catch {
-    console.log(JSON.stringify({ provider: "deepseek", model, status: "unreachable", ms: Date.now() - started }));
-    return null;
+    const stalled = t.signal.aborted;
+    console.log(JSON.stringify({ provider: "deepseek", model, status: stalled ? "timeout" : "unreachable", ms: Date.now() - started }));
+    return stalled ? "stalled" : null;
+  } finally {
+    t.done();
   }
 }
 
@@ -253,6 +284,9 @@ async function usage(user: string, key: string | undefined): Promise<Response> {
 }
 
 Deno.serve(async (req) => {
+  // The phone's wait counts from here: the providers' tries get what is left of [BUDGET_MS].
+  const started = Date.now();
+  const left = () => BUDGET_MS - (Date.now() - started);
   if (req.method !== "POST") return json({ error: "method" }, 405);
   const user = signedIn(req);
   if (!user) return json({ error: "sign_in" }, 401);
@@ -280,7 +314,12 @@ Deno.serve(async (req) => {
   // everybody else.
   if (deepseekKey && DEEPSEEK_USERS.includes(user)) {
     for (const model of DEEPSEEK_MODELS) {
-      const got = await deepseek(deepseekKey, model, system, turns, tools);
+      // Gemini keeps its turn after DeepSeek, whatever DeepSeek does; without a Gemini key DeepSeek has all the time.
+      const ms = keys.length > 0 ? Math.min(DEEPSEEK_TRY_MS, left() - GEMINI_KEEP_MS) : left();
+      if (ms < 5_000 || req.signal.aborted) break;
+      const got = await deepseek(deepseekKey, model, system, turns, tools, ms, req.signal);
+      // A stalled seller: straight to Gemini — its second model sits behind the same gateway.
+      if (got === "stalled") break;
       if (got) {
         await record(user, got.prompt, got.completion);
         return json(got.answer);
@@ -300,27 +339,38 @@ Deno.serve(async (req) => {
   });
   // The first key; the next one when this one fails (refused, unreachable, Google failing) or its limit is spent (429).
   // Each try is logged (which key by its number, Google's status, how long it took): why an answer was slow or did not
-  // come is in the function's log, not guessed.
+  // come is in the function's log, not guessed. A try has what is left of the phone's wait: one that runs out of it ends
+  // as unreachable does, and the phone hears «provider» while it still listens.
   let res: Response | null = null;
+  // deno-lint-ignore no-explicit-any
+  let data: any = null;
   for (const [i, key] of keys.entries()) {
-    const started = Date.now();
+    const ms = left();
+    if (ms < 1_000 || req.signal.aborted) break;
+    const t = limit(ms, req.signal);
+    const tried = Date.now();
     try {
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": key },
         body: request,
+        signal: t.signal,
       });
+      console.log(JSON.stringify({ provider: "gemini", key: i + 1, status: res.status, ms: Date.now() - tried }));
+      // Read within the try's limit too: the body of a slow answer comes after its status.
+      if (res.ok) {
+        data = await res.json().catch(() => null);
+        break;
+      }
     } catch {
-      console.log(JSON.stringify({ provider: "gemini", key: i + 1, status: "unreachable", ms: Date.now() - started }));
+      console.log(JSON.stringify({ provider: "gemini", key: i + 1, status: t.signal.aborted ? "timeout" : "unreachable", ms: Date.now() - tried }));
       res = null;
-      continue;
+    } finally {
+      t.done();
     }
-    console.log(JSON.stringify({ provider: "gemini", key: i + 1, status: res.status, ms: Date.now() - started }));
-    if (res.ok) break;
   }
   if (!res) return json({ error: "provider" }, 502);
   if (!res.ok) return json({ error: res.status === 429 ? "busy" : "provider", status: res.status }, 502);
-  const data = await res.json().catch(() => null);
   if (!data) return json({ error: "provider" }, 502);
   const parts = data?.candidates?.[0]?.content?.parts ?? [];
   const text = parts

@@ -188,10 +188,10 @@ object CoachActions {
             Param("reset", "boolean", "true — вернуть темповый приложения", required = false))
         fn(TRIAL, "Контрольный забег: поставить на следующий тяжёлый день (next) — когда человек сам хочет проверить форму; или отложить на 4 недели (skip) — когда он не хочет или не готов («зачем контрольный, я не пробегу»). При цели контрольный не обязателен: форму приложение оценивает по тренировкам. Темп контрольного — по нынешней форме, не по цели.",
             Param("when", "string", "next — поставить, skip — отложить на 4 недели", values = listOf("next", "skip")))
-        fn(RUN_PACE, "Темпы бега спокойнее или быстрее — когда человек говорит, что бег по темпу слишком тяжёлый или слишком лёгкий. Сдвигает форму, от которой идут ВСЕ темпы (лёгкий, темповый, интервалы, отрезки, контрольный): один шаг — примерно 2 % темпа, около 1–1,5 с на круге 200 м. easier приложение делает сразу, harder человек подтверждает. Одна тяжёлая тренировка — не повод делать быстрее.",
+        fn(RUN_PACE, "Темпы бега спокойнее или быстрее — когда человек говорит, что бег по темпу слишком тяжёлый или слишком лёгкий. Сдвигает форму, от которой идут ВСЕ темпы (лёгкий, темповый, интервалы, отрезки, контрольный): один шаг — примерно 2 % темпа, около 1–1,5 с на круге 200 м. easier приложение делает сразу, один раз за ответ (второй такой вызов в том же ответе не делается); harder человек подтверждает. Одна тяжёлая тренировка — не повод делать быстрее.",
             Param("change", "string", "easier — спокойнее, harder — быстрее", values = listOf("easier", "harder")),
             Param("steps", "integer", "1 или 2; не сказано — 1", required = false))
-        fn(RUN_STEP, "Шаг тяжёлой пробежки легче или тяжелее на одну ступень лестницы приложения: race_pace — отрезки в темпе цели, intervals — интервалы, tempo — темповый (свой темповый меняется через set_tempo). Когда человек говорит, что отрезки слишком длинные, их слишком много или наоборот мало. easier — сразу, harder — человек подтверждает. Темп при этом не меняется (для темпа — set_run_pace).",
+        fn(RUN_STEP, "Шаг тяжёлой пробежки легче или тяжелее на одну ступень лестницы приложения: race_pace — отрезки в темпе цели, intervals — интервалы, tempo — темповый (свой темповый меняется через set_tempo). Когда человек говорит, что отрезки слишком длинные, их слишком много или наоборот мало. easier — сразу, для каждой пробежки один раз за ответ; harder — человек подтверждает. Темп при этом не меняется (для темпа — set_run_pace).",
             Param("kind", "string", "race_pace, intervals или tempo", values = listOf("race_pace", "intervals", "tempo")),
             Param("change", "string", "easier — на ступень легче, harder — на ступень тяжелее", values = listOf("easier", "harder")))
         fn(WISH, "Записать пожелание разработчику приложения: то, что человек попросил, а ты сделать не смог (нет такой функции, приложение этого не умеет). Одной фразой — что он хотел получить. Сначала всё равно помоги тем, что есть.",
@@ -207,7 +207,7 @@ object CoachActions {
             Param("when", "string", "this — эта неделя, next — следующая, skip — отменить лёгкую на этой неделе", values = listOf("this", "next", "skip")))
         fn(ORDER, "Порядок упражнений в силовой тренировке: поставить упражнение первым, последним или на место N (изменение плана; человек подтверждает). Сам порядок приложение строит так: главные упражнения первыми, пока силы свежие, одиночные — в конце; reset — вернуть порядок приложения.",
             exercise, Param("place", "string", "first — первым, last — последним, номер места (1, 2, 3 …) или reset — порядок приложения"), session)
-        fn(EASE_DAY, "В этот день недели вместо тяжёлого бега — лёгкий, на weeks недель (0 — вернуть тяжёлый). Когда тяжёлых пробежек слишком много, ноги не успевают восстановиться, болят голени — или человек хочет один тяжёлый бег в неделю. Делается сразу, можно вернуть.",
+        fn(EASE_DAY, "В этот день недели вместо тяжёлого бега — лёгкий, на weeks недель (0 — вернуть тяжёлый). Когда тяжёлых пробежек слишком много, ноги не успевают восстановиться, болят голени — или человек хочет один тяжёлый бег в неделю. При боли — на 1–2 недели, потом спроси снова. До 2 недель делается сразу, можно вернуть; дольше, или когда при цели по бегу в неделе не остаётся тяжёлого бега, — человек подтверждает.",
             Param("day", "string", "день недели: пн, вт, ср, чт, пт, сб или вс"), Param("weeks", "integer", "0–$MAX_WEEKS"))
         fn(RUN_CUSTOM, "Своя пробежка на СЕГОДНЯ, какой нет в плане: reps отрезков по work_sec секунд (или work_m метров) в темпе pace, между ними rest_sec трусцой; до и после — лёгкий бег. Примеры: «8 по 200 быстро через минуту» — reps 8, work_m 200, pace fast, rest_sec 60; «20 минут спокойно» — reps 1, work_sec 1200, pace easy; «фартлек 6 по 2 минуты» — reps 6, work_sec 120, pace interval, rest_sec 120. Темп отрезков даёт приложение по форме человека; на стадионе отрезки станут целыми кругами. Заменяет сегодняшнюю пробежку плана, засчитывается, шаги плана не двигает. Тяжёлую человек подтверждает; тяжёлая не ставится рядом с другим тяжёлым бегом и в день ног. Для постоянных изменений — set_tempo, set_run_step, set_easy_run_minutes.",
             Param("reps", "integer", "сколько отрезков, 1–20 (1 — один непрерывный бег)"),
@@ -388,6 +388,9 @@ object CoachActions {
 
     private val DAY_NAMES = listOf("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 
+    /** A day of the week after «в» ("во вторник"), by its ISO number less one. */
+    private val ON_DAY = listOf("в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу", "в воскресенье")
+
     /** Starts of the days' names, short and full ("чт", "четверг"). */
     private val DAY_STARTS = listOf("пн" to 1, "пон" to 1, "вт" to 2, "ср" to 3, "чт" to 4, "чет" to 4, "пт" to 5, "пят" to 5, "сб" to 6, "суб" to 6, "вс" to 7, "вос" to 7)
 
@@ -475,6 +478,52 @@ object CoachActions {
     private fun name(id: String) = Catalog.find(id)?.name ?: id
 
     private fun down(w: Double, step: Double) = floor(w / step + 1e-9) * step
+
+    /** An easy run as «Сегодня» will start it ([easyOn]): its day, its minutes, why fewer than asked, the week's cap on that day. */
+    class EasyAhead(val day: LocalDate, val minutes: Int, val why: String?, val weekCap: Int?)
+
+    /**
+     * The easy run of [day] as «Сегодня» will start it ([TrainingRepository.runFor]) with [minutes] (null: the plan's own
+     * length), with the plan's caps — the week's running +10 % on the weeks before, a day with the gym, a lighter week, a
+     * break — and why it is shorter. The coach's card said «Лёгкий бег: 40 → 45 мин» and its summary «40 мин» while
+     * «Сегодня» started 15 (the audit of 24 November). Null when the day has another run than an easy one (a long run).
+     */
+    internal suspend fun easyOn(repo: TrainingRepository, day: LocalDate, minutes: Int? = null): EasyAhead? {
+        val program = repo.store.programNow() ?: return null
+        val w = runCatching { repo.runFor(SessionKind.RUN_EASY, day, minutes = minutes) }.getOrNull()
+            ?.takeIf { it.type == forma.core.run.RunType.EASY } ?: return null
+        val real = w.workSeconds / 60
+        val profile = repo.store.profileNow()
+        val saved = repo.runStateToGo(profile?.runGoal)
+        val week = forma.core.run.RunPlan.weekCap(saved, day.toEpochDay())
+        val gym = program.week.on(day.dayOfWeek.value).filter { it.kind == SessionKind.LIFT }
+        val legs = gym.any { g -> program.templates.firstOrNull { it.id == g.templateId }?.legs == true }
+        val why = when {
+            real >= (minutes ?: saved.easyMinutes) -> null
+            forma.core.run.RunPlan.breakDays(saved, day.toEpochDay()) != null -> "после перерыва короче"
+            week != null && week <= real -> "неделя бега растёт не больше чем на 10 %"
+            gym.isNotEmpty() && profile?.doubleDays != true && real <= 30 -> "в день с залом до 30 мин"
+            legs && real <= TrainingRepository.AFTER_LEGS_EASY -> "в день ног до ${TrainingRepository.AFTER_LEGS_EASY} мин"
+            ProgramGenerator.isRunCutbackWeek(program, day) -> "неделя лёгкая"
+            else -> "по правилам плана на этот день"
+        }
+        return EasyAhead(day, real, why, week)
+    }
+
+    /** The plan's next easy run from [from] on, within a week and on a day with no run done yet, as [easyOn] gives it. */
+    internal suspend fun nextEasy(repo: TrainingRepository, from: LocalDate, minutes: Int? = null): EasyAhead? {
+        val program = repo.store.programNow() ?: return null
+        val s = repo.store.settingsNow()
+        val ran = repo.db.workouts().allDone().filter { it.kind == Kind.RUN }.map { it.epochDay }.toSet()
+        return (0L..6L).map { from.plusDays(it) }.firstNotNullOfOrNull { d ->
+            if (repo.paused(s, d) || d.toEpochDay() in ran || program.week.on(d.dayOfWeek.value).none { it.kind == SessionKind.RUN_EASY }) null
+            else easyOn(repo, d, minutes)
+        }
+    }
+
+    /** "Сегодня", "В субботу": the day of [day] seen from [today], to start a sentence. */
+    private fun dayWords(day: LocalDate, today: LocalDate) =
+        if (day == today) "Сегодня" else ON_DAY[day.dayOfWeek.value - 1].replaceFirstChar { it.uppercase() }
 
     /** [call] checked against the limits and the data now: ready to be made (or to be accepted), or refused with the reason. */
     suspend fun prepare(repo: TrainingRepository, call: CoachCall, today: LocalDate = repo.today()): Checked {
@@ -691,8 +740,12 @@ object CoachActions {
                         else -> "не длиннее 110 % самой длинной пробежки за месяц."
                     })
                 }
+                // What «Сегодня» will start next: the plan's caps (the week's +10 %, a day with the gym) may hold the next easy
+                // run below the new length, and the card says so instead of promising it.
+                val next = nextEasy(repo, today, min)?.takeIf { it.why != null }
                 // A second change in a week, or a run shorter by more than a tenth than two weeks ago, waits for the person.
-                either(earlier.isEmpty() && (min > st.easyMinutes || min >= before * EASY_CUT_AUTO), "Лёгкий бег: ${st.easyMinutes} → $min мин. Дальше длина меняется по правилам приложения.") {
+                either(earlier.isEmpty() && (min > st.easyMinutes || min >= before * EASY_CUT_AUTO), "Лёгкий бег: ${st.easyMinutes} → $min мин." +
+                    (next?.let { " ${dayWords(it.day, today)} будет ${it.minutes} мин: ${it.why}." } ?: "") + " Дальше длина меняется по правилам приложения.") {
                     val now = repo.store.runStateNow()
                     repo.store.setRunState(now.copy(easyMinutes = min))
                     repo.changed()
@@ -745,7 +798,10 @@ object CoachActions {
                 if (!st.canRunContinuously) return no("Пока бег чередуется с ходьбой: контрольного нет, его время придёт после 30 минут бега без остановки.")
                 when (a.str("when")) {
                     "next" -> {
-                        if (st.testSoon && st.noTrialUntil == null) return no("Контрольный и так стоит на следующий тяжёлый день.")
+                        // What the plan shows ([TrainingRepository.trialDay]), not the flag: a trial due by time has none,
+                        // and one asked for waits two weeks after a try (the audit of 24 November).
+                        repo.trialDay(today)?.let { return no("Контрольный и так стоит: ${ON_DAY[it.dayOfWeek.value - 1]}, ${Ru.date(it)}.") }
+                        if (st.testSoon && st.noTrialUntil == null) return no("Контрольный уже поставлен, но пока его не будет: ${repo.trialWait(today)}.")
                         if (repo.store.programNow()?.week?.days?.none { d -> d.sessions.any { it.kind == SessionKind.RUN_QUALITY } } != false) {
                             return no("В неделе нет тяжёлого бега: контрольный ставится на его день. Сначала добавь тяжёлую пробежку (set_week).")
                         }
@@ -878,8 +934,12 @@ object CoachActions {
                 val w = (kg * 10).roundToInt() / 10.0
                 // A typo (83 for 73) would move every body-weight exercise: a change of more than a tenth waits for the person.
                 either(abs(w - old) <= old * 0.10, "Вес тела сегодня: ${Ru.kg(w)} кг" + (if (abs(w - old) > 1e-9) " (было ${Ru.kg(old)})." else ".")) {
+                    // The day's own weigh-in, to put back on that day (none: taken away): «Вернуть» on a later day kept the
+                    // coach's entry and added the old weight as a weigh-in of the day of the undo (the audit of 24 November).
+                    val day = repo.today().toEpochDay()
+                    val was = repo.db.state().bodyWeights().firstOrNull { it.epochDay == day }?.kg
                     repo.logBodyWeight(w)
-                    CoachCall("undo_body", args("old" to old, "expect" to w))
+                    CoachCall("undo_body", args("old" to old, "expect" to w, "day" to day, "was" to was))
                 }
             }
             OPEN -> {
@@ -989,7 +1049,21 @@ object CoachActions {
                 val was = s.easyRunDays[day]?.takeIf { it >= today.toEpochDay() }
                 if (w == 0 && was == null) return no("В $dayName тяжёлый бег и так по плану.")
                 val until = today.plusWeeks(w.toLong()).minusDays(1)
-                auto(if (w == 0) "В $dayName снова тяжёлый бег по плану." else "В $dayName вместо тяжёлого бега — лёгкий, на ${weeks(w)}, до ${Ru.date(until)}. Потом тяжёлый вернётся сам.") {
+                // Two weeks or less of one hard day is made at once (sore shins: an easy week or two). Longer, or no hard run
+                // left in the week with a running goal, waits for «Принять» with the cost said: a change that costs a goal
+                // waits (27 October), and two calls of 8 weeks took all of Denis's hard running unasked.
+                val goal = repo.store.profileNow()?.runGoal?.let { "${it.meters} м за ${Ru.clock(it.seconds)}" }
+                val hardLeft = program.week.days.any { d ->
+                    d.day != day && d.sessions.any { it.kind == SessionKind.RUN_QUALITY } && s.easyRunDays[d.day]?.let { it >= today.toEpochDay() } != true
+                }
+                val risk = when {
+                    w == 0 -> null
+                    goal != null && !hardLeft -> "В неделе не останется тяжёлого бега, к $goal не приблизиться."
+                    w > 2 -> "$w ${Ru.plural(w, "неделя", "недели", "недель")} в этот день без тяжёлого бега, " +
+                        (goal?.let { "к $it медленнее." } ?: "форма бега будет расти медленнее.")
+                    else -> null
+                }
+                either(risk == null, withRisk(if (w == 0) "В $dayName снова тяжёлый бег по плану." else "В $dayName вместо тяжёлого бега — лёгкий, на ${weeks(w)}, до ${Ru.date(until)}. Потом тяжёлый вернётся сам.", risk)) {
                     val old = repo.store.settingsNow().easyRunDays[day]
                     repo.updateSettings { if (w == 0) it.copy(easyRunDays = it.easyRunDays - day) else it.copy(easyRunDays = it.easyRunDays + (day to until.toEpochDay())) }
                     CoachCall("undo_ease_day", args("day" to day, "old" to old, "expect" to if (w == 0) null else until.toEpochDay()))
@@ -1083,7 +1157,11 @@ object CoachActions {
                 val limit = listOfNotNull(cap, longest?.let { (it * 1.10).toInt().coerceAtLeast(st.easyMinutes) }, 60).min()
                 if (min != null && min < 15) return no("Пробежка — не короче 15 минут.")
                 if (min != null && min > limit) return no("Сегодня можно до $limit мин: " + if (limit == cap) "это потолок лёгкого бега под твою цель." else "не длиннее 110 % самой длинной пробежки за месяц.")
-                auto("На сегодня лёгкий бег ${min ?: st.easyMinutes} мин: на экране «Сегодня» — «Начать». В разговорном темпе, без ускорений.") {
+                // The run «Сегодня» will start (its card asks [TrainingRepository.runFor] with these minutes): the week's +10 %
+                // and a day with the gym cut it, and the card said the minutes asked (the audit of 24 November).
+                val real = easyOn(repo, today, min)
+                auto("На сегодня лёгкий бег ${real?.minutes ?: min ?: st.easyMinutes} мин" + (real?.why?.let { " ($it)" } ?: "") +
+                    ": на экране «Сегодня» — «Начать». В разговорном темпе, без ускорений.") {
                     val old = repo.store.settingsNow().coachRunToday
                     val term = CoachTerm(min ?: 0, today.toEpochDay())
                     repo.updateSettings { it.copy(coachRunToday = term) }
@@ -1118,7 +1196,9 @@ object CoachActions {
                 if (abs(was - step) < 1e-9 && abs(wasFrom - from) < 1e-9) {
                     return no("Шаг «${ex.name}» и так ${Ru.kg(step)} кг" + (if (from > 0) " от ${Ru.kg(from)} кг." else "."))
                 }
-                // The weights now land on the new steps (down): the step must not cut them more than a weight change may.
+                // The weights now land on the new steps: down, or up to a first weight above them (30 kg on a stack from 45
+                // is 45). Either way no more than a weight change may move them (set_working_weight: 25 % at most, past
+                // 10 % the person says): a first weight above the working one raised it by half at once, unsaid.
                 fun on(w: Double) = forma.core.floorTo(w, step, from)
                 val weights = found.filter { it.exerciseId == ex.id }.mapNotNull { repo.db.state().slot(it.tuned.key)?.weight }.filter { it > 0 }
                 val cut = weights.maxOfOrNull { (it - on(it)) / it } ?: 0.0
@@ -1126,14 +1206,20 @@ object CoachActions {
                     val w = weights.maxBy { (it - on(it)) / it }
                     return no("С шагом ${Ru.kg(step)} кг вес упал бы с ${Ru.kg(w)} до ${Ru.kg(on(w))} кг — слишком много.")
                 }
+                val rise = weights.maxOfOrNull { (on(it) - it) / it } ?: 0.0
+                val risen = weights.maxByOrNull { (on(it) - it) / it }?.takeIf { rise > 1e-9 }
+                if (risen != null && rise > WEIGHT_MAX + 1e-9) {
+                    return no("С первым весом ${Ru.kg(from)} кг вес вырос бы с ${Ru.kg(risen)} кг до ${Ru.kg(on(risen))} кг — больше 25 % за раз.")
+                }
                 // A step that is a large part of the weight (20 kg on 60 kg) makes every later jump that large: the person says.
                 val coarse = weights.any { step > it * 0.3 }
-                val sure = cut <= WEIGHT_AUTO + 1e-9 && !coarse && (weights.isNotEmpty() || step <= 5.0)
+                val sure = max(cut, rise) <= WEIGHT_AUTO + 1e-9 && !coarse && (weights.isNotEmpty() || step <= 5.0)
                 val stack = if (from > 0) listOf(0, 1, 2, 3).joinToString(", ") { Ru.kg(from + it * step) } + " … кг" else null
                 either(sure, "Шаг веса «${ex.name}»: " +
                     (if (stack != null) "вес будет только $stack (шаг ${Ru.kg(step)} кг от ${Ru.kg(from)})."
                     else "${Ru.kg(was)} → ${Ru.kg(step)} кг. Вес будет меняться по ${Ru.kg(step)} кг.") +
-                    (if (cut > 1e-9) " Нынешний вес встанет на ближний вес тренажёра (вниз)." else "")) {
+                    (if (cut > 1e-9) " Нынешний вес встанет на ближний вес тренажёра (вниз)." else "") +
+                    (risen?.let { " Вес вырастет с ${Ru.kg(it)} кг до ${Ru.kg(on(it))} кг: легче на этом тренажёре нет." } ?: "")) {
                     repo.setStep(ex.id, step, ex.step, from)
                     CoachCall("undo_step", args("exercise" to ex.id, "step" to was, "from" to wasFrom, "expect" to step, "expect_from" to from))
                 }
@@ -1898,8 +1984,18 @@ object CoachActions {
                 }
             }
             "undo_body" -> {
-                val old = a.num("old")
-                if (old == null || repo.store.profileNow()?.bodyWeightKg != a.num("expect")) false else { repo.logBodyWeight(old); true }
+                val old = a.num("old") ?: return false
+                if (repo.store.profileNow()?.bodyWeightKg != a.num("expect")) return false
+                // Made before the day was kept: taken back as such a change was then.
+                val day = a.long("day") ?: run { repo.logBodyWeight(old); return true }
+                // The weigh-in of that day put right since: it stays.
+                if (repo.db.state().bodyWeights().firstOrNull { it.epochDay == day }?.kg != a.num("expect")) return false
+                // That day's weigh-in as it was before the coach's (none: no entry), and the profile's weight back.
+                val was = a.num("was")
+                if (was != null) repo.db.state().upsertBodyWeight(BodyWeightEntity(day, was)) else repo.db.state().deleteBodyWeight(day)
+                repo.store.profileNow()?.let { repo.store.setProfile(it.copy(bodyWeightKg = old)) }
+                repo.changed()
+                true
             }
             "undo_trial" -> {
                 val now = repo.store.runStateNow()

@@ -69,6 +69,8 @@ interface StateDao {
     @Query("SELECT * FROM exercise_stat") fun observeStats(): Flow<List<ExerciseStatEntity>>
     @Query("SELECT * FROM exercise_stat WHERE exerciseId = :id") suspend fun stat(id: String): ExerciseStatEntity?
     @Upsert suspend fun upsertBodyWeight(b: BodyWeightEntity)
+    /** A weigh-in taken back (the coach's, by «Вернуть»): the next sync deletes it in the cloud too. */
+    @Query("DELETE FROM body_weight WHERE epochDay = :day") suspend fun deleteBodyWeight(day: Long)
     @Query("SELECT * FROM body_weight ORDER BY epochDay") fun observeBodyWeight(): Flow<List<BodyWeightEntity>>
     @Query("SELECT * FROM body_weight ORDER BY epochDay DESC LIMIT 1") suspend fun lastBodyWeight(): BodyWeightEntity?
     @Query("SELECT * FROM body_weight ORDER BY epochDay") suspend fun bodyWeights(): List<BodyWeightEntity>

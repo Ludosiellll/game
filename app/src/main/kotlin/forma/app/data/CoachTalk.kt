@@ -113,7 +113,9 @@ object CoachTalk {
             val reply = api.askCoach(history(repo.store.coachChatNow()), context(), CoachActions.declarations)
             // «Новый разговор» while the answer was on its way: the talk it answers is gone, and so are its changes.
             if (repo.store.coachChatNow().none { it.id == mine.id }) return CoachChatMsg(nextId(repo), false, reply.text)
-            var acts = change { reply.calls.map { act(repo, it) } }
+            // The «easier» levers made in this answer, its second go included ([easierKind]).
+            val eased = mutableSetOf<String>()
+            var acts = change { reply.calls.map { act(repo, it, eased) } }
             // What the app did goes first (a long answer is cut at its end on the way to the model), and words of the model
             // dressed as the app's are dropped: only the app says what was done.
             fun own(t: String) = t.lines().filterNot { it.trimStart().startsWith("[Приложение") }.joinToString("\n").trim()
@@ -131,7 +133,7 @@ object CoachTalk {
                     // A call it makes again as it was (made already, or waiting for «Принять») is not made twice.
                     fun bare(c: CoachCall) = c.name to kotlinx.serialization.json.JsonObject(c.args - "why")
                     val kept = acts.filter { it.state != CoachActState.REFUSED }.map { bare(it.call) }
-                    val more = change { again.calls.filter { bare(it) !in kept }.map { act(repo, it) } }
+                    val more = change { again.calls.filter { bare(it) !in kept }.map { act(repo, it, eased) } }
                     val second = own(again.text)
                     // What the second go put right is not shown as failed; what it left unsaid stays on the cards.
                     if (more.isNotEmpty() || second.isNotBlank()) acts = acts.filter { it.state != CoachActState.REFUSED } + more
@@ -149,12 +151,34 @@ object CoachTalk {
     }
 
     /**
-     * A call of the coach's checked: made at once, waiting for «Принять», or not possible (and why). One bad call never
-     * loses the answer and the changes already made with it.
+     * The kind of an «easier» call of the paces or of a ladder's step (one for the paces, one for each ladder); null for
+     * any other call. Easier is made at once, and each call reads the state the one before it left: a call repeated in an
+     * answer — a duplicate, or sent again on the second go with "steps" added — cut the fitness twice, at once, and the
+     * plan gives it back only slowly (the audit of 24 November). One of a kind in an answer; the next one waits for
+     * another request.
      */
-    private suspend fun act(repo: TrainingRepository, call: CoachCall): CoachChatAct {
+    private fun easierKind(call: CoachCall): String? {
+        fun arg(key: String) = (call.args[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content?.trim()
+        if (arg("change") != "easier") return null
+        return when (call.name) {
+            CoachActions.RUN_PACE -> call.name
+            CoachActions.RUN_STEP -> "${call.name}:${arg("kind")}"
+            else -> null
+        }
+    }
+
+    /**
+     * A call of the coach's checked: made at once, waiting for «Принять», or not possible (and why). One bad call never
+     * loses the answer and the changes already made with it. [eased]: the «easier» kinds made or waiting in this answer.
+     */
+    private suspend fun act(repo: TrainingRepository, call: CoachCall, eased: MutableSet<String>): CoachChatAct {
+        val kind = easierKind(call)
+        if (kind != null && kind in eased) {
+            val why = if (call.name == CoachActions.RUN_PACE) "1 шаг за ответ: темпы в этом ответе уже спокойнее." else "1 ступень за ответ: эта пробежка в этом ответе уже легче."
+            return CoachChatAct(call, why, null, CoachActState.REFUSED)
+        }
         val c = runCatching { CoachActions.prepare(repo, call) }.getOrElse { return CoachChatAct(call, "Не получилось разобрать изменение.", null, CoachActState.REFUSED) }
-        return when (c) {
+        val act = when (c) {
             is CoachActions.Refused -> CoachChatAct(call, c.why, null, CoachActState.REFUSED)
             // A button to a screen changes nothing: shown, not kept among the changes.
             is CoachActions.Ready -> if (call.name == CoachActions.OPEN) CoachChatAct(call, c.text, c.why, CoachActState.DONE)
@@ -163,6 +187,8 @@ object CoachTalk {
                 ?.let { CoachChatAct(call, c.text, c.why, CoachActState.DONE, it.id) }
                 ?: CoachChatAct(call, "Не получилось: ${c.text}", c.why, CoachActState.REFUSED)
         }
+        if (kind != null && act.state != CoachActState.REFUSED) eased += kind
+        return act
     }
 
     private suspend fun update(repo: TrainingRepository, msgId: Long, index: Int, f: (CoachChatAct) -> CoachChatAct) {

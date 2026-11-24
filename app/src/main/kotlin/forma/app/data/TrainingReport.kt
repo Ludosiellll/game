@@ -134,9 +134,14 @@ object TrainingReport {
         appendLine()
         // Running only of who runs; the long run and the ladders only when the week holds them.
         val sessions = b.program?.week?.days?.flatMap { it.sessions }.orEmpty()
-        b.runState?.takeIf { p?.aim?.runs != false }?.let { st ->
+        b.runState?.takeIf { p?.aim?.runs != false }?.let { saved ->
             appendLine("### Бег")
             appendLine()
+            // As the plan and «Сегодня» go by it: after more than a week without running the runs are shorter and the fitness
+            // lower. The file gave the numbers from before the break (the audit of 24 November).
+            val off = forma.core.run.RunPlan.breakDays(saved, today.toEpochDay())
+            val st = forma.core.run.RunPlan.withBreak(saved, today.toEpochDay())
+            off?.let { appendLine("- После перерыва ${Ru.days(it)} без бега: длины, форма и темпы ниже, как в плане.") }
             // Measured by a trial, or the estimate gone by before any is counted (from the goal, moved by the runs).
             val known = forma.core.run.RunPlan.estimated(st, b.profile?.runGoal)
             val v = known.fitness

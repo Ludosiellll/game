@@ -2478,6 +2478,30 @@ class TrainingRepository(
     }
 
     /**
+     * Why a trial asked for ([RunState.testSoon]) is on no day of the two weeks from [from] ([trialDay] null), in the
+     * coach's words, by the rules [trialDay] goes by. The coach was told the trial «стоит на следующий тяжёлый день» while
+     * the plan held none for two weeks after a try (the audit of 24 November).
+     */
+    suspend fun trialWait(from: LocalDate = today()): String {
+        val st = store.runStateNow()
+        val settings = store.settingsNow()
+        val day = from.toEpochDay()
+        val tried = st.lastTrialTryDay?.takeIf { day - it < 14 }
+        val race = store.profileNow()?.runGoal?.date?.takeIf { it - day in 0..21 }
+        val hard = store.programNow()?.week?.days?.filter { d -> d.sessions.any { it.kind == SessionKind.RUN_QUALITY } }.orEmpty()
+        return when {
+            st.returnEasy > 0 || RunPlan.breakDays(st, day) != null -> "после перерыва сначала лёгкие пробежки"
+            tried != null -> "попытка " + (if (tried == day) "сегодня" else "${Ru.days((day - tried).toInt())} назад") +
+                ", следующий не раньше ${Ru.date(LocalDate.ofEpochDay(tried + 14))}"
+            race != null -> "забег ${Ru.date(LocalDate.ofEpochDay(race))} сам покажет форму, до него контрольного нет"
+            easyAfterSick(from) > 0 || sickEnd(settings, from)?.let { day - it <= SICK_NO_TRIAL_DAYS } == true -> "после болезни сначала лёгкие пробежки"
+            paused(settings, from) -> "пауза в плане"
+            hard.isNotEmpty() && hard.all { d -> settings.easyRunDays[d.day]?.let { it >= day } == true } -> "в тяжёлые дни сейчас лёгкий бег (ease_run_day)"
+            else -> "в ближайшие 2 недели нет свободного тяжёлого дня"
+        }
+    }
+
+    /**
      * The workout a saved run was run to, as planned that day — not what the plan holds now: once a run is saved the plan
      * moves on (the next hard session is another one), and a day already done must show what was done.
      */
