@@ -51,19 +51,23 @@ fun ExerciseScreen(exerciseId: String) {
     val e1rm = stats.firstOrNull { it.exerciseId == exerciseId }?.e1rm
     val today = forma.app.ui.rememberToday(repo).toEpochDay()
     // One number for «на 1 раз», by the rule «Прогресс» uses (the better of the last two sessions), and the best ever
-    // (23 November: the screen showed 102,5, 108,5 and 100 for one squat).
-    val now = remember(series, today) { Stats.liftOn(series, today) } ?: e1rm ?: series.lastOrNull()?.value
+    // (23 November: the screen showed 102,5, 108,5 and 100 for one squat); the table below reads it too.
+    val now = remember(series, today, e1rm) { Stats.oneRmNow(series, today, e1rm) }
     // The line by the same rule at each session: a light week's session does not cut a dip into it.
     val smooth = remember(series) { series.map { Point(it.epochDay, Stats.liftOn(series, it.epochDay) ?: it.value) } }
+    // A lift with the body is said as what is added to it, as «Прогресс» says it: the estimate counts the body in, and
+    // «≈ 112 кг» for pull-ups read as 112 kg on the belt.
+    fun oneRep(v: Double) = forma.app.ui.Texts.oneRm(ex, v, bw(today))
     ScrollScreen {
         TopBar(ex.name, "${ex.equipment.ru} · ${ex.primary.joinToString { it.ru.lowercase() }}", onBack = { nav.back() })
         if (ex.load != LoadKind.TIMED && now != null) {
             Text("Вес на 1 раз", style = T.secondary(14.sp))
-            NumText("≈ " + forma.app.ui.Texts.oneRm(ex, now), style = T.number(40.sp).copy(color = F.c.strength))
-            rec?.bestE1rm?.takeIf { it > now + 0.25 }?.let { Text("Лучший: ${forma.app.ui.Texts.oneRm(ex, it)}", style = T.secondary(14.sp)) }
+            NumText("≈ " + oneRep(now), style = T.number(40.sp).copy(color = F.c.strength))
+            rec?.bestE1rm?.takeIf { it > now + 0.25 }?.let { Text("Лучший: ${oneRep(it)}", style = T.secondary(14.sp)) }
             if (smooth.size >= 2) forma.app.ui.components.TrendChart(
                 smooth, smooth.first().epochDay, today, "Вес на 1 раз по тренировкам",
-                endLabel = Ru.kg((smooth.last().value * 2).roundToInt() / 2.0) + " кг", minSpan = 10.0,
+                endLabel = if (ex.load == LoadKind.BODYWEIGHT_PLUS) oneRep(smooth.last().value) else Ru.kg((smooth.last().value * 2).roundToInt() / 2.0) + " кг",
+                minSpan = 10.0,
                 startLabel = shortDate(LocalDate.ofEpochDay(smooth.first().epochDay)),
             )
         } else if (ex.load == LoadKind.TIMED && rec != null) {
@@ -99,14 +103,16 @@ fun ExerciseScreen(exerciseId: String) {
         }
         // The rest a tap away: how to do it, how many reps a weight allows, the heaviest set, similar exercises.
         forma.core.model.Cues.of(ex.id)?.let { cue -> Fold("Как делать") { Text(cue, style = T.body(15.sp)) } }
-        if (e1rm != null && ex.load == LoadKind.EXTERNAL) Fold("Сколько раз смогу с весом") {
+        // From the number above, not the engine's smoothed working estimate a few kilos behind it: «1 повтор до отказа»
+        // said 132,5 under «≈ 143,5 кг» for one bench.
+        if (now != null && ex.load == LoadKind.EXTERNAL) Fold("Сколько раз смогу с весом") {
             listOf(1, 3, 5, 8, 10, 12).forEachIndexed { i, r ->
                 if (i > 0) Hairline()
                 Row(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
                     Text("${Ru.reps(r)} до отказа", style = T.body(14.sp), modifier = Modifier.weight(1f))
                     // Down to the step of this gym (the user's own, else the exercise's): "you can do it" must not
                     // promise more than the estimate, nor a weight the gym does not have.
-                    val load = OneRm.loadFor(e1rm, r)
+                    val load = OneRm.loadFor(now, r)
                     val on = settings.onSteps(ex)
                     NumText(forma.app.ui.Texts.weight(ex, on.floorW(load)), style = T.number(14.sp, FontWeight.Bold))
                 }

@@ -227,8 +227,7 @@ fun TrendChart(
         val refW = referenceLabel?.let { measurer.measure(it, small).size.width + 6.dp.toPx() } ?: 0f
         val right = maxOf(endW, refW, 12.dp.toPx()) + 4.dp.toPx()
         val w = size.width - left - right
-        val span = (to - from).coerceAtLeast(1).toFloat()
-        fun x(day: Long) = left + w * ((day - from).coerceIn(0, to - from) / span)
+        fun x(day: Long) = left + w * trendX(day, from, to)
         fun y(v: Double): Float {
             val f = ((v - lo) / (hi - lo)).toFloat()
             return top + h * (if (invert) f else 1 - f)
@@ -274,6 +273,12 @@ fun TrendChart(
         val e = measurer.measure(endXLabel, small)
         drawText(e, topLeft = Offset(left + w - e.size.width, size.height - xBand + 2.dp.toPx()))
     }
+}
+
+/** Where [day] sits across a [TrendChart] from [from] to [to], 0 to 1: by its date, so a gap of weeks looks like one. */
+internal fun trendX(day: Long, from: Long, to: Long): Float {
+    val span = (to - from).coerceAtLeast(1)
+    return (day - from).coerceIn(0, span) / span.toFloat()
 }
 
 /**

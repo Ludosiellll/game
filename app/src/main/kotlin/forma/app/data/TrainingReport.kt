@@ -169,15 +169,20 @@ object TrainingReport {
             appendLine("### Зал: расчётный максимум на 1 раз")
             appendLine()
             forma.core.strength.RirScale.explain(TrainingRepository.rirBiasOf(b.workouts.filter { it.status == Status.DONE }, b.sets))?.let { appendLine(it); appendLine() }
+            // As «Прогресс» and the exercise's page say it (the better of the last two sessions), not the engine's smoothed
+            // working estimate a few kilos behind it: 134,5 here and 143,5 there for one bench.
+            val rows = TrainingRepository.setRowsOf(done, b.sets)
+            val bw = TrainingRepository.weightOn(b.bodyWeights, p?.bodyWeightKg ?: 75.0)
             b.stats.sortedByDescending { it.e1rm }.forEach { s ->
                 val ex = Catalog.find(s.exerciseId)
                 if (ex?.load == LoadKind.TIMED) return@forEach
+                val now = ex?.let { forma.core.analytics.Stats.oneRmNow(forma.core.analytics.Stats.e1rmSeries(rows, it, bw), today.toEpochDay(), s.e1rm) } ?: s.e1rm
                 val next = b.slots.filter { it.exerciseId == s.exerciseId }.maxByOrNull { it.updatedAt }
                 // Pull-ups and dips: the maximum is of the body with the extra weight; the next target is the extra weight ("+12,5 кг").
                 val withBody = if (ex?.load == LoadKind.BODYWEIGHT_PLUS) ", с весом тела" else ""
                 // Dumbbells: the estimate is of one, as the sets say it ("30 кг ×2").
                 val pair = if (ex?.perHand == true && ex.load == LoadKind.EXTERNAL) " ×2" else ""
-                appendLine("- ${name(s.exerciseId)}: ${half(s.e1rm)} кг$pair (лучший ${half(s.best)}$withBody)" +
+                appendLine("- ${name(s.exerciseId)}: ${half(now)} кг$pair (лучший ${half(s.best)}$withBody)" +
                     (next?.weight?.let { w -> "; следующая цель ${Texts.weightReps(ex, w, next.reps)}" } ?: ""))
             }
             appendLine()

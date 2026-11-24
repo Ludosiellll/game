@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import kotlin.math.roundToInt
 
 /**
  * How the app decides, said for the coach: the coach explains the app's own reasons and changes things within them. Kept
@@ -332,6 +333,9 @@ internal suspend fun inProgress(repo: TrainingRepository): String = buildString 
 private suspend fun exercises(repo: TrainingRepository, today: LocalDate): String = buildString {
     val program = repo.store.programNow() ?: return@buildString
     if (program.templates.isEmpty()) return@buildString
+    // The sessions as «Прогресс» reads them, for «на 1 раз» below.
+    val rows = repo.setRows().first()
+    val bw = repo.bodyWeightLookup().first()
     appendLine("## Упражнения в плане (id — для функций)")
     for (t in program.templates) {
         val plan = runCatching { repo.liftPlan(t.id, today) }.getOrNull() ?: continue
@@ -346,6 +350,10 @@ private suspend fun exercises(repo: TrainingRepository, today: LocalDate): Strin
             // A plate on pull-ups is on top of the body; the estimate is of the whole load: said so, or 0 vs 85 kg reads as room.
             val plate = ex?.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS
             val each = if (ex?.perHand == true) " (каждая гантель)" else ""
+            // One number for «на 1 раз»: the one «Прогресс» and the exercise's page show. Asked «какой у меня максимум», the
+            // coach gave the engine's smoothed estimate, a few kilos behind and shown nowhere; that one is named beside it
+            // where it differs, as the weights and set_working_weight are worked out from it.
+            val shown = ex?.let { forma.core.analytics.Stats.oneRmNow(forma.core.analytics.Stats.e1rmSeries(rows, it, bw), today.toEpochDay(), stat?.e1rm) } ?: stat?.e1rm
             val parts = listOfNotNull(
                 "${p.sets} × ${i.slot.repMin}–${i.slot.repMax}" + (if (p.reps != i.slot.repMin) " (цель сейчас ${p.reps})" else ""),
                 "запас ${p.rir}",
@@ -364,7 +372,10 @@ private suspend fun exercises(repo: TrainingRepository, today: LocalDate): Strin
                 },
                 if (p.weight != null || p.calibrate) "шаг ${Ru.kg(i.step)} кг$each" + (if (i.stepFrom > 0) " от ${Ru.kg(i.stepFrom)} кг (вес только ${Ru.kg(i.stepFrom)}, ${Ru.kg(i.stepFrom + i.step)}, ${Ru.kg(i.stepFrom + 2 * i.step)} …)" else "") else null,
                 "отдых ${Ru.clock(i.slot.restSec)}",
-                stat?.let { "расчётный максимум ${Ru.kg(it.e1rm)} кг" + if (plate) " (вместе с весом тела)" else each },
+                shown?.let { y ->
+                    "расчётный максимум ${Ru.kg((y * 2).roundToInt() / 2.0)} кг" + (if (plate) " (вместе с весом тела)" else each) +
+                        (stat?.e1rm?.takeIf { x -> kotlin.math.abs(x - y) >= 0.5 }?.let { x -> ", веса приложение считает от сглаженного ${Ru.kg(x)} кг" } ?: "")
+                },
                 if (i.addedForGood) "добавлено человеком" else null,
             )
             appendLine("- ${i.name} [${i.exerciseId}]: ${parts.joinToString(", ")}")

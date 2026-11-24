@@ -96,6 +96,19 @@ object Texts {
     fun oneRm(ex: Exercise?, e1rm: Double): String =
         "${Ru.kg((e1rm * 2).roundToInt() / 2.0)} кг" + if (ex?.perHand == true && ex.load == LoadKind.EXTERNAL) " ×2" else ""
 
+    /**
+     * A one-rep estimate as the weight to put on: for a lift with the body, the estimate less the share of the body it moves
+     * (all of it on pull-ups, a third on leg raises), to half a kilo, as [weight] says it — «+32 кг», «помощь 19 кг» on an
+     * assisted one, «свой вес». The estimate counts the body in: «112 кг на 1 раз» for pull-ups read as 112 kg on the belt,
+     * and less the whole body, leg raises always read «свой вес». Other lifts as [oneRm] without the body.
+     */
+    fun oneRm(ex: Exercise?, e1rm: Double, bodyWeight: Double): String {
+        if (ex == null || ex.load != LoadKind.BODYWEIGHT_PLUS) return oneRm(ex, e1rm)
+        val extra = ((e1rm - ex.bodyShare * bodyWeight) * 2).roundToInt() / 2.0
+        // Below the body on a lift without help (a lighter day's weigh-in): the body alone, not «помощь».
+        return weight(ex, if (extra < 0 && !ex.assisted) 0.0 else extra)
+    }
+
     private fun target(ex: Exercise?, w: Double, reps: Int): String = weightReps(ex, w, reps)
 
     fun outcome(o: Outcome, ex: Exercise?): String = when (o) {

@@ -27,14 +27,14 @@ import forma.app.ui.components.GhostButton
 import forma.app.ui.components.StatTile
 import forma.app.ui.components.FCard
 import forma.app.ui.components.Hairline
-import forma.app.ui.components.LineChart
 import forma.app.ui.components.PrimaryButton
 import forma.app.ui.components.SectionLabel
-import forma.app.ui.components.Series
 import forma.app.ui.components.TopBar
+import forma.app.ui.components.TrendChart
 import forma.app.ui.components.NumText
 import forma.app.ui.theme.F
 import forma.app.ui.theme.T
+import forma.core.analytics.Point
 import forma.core.body.Body
 import forma.core.text.Ru
 import kotlinx.coroutines.launch
@@ -47,6 +47,7 @@ fun BodyScreen() {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val list by remember { repo.db.state().observeBodyWeight() }.collectAsState(initial = emptyList())
+    val today = forma.app.ui.rememberToday(repo).toEpochDay()
     // Empty until today's weight is typed: the last one is only the grey example, so one tap never saves an old weight
     // for today.
     var value by remember { mutableStateOf("") }
@@ -65,7 +66,14 @@ fun BodyScreen() {
             FCard {
                 // The chart spreads any change over its height: the first and the last weight say how big it is.
                 NumText("${Ru.kg(list.first().kg)} → ${Ru.kg(list.last().kg)}\u00A0кг", style = T.number(15.sp))
-                LineChart(listOf(Series(list.map { it.kg }, F.c.text, fill = true)), description = "Вес тела", xLabels = listOf(shortDate(LocalDate.ofEpochDay(list.first().epochDay)), shortDate(LocalDate.ofEpochDay(list.last().epochDay))))
+                // Each weigh-in at its date, from the first one to today, as «Прогресс» draws it: spaced evenly, a month
+                // between two weigh-ins looked like a day (10 and 12 October, 20 November: the middle one sat halfway).
+                val first = LocalDate.ofEpochDay(list.first().epochDay)
+                TrendChart(
+                    list.map { Point(it.epochDay, it.kg) }, first.toEpochDay(), maxOf(today, list.last().epochDay),
+                    "Вес тела по датам с ${shortDate(first)}: ${Ru.kg(list.first().kg)} → ${Ru.kg(list.last().kg)} кг",
+                    startLabel = shortDate(first),
+                )
             }
         }
         Estimates(list.lastOrNull()?.kg)

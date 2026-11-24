@@ -539,6 +539,29 @@ class TrainingRepository(
             return forma.core.strength.RirScale.bias(pairs)
         }
 
+        /**
+         * The sets of finished workouts [ws] as the charts and rows read them, each with the engine's own estimate of its
+         * exercise in that session (the best of the summary's reports for it): «Прогресс», the exercise's page, the coach
+         * and the session's record then say one number, not two readings of the same sets.
+         */
+        fun setRowsOf(ws: List<WorkoutEntity>, sets: List<SetEntity>): List<SetRow> {
+            val day = ws.associate { it.id to it.epochDay }
+            val engine = ws.filter { it.kind == Kind.LIFT }.associate { w ->
+                val reports = w.summaryJson?.let { runCatching { AppJson.decodeFromString(LiftSummary.serializer(), it) }.getOrNull() }?.reports.orEmpty()
+                w.id to reports.mapNotNull { r -> r.e1rm?.takeIf { it > 0 }?.let { r.exerciseId to it } }
+                    .groupBy({ it.first }, { it.second }).mapValues { (_, e) -> e.max() }
+            }
+            return sets.mapNotNull { s ->
+                day[s.workoutId]?.let { SetRow(s.workoutId, it, s.exerciseId, s.weight, s.reps, s.rir, s.targetReps, engine[s.workoutId]?.get(s.exerciseId)) }
+            }
+        }
+
+        /** Body weight on a day: the last weigh-in up to it, the first one before any, else [fallback] (the profile's). */
+        fun weightOn(list: List<BodyWeightEntity>, fallback: Double): (Long) -> Double {
+            val sorted = list.sortedBy { it.epochDay }
+            return { day -> sorted.lastOrNull { it.epochDay <= day }?.kg ?: sorted.firstOrNull()?.kg ?: fallback }
+        }
+
         /** What a finished workout stands for in the weekly plan. */
         fun sessionOf(w: WorkoutEntity): PlannedSession = when {
             w.kind == Kind.LIFT -> PlannedSession(SessionKind.LIFT, w.templateId)
@@ -2767,9 +2790,9 @@ class TrainingRepository(
             }
         }
 
+    // Each finished lift's summary read for its estimates: off the main thread, where the screens collect this.
     fun setRows(): Flow<List<SetRow>> = combine(db.sets().observeAllDone(), db.workouts().observeHistory()) { sets, ws ->
-        val day = ws.associate { it.id to it.epochDay }
-        sets.mapNotNull { s -> day[s.workoutId]?.let { SetRow(s.workoutId, it, s.exerciseId, s.weight, s.reps, s.rir, s.targetReps) } }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { setRowsOf(ws, sets) }
     }
 
     /**
@@ -2811,10 +2834,7 @@ class TrainingRepository(
 
     /** Body weight on a given day: the last logged value up to that day. */
     fun bodyWeightLookup(): Flow<(Long) -> Double> = combine(db.state().observeBodyWeight(), store.profile) { list, profile ->
-        val fallback = profile?.bodyWeightKg ?: 75.0
-        val sorted = list.sortedBy { it.epochDay }
-        val f: (Long) -> Double = { day -> sorted.lastOrNull { it.epochDay <= day }?.kg ?: sorted.firstOrNull()?.kg ?: fallback }
-        f
+        weightOn(list, profile?.bodyWeightKg ?: 75.0)
     }
 
     fun dailyLoads(): Flow<Map<LocalDate, Double>> = db.workouts().observeHistory().map { ws ->

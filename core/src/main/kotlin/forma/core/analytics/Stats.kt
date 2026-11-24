@@ -12,7 +12,10 @@ import java.time.temporal.TemporalAdjusters
 import kotlin.math.exp
 import kotlin.math.ln
 
-/** A logged working set with the day it was done. */
+/**
+ * A logged working set with the day it was done. [e1rm]: the engine's own estimate of its exercise in that session (the
+ * session's summary, the best of it where the exercise was done twice), null when the session has none.
+ */
 data class SetRow(
     val workoutId: Long,
     val epochDay: Long,
@@ -21,6 +24,7 @@ data class SetRow(
     val reps: Int,
     val rir: Int?,
     val targetReps: Int?,
+    val e1rm: Double? = null,
 )
 
 data class Point(val epochDay: Long, val value: Double)
@@ -34,13 +38,21 @@ object Stats {
      */
     private fun rirOf(r: SetRow, plannedRir: Int = 2) = r.rir ?: if (r.targetReps != null && r.targetReps > 1 && r.reps >= r.targetReps) plannedRir else 0
 
-    /** Best e1RM of each session for one exercise. Sessions with no load (a weighted exercise done at 0 kg) have none. */
+    /**
+     * Best e1RM of each session for one exercise. Sessions with no load (a weighted exercise done at 0 kg) have none. A
+     * session with the engine's own estimate ([SetRow.e1rm]) is read at it: the engine reads the sets with the plan of the
+     * day — the "+" set stopped with one in reserve, reps past the target out of the reserve, the reserve on the person's
+     * own scale, sets past 12 reps capped. Read a second way here, an unmarked bench 97,5 × 8, 8, 10 was 143,4 kg on
+     * «Прогресс» and 137,9 in the engine (the session's record, the floor under its weights). Without one, each set by its
+     * reserve as marked, else guessed ([rirOf]).
+     */
     fun e1rmSeries(rows: List<SetRow>, ex: Exercise, bodyWeight: (Long) -> Double): List<Point> =
         rows.filter { it.exerciseId == ex.id && it.reps > 0 && ex.load != LoadKind.TIMED }
             .groupBy { it.workoutId }
             .map { (_, sets) ->
                 val day = sets.first().epochDay
-                Point(day, sets.maxOf { OneRm.estimate(Progression.effectiveLoad(ex, it.weight, bodyWeight(day)), it.reps, rirOf(it)) })
+                val engine = sets.mapNotNull { it.e1rm }.maxOrNull()
+                Point(day, engine ?: sets.maxOf { OneRm.estimate(Progression.effectiveLoad(ex, it.weight, bodyWeight(day)), it.reps, rirOf(it)) })
             }
             .filter { it.value > 0 && it.value.isFinite() }
             .sortedBy { it.epochDay }
@@ -155,6 +167,14 @@ object Stats {
         if (upTo.isEmpty() || day - upTo.last().epochDay > ACTIVE_DAYS) return null
         return upTo.takeLast(2).filter { upTo.last().epochDay - it.epochDay <= ACTIVE_DAYS }.maxOf { it.value }
     }
+
+    /**
+     * The one number for «на 1 раз» wherever it is said — the exercise's page and its table, the coach, the export — as
+     * «Прогресс» has it ([liftOn] on [today]); a lift not done in the last four weeks keeps [stored] (the engine's working
+     * estimate), else its last session. The working estimate is smoothed and runs a few kilos behind: shown beside the
+     * other on one screen, one squat read 102,5, 108,5 and 100.
+     */
+    fun oneRmNow(series: List<Point>, today: Long, stored: Double?): Double? = liftOn(series, today) ?: stored ?: series.lastOrNull()?.value
 
     /**
      * An exercise now and its change since [fromDay], by the index's own rule ([liftOn]) — so a row never says less while

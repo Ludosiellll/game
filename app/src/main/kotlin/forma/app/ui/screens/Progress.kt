@@ -249,7 +249,7 @@ private fun StrengthSection(today: LocalDate, from: Long) {
  * One exercise as a row: its one-rep estimate now and the change over the window with its unit, by the index's own rule
  * ([Stats.liftChange]); a hold in seconds. Null when it was not done in the last four weeks.
  */
-private fun liftRow(ex: forma.core.model.Exercise, rows: List<SetRow>, bw: (Long) -> Double, from: Long, today: Long): Pair<String, String?>? {
+internal fun liftRow(ex: forma.core.model.Exercise, rows: List<SetRow>, bw: (Long) -> Double, from: Long, today: Long): Pair<String, String?>? {
     val timed = ex.load == forma.core.model.LoadKind.TIMED
     val series = if (timed) rows.filter { it.reps > 0 }.groupBy { it.workoutId }
         .map { (_, s) -> Point(s.first().epochDay, s.maxOf { it.reps }.toDouble()) }.sortedBy { it.epochDay }
@@ -258,8 +258,9 @@ private fun liftRow(ex: forma.core.model.Exercise, rows: List<SetRow>, bw: (Long
     fun kg(v: Double) = Ru.kg((v * 2).roundToInt() / 2.0)
     val value = when {
         timed -> "${now.roundToInt()} с"
-        // A lift with the body: what is added to it, not the body counted in.
-        ex.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS -> (now - bw(today)).let { if (it >= 0.5) "+${kg(it)} кг" else "свой вес" }
+        // A lift with the body: what is added to it, not the body counted in — less the share of the body it moves, not
+        // all of it (leg raises move a third: «свой вес» whatever was done; help on pull-ups read «свой вес»).
+        ex.load == forma.core.model.LoadKind.BODYWEIGHT_PLUS -> forma.app.ui.Texts.oneRm(ex, now, bw(today))
         else -> "${kg(now)} кг"
     }
     val shown = if (timed) delta.roundToInt().toDouble() else (delta * 2).roundToInt() / 2.0
@@ -362,18 +363,26 @@ private fun LadderLine(st: forma.core.run.RunState, today: LocalDate) {
     )
 }
 
-/** Kilometres a week over the window, this week last; minutes when the runs have no distance (by time, no GPS). */
+/**
+ * Kilometres a week over the window, this week last; minutes when a run in it has no distance (by time, no GPS, or entered
+ * by hand with the time alone): in kilometres such a run added nothing, and a week of only such runs read «0,0».
+ */
 @Composable
 private fun RunWeeks(runs: List<forma.app.data.RunEntity>, dayOf: Map<Long, Long>, today: LocalDate, titled: Boolean = false) {
     val monday = Stats.monday(today).minusWeeks((WEEKS - 1).toLong()).toEpochDay()
     val km = DoubleArray(WEEKS)
     val min = DoubleArray(WEEKS)
+    var unmeasured = false
     runs.forEach { r ->
         val d = dayOf[r.workoutId] ?: return@forEach
         val w = ((d - monday) / 7).toInt()
-        if (d >= monday && w in 0 until WEEKS) { km[w] += (r.distanceM ?: 0.0) / 1000; min[w] += r.movingSec / 60.0 }
+        if (d >= monday && w in 0 until WEEKS) {
+            km[w] += (r.distanceM ?: 0.0) / 1000
+            min[w] += r.movingSec / 60.0
+            if ((r.distanceM ?: 0.0) <= 0.0 && r.movingSec > 0) unmeasured = true
+        }
     }
-    val useKm = km.sum() > 0.0
+    val useKm = km.sum() > 0.0 && !unmeasured
     if (!useKm && min.sum() <= 0.0) return
     val what = if (useKm) "Километры по неделям" else "Минуты по неделям"
     if (titled) Text(what, style = T.secondary(14.sp))

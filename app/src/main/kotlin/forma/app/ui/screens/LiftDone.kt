@@ -62,6 +62,8 @@ fun LiftDoneScreen(workoutId: Long) {
             StatTile("Поднято", Ru.one(summary.volumeKg / 1000), "тонны", F.c.strength, Modifier.weight(1f))
         }
         val records = summary.reports.filter { it.record }
+        // The body weight the session's estimates were made with (the profile's, as the engine reads it).
+        val profile by repo.store.profile.collectAsState(initial = null)
         if (records.isNotEmpty()) {
             FCard(outline = F.c.strength) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -69,7 +71,16 @@ fun LiftDoneScreen(workoutId: Long) {
                     Text("Новый рекорд силы", style = T.title(18.sp))
                 }
                 records.forEach { r ->
-                    Text("${r.name}: около ${Texts.oneRm(Catalog.find(r.exerciseId), r.e1rm ?: 0.0)} на 1 раз", style = T.body(15.sp))
+                    val ex = Catalog.find(r.exerciseId)
+                    val body = profile?.bodyWeightKg
+                    // A lift with the body: what is added to it, as «Прогресс» says it — «Подтягивания: около 112 кг на
+                    // 1 раз» read as 112 kg on the belt. The name alone until the body weight is read.
+                    val line = when {
+                        ex?.load != LoadKind.BODYWEIGHT_PLUS -> "${r.name}: около ${Texts.oneRm(ex, r.e1rm ?: 0.0)} на 1 раз"
+                        body != null -> "${r.name}: ${Texts.oneRm(ex, r.e1rm ?: 0.0, body)} на 1 раз"
+                        else -> r.name
+                    }
+                    Text(line, style = T.body(15.sp))
                 }
             }
         }
