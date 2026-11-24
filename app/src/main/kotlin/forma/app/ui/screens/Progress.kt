@@ -276,7 +276,7 @@ private fun RunSection(today: LocalDate, from: Long) {
     val runs by remember { repo.db.runs().observeAll() }.collectAsState(initial = emptyList())
     val workouts by remember { repo.db.workouts().observeHistory() }.collectAsState(initial = emptyList())
     val profile by repo.store.profile.collectAsState(initial = null)
-    val st = runState?.let { RunPlan.estimated(RunPlan.withBreak(it, today.toEpochDay()), profile?.runGoal) }
+    val st = runState?.let { RunPlan.current(it, profile?.runGoal, today.toEpochDay()) }
     val goal = profile?.runGoal
     val lapM = profile?.lapMeters
     if (goal == null && profile?.finish == null && runs.isEmpty()) return

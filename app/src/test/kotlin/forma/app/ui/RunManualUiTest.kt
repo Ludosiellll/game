@@ -212,7 +212,12 @@ class RunManualUiTest {
 
     @Test fun aTrialOnTheWatch() {
         val repo = repo("ui-manual-trial")
-        val w: RunWorkout = runBlocking { RunPlan.goalTest(repo.store.runStateNow().copy(vdot = 46.0), RunGoal(1500, 335), 230) }
+        // A runner with a trial counted before (46): the time typed from the watch is believable from there. (Going by an
+        // estimate alone, a typed 52 past the goal by 4 would be asked about as a typo — the audit of 24.11.)
+        val w: RunWorkout = runBlocking {
+            repo.store.setRunState(repo.store.runStateNow().copy(vdot = 46.0))
+            RunPlan.goalTest(repo.store.runStateNow(), RunGoal(1500, 335), 230)
+        }
         show(repo, Navigator(Screen.Today)) { RunManualScreen(w) }
         type("Время забега", "5:38")
         compose.onNodeWithText("9").performScrollTo().performClick()

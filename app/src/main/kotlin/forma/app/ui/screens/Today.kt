@@ -322,7 +322,7 @@ fun TodayScreen() {
             )
             // The time over the goal's distance (5 km without one), as «Прогресс» gives it: from a trial, or the estimate
             // before any is counted (said with «≈»); a break taken into account. A time, not the fitness number behind it.
-            val rs = runState?.let { forma.core.run.RunPlan.estimated(forma.core.run.RunPlan.withBreak(it, today.toEpochDay()), runGoal) }
+            val rs = runState?.let { forma.core.run.RunPlan.current(it, runGoal, today.toEpochDay()) }
             val approx = rs?.estimated == true
             val dist = runGoal?.meters ?: 5000
             val forecast = rs?.fitness?.let { Vdot.predictSeconds(it, dist.toDouble()) }

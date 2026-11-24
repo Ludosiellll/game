@@ -1213,6 +1213,14 @@ object RunPlan {
      * four weeks or more the first 2–3 runs are easy. The usual rules then build everything back up.
      * Applied once: the result counts the break as taken.
      */
+    /**
+     * The running state as it stands on [day]: the estimate first (from the goal, less the hard runs missed since: it stands
+     * for what the runner is shown to hold), then a break past a week ([withBreak]) on it. The other way round a break
+     * raised the estimate: it clears the misses, and the estimate worked out after it no longer took them off (Denis on
+     * 24.11: 41 after eight days off, 40 before; the check of the progression, 24.11).
+     */
+    fun current(state: RunState, goal: RunGoal?, day: Long): RunState = withBreak(estimated(state, goal), day)
+
     fun withBreak(state: RunState, day: Long): RunState {
         val off = breakDays(state, day) ?: return state
         val keep = when {
@@ -1377,7 +1385,7 @@ object RunPlan {
         val original = state
         // Every decision below starts from the state after any break was taken into account.
         // Without a trial counted, the estimate to go by (kept from here on).
-        @Suppress("NAME_SHADOWING") val state = estimated(withBreak(original, day), goal)
+        @Suppress("NAME_SHADOWING") val state = current(original, goal, day)
         val est = state.estimated
         if (state.vdot != original.vdot && state.vdot != null) out += RunOutcome.VdotChanged(original.vdot, state.vdot)
         var s = state.copy(

@@ -136,6 +136,16 @@ internal fun exerciseOf(id: String, settings: forma.app.data.Settings?, item: Li
 }
 
 /** Values being edited for the next set of one exercise. [exerciseId]: the exercise they were typed for (a swap puts another one at the same position). */
+/**
+ * The fields for the next set ([typed]: weight, reps and the reserve picked) after the logged sets were put right or a
+ * set deleted: the weight and reps worked out from the sets as they are now ([after]) only while the fields still hold
+ * what the sets before put there ([before]); a weight or reps typed since stay, and the reserve picked always stays —
+ * «+» pressed for the next set, then the last set rated as its hint asks, must not bring the old weight back nor clear
+ * the reserve (gym-04, the audit of November).
+ */
+internal fun fieldsAfterEdit(typed: Triple<Double, Int, Int?>, before: Pair<Double, Int>, after: Pair<Double, Int>): Triple<Double, Int, Int?> =
+    if (typed.first == before.first && typed.second == before.second) Triple(after.first, after.second, typed.third) else typed
+
 private class SetInput(val exerciseId: String, weight: Double, reps: Int) {
     var weight by mutableStateOf(weight)
     var reps by mutableIntStateOf(reps)
@@ -256,10 +266,13 @@ fun WorkoutScreen(workoutId: Long) {
      */
     fun resume(inp: SetInput, item: LiftItem, logged: List<SetEntity>, was: List<SetEntity>? = null) {
         val (weight, reps, hint) = nextOf(item, logged)
-        if (was == null || nextOf(item, was).let { (wasWeight, wasReps) -> wasWeight == inp.weight && wasReps == inp.reps }) {
-            inp.weight = weight
-            inp.reps = reps
+        val (w, r, rir) = if (was == null) Triple(weight, reps, inp.rir) else {
+            val (wasWeight, wasReps) = nextOf(item, was)
+            fieldsAfterEdit(Triple(inp.weight, inp.reps, inp.rir), wasWeight to wasReps, weight to reps)
         }
+        inp.weight = w
+        inp.reps = r
+        inp.rir = rir
         if (hint != null) advice[keyOf(item)] = hint else advice.remove(keyOf(item))
     }
 

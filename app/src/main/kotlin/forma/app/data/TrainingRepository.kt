@@ -2190,7 +2190,7 @@ class TrainingRepository(
         val caps = capsOn(date)
         // Before any trial is counted every pace comes from the estimate of the fitness: from the goal at first, then as
         // the runs go ([RunPlan.estimated]).
-        val st = RunPlan.withBreak(saved, date.toEpochDay()).let { if (minutes != null && kind == SessionKind.RUN_EASY) it.copy(easyMinutes = minutes) else it }.let {
+        val st = RunPlan.current(saved, goal, date.toEpochDay()).let { if (minutes != null && kind == SessionKind.RUN_EASY) it.copy(easyMinutes = minutes) else it }.let {
             if (caps == null) it else it.copy(easyMinutes = minOf(it.easyMinutes, caps.easyMax), longMinutes = minOf(it.longMinutes, caps.longMax))
         }.let { s -> RunPlan.weekCap(saved, date.toEpochDay())?.let { cap -> s.copy(easyMinutes = minOf(s.easyMinutes, cap), longMinutes = minOf(s.longMinutes, cap)) } ?: s }
             .let { RunPlan.estimated(it, goal) }

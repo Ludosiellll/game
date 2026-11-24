@@ -266,6 +266,22 @@ class AuditFixRunEngineTest {
         assertEquals(Track.lapSec(eased, loop), lapOf(RunPlan.goalPace(a.state, goal, loop)), 0.1)
     }
 
+    /**
+     * The check of the progression, 24.11: eight days without running raised Denis's estimate from 40 to 41 — the break
+     * cleared the hard run missed, and the estimate worked out after it no longer took it off. A break never raises it.
+     */
+    @Test fun aBreakNeverRaisesTheEstimate() {
+        // His state on 16.11: no trial counted, one hard run missed, the estimate not stored (worked out from the goal).
+        val st = RunState(walkStage = -1, qualityFails = 1, runs = 12, lastRunDay = 20773)
+        val before = assertNotNull(RunPlan.current(st, goal, 20774).fitness)
+        val after = assertNotNull(RunPlan.current(st, goal, 20773 + 9).fitness)
+        assertTrue(after <= before, "after the break $after, before $before")
+        // And a run planned and saved after the break goes by that lower estimate, not the goal's.
+        val w = RunPlan.easy(st)
+        val saved = RunPlan.after(st, w, RunResult(1.0, 4, w.totalSeconds), caps, day = 20773 + 9, goal = goal).state
+        assertTrue(assertNotNull(saved.fitness) <= before, "${saved.fitness} after a run past the break, $before before")
+    }
+
     /** gaps:tight-loop-one-way */
     @Test fun stridesAfterAnEasyRunFitTheStraightOfASmallLoop() {
         val w = RunPlan.easy(RunState(walkStage = -1, vdot = 40.0, runs = 12), strides = 6)

@@ -232,7 +232,9 @@ class RunRulesTest {
         // The form is said to move by a trial, the ladder, the easy runs' pace or a break: the last said is the form —
         // measured, or the estimate gone by before any trial (it starts from the goal with no word, and a break cuts it).
         val vs = a.outcomes.mapNotNull { o -> when (o) { is RunOutcome.VdotChanged -> o.to; is RunOutcome.EasyPaces -> o.to; is RunOutcome.EstChanged -> o.to; else -> null } }
-        val estBefore = RunPlan.estimated(RunPlan.withBreak(c.state, c.day), c.goal).estVdot
+        // As the plan sees the state before the run: the estimate first, then the break on it ([RunPlan.current]; the other
+        // way round a break raised the estimate — the check of the progression, 24.11).
+        val estBefore = RunPlan.current(c.state, c.goal, c.day).estVdot
         when {
             s.vdot?.let { it.isNaN() || it < RunPlan.MIN_VDOT - 1e-9 || it > RunPlan.MAX_VDOT + 1e-9 } == true -> "форма ${s.vdot}"
             s.easyMinutes !in 10..300 || s.longMinutes !in 10..400 -> "лёгкий ${s.easyMinutes}, длинный ${s.longMinutes}"

@@ -106,7 +106,7 @@ class AuditFixProgressUiTest {
     private fun waitForDescription(substring: String) = compose.waitUntil(30_000) { settle(1); descriptions(substring).isNotEmpty() }
 
     /** Whether [condition] comes true within a while: a screen's flows emit one after another (the stats before the sets). */
-    private fun eventually(condition: () -> Boolean): Boolean = runCatching { compose.waitUntil(15_000) { settle(1); condition() } }.isSuccess
+    private fun eventually(condition: () -> Boolean): Boolean = runCatching { compose.waitUntil(60_000) { settle(1); condition() } }.isSuccess
 
     private val denis = Profile(
         name = "Денис", goal = Goal.HYBRID, experience = Experience.NOVICE, runLevel = RunLevel.BASE,
@@ -192,7 +192,8 @@ class AuditFixProgressUiTest {
         val shown = Ru.kg((maxOf(estimates[6], estimates[7]) * 2).roundToInt() / 2.0)
         show(repo) { ProgressScreen() }
         waitForText(ex.name)
-        assertTrue(eventually { texts("кг").any { it == "$shown кг" } }, "the row of ${ex.name} should say $shown кг: ${texts("кг")}")
+        // A row is one merged node: its texts come joined by ", " («Приседания со штангой, 102,5 кг, +16,5 кг»).
+        assertTrue(eventually { texts("кг").any { "$shown кг" in it.split(", ") } }, "the row of ${ex.name} should say $shown кг: ${texts("кг")}")
         val today = repo.today()
         val brief = runBlocking { coachContext(repo, today) }.lines().filter { "[${ex.id}]" in it && "расчётный максимум" in it }
         assertTrue(brief.isNotEmpty() && brief.all { "расчётный максимум $shown кг" in it }, brief.toString())

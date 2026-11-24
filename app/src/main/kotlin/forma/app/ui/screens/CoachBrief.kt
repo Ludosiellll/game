@@ -392,7 +392,7 @@ private suspend fun running(repo: TrainingRepository, today: LocalDate): String 
     // As «Сегодня» and the plan go by it: after more than a week without running the runs are shorter, the fitness and the
     // paces lower. The brief gave the numbers from before the break, its own list of runs the shorter ones.
     val off = forma.core.run.RunPlan.breakDays(saved, today.toEpochDay())
-    val st = forma.core.run.RunPlan.withBreak(saved, today.toEpochDay())
+    val st = forma.core.run.RunPlan.current(saved, profile?.runGoal, today.toEpochDay())
     val caps = ProgramGenerator.runCaps(program, profile?.runGoal?.middleDistance == true)
     appendLine("## Бег сейчас")
     off?.let { appendLine("- После перерыва ${Ru.days(it)} без бега: длины, форма и темпы ниже уже с учётом перерыва, как на «Сегодня»; первая пробежка лёгкая.") }

@@ -1083,7 +1083,7 @@ object CoachActions {
                 val profile = repo.store.profileNow()
                 val goal = profile?.runGoal
                 val program = repo.store.programNow() ?: return no("Нет плана.")
-                val st = forma.core.run.RunPlan.estimated(forma.core.run.RunPlan.withBreak(repo.store.runStateNow(), today.toEpochDay()), goal)
+                val st = forma.core.run.RunPlan.current(repo.store.runStateNow(), goal, today.toEpochDay())
                 if (!st.canRunContinuously) return no("Пока бег чередуется с ходьбой: пробежки ведёт лестница приложения.")
                 if (repo.paused(s, today)) return no("Сейчас пауза в плане.")
                 if (s.feelOn(today) == forma.app.data.Feel.SICK) return no("Сегодня отмечено «Болею»: бегать не нужно.")
