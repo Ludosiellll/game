@@ -675,7 +675,7 @@ object CoachActions {
                 }
                 either(going == null && !old, "Оценка «${w.title}» за ${Ru.date(LocalDate.ofEpochDay(w.epochDay))}: ${w.rpe ?: "—"} → $rpe.$about") {
                     repo.setRating(w.id, rpe)
-                    w.rpe?.let { CoachCall("undo_rate", args("workout" to w.id, "rpe" to it, "expect" to rpe)) }
+                    w.rpe?.let { CoachCall("undo_rate", args("workout" to w.id, "uid" to w.uid, "rpe" to it, "expect" to rpe)) }
                 }
             }
             LAPS -> {
@@ -712,7 +712,7 @@ object CoachActions {
                 confirm("Пробежка «${w.title}» ${Ru.date(LocalDate.ofEpochDay(w.epochDay))}: $what" +
                     if (reps) " Если после неё ещё не было пробежек, она решится заново по этим кругам." else "") {
                     repo.editRunLaps(w.id, fixed)
-                    CoachCall("undo_laps", args("workout" to w.id, "laps" to lapsJson(laps), "expect" to lapsJson(fixed)))
+                    CoachCall("undo_laps", args("workout" to w.id, "uid" to w.uid, "laps" to lapsJson(laps), "expect" to lapsJson(fixed)))
                 }
             }
             EASY -> {
@@ -1885,6 +1885,16 @@ object CoachActions {
         return done
     }
 
+    /**
+     * The workout a change was made to: by its global id where the change kept it — the log syncs since 23 November, and
+     * on another phone the workouts come from the cloud under other local ids (one of them may be this one's); not found
+     * there, nothing is taken back. Changes made before that kept the local id alone.
+     */
+    private suspend fun workoutOf(repo: TrainingRepository, a: JsonObject): WorkoutEntity? {
+        val uid = a.str("uid") ?: return a.long("workout")?.let { repo.db.workouts().get(it) }
+        return repo.db.sync().workoutByUid(uid)
+    }
+
     private suspend fun undoOf(repo: TrainingRepository, call: CoachCall): Boolean {
         val a = call.args
         return when (call.name) {
@@ -1920,8 +1930,8 @@ object CoachActions {
                 true
             }
             "undo_rate" -> {
-                val id = a.long("workout")!!
-                if (repo.db.workouts().get(id)?.rpe != a.int("expect")) false else { repo.setRating(id, a.int("rpe")!!); true }
+                val w = workoutOf(repo, a) ?: return false
+                if (w.rpe != a.int("expect")) false else { repo.setRating(w.id, a.int("rpe")!!); true }
             }
             "undo_lighter" -> {
                 val p = repo.store.programNow() ?: return false
@@ -2291,11 +2301,10 @@ object CoachActions {
                 }
             }
             "undo_laps" -> {
-                val id = a.long("workout") ?: return false
-                val w = repo.db.workouts().get(id) ?: return false
+                val w = workoutOf(repo, a) ?: return false
                 val now = w.summaryJson?.let { runCatching { AppJson.decodeFromString(RunSummary.serializer(), it) }.getOrNull() }?.laps
                 // The laps as the coach left them, or put right since by hand: then they stay.
-                if (now != lapsOf(a["expect"])) false else { repo.editRunLaps(id, lapsOf(a["laps"])); true }
+                if (now != lapsOf(a["expect"])) false else { repo.editRunLaps(w.id, lapsOf(a["laps"])); true }
             }
             "undo_lap" -> {
                 val profile = repo.store.profileNow() ?: return false

@@ -142,7 +142,9 @@ fun ProgramWizardScreen() {
     val nav = LocalNav.current
     val profile = repo.store.profile.collectAsState(initial = null).value ?: return
     ProgramWizard(profile, first = false, onBack = { nav.back() }) { p ->
-        repo.updateProfile(p)
+        // The program its last step showed, on a friend's program too: not one's own put aside, which the profile screen
+        // brings back when the aim and days stay the copy's.
+        repo.updateProfile(p, asAnswered = true)
         nav.back()
     }
 }

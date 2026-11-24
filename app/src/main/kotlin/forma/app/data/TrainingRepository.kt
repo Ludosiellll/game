@@ -254,14 +254,23 @@ class TrainingRepository(
         else -> next.copy(keptAim = next.keptAim ?: old?.keptAim)
     }
 
-    suspend fun updateProfile(input: Profile) {
+    /**
+     * [asAnswered]: saved from the program wizard, whose last step showed the program built from [input]. That program is
+     * the one saved, on a friend's program too: one's own program put aside never comes back in its place (the audit of
+     * 24 November: «Всё тело» shown on the friend's days, the old own upper / lower days saved); its edits do, as with
+     * new days.
+     */
+    suspend fun updateProfile(input: Profile, asAnswered: Boolean = false) {
         val old = store.profileNow()
         // Saved on a friend's program without a new aim or days (the screen showed the copy's): one's own program comes
         // back as it was, its days too; with new ones, a plan is built from them.
-        val own = store.settingsNow().ownPlan?.takeIf { old != null && store.programNow()?.copiedFrom != null && sameShape(old, input) }
+        val own = store.settingsNow().ownPlan?.takeIf { !asAnswered && old != null && store.programNow()?.copiedFrom != null && sameShape(old, input) }
         val profile = keptAimOf(old, own?.let { withShapeOf(input, it.profile) } ?: input)
         if (old != null && (old.gear != profile.gear || old.pullupBar != profile.pullupBar)) moveKit(old, profile)
         store.setProfile(profile)
+        // The sessions the edits kept per session were made on: one's own put aside on a friend's program (they come back
+        // with it below), else the plan's until now.
+        val laidOut = store.settingsNow().ownPlan?.program ?: store.programNow()
         store.setProgram(own?.let { ownProgram(profile, it) } ?: keepCycle(ProgramGenerator.generate(profile, today()), store.programNow()))
         reapplyPicks()
         val raceChanged = old == null || old.raceMeters != profile.raceMeters || old.raceSeconds != profile.raceSeconds
@@ -296,6 +305,8 @@ class TrainingRepository(
         if (old?.bodyWeightKg != profile.bodyWeightKg) logBodyWeight(profile.bodyWeightKg)
         // Leaving a friend's program for an own one: the own edits put aside when copying belong to it again.
         store.settingsNow().ownPlan?.let { own -> store.setSettings(own.editsInto(store.settingsNow())) }
+        // Laid out in other sessions (another split, other days): what was kept per session goes to the new ones.
+        laidOut?.let { moveDays(it) }
         onChange()
     }
 
@@ -324,9 +335,13 @@ class TrainingRepository(
         onChange()
     }
 
-    /** The same aim, days and session length: what the plan is laid out by. */
+    /**
+     * The same aim, days and session length, the gym divided the same way and done in the same place: what the plan is
+     * laid out by. Another split, other accents or another kit is a new layout the own program put aside does not have.
+     */
     private fun sameShape(a: Profile, b: Profile) = a.aim == b.aim && a.trainingDays == b.trainingDays && a.gymDays == b.gymDays &&
-        a.runDays == b.runDays && a.doubleDays == b.doubleDays && a.sessionMinutes == b.sessionMinutes
+        a.runDays == b.runDays && a.doubleDays == b.doubleDays && a.sessionMinutes == b.sessionMinutes &&
+        a.split == b.split && a.accents == b.accents && a.gear == b.gear && a.pullupBar == b.pullupBar
 
     /** [profile] with the aim, days and session length of [p]. */
     private fun withShapeOf(profile: Profile, p: Profile) = profile.copy(
@@ -752,6 +767,80 @@ class TrainingRepository(
             val to = addedKey(templateId, newId)
             fun <V> Map<String, V>.move(): Map<String, V> = this[from]?.let { (this - from) + (to to it) } ?: this
             return s.copy(added = s.added + (templateId to next), sets = s.sets.move(), reps = s.reps.move(), rest = s.rest.move())
+        }
+
+        /**
+         * The session of [to] that takes the place of [t], a session of [from]: of those [fits] allows, the one with most of
+         * its exercises, then one on a weekday [t] had, then the first. Null when [fits] allows none.
+         */
+        internal fun placeOf(
+            t: forma.core.plan.Template, from: Program, to: Program, fits: (forma.core.plan.Template) -> Boolean = { true },
+        ): forma.core.plan.Template? {
+            val mine = t.slots.map { it.exerciseId }.toSet()
+            val days = from.week.days.filter { d -> d.sessions.any { it.templateId == t.id } }.map { it.day }.toSet()
+            fun onItsDay(n: forma.core.plan.Template) = to.week.days.any { d -> d.day in days && d.sessions.any { it.templateId == n.id } }
+            return to.templates.filter(fits).sortedWith(
+                compareByDescending<forma.core.plan.Template> { n -> n.slots.count { it.exerciseId in mine } }.thenByDescending { onItsDay(it) },
+            ).firstOrNull()
+        }
+
+        /**
+         * [s] with the exercises added for good to the sessions of [from] that [to] has no more (another split, other days)
+         * in the sessions that take their places ([placeOf]), with their own sets, reps and rest and the gym goal's day:
+         * Settings.added and the numbers are kept by session id, and the plan reads only its own sessions' (a new layout
+         * dropped them without a word). Each goes to a session of its half of the body that does not have it yet; with
+         * none, it stays where it was and comes back with that session.
+         */
+        internal fun withDaysMoved(s: Settings, from: Program, to: Program): Settings {
+            val ids = to.templates.map { it.id }.toSet()
+            var n = s
+            for (t in from.templates) {
+                val list = n.added[t.id].orEmpty()
+                if (t.id in ids || list.isEmpty()) continue
+                val left = mutableListOf<String>()
+                for (ex in list) {
+                    val lower = Catalog.find(ex)?.lowerBody == true
+                    val held = n.added
+                    val swaps = n.swaps
+                    val place = placeOf(t, from, to) { d ->
+                        (d.focus == forma.core.plan.Focus.FULL || (d.focus == forma.core.plan.Focus.LOWER) == lower) &&
+                            d.slots.none { it.exerciseId == ex || swaps[it.exerciseId] == ex } && ex !in held[d.id].orEmpty()
+                    }
+                    if (place == null) {
+                        left += ex
+                        continue
+                    }
+                    val was = addedKey(t.id, ex)
+                    val now = addedKey(place.id, ex)
+                    fun <V> Map<String, V>.moved(): Map<String, V> = this[was]?.let { (this - was) + (now to it) } ?: this
+                    fun rekeyed(l: List<KeyNumbers>) = l.map { if (it.key == was) it.copy(key = now) else it }
+                    n = n.copy(
+                        added = n.added + (place.id to n.added[place.id].orEmpty() + ex),
+                        sets = n.sets.moved(), reps = n.reps.moved(), rest = n.rest.moved(),
+                        // The goal's changes are taken back by these keys and this day: they move with the exercise.
+                        goalPlan = n.goalPlan?.let { g ->
+                            g.copy(
+                                before = rekeyed(g.before), after = rekeyed(g.after),
+                                addedTo = if (g.addedTo == t.id && g.exerciseId == ex) place.id else g.addedTo,
+                            )
+                        },
+                    )
+                }
+                n = n.copy(added = if (left.isEmpty()) n.added - t.id else n.added + (t.id to left))
+            }
+            return n
+        }
+
+        /**
+         * [base], a session's exercises in the app's order, with those [own] names in [own]'s order, each in a place one of
+         * them has in [base]: the others keep theirs (a main lift new to the session is not pushed down below them). Null
+         * when fewer than two are named: no order among them to keep.
+         */
+        internal fun ownOrderIn(base: List<String>, own: List<String>): List<String>? {
+            val named = own.distinct().filter { it in base }
+            if (named.size < 2) return null
+            val rest = named.iterator()
+            return base.map { if (it in named && rest.hasNext()) rest.next() else it }
         }
 
         /** [s] with sets, reps and rest of [planId] for good; values equal to the plan's own ([planned]) clear the override. */
@@ -1520,6 +1609,34 @@ class TrainingRepository(
         val program = store.programNow() ?: return
         val profile = store.profileNow() ?: return
         store.editSettings { withPicks(it, program, profile).first }
+    }
+
+    /**
+     * The plan laid out in other sessions than [from]'s (another split, other days): what the person kept per session goes
+     * to the session that takes its place — exercises added for good with their numbers ([withDaysMoved]), and an own
+     * order of a session ([Settings.order]), kept among those of its exercises the new session has, in their places there
+     * ([ownOrderIn]). What has no such session stays where it was, and comes back with that session.
+     */
+    private suspend fun moveDays(from: Program) {
+        val to = store.programNow() ?: return
+        val ids = to.templates.map { it.id }.toSet()
+        val gone = from.templates.filter { it.id !in ids }
+        if (gone.isEmpty()) return
+        val was = store.settingsNow()
+        // Each own order as the session had it: those it names first, the rest of the session after them.
+        val orders = gone.mapNotNull { t ->
+            was.order[t.id]?.takeIf { it.isNotEmpty() }?.let { own -> t to (own + t.slots.map { it.exerciseId } + was.added[t.id].orEmpty()).distinct() }
+        }
+        store.editSettings { withDaysMoved(it, from, to) }
+        for ((t, own) in orders) {
+            val s = store.settingsNow()
+            // A session with an own order of its own keeps it.
+            val place = placeOf(t, from, to) { s.order[it.id].isNullOrEmpty() } ?: continue
+            // The new session as the app orders it, the exercises added for good moved to it included.
+            val base = runCatching { liftPlan(place.id, today()) }.getOrNull()?.items?.map { it.planId ?: it.exerciseId } ?: continue
+            val merged = ownOrderIn(base, own) ?: continue
+            store.editSettings { it.copy(order = (it.order - t.id) + (place.id to merged)) }
+        }
     }
 
     /** Sets of [planId] in every session from now on; null (or the plan's own number) brings the plan's back. */
