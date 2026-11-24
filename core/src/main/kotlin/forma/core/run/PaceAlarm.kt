@@ -39,5 +39,13 @@ class PaceAlarm {
         const val SETTLE_MS = 30_000L
         const val HOLD_MS = 20_000L
         const val REPEAT_MS = 60_000L
+
+        /**
+         * The fast limit of the segment [seg] of [w] at [intoSec] seconds into it, for [update]: none in the second half
+         * of a time trial or the race — run on as fast as is left, as their notes say («дальше на сколько хватит сил»);
+         * «Быстрее цели, чуть сбавь» there held the runner back on the way to the finish.
+         */
+        fun fastLimit(w: RunWorkout, seg: Segment, intoSec: Int): Double? =
+            seg.pace?.fast?.toDouble()?.takeIf { w.testMeters == null || intoSec * 2 < seg.seconds }
     }
 }

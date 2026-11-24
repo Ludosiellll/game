@@ -40,6 +40,8 @@ data class RunUi(
     val cadence: Int? = null,
     /** The last laps pressed, oldest first (at most [RECENT_LAPS]): the bars on the run screen. */
     val recentLaps: List<forma.core.run.Lap> = emptyList(),
+    /** Fixes came, and none for a while: the GPS signal is gone ([RunTracker.gpsLost]); [gpsAccuracy] is null then. */
+    val gpsLost: Boolean = false,
 )
 
 /** How many of the last laps the run screen draws. */
@@ -221,13 +223,14 @@ object RunSession {
         val t = tracker ?: return
         _ui.value = RunUi(
             t.workout, t.state, t.activeSec(nowMs), t.timeline(nowMs), t.shownDistanceM(), t.currentPace(nowMs), t.averagePace(nowMs),
-            gpsEnabled, t.lastAccuracy, startedAtWall, restored, t.laps.lastOrNull(), t.laps.size,
+            gpsEnabled, t.accuracyNow(nowMs), startedAtWall, restored, t.laps.lastOrNull(), t.laps.size,
             if (t.workout.lapMeters != null) t.lapClockSec(nowMs) else null,
             if (t.workout.isOpenEnded) 0 else ((t.timelineMs(nowMs) / 1000).toInt() - t.workout.totalSeconds).coerceAtLeast(0),
             t.waiting(nowMs),
             autoPaused && t.state == RunTracker.State.PAUSED,
             t.cadence(),
             t.laps.takeLast(RECENT_LAPS),
+            gpsLost = t.gpsLost(nowMs),
         )
     }
 

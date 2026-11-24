@@ -271,10 +271,16 @@ class TrainingRepository(
             // A test run since says more than a race typed long ago; a race typed now says more than the old fitness.
             val vdot = if (raceChanged) init.vdot ?: cur.vdot else cur.vdot ?: init.vdot
             val next = if (old?.runLevel != profile.runLevel) {
-                // Another level: its starting lengths and steps, but what running has shown stays.
+                // Another level: its starting lengths and steps, but what running has shown stays — the estimate the runs
+                // moved, the paces held in race-pace reps, the own tempo reps, the effort scale, the easy runs owed after a
+                // break and the trial put off (they were lost: the estimate back to the goal's minus 8, the coach's tempo gone).
                 init.copy(
                     vdot = vdot, runs = cur.runs, recent = cur.recent, lastRunDay = cur.lastRunDay, lastTestDay = cur.lastTestDay,
                     lastVdotUpDay = cur.lastVdotUpDay, goalStage = cur.goalStage, qualityCount = cur.qualityCount,
+                    estVdot = cur.estVdot.takeIf { vdot == null }, estUpDay = cur.estUpDay, goalRepPace = cur.goalRepPace,
+                    goalRepPaces = cur.goalRepPaces, tempoOwn = cur.tempoOwn, tempoSoft = cur.tempoSoft, easyRpes = cur.easyRpes,
+                    easySigns = cur.easySigns, returnEasy = cur.returnEasy, lastTrialTryDay = cur.lastTrialTryDay,
+                    noTrialUntil = cur.noTrialUntil, goalDeferredOn = cur.goalDeferredOn, qualityAhead = cur.qualityAhead,
                 )
             } else cur.copy(vdot = vdot)
             store.setRunState(if (raceChanged && init.vdot != null) typedRace(next, profile) else next)
@@ -2064,19 +2070,13 @@ class TrainingRepository(
         val sickLeft = easyAfterSick(date)
         val sickNote = "После болезни начинаем мягко: ещё $sickLeft ${Ru.plural(sickLeft, "лёгкая пробежка", "лёгкие пробежки", "лёгких пробежек")}, " +
             "без отрезков и ускорений. Беги так, чтобы получалось говорить. Станет хуже — остановись и отметь «Болею»: здоровье важнее плана. "
+        // The taper's strides wait, as any, while easy runs are owed after a long break.
+        val taperStrides = if (st.returnEasy > 0) 0 else 4
+        // Being sick and a break come before the taper: race-pace reps and strides came right after «Болею» or ten days
+        // off in the week before a race.
         val w = if (!st.canRunContinuously) RunPlan.runWalk(st) else when {
-            toRace != null && toRace in 1..2 -> RunPlan.easy(st.copy(easyMinutes = minOf(st.easyMinutes, 20)), strides = 4).let {
-                it.copy(note = "До забега ${toRace} ${Ru.plural(toRace.toInt(), "день", "дня", "дней")}: только размяться, без усталости. " + it.note)
-            }
-            toRace != null && toRace in 3..5 && kind == SessionKind.RUN_QUALITY -> (
-                if (goal?.middleDistance == true) RunPlan.goalPace(st, goal, lap, cutback = true) else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap)
-            ).let { it.copy(note = "Последняя тяжёлая перед забегом. Она короткая: освежить темп и не устать. " + it.note) }
-            toRace != null && toRace in 3..7 && kind != SessionKind.RUN_QUALITY ->
-                RunPlan.easy(st.copy(easyMinutes = (minOf(st.easyMinutes, st.longMinutes) * 0.7).toInt().coerceAtLeast(20)), strides = 4)
             sickLeft > 0 -> RunPlan.easy(guess ?: st, lighter, date.toEpochDay())
                 .let { if (guess != null) RunPlan.provisional(it) else it }.let { it.copy(note = sickNote + it.note) }
-            kind == SessionKind.RUN_LONG || longEasy ->
-                if (guess != null) RunPlan.provisional(RunPlan.long(guess, lighter, date.toEpochDay())) else RunPlan.long(st, lighter, date.toEpochDay())
             // The first run after more than a week without running: no hard session cold, nor a due trial — easy today, the
             // hard ones from the next hard day (the trial there, [trialDay]). Whether a trial was due or not: two people
             // back from the same break got an easy run and race-pace reps.
@@ -2089,6 +2089,17 @@ class TrainingRepository(
                             ) + it.note,
                     )
                 }
+            toRace != null && toRace in 1..2 -> RunPlan.easy(st.copy(easyMinutes = minOf(st.easyMinutes, 20)), strides = taperStrides).let {
+                it.copy(note = "До забега ${toRace} ${Ru.plural(toRace.toInt(), "день", "дня", "дней")}: только размяться, без усталости. " + it.note)
+            }
+            // While easy runs are owed after a long break the hard day is one of them ([RunPlan.quality], below).
+            toRace != null && toRace in 3..5 && kind == SessionKind.RUN_QUALITY && st.returnEasy == 0 -> (
+                if (goal?.middleDistance == true) RunPlan.goalPace(st, goal, lap, cutback = true) else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap)
+            ).let { it.copy(note = "Последняя тяжёлая перед забегом. Она короткая: освежить темп и не устать. " + it.note) }
+            toRace != null && toRace in 3..7 && kind != SessionKind.RUN_QUALITY ->
+                RunPlan.easy(st.copy(easyMinutes = (minOf(st.easyMinutes, st.longMinutes) * 0.7).toInt().coerceAtLeast(20)), strides = taperStrides)
+            kind == SessionKind.RUN_LONG || longEasy ->
+                if (guess != null) RunPlan.provisional(RunPlan.long(guess, lighter, date.toEpochDay())) else RunPlan.long(st, lighter, date.toEpochDay())
             kind == SessionKind.RUN_QUALITY -> when {
                 !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date))
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
@@ -2543,7 +2554,7 @@ class TrainingRepository(
      */
     internal suspend fun runStateToGo(goal: forma.core.model.RunGoal?): RunState {
         val st = store.runStateNow()
-        if (st.goalRepPace != null || goal == null) return st
+        if (st.goalRepPace != null || st.goalRepPaces.isNotEmpty() || goal == null) return st
         val records = (store.earlierRunsNow() + listOfNotNull(store.lastRunNow())).map { it.workout to it.result }
         return RunPlan.withShownRepPace(st, goal, records)
     }

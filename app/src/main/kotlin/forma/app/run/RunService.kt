@@ -341,7 +341,8 @@ class RunService : Service() {
         val seg = tl.segment
         val (fast, slow, easy) = when {
             w.isOpenEnded -> w.targetPace?.let { Triple(it.fast.toDouble(), it.slow.toDouble(), false) }
-            seg?.kind == forma.core.run.SegmentKind.WORK -> seg.pace?.let { Triple(it.fast.toDouble(), it.slow.toDouble(), false) }
+            // A trial's second half has no fast limit: as fast as is left ([forma.core.run.PaceAlarm.fastLimit]).
+            seg?.kind == forma.core.run.SegmentKind.WORK -> seg.pace?.let { Triple(forma.core.run.PaceAlarm.fastLimit(w, seg, tl.segmentElapsed), it.slow.toDouble(), false) }
             seg?.kind == forma.core.run.SegmentKind.RUN -> seg.pace?.let { Triple(it.fast.toDouble(), null, true) }
             else -> null
         } ?: Triple(null, null, false)

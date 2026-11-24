@@ -788,12 +788,21 @@ object CoachActions {
                     "Дальше темпы сами подстраиваются по тому, как идут пробежки."
                 either(!up, text) {
                     val now = forma.core.run.RunPlan.estimated(repo.runStateToGo(goal), goal)
-                    // Easier: the race-pace reps too, by the same steps (each about 2.5 % on the pace held in them).
-                    val rep = now.goalRepPace?.let { if (up) it else it * (1 + forma.core.run.RunPlan.STEP_AHEAD * steps) }
-                    val next = (if (now.estimated) now.copy(estVdot = to) else now.copy(vdot = to)).copy(goalRepPace = rep)
+                    // Easier: the race-pace reps too, by the same steps (each about 2.5 % on the pace held in them) — those
+                    // held in longer reps as well.
+                    val ease = 1 + forma.core.run.RunPlan.STEP_AHEAD * steps
+                    val rep = now.goalRepPace?.let { if (up) it else it * ease }
+                    val reps = if (up) now.goalRepPaces else now.goalRepPaces.mapValues { (_, p) -> p * ease }
+                    val next = (if (now.estimated) now.copy(estVdot = to) else now.copy(vdot = to)).copy(goalRepPace = rep, goalRepPaces = reps)
                     repo.store.setRunState(next)
                     repo.changed()
-                    CoachCall("undo_run_pace", args("est" to now.estimated, "old" to from, "expect" to to, "rep" to now.goalRepPace))
+                    CoachCall(
+                        "undo_run_pace",
+                        args(
+                            "est" to now.estimated, "old" to from, "expect" to to, "rep" to now.goalRepPace,
+                            "reps" to JsonObject(now.goalRepPaces.entries.associate { (k, p) -> k.toString() to JsonPrimitive(p) }),
+                        ),
+                    )
                 }
             }
             RUN_STEP -> {
@@ -1910,8 +1919,10 @@ object CoachActions {
                 if (old == null || cur != a.num("expect") || est != (now.vdot == null)) false
                 else {
                     val back = if (est) now.copy(estVdot = old) else now.copy(vdot = old)
-                    // The race-pace reps' pace as it was, when the change moved it.
-                    repo.store.setRunState(if (a.containsKey("rep")) back.copy(goalRepPace = a.num("rep")) else back)
+                    // The race-pace reps' pace as it was, when the change moved it (those of longer reps too, kept since).
+                    val reps = (a["reps"] as? JsonObject)?.entries?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { length -> (v as? JsonPrimitive)?.doubleOrNull?.let { length to it } } }?.toMap()
+                    val withRep = if (a.containsKey("rep")) back.copy(goalRepPace = a.num("rep")) else back
+                    repo.store.setRunState(if (reps != null) withRep.copy(goalRepPaces = reps) else withRep)
                     repo.changed()
                     true
                 }

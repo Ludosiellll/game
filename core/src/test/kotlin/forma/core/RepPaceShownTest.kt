@@ -77,21 +77,26 @@ class RepPaceShownTest {
     }
 
     @Test fun twoMissesInARowEaseItAStepAndBackToTheFitnessAtMost() {
-        val st = RunPlan.estimated(denis, goal).copy(goalRepPace = goal.pace, goalStage = 3, qualityFails = 0)
+        // The pace is kept by the length of the reps it was held in (audit of 24.11, the rep-pace loop): the reps of step 3
+        // are 2 laps, and the pace held in them is the one eased.
+        val two = RunPlan.repLength(3)
+        val st = RunPlan.estimated(denis, goal).copy(goalRepPaces = mapOf(two to goal.pace), goalStage = 3, qualityFails = 0)
         val w = RunPlan.goalPace(st, goal, 205)
         assertEquals(Track.lapSec(goal.pace, 205), lap(w), 0.1)
         val miss = RunResult(0.6, 9, 1200, workPace = target(w) * 1.06, reps = 3)
         val a = RunPlan.after(st, w, miss, caps, day = 20780, goal = goal)
-        assertEquals(goal.pace, a.state.goalRepPace)
+        assertEquals(goal.pace, a.state.goalRepPaces[two])
         val b = RunPlan.after(a.state.copy(qualityCount = 0), RunPlan.goalPace(a.state, goal, 205), miss, caps, day = 20787, goal = goal)
-        assertEquals(goal.pace * (1 + RunPlan.STEP_AHEAD), assertNotNull(b.state.goalRepPace), 1e-9)
+        assertEquals(goal.pace * (1 + RunPlan.STEP_AHEAD), assertNotNull(b.state.goalRepPaces[two]), 1e-9)
         assertTrue(b.outcomes.any { it is RunOutcome.StageDown }, "${b.outcomes}")
-        // Eased past the fitness's own step: the fitness decides again.
+        // Eased past the fitness's own step: the fitness's step it is — kept as this length's pace (capped, not dropped:
+        // dropped, the quicker pace of shorter reps would come back to these, the loop the audit of 24.11 found).
         // The fitness's step after this miss (the estimate a point lower), and a pace held just quicker than it.
-        val fitnessAfter = RunPlan.stepPace(b.state.copy(goalRepPace = null, estVdot = b.state.estVdot!! - 1), goal)
-        val near = b.state.copy(goalRepPace = fitnessAfter / 1.01, goalFails = 1, qualityCount = 0)
+        val fitnessAfter = RunPlan.stepPace(b.state.copy(goalRepPaces = emptyMap(), estVdot = b.state.estVdot!! - 1), goal)
+        val near = b.state.copy(goalRepPace = fitnessAfter / 1.01, goalRepPaces = emptyMap(), goalFails = 1, qualityCount = 0)
         val c = RunPlan.after(near, RunPlan.goalPace(near, goal, 205), miss, caps, day = 20794, goal = goal)
-        assertNull(c.state.goalRepPace)
+        val fitnessNow = RunPlan.stepPace(c.state.copy(goalRepPace = null, goalRepPaces = emptyMap()), goal)
+        assertEquals(fitnessNow, assertNotNull(c.state.goalRepPace), 1e-9)
     }
 
     @Test fun aBreakSlowsIt() {

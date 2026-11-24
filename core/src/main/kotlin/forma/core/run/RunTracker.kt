@@ -166,6 +166,18 @@ class RunTracker(
     var lastAccuracy: Float? = null
         private set
 
+    /** When the last fix came (the clock of [onFix]); null before the first one. */
+    private var lastAccuracyMs: Long? = null
+
+    /**
+     * No fix for [FIX_STALE_MS] after fixes came: the signal is gone (under a bridge, between tall buildings). The last
+     * accuracy then stood on the screen in green, «GPS · точность 5 м», while the voice said «GPS потерян».
+     */
+    fun gpsLost(nowMs: Long): Boolean = lastAccuracyMs?.let { nowMs - it > FIX_STALE_MS } == true
+
+    /** The accuracy of the last fix while it is fresh, metres; null before the first fix and once the signal is gone ([gpsLost]). */
+    fun accuracyNow(nowMs: Long): Float? = lastAccuracy?.takeIf { !gpsLost(nowMs) }
+
     /** Timeline moments (ms) the runner pressed "lap" at, and the laps they closed (same order). */
     private val taps = mutableListOf<Long>()
     private val lapList = mutableListOf<Lap>()
@@ -589,6 +601,7 @@ class RunTracker(
     /** Feeds a GPS fix; returns kilometre events crossed by it. */
     fun onFix(fix: Fix, nowMs: Long): List<RunEvent> {
         lastAccuracy = fix.accuracy
+        lastAccuracyMs = nowMs
         if (state != State.RUNNING || fix.accuracy > maxAccuracy) return emptyList()
         val active = activeMs(nowMs)
         lastRaw = fix
@@ -1276,7 +1289,10 @@ class RunTracker(
         val d = Geo.haversine(ln.first, ln.second, fix.lat, fix.lon)
         if (workout.reps == 0 && !looked) {
             looked = true
-            if (lineT == null && lapList.isEmpty()) {
+            // Where GPS first has the runner decides nothing while laps and starts are the presses ([GPS_DECIDES]): a first
+            // fix on the line seconds after «Старт» took the place of the start press, which was then dropped as too short
+            // a lap, or made a lap of the wait.
+            if (GPS_DECIDES && lineT == null && lapList.isEmpty()) {
                 when {
                     // Started at the line (within GPS's few metres): the laps count from the start.
                     d <= 15.0 && active <= 5_000 -> {
@@ -1408,10 +1424,14 @@ class RunTracker(
         return maxOf(whole, minOf(lead, USUAL_DRIFT * whole))
     }
 
-    /** Seconds into the lap being run: since the last press, or since the current segment began if it came later. */
+    /**
+     * Seconds into the lap being run: since the last press, or since the current segment began if it came later. A run
+     * without reps counts its laps from the start press through all its segments (an easy run's «этот круг» ran from
+     * «Старт», not from the press).
+     */
     fun lapClockSec(nowMs: Long): Int {
         val t = timelineMs(nowMs)
-        val start = startOf(segmentAt(t))
+        val start = (if (workout.reps == 0) starts[-1] else null) ?: startOf(segmentAt(t))
         val prev = taps.lastOrNull()
         return ((t - if (prev != null && prev >= start) prev else start) / 1000).toInt().coerceAtLeast(0)
     }
@@ -1468,6 +1488,9 @@ class RunTracker(
 
         /** Presses closer than this are one press (a double tap): no lap on a stadium is this short. */
         const val MIN_LAP_MS = 5_000L
+
+        /** No fix for this long after fixes came: the GPS signal is gone (see [gpsLost]). */
+        const val FIX_STALE_MS = 10_000L
 
         /**
          * GPS times laps, starts reps and turns down presses off the line: off. Laps and starts are the runner's presses

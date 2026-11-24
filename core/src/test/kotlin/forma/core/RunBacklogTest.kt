@@ -56,7 +56,8 @@ class RunBacklogTest {
         val st = RunState(walkStage = -1, vdot = 50.0, runs = 12)
         val w = RunPlan.easy(st, strides = RunPlan.strides(st, cutback = false))
         assertEquals("Лёгкий бег · 30 мин + 6 ускорений", w.title)
-        assertTrue("80 м" in w.note)
+        // Seconds on a straight, not 80 m: a small loop's straight is about 50 m (audit 24.11, tight-loop-one-way).
+        assertTrue("секунд по 10, по прямой" in w.note, w.note)
         // The run itself is the same length: strides are not part of the minutes that grow.
         assertEquals(RunPlan.easy(st).workSeconds, w.workSeconds)
         assertEquals(4, RunPlan.strides(st.copy(runs = 3), cutback = false))

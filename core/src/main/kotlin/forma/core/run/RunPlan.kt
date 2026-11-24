@@ -112,13 +112,22 @@ data class RunState(
     /** No trial is due before this day: the runner put it off («не хочу контрольный»). */
     val noTrialUntil: Long? = null,
     /**
-     * The pace (s a km) the runner has held in race-pace reps, done with the effort asked or less: the reps are never
-     * slower than that, and never quicker than the goal ([RunPlan.stepPace]). Fitness, measured or estimated, is about
-     * endurance; a runner can be quicker over a lap than it says (Denis, 16 November: 6 × 205 m at 42.6–44.4 s, effort
-     * 6 — the goal's 45 s and quicker, while his estimate gave 52.6 s). Slower by a step after two misses in a row and
-     * after a break. Null: the step from the fitness alone.
+     * The pace (s a km) the runner has held in the race-pace ladder's shortest reps (200 m for 1500 m: a lap of a small
+     * loop; longer reps: [goalRepPaces]), done with the effort asked or less: the reps are never slower than that, and
+     * never quicker than the goal ([RunPlan.stepPace]). Fitness, measured or estimated, is about endurance; a runner can
+     * be quicker over a lap than it says (Denis, 16 November: 6 × 205 m at 42.6–44.4 s, effort 6 — the goal's 45 s and
+     * quicker, while his estimate gave 52.6 s). Slower by a step after two misses in a row and after a break. Null: the
+     * step from the fitness alone.
      */
     val goalRepPace: Double? = null,
+    /**
+     * The same for the ladder's longer reps, by their length as the ladder names it ([RunPlan.repLength]: 400, 600, 800 m
+     * for 1500 m; 1000 — the race in two parts). A step goes by the pace held in reps as long as its own or longer: the
+     * quick laps of one-lap reps say only that the runner is quick, not that he holds that pace over 3 laps (seen: two
+     * misses of 3 × 3 laps eased their pace, the next 5 × 2 laps run quickly put the one-lap pace back on them, and they
+     * failed again — a loop).
+     */
+    val goalRepPaces: Map<Int, Double> = emptyMap(),
 ) {
     val canRunContinuously: Boolean get() = walkStage < 0
 
@@ -422,6 +431,54 @@ object RunPlan {
         return near.coerceAtMost(cap).coerceAtLeast(1)
     }
 
+    /** The rest of a race-pace step of [rest] s between reps of [meters] m run as [lapsM] m of whole laps: it grows with the rep. */
+    private fun restOnLaps(rest: Int, lapsM: Double, meters: Double): Int = (((rest * lapsM / meters) / 15).roundToInt() * 15).coerceAtLeast(rest)
+
+    /**
+     * How many reps the full step [stage] has on a track of [lapMeters]: as many whole-lap reps as make its volume
+     * ([trackReps]) — one more when that would make it the session of the step before it (on 205 m 5 × 400 and 6 × 400
+     * both came out 5 × 2 laps under the cap of 1.6 races, and «шаг 5 из 9» was the step just passed: a step is a step
+     * up, by a rep over the cap). Null for the race in two parts and for reps no lap count fits (they stay timed).
+     */
+    private fun lapsCount(stage: Int, scale: Double, lapMeters: Int, raceMeters: Double): Int? {
+        // The step's reps on this track: whole laps a rep, how many, the rest between them.
+        fun onLaps(i: Int): Triple<Double, Int, Int>? {
+            if (i !in 0 until GOAL.lastIndex) return null
+            val step = GOAL[i]
+            val m = step.reps.first() * scale
+            val l = goalRepLaps(m, scale, lapMeters) ?: return null
+            return Triple(l, trackReps(step.reps.size * m, l * lapMeters, raceMeters), restOnLaps(step.rest, l * lapMeters, m))
+        }
+        val now = onLaps(stage) ?: return null
+        return if (onLaps(stage - 1) == now) now.second + 1 else now.second
+    }
+
+    /** The length the reps of the race-pace ladder's step [stage] go by, as the ladder is written for 1500 m: 200–800 m, 1000 — the race in two parts. */
+    fun repLength(stage: Int): Int = GOAL[stage.coerceIn(0, GOAL.lastIndex)].reps.first()
+
+    /** The paces held in race-pace reps by their length ([RunState.goalRepPace] the shortest reps', [RunState.goalRepPaces] the longer ones'). */
+    private fun heldPaces(state: RunState): Map<Int, Double> =
+        state.goalRepPaces + (state.goalRepPace?.let { mapOf(repLength(0) to it) } ?: emptyMap())
+
+    /**
+     * The pace for race-pace reps of the step [stage], s a km, from what the runner has held: the quickest held in reps as
+     * long or longer (held over 3 laps, a pace holds over 2). Reps of a length never run yet take the pace of the longest
+     * shorter ones (Denis, 23.11: race-pace reps at the pace he holds, not slower): a miss on them then eases that length
+     * alone ([decide]), so a quick session of shorter reps does not bring the quicker pace back (the audit of 24.11). Null
+     * when nothing is held.
+     */
+    fun heldRepPace(state: RunState, stage: Int = state.goalStage): Double? {
+        val held = heldPaces(state)
+        val length = repLength(stage)
+        return held.filterKeys { it >= length }.values.minOrNull()
+            ?: held.filterKeys { it < length }.maxByOrNull { it.key }?.value
+    }
+
+    /** [state] with [pace] held in reps of [length] (null: none held). */
+    private fun withHeld(state: RunState, length: Int, pace: Double?): RunState =
+        if (length <= repLength(0)) state.copy(goalRepPace = pace)
+        else state.copy(goalRepPaces = if (pace == null) state.goalRepPaces - length else state.goalRepPaces + (length to pace))
+
     /** Paces (s/km) a time trial can believably be run at: faster than 2:10 or slower than 15:00 is a typo. */
     val PLAUSIBLE_PACE = 130.0..900.0
 
@@ -435,6 +492,18 @@ object RunPlan {
      */
     fun believable(vdot: Double, current: Double?): Boolean =
         vdot in MIN_VDOT..MAX_VDOT && (current == null || abs(vdot - current) <= 8.0)
+
+    /**
+     * A trial's typed time while the app goes by an estimate ([RunState.estimated]): with no trial counted [believable]
+     * had nothing to hold it against, and a minute off («4:52» for «5:52», 1435 m: 53 for 43) jumped from the estimate
+     * past the goal — «цель достигнута», and every pace from it. Within 8 of the estimate, as of a fitness known, or up to
+     * 3 above the goal's own (the estimate starts 8 below the goal, where the runner may well be already).
+     */
+    private fun believableByEstimate(vdot: Double, state: RunState, goal: RunGoal?): Boolean {
+        val est = state.estVdot?.takeIf { state.vdot == null } ?: return true
+        val pastGoal = goal?.let { Vdot.fromRace(it.meters.toDouble(), it.seconds.toDouble()) + 3.0 } ?: 0.0
+        return vdot <= max(est + 8.0, pastGoal)
+    }
 
     /** A stretch of a time trial held from its start: [meters] in [seconds], and the fitness ([vdot]) it gives. */
     data class Held(val meters: Double, val seconds: Double, val vdot: Double)
@@ -593,14 +662,15 @@ object RunPlan {
     }
 
     /**
-     * An easy run; [strides] short accelerations after it (4–6 × about 80 m, 15–20 s): speed and form at no cost of
-     * recovery, twice a week for runners with hard runs (Daniels' "strides").
+     * An easy run; [strides] short accelerations after it (4–6 of about 10 s, on a straight): speed and form at no cost of
+     * recovery, twice a week for runners with hard runs (Daniels' "strides"). 10 s, not 80 m: the straight of a small loop
+     * is about 50 m (Denis's 205 m, fitted by GPS), and a stride into its bend loads the inner leg most.
      */
     fun easy(state: RunState, cutback: Boolean = false, day: Long? = null, strides: Int = 0): RunWorkout {
         val cap = singleRunCap(state, day)
         val min = scaled(state.easyMinutes, cutback).let { if (cap != null) minOf(it, maxOf(15, cap)) else it }
         val note = "Спокойно, чтобы получалось болтать." + if (strides > 0) {
-            " В конце $strides ${Ru.plural(strides, "ускорение", "ускорения", "ускорений")} по 80 м (15–20 с), на стадионе по прямой. " +
+            " В конце $strides ${Ru.plural(strides, "ускорение", "ускорения", "ускорений")} секунд по 10, по прямой. " +
                 "Быстро, но не в полную силу. Между ними около минуты шагом."
         } else ""
         return RunWorkout(
@@ -621,7 +691,15 @@ object RunPlan {
     fun race(state: RunState, goal: RunGoal): RunWorkout {
         val t = goalTest(state, goal, null)
         val name = if (goal.meters < 1000 || goal.meters % 1000 != 0) "${goal.meters} м" else "${goal.meters / 1000} км"
+        // Run at the goal's pace, as the note says: the clock, the voice and the pace alarm with it. Paced from a fitness
+        // below the goal (as a trial is), a race run at the goal heard «Быстрее цели, чуть сбавь» every minute and «Осталась
+        // минута» a minute late.
+        val pace = goal.pace
+        val segments = t.segments.map { s ->
+            if (s.kind == SegmentKind.WORK) s.copy(seconds = goal.seconds, pace = PaceRange((pace - 3).roundToInt(), (pace + 3).roundToInt())) else s
+        }
         return t.copy(
+            segments = segments,
             title = "Забег · $name",
             note = "Твой забег: $name за ${Ru.clock(goal.seconds)}. Разминка 12 минут. $STRIDES_NOTE Первую половину беги " +
                 "ровно, в темпе цели. Вторую — на сколько хватит сил. После финиша впиши время с табло.",
@@ -828,10 +906,14 @@ object RunPlan {
                 // Whole laps are longer than the rep they stand for (on 230 m: 400 → 460 m, 600 → 690 m): fewer reps, so
                 // the session stays the volume it was meant to be, and the rest grows with the rep.
                 val meant = reps.size * reps.first()
-                val n = trackReps(meant, l * lapMeters, goal.meters.toDouble())
+                val near = trackReps(meant, l * lapMeters, goal.meters.toDouble())
+                val fullReps = lapsCount(stage, scale, lapMeters, goal.meters.toDouble()) ?: near
+                // A lighter week is lighter on a track too: its quarter fewer can round back up to the full step's count of
+                // whole laps (6 × 400 less one: 5 × 2 laps of 205 m, as the full step) — then it is one rep fewer than that.
+                val n = if (!cutback) fullReps else if (near < fullReps) near else max(1, fullReps - 1)
                 reps = List(n) { reps.first() }
                 laps = List(n) { l }
-                rest = (((step.rest * (l * lapMeters) / reps.first()) / 15).roundToInt() * 15).coerceAtLeast(step.rest)
+                rest = restOnLaps(step.rest, l * lapMeters, reps.first())
             }
         }
         if (last && lapMeters != null) {
@@ -886,8 +968,9 @@ object RunPlan {
      */
     fun stepPace(state: RunState, goal: RunGoal): Double {
         val byFitness = fitnessStep(state, goal)
-        // What the runner has held in these reps: the step is never slower than that (nor quicker than the goal).
-        val shown = state.goalRepPace ?: return byFitness
+        // What the runner has held in reps as long as these or longer: the step is never slower than that (nor quicker
+        // than the goal). A pace held in shorter reps is not put on these ([RunState.goalRepPaces]).
+        val shown = heldRepPace(state) ?: return byFitness
         return max(goal.pace, min(byFitness, shown))
     }
 
@@ -919,9 +1002,10 @@ object RunPlan {
      * kept yet: for a runner who ran such reps before the app kept it (24 November). Unchanged with one kept or none shown.
      */
     fun withShownRepPace(state: RunState, goal: RunGoal?, records: List<Pair<RunWorkout, RunResult>>): RunState {
-        if (state.goalRepPace != null || goal == null || !goal.middleDistance) return state
+        if (state.goalRepPace != null || state.goalRepPaces.isNotEmpty() || goal == null || !goal.middleDistance) return state
         val (w, r) = records.lastOrNull { it.first.type == RunType.GOAL_PACE && !it.first.light && !it.first.custom } ?: return state
-        return shownRepPace(state, w, r, goal)?.let { state.copy(goalRepPace = it) } ?: state
+        // Kept with the length of the reps it was held in.
+        return shownRepPace(state, w, r, goal)?.let { withHeld(state, repLength(w.stage), it) } ?: state
     }
 
     /**
@@ -1143,6 +1227,7 @@ object RunPlan {
             vdot = state.vdot?.let { (it * (1 - fitnessLoss(off)) * 2).roundToInt() / 2.0 },
             estVdot = state.estVdot?.let { (it * (1 - fitnessLoss(off)) * 2).roundToInt() / 2.0 },
             goalRepPace = state.goalRepPace?.let { it * (1 + fitnessLoss(off)) },
+            goalRepPaces = state.goalRepPaces.mapValues { (_, p) -> p * (1 + fitnessLoss(off)) },
             walkStage = if (state.walkStage >= 0) max(0, state.walkStage - 3 * back) else state.walkStage,
             easyMinutes = cut(state.easyMinutes, 20),
             longMinutes = cut(state.longMinutes, 30),
@@ -1153,6 +1238,9 @@ object RunPlan {
             goalFails = 0,
             testSoon = state.testSoon && off < 28,
             qualityOnPace = 0,
+            // Hard runs ahead before the break say nothing of the paces after it (cut by it): one ahead after it was the
+            // third of a streak, the estimate up again a week after coming back.
+            qualityAhead = 0,
             qualityFails = 0,
             intervalFails = 0,
             tempoFails = 0,
@@ -1264,6 +1352,19 @@ object RunPlan {
         else -> into
     }
 
+    /**
+     * Whether the reps' average lap would be said fast, as each lap is ([Lap.verdict]: to the whole second, against the
+     * lap range shown): on a track, with the reps' laps pressed and judged. Null without such laps (typed by hand, on the
+     * road, timed reps): nothing was said lap by lap.
+     */
+    private fun avgLapSaidFast(w: RunWorkout, r: RunResult): Boolean? {
+        val lapM = w.lapMeters ?: return null
+        val pace = r.workPace ?: return null
+        val range = w.segments.firstOrNull { it.kind == SegmentKind.WORK && it.lapSec != null }?.pace ?: return null
+        if (r.laps.orEmpty().count { it.rep != null && !it.rough && (it.fast != null || it.slow != null) } < 2) return null
+        return Lap(pace * lapM / 1000.0, Track.lapSec(range.fast.toDouble(), lapM)).verdict == -1
+    }
+
     fun after(state: RunState, w: RunWorkout, r: RunResult, caps: RunCaps, day: Long = 0, goal: RunGoal? = null): RunAfter {
         val fixed = onMeasuredLoop(w, r) ?: return decide(state, w, r, caps, day, goal)
         val a = decide(state, fixed.first, fixed.second, caps, day, goal)
@@ -1335,8 +1436,12 @@ object RunPlan {
                 val full = w.workSeconds >= state.easyMinutes * 60
                 val extra = minutes - w.workSeconds / 60
                 val step = if (extra >= 6) (extra / 2).coerceIn(3, 8) else 3
+                // Shorter down to 20 minutes, never longer: one at 15 (the coach's, or just out of run/walk) rated hard became
+                // 20 with «короче: 20 мин»; one at the floor stays as it is.
+                val shorter = min(state.easyMinutes, max(20, state.easyMinutes - 5))
                 s = when {
-                    rpe >= 7 -> s.copy(easyMinutes = max(20, state.easyMinutes - 5)).also { out += RunOutcome.Shorter(it.easyMinutes) }
+                    rpe >= 7 && shorter < state.easyMinutes -> s.copy(easyMinutes = shorter).also { out += RunOutcome.Shorter(it.easyMinutes) }
+                    rpe >= 7 -> s.also { out += RunOutcome.Same(min(state.easyMinutes, caps.easyMax)) }
                     done && full && rpe <= 5 && state.easyMinutes < caps.easyMax && weekAllowsMore ->
                         s.copy(easyMinutes = min(caps.easyMax, state.easyMinutes + step)).also { out += RunOutcome.Longer(it.easyMinutes) }
                     else -> s.also { out += RunOutcome.Same(min(state.easyMinutes, caps.easyMax)) }
@@ -1349,8 +1454,11 @@ object RunPlan {
                 val extra = minutes - w.workSeconds / 60
                 val step = if (extra >= 10) (extra / 2).coerceIn(5, 10) else 5
                 val next = minOf(caps.longMax, state.longMinutes + step, (longest * 1.10).toInt())
+                // Shorter down to 30 minutes, never longer (a long run of 25 stopped early became 30).
+                val shorter = min(state.longMinutes, max(30, state.longMinutes - 5))
                 s = when {
-                    rpe >= 8 || !done -> s.copy(longMinutes = max(30, state.longMinutes - 5)).also { out += RunOutcome.Shorter(it.longMinutes) }
+                    (rpe >= 8 || !done) && shorter < state.longMinutes -> s.copy(longMinutes = shorter).also { out += RunOutcome.Shorter(it.longMinutes) }
+                    rpe >= 8 || !done -> s.also { out += RunOutcome.Same(min(state.longMinutes, caps.longMax)) }
                     rpe <= 6 && next > state.longMinutes && w.workSeconds >= state.longMinutes * 60 && weekAllowsMore ->
                         s.copy(longMinutes = next).also { out += RunOutcome.Longer(it.longMinutes) }
                     else -> s.also { out += RunOutcome.Same(min(state.longMinutes, caps.longMax)) }
@@ -1521,8 +1629,11 @@ object RunPlan {
                         exact != null -> Vdot.fromRace(tm.toDouble(), exact)
                         // Run to the end of its time: the distance in it is the result, however short of the trial's (a
                         // runner slower than the plan) — 79 % kept the form, 81 % lowered it. Half of it at least: less
-                        // is GPS lost more likely than a runner that slow.
-                        w.lapMeters == null && done && d != null && d >= tm * 0.5 && sec > 0 && sec / (d / 1000) in PLAUSIBLE_PACE -> Vdot.fromRace(d, sec.toDouble())
+                        // is GPS lost more likely than a runner that slow. Or run to its distance before its time (a runner
+                        // quicker than the plan's guess stops at the finish): the trial run, not a stretch of it — 1500 m
+                        // in 5:40 against an estimate's 6:35 was «не добежан», a full trial again and no goal reached.
+                        w.lapMeters == null && d != null && (done || d >= tm) && d >= tm * 0.5 && sec > 0 && sec / (d / 1000) in PLAUSIBLE_PACE ->
+                            Vdot.fromRace(d, sec.toDouble())
                         else -> null
                     }
                     // What was held from the start: faded after it, the whole time underrates the runner; stopped or
@@ -1546,6 +1657,8 @@ object RunPlan {
                     val part = if (w.lapMeters == null && raw != null) null else held(w, read)
                     // A stretch is a part of the trial: the whole of it is the whole time.
                     val better = part != null && raw != null && part.meters < tm - 1 && (part.vdot * 2).roundToInt() > (raw * 2).roundToInt()
+                    // A time typed that no laps bear out (none, or far from it): a typo is possible.
+                    val typedAlone = r.testSeconds != null && (lapsTime == null || abs(lapsTime / r.testSeconds - 1) > 0.15)
                     when {
                         raw != null -> {
                             // Faded, the stretch corrects the whole time by 3 at most, and never past the fitness known
@@ -1554,7 +1667,7 @@ object RunPlan {
                             // just past belief once dropped, the form 6–8 lower for a trial run 2 % faster.
                             val used = if (better) minOf(part!!.vdot, raw + PART_OVER_WHOLE, (state.vdot ?: Double.MAX_VALUE) + 8.0) else raw
                             val capped = better && (used * 2).roundToInt() < (part!!.vdot * 2).roundToInt()
-                            if (!believable(used, state.vdot)) {
+                            if (!believable(used, state.vdot) || typedAlone && !believableByEstimate(used, state, goal)) {
                                 out += RunOutcome.TestDoubtful((used * 2).roundToInt() / 2.0)
                             } else {
                                 val nv = (used * 2).roundToInt() / 2.0
@@ -1635,20 +1748,26 @@ object RunPlan {
                 // Measured (laps or GPS): more than 3 % slower is not the goal pace; 2 % faster at a moderate effort
                 // means the goal pace is comfortable already.
                 val slow = target != null && pace != null && pace > target * 1.03
-                val fast = target != null && pace != null && pace < target * 0.98
+                val quick = target != null && pace != null && pace < target * 0.98
+                // On a track every lap was said against the lap range shown, to the whole second («Круг 44–46 с»: «44. В
+                // темпе.»): reps whose average lap is said on pace so are not called fast here either. 43,6-s laps, each
+                // «в темпе» on the voice and in the debrief, were repeated as «заметно быстрее» (3 % on the unrounded
+                // average). Without laps said (by hand, on the road) the pace alone decides.
+                val saidFast = avgLapSaidFast(w, r) != false
+                val fast = quick && saidFast
                 // More than 3 % faster: the laps were not the goal's. Even laps are the skill this ladder teaches (a fast
                 // runner who fades after 800 m lacks exactly that), so the step is run again at the right lap time.
                 // Measured against the goal's own pace too (a step slower than the goal run at the goal is not too fast);
                 // GPS on short road reps is less exact than laps.
-                val tooFast = target != null && pace != null && pace < min(target, goal?.pace ?: target) * (if (w.lapMeters != null) 0.97 else 0.95)
+                val tooFast = saidFast && target != null && pace != null && pace < min(target, goal?.pace ?: target) * (if (w.lapMeters != null) 0.97 else 0.95)
                 val cur = state.goalStage.coerceIn(0, GOAL.lastIndex)
                 if (pace == null) out += RunOutcome.PaceUnknown
                 if (slow) out += RunOutcome.TooSlow
                 val rq = if (pace != null && !slow) rpe else r.rpe
                 if (enough && rq <= 8 && !slow && w.cutback) {
-                    // A lighter week's shorter session: done, and the ladder waits for the full step.
+                    // A lighter week's shorter session: done, and the ladder waits for the full step — a miss of the full
+                    // step before it still counts, as for intervals and tempo (miss, lighter week, miss was a repeat).
                     out += RunOutcome.LighterWeek("goal")
-                    s = s.copy(goalFails = 0)
                 } else if (enough && tooFast) {
                     out += RunOutcome.TooFastRepeat
                     s = s.copy(goalFails = 0)
@@ -1674,7 +1793,7 @@ object RunPlan {
                     // Going by an estimate: reps of a minute and a half or more held with effort to spare say the step
                     // can come nearer the goal (short ones say only that the runner is quick).
                     val long = (w.segments.firstOrNull { it.kind == SegmentKind.WORK }?.seconds ?: 0) >= 90
-                    if (est && long && pace != null && rq <= w.targetRpe - 1) s = moveEst(s, if (fast) 1.0 else 0.5, day, goal, out)
+                    if (est && long && pace != null && rq <= w.targetRpe - 1) s = moveEst(s, if (quick) 1.0 else 0.5, day, goal, out)
                 } else if (state.goalFails >= 1) {
                     // Second miss in a row: one step back.
                     val back = max(0, cur - 1)
@@ -1682,16 +1801,33 @@ object RunPlan {
                     s = s.copy(goalStage = back, goalFails = 0)
                     // And by an estimate the step's pace itself was too quick.
                     if (est) s = moveEst(s, -1.0, day, goal, out)
-                    // The pace held before was too quick for these reps: a step slower, back to the fitness's step at most.
-                    if (goal != null) s = s.copy(goalRepPace = s.goalRepPace?.let { it * (1 + STEP_AHEAD) }?.takeIf { it < fitnessStep(s, goal) })
+                    // The pace held before was too quick for these reps: a step slower, back to the fitness's step at most —
+                    // the paces held in reps as long as these or longer, the ones their pace came from. A pace carried over
+                    // from shorter reps is eased for this length alone and kept for it (capped at the fitness's step, never
+                    // dropped), so the shorter reps' quicker pace does not come back to these after a step back.
+                    if (goal != null) {
+                        val top = fitnessStep(s, goal)
+                        val length = repLength(cur)
+                        val held = heldPaces(s)
+                        s = held.filterKeys { it >= length }.entries.fold(s) { x, (len, p) ->
+                            withHeld(x, len, min(p * (1 + STEP_AHEAD), top))
+                        }
+                        if (held.keys.none { it >= length }) {
+                            held.filterKeys { it < length }.maxByOrNull { it.key }?.value?.let { carried ->
+                                s = withHeld(s, length, min(carried * (1 + STEP_AHEAD), top))
+                            }
+                        }
+                    }
                 } else {
                     out += RunOutcome.StageRepeat("goal")
                     s = s.copy(goalFails = 1)
                 }
-                // The pace the reps showed the runner holds: kept, the quickest so far, and the step comes to it.
+                // The pace the reps showed the runner holds, kept for reps of their length: the quickest so far, and a step
+                // of reps that long or shorter comes to it — not a step of longer reps (see [RunState.goalRepPaces]).
                 if (goal != null) shownRepPace(state, w, r, goal)?.let { shown ->
                     val was = stepPace(s, goal)
-                    s = s.copy(goalRepPace = min(shown, s.goalRepPace ?: shown))
+                    val length = repLength(w.stage)
+                    s = withHeld(s, length, min(shown, heldPaces(s)[length] ?: shown))
                     val now = stepPace(s, goal)
                     if (now < was * 0.99) out += RunOutcome.RepPace(was, now)
                 }

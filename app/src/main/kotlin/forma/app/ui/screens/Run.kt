@@ -622,6 +622,8 @@ fun RunActiveScreen() {
                             !u.gps && lapM != null -> "Стадион · круг $lapM м"
                             !u.gps && u.distanceM > 0 -> "Без GPS · дистанция по шагам"
                             !u.gps -> "Без GPS · только время"
+                            // Fixes stopped (a bridge, tall buildings): not the last accuracy in green.
+                            u.gpsLost -> "GPS · нет сигнала"
                             acc == null -> "GPS · ищем спутники…"
                             acc <= 15 -> "GPS · точность ${acc.roundToInt()} м"
                             else -> "GPS · слабый сигнал (${acc.roundToInt()} м)"
