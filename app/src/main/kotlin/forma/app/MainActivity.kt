@@ -1,5 +1,6 @@
 package forma.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -26,7 +27,11 @@ class MainActivity : ComponentActivity() {
         // The rest between sets saved before the app was closed comes back; one of a session finished or deleted since,
         // or one that ended long ago, goes with its notification.
         lifecycleScope.launch { RestTimer.restore(this@MainActivity) { id -> repo.db.workouts().get(id)?.status == Status.ACTIVE } }
-        opened(intent)
+        // A notification's ask only on a fresh start. The activity made again (the phone turned, the dark theme on its
+        // schedule, a font size, back after the system closed the app) or started from the recents still holds the
+        // notification's intent, and it put «Люди» over whatever was on the screen each time, a run or a session too.
+        val fromRecents = ((intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        if (savedInstanceState == null && !fromRecents) opened(intent)
         // The new look, once for everyone (Denis's choice: «Минимализм» 30.10, dark 31.10); another can be chosen in
         // «Оформление и звук».
         lifecycleScope.launch { repo.updateSettings(forma.app.ui.theme.Looks::moved) }
@@ -38,14 +43,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onNewIntent(intent: android.content.Intent) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         opened(intent)
+        setIntent(intent)
     }
 
-    /** Opened from a notification about messages: the app goes to them. */
-    private fun opened(intent: android.content.Intent?) {
-        intent?.getStringExtra(forma.app.sync.MessageNotice.EXTRA_OPEN)?.let { forma.app.ui.Opens.pending.value = it }
+    /** Opened from a notification about messages: the app goes to them. Taken once: the ask is removed from [intent]. */
+    private fun opened(intent: Intent?) {
+        if (intent == null) return
+        val open = intent.getStringExtra(forma.app.sync.MessageNotice.EXTRA_OPEN) ?: return
+        intent.removeExtra(forma.app.sync.MessageNotice.EXTRA_OPEN)
+        forma.app.ui.Opens.pending.value = open
     }
 
     /**

@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +48,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import forma.app.sync.FriendsApi
 import forma.app.sync.Message
 import forma.app.sync.MessageNotice
@@ -65,6 +69,13 @@ import java.time.ZoneId
 
 /** How often an open chat asks for new messages. */
 private const val CHAT_POLL_MS = 5_000L
+
+/** Messages asked for at once: the newest on each poll, the ones before them on reaching the top. */
+private const val CHAT_PAGE = 50
+
+/** [page] put into [loaded] by id, oldest first: a message already there is replaced (read since), the others stay. */
+internal fun mergeMessages(loaded: List<Message>, page: List<Message>): List<Message> =
+    if (page.isEmpty()) loaded else (loaded.associateBy { it.id } + page.associateBy { it.id }).values.sortedBy { it.id }
 
 /** «18:05» today, «вчера 18:05», «12 октября 18:05» before. */
 fun messageTime(sentAt: String, today: LocalDate = LocalDate.now()): String {
@@ -86,6 +97,8 @@ fun ChatContent(userId: String, name: String, api: FriendsApi?, onBack: () -> Un
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var messages by remember { mutableStateOf<List<Message>>(emptyList()) }
+    // There are messages before the first one loaded: a page of them comes on reaching the top.
+    var older by remember { mutableStateOf(false) }
     var typed by rememberSaveable(userId) { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var canWrite by remember { mutableStateOf(true) }
@@ -96,8 +109,17 @@ fun ChatContent(userId: String, name: String, api: FriendsApi?, onBack: () -> Un
     var notice by remember { mutableStateOf<String?>(null) }
 
     suspend fun refresh(a: FriendsApi) {
-        runCatching { a.messages(userId).reversed() }
-            .onSuccess { fresh -> if (fresh != messages) messages = fresh; error = null }
+        runCatching { a.messages(userId, limit = CHAT_PAGE).reversed() }
+            .onSuccess { page ->
+                // The newest page merged in, not put in place of the list: it took the older pages away, and only the
+                // newest 50 could ever be read. A full page that does not reach the newest loaded one (many came while
+                // the chat was out of sight) may leave a gap: the chat starts again from that page.
+                val gap = page.size >= CHAT_PAGE && messages.isNotEmpty() && page.first().id > messages.last().id
+                if (gap || messages.isEmpty()) older = page.size >= CHAT_PAGE
+                val next = if (gap) page else mergeMessages(messages, page)
+                if (next != messages) messages = next
+                error = null
+            }
             .onFailure { error = describeFriends(it) }
         // Read here: off the server's count and the phone's notification.
         if (messages.any { !it.fromMe && it.readAt == null }) {
@@ -105,12 +127,33 @@ fun ChatContent(userId: String, name: String, api: FriendsApi?, onBack: () -> Un
             MessageNotice.clear(context)
         }
     }
-    LaunchedEffect(userId, api) {
+
+    /** The page before the first message loaded, put above it. */
+    suspend fun loadOlder(a: FriendsApi) {
+        val first = messages.firstOrNull() ?: return
+        if (!older) return
+        runCatching { a.messages(userId, before = first.id, limit = CHAT_PAGE).reversed() }
+            .onSuccess { page ->
+                // Unless the chat started again from the newest meanwhile: the page would not join it.
+                if (messages.firstOrNull()?.id == first.id) {
+                    older = page.size >= CHAT_PAGE
+                    messages = mergeMessages(messages, page)
+                }
+            }
+            .onFailure { error = describeFriends(it) }
+    }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(userId, api, lifecycle) {
         val a = api ?: return@LaunchedEffect
         runCatching { a.conversations().firstOrNull { it.userId == userId } }.getOrNull()?.let { canWrite = it.canWrite; blocked = it.blocked }
-        while (true) {
-            refresh(a)
-            delay(pollMs)
+        // Asked for and read only while the chat is in front (and at once on coming back). Left open behind the lock
+        // screen or another app, it went on every 5 s and marked the answers read: their notification went, the sender
+        // saw «прочитано», and nobody was told.
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                refresh(a)
+                delay(pollMs)
+            }
         }
     }
     fun send() {
@@ -120,13 +163,26 @@ fun ChatContent(userId: String, name: String, api: FriendsApi?, onBack: () -> Un
         sending = true
         scope.launch {
             runCatching { a.send(userId, text) }
-                .onSuccess { m -> messages = messages + m; typed = ""; error = null }
+                // By id: a poll may have brought it already (twice in the list, the same key broke it).
+                .onSuccess { m -> messages = mergeMessages(messages, listOf(m)); typed = ""; error = null }
                 .onFailure { error = describeFriends(it) }
             sending = false
         }
     }
     val list = rememberLazyListState()
-    LaunchedEffect(messages.size) { if (messages.isNotEmpty()) list.scrollToItem(messages.size - 1) }
+    // Down to the newest when one comes (and on opening); older ones put above keep the place in the list.
+    var atNewest by remember { mutableStateOf(false) }
+    LaunchedEffect(messages.lastOrNull()?.id) {
+        if (messages.isNotEmpty()) {
+            list.scrollToItem(messages.size - 1)
+            atNewest = true
+        }
+    }
+    // The top reached, once the chat stands at its newest: the messages before the first one loaded.
+    LaunchedEffect(list, api, userId) {
+        val a = api ?: return@LaunchedEffect
+        snapshotFlow { atNewest && older && list.firstVisibleItemIndex == 0 }.collect { top -> if (top) loadOlder(a) }
+    }
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding()) {
         Box(Modifier.padding(horizontal = 20.dp)) {
             TopBar(name, if (blocked) "Заблокирован" else "Сообщения", onBack = onBack) {

@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +60,8 @@ import forma.core.model.Catalog
 import forma.core.run.Vdot
 import forma.core.text.Ru
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import kotlin.math.roundToInt
 
@@ -96,25 +99,30 @@ suspend fun loadFriends(api: FriendsApi, localName: String?, message: String? = 
     )
 }
 
+/**
+ * «Люди»: people open to all, friends, messages. [api] and [account] (the e-mail signed in) are the cloud's; tests give
+ * their own.
+ */
 @Composable
-fun FriendsScreen() {
+fun FriendsScreen(
+    api: FriendsApi? = LocalCloud.current?.friends,
+    account: String? = LocalCloud.current?.state?.collectAsState()?.value?.email,
+) {
     val repo = LocalRepo.current
     val nav = LocalNav.current
     val cloud = LocalCloud.current
-    val cloudState = cloud?.state?.collectAsState()?.value
-    val api = cloud?.friends
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var ui by remember { mutableStateOf(FriendsUi(signedIn = cloudState?.email != null, loading = true)) }
+    var ui by remember { mutableStateOf(FriendsUi(signedIn = account != null, loading = true)) }
     var ask by remember { mutableStateOf<Pair<FeedItem, List<String>>?>(null) }
     // Opened from a notification about messages: the conversations.
     var section by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(if (forma.app.ui.Opens.pending.value == forma.app.sync.MessageNotice.OPEN_MESSAGES) 2 else 0)
     }
-    LaunchedEffect(Unit) { forma.app.ui.Opens.pending.value = null }
+    val sharing = remember { SharingCalls() }
 
     suspend fun reload() {
-        if (api == null || cloudState?.email == null) {
+        if (api == null || account == null) {
             ui = FriendsUi(signedIn = false)
             return
         }
@@ -125,7 +133,25 @@ fun FriendsScreen() {
         // Explained once: the banner stays on this visit, not on the next ones.
         if (ui.fresh) cloud?.friendsExplained = true
     }
-    LaunchedEffect(cloudState?.email) { reload() }
+    LaunchedEffect(account) { reload() }
+    // Every ask for the messages is taken here, not only the one the screen opened with: a notification tapped while
+    // «Люди» is open goes to the conversations, loaded anew. An ask left untaken swallowed the next taps too (the same
+    // value set again is no change to the flow), and they opened nothing until «Люди» was opened by hand.
+    val reloadNow by rememberUpdatedState<suspend () -> Unit> { reload() }
+    LaunchedEffect(Unit) {
+        var opening = true
+        forma.app.ui.Opens.pending.collect { open ->
+            if (open == forma.app.sync.MessageNotice.OPEN_MESSAGES) {
+                forma.app.ui.Opens.pending.value = null
+                // The ask the screen opened with is read above, and the first load is on its way.
+                if (!opening) {
+                    section = 2
+                    reloadNow()
+                }
+            }
+            opening = false
+        }
+    }
 
     /** A call that changes friends: on failure (offline) the error shows and the screen stays as it was. */
     fun change(call: suspend (FriendsApi) -> Unit) {
@@ -149,7 +175,25 @@ fun FriendsScreen() {
             }
         },
         onSharing = { activity, body ->
-            scope.launch { runCatching { api?.setSharing(activity, body) }.onSuccess { m -> ui = ui.copy(me = m ?: ui.me, error = null) }.onFailure { ui = ui.copy(error = describeFriends(it)) } }
+            val a = api
+            val now = ui.me
+            if (a != null && now != null) {
+                // Moved at once and sent in turn, each call with both switches as the screen shows them: a second switch
+                // tapped before the server answered the first sent the first one's old value and undid it.
+                if (sharing.waiting == 0) sharing.server = now
+                sharing.waiting++
+                ui = ui.copy(me = now.copy(shareActivity = activity, shareBody = body))
+                scope.launch {
+                    sharing.lock.withLock {
+                        val r = runCatching { a.setSharing(activity, body) }
+                        sharing.waiting--
+                        r.onSuccess { sharing.server = it }.onFailure { ui = ui.copy(error = describeFriends(it)) }
+                        // The last answer shows (an earlier one would move a switch back for a moment); after a failure,
+                        // what the server has.
+                        if (sharing.waiting == 0) ui = ui.copy(me = sharing.server, error = if (r.isSuccess) null else ui.error)
+                    }
+                }
+            }
         },
         onAdd = { code ->
             scope.launch {
@@ -177,6 +221,13 @@ fun FriendsScreen() {
             scope.launch { ui = ui.copy(message = startCopy(repo, nav, item)) }
         }
     }
+}
+
+/** «Что видят друзья» on its way to the server: one call at a time, how many wait, and what the server said last. */
+private class SharingCalls {
+    val lock = Mutex()
+    var waiting = 0
+    var server: FriendMe? = null
 }
 
 private fun addText(r: AddResult) = when (r) {
@@ -278,7 +329,9 @@ fun FriendsContent(
         }
 
         val me = ui.me
-        if (me != null && ui.fresh && me.shareActivity) {
+        // Not to someone shown to all: the friends' switch alone hides nothing from anybody then (the hint on «Люди» says
+        // where to turn that off).
+        if (me != null && ui.fresh && me.shareActivity && !me.listed) {
             Banner("Друзья увидят твои тренировки, веса, пробежки и программу. Не хочешь — выключи «Тренировки и прогресс» ниже.", F.c.accent)
         }
         if (me != null) {
@@ -298,8 +351,12 @@ fun FriendsContent(
             FCard(gap = 6.dp) {
                 SectionLabel("Что видят друзья")
                 Text(
-                    if (me.shareActivity) "Сейчас друзья видят все твои тренировки и пробежки, веса, сколько ты поднимешь на 1 раз и программу. Тренировки и программу они могут повторить."
-                    else "Сейчас друзья не видят твоих тренировок, только имя.",
+                    when {
+                        me.shareActivity -> "Сейчас друзья видят все твои тренировки и пробежки, веса, сколько ты поднимешь на 1 раз и программу. Тренировки и программу они могут повторить."
+                        // Shown to all, the page stays open to everybody, friends too: «только имя» was not so.
+                        me.listed -> "Тренировки всё равно видны всем, пока включено «Показывать меня всем»."
+                        else -> "Сейчас друзья не видят твоих тренировок, только имя."
+                    },
                     style = T.secondary(13.sp),
                 )
                 Toggle("Тренировки и прогресс", "Что делал, веса, пробежки, программа", me.shareActivity) { onSharing(it, me.shareBody) }

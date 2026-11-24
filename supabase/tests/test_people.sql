@@ -77,10 +77,13 @@ select pg_temp.ok(public.person_progress(:D::uuid) ->> 'name' = 'Открыты�
 select pg_temp.ok(public.person_progress(:B::uuid) ->> 'name' = 'Егор', 'A opens his friend B');
 select pg_temp.refused(format('select public.person_progress(%L)', :C), '42501', 'A must not open C');
 select pg_temp.refused(format('select public.person_feed(%L)', :C), '42501', 'A must not read C''s workouts');
--- A friend who stopped sharing is closed again (not listed either).
+-- A friend who stopped sharing is closed again (not listed either): the page has the name and «Написать», none of the
+-- training. It used to refuse, and the page then had no «Написать» although friends may write to each other.
 select pg_temp.who(:B); select public.set_sharing(false, false);
 select pg_temp.who(:A);
-select pg_temp.refused(format('select public.person_progress(%L)', :B), '42501', 'a friend who does not share');
+select pg_temp.ok(public.person_progress(:B::uuid) ->> 'shared' = 'false' and public.person_progress(:B::uuid) -> 'sets' is null
+  and (public.person_progress(:B::uuid) ->> 'can_write')::boolean, 'a friend who does not share: the name only');
+select pg_temp.ok(jsonb_array_length(public.person_feed(:B::uuid)) = 0, 'and no workouts');
 select pg_temp.who(:B); select public.set_sharing(true, false);
 select pg_temp.who(:A);
 
