@@ -1,13 +1,13 @@
 package forma.core.strength
 
 import forma.core.analytics.Point
+import forma.core.floorTo
 import forma.core.model.Experience
 import forma.core.model.LiftGoal
 import forma.core.text.Ru
 import java.time.LocalDate
 import kotlin.math.ceil
 import kotlin.math.exp
-import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.pow
@@ -136,8 +136,11 @@ object GymGoal {
         return exp(slope * 7) - 1
     }
 
-    /** Down to the [step] of the lift. */
-    private fun down(x: Double, step: Double) = floor(x / step + 1e-9) * step
+    /** Down to the [step] of the lift, on a stack that goes from [from] (9, 14, 19 …; 0: multiples of the step). */
+    private fun down(x: Double, step: Double, from: Double = 0.0) = floorTo(x, step, from)
+
+    /** Up to the [step] of the lift, on a stack that goes from [from]. */
+    private fun up(x: Double, step: Double, from: Double = 0.0) = if (x <= from) from else from + ceil((x - from) / step - 1e-9) * step
 
     /** The test of the max: warm-up sets (weight, reps) and the attempts at one rep, lightest first. */
     data class TestDay(val warmups: List<Pair<Double, Int>>, val attempts: List<Double>)
@@ -145,14 +148,19 @@ object GymGoal {
     /**
      * The test of the max on the goal's day, from the estimate [e1rm]: warm-up sets of 5, 3, 2 and 1 at half, 70, 80 and
      * 90 %, an opener a little under the estimate, then the goal ([target]) — or the estimate and a little, when the goal
-     * is far past it (a test that ends in a miss teaches nothing). Weights down to the [step].
+     * is far past it (a test that ends in a miss teaches nothing). Weights down to the [step], on a machine's stack from
+     * its first weight [from] (9, 14, 19 …: multiples of 5 were not on it), never under the empty [bar] (a 35 kg max had a
+     * first warm-up of 17.5): a warm-up below it is the bar itself, once.
      */
-    fun testDay(e1rm: Double, target: Double, step: Double): TestDay {
-        val opener = down(minOf(e1rm * 0.95, target), step)
-        val warm = listOf(0.5 to 5, 0.7 to 3, 0.8 to 2, 0.9 to 1).map { (f, r) -> down(e1rm * f, step) to r }.filter { it.first < opener }
+    fun testDay(e1rm: Double, target: Double, step: Double, from: Double = 0.0, bar: Double? = null): TestDay {
+        val opener = down(minOf(e1rm * 0.95, target), step, from)
+        val warm = listOf(0.5 to 5, 0.7 to 3, 0.8 to 2, 0.9 to 1)
+            .map { (f, r) -> max(bar ?: 0.0, down(e1rm * f, step, from)) to r }
+            .filter { it.first < opener }
+            .fold(emptyList<Pair<Double, Int>>()) { out, s -> if (out.isNotEmpty() && s.first <= out.last().first + 1e-9) out else out + s }
         // The goal itself when it is within reach, up to the next step (a goal of 126 on a 2,5 kg bar is 127,5).
-        val goalOnStep = ceil(target / step - 1e-9) * step
-        val last = if (goalOnStep <= e1rm * 1.025 + 1e-9) goalOnStep else down(minOf(target, e1rm * 1.02), step)
+        val goalOnStep = up(target, step, from)
+        val last = if (goalOnStep <= e1rm * 1.025 + 1e-9) goalOnStep else down(minOf(target, e1rm * 1.02), step, from)
         return TestDay(warm, listOf(opener) + if (last > opener) listOf(last) else emptyList())
     }
 

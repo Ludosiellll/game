@@ -355,7 +355,11 @@ class GymRulesTest {
         if (c.p.calibrate || c.done.none { it.reps > 0 }) return@check null
         val e = eval(c)
         val s = e.state
-        if (s.weight != c.state.weight || s.reps != c.state.reps || s.stalls != c.state.stalls || s.misses != c.state.misses) {
+        // Back after a break the progress kept is the weight the break made lighter (gym-layoff-lost-after-lighter-session):
+        // the session is the last time done, and the full weight from before the break came back the next time.
+        val before = c.state.weight
+        val kept = c.p.afterBreak?.takeIf { before != null && it < before - 1e-9 } ?: before
+        if (s.weight != kept || s.reps != c.state.reps || s.stalls != c.state.stalls || s.misses != c.state.misses) {
             "${c.p.phase}: прогресс сдвинулся: ${c.state.weight}×${c.state.reps} → ${s.weight}×${s.reps} (${e.outcome})"
         } else null
     }

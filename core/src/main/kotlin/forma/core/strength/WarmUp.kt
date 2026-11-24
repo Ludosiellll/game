@@ -26,6 +26,22 @@ object WarmUp {
         return if (w <= 0 || w >= workWeight) emptyList() else listOf(WarmUpSet(w, 6))
     }
 
+    /**
+     * Before a main lift done with the body and extra weight (pull-ups or dips with +25 on a belt; [workWeight] is the
+     * extra): the body alone for five, then about half and three quarters of the extra for three and two. A ramp on the
+     * whole load would go below the body — help that not every gym has; before, there was no ramp at all.
+     */
+    fun extra(workWeight: Double, step: Double): List<WarmUpSet> {
+        if (workWeight <= 0) return emptyList()
+        val out = mutableListOf(WarmUpSet(0.0, 5))
+        for ((pct, reps) in listOf(0.5 to 3, 0.75 to 2)) {
+            val w = roundTo(workWeight * pct, step)
+            if (w <= out.last().weight || w >= workWeight) continue
+            out += WarmUpSet(w, reps)
+        }
+        return out
+    }
+
     /** [from]: the weight a machine stack's steps go from (0: multiples of [step]). */
     fun sets(workWeight: Double, step: Double, barWeight: Double? = 20.0, from: Double = 0.0): List<WarmUpSet> {
         if (workWeight <= 0) return emptyList()

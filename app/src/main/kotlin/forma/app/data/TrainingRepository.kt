@@ -498,6 +498,12 @@ class TrainingRepository(
         /** The review of weights older versions left ([reviewWeights]); a new one when the rules change how sets count. */
         const val WEIGHTS_REVIEW = 1
 
+        /** Why a heavy lift has no warm-up: nothing lighter than the work itself (the empty bar, the lightest load). */
+        private const val NO_LIGHTER = "Разминка — первый подход: вес и так самый лёгкий. Сделай его медленно, следи за техникой."
+
+        /** Why a main lift with the body alone (or with help) has no ramp: nothing lighter than the body without help. */
+        private const val BODY_FIRST = "Первый подход и есть разминка, сделай его медленно."
+
         /** The plan's estimate for a session as planned, minutes. */
         fun estimateOf(plan: LiftPlan): Double = forma.core.plan.SessionTime.estimate(plan.items.map { it.slot to it.prescription.sets })
 
@@ -944,18 +950,19 @@ class TrainingRepository(
             val work = p.weight ?: p.startHint?.takeIf { p.calibrate && it > 0 }
             // In a lighter week too: the weight is a tenth lighter, the joints and the groove want the ramp all the same.
             val heavy = work != null && ex.load == LoadKind.EXTERNAL && ex.compound
-            val single = if (heavy && fresh) WarmUp.single(work!!, ex.step, bar, ex.stepFrom) else emptyList()
+            // On this gym's weights (the item's step and stack, as the work's): the catalog's 2 kg dumbbell step gave a 14 kg
+            // warm-up on a rack of 12.5 and 15.
+            val single = if (heavy && fresh) WarmUp.single(work!!, item.step, bar, item.stepFrom) else emptyList()
             val out = when {
                 item.slot.role == SlotRole.MAIN && item.warmups.isNotEmpty() -> item.copy(warmups = if (fresh) item.warmups else item.warmups.takeLast(2))
                 single.isNotEmpty() -> item.copy(warmups = single)
                 ex.load == LoadKind.TIMED -> item
                 // Nothing lighter than the work itself: the empty bar or the lightest load.
-                heavy && fresh -> item.copy(
-                    warmups = emptyList(),
-                    noWarmUp = "Разминка — первый подход: вес и так самый лёгкий. Сделай его медленно, следи за техникой.",
-                )
+                heavy && fresh -> item.copy(warmups = emptyList(), noWarmUp = NO_LIGHTER)
                 !ex.compound -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: упражнение на одну мышцу, первый подход сам её разогреет.")
                 !fresh -> item.copy(warmups = emptyList(), noWarmUp = "Разминка не нужна: ${ex.primary.joinToString(", ") { it.ru.lowercase() }} уже в работе после прошлых упражнений.")
+                // A main lift with the body alone (or with help): no ramp below it without help, said why — as for any main lift.
+                item.slot.role == SlotRole.MAIN && ex.load == LoadKind.BODYWEIGHT_PLUS -> item.copy(warmups = emptyList(), noWarmUp = BODY_FIRST)
                 else -> item
             }
             warm += ex.primary + ex.secondary
@@ -1111,15 +1118,23 @@ class TrainingRepository(
         )
         // The ramp leads to the working weight, or the first time to the weight to start the search from.
         val work = p.weight ?: p.startHint?.takeIf { p.calibrate }
-        val warm = if (spec.role == SlotRole.MAIN && work != null && work > 0 && ex.load == LoadKind.EXTERNAL) {
-            WarmUp.sets(work, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null, ex.stepFrom)
-        } else emptyList()
+        val warm = if (spec.role == SlotRole.MAIN && work != null && work > 0) ramp(ex, work) else emptyList()
         // Own rest belongs to the place in the plan: it stays after a swap, and one set for a day stays on that day.
         // The time between set marks is never read (Denis, 23 November: «смысла учитывать отдых между подходами по-моему
         // вообще нет, у каждого свой организм и каждый сам чувствует когда нужно делать»): rest is the person's own, and
         // the gaps hold talk and waiting as much as rest. The rest said after a set follows the set alone.
         val ownRest = restKey != null && restKey in settings.rest
         return LiftItem(position, spec, ex.id, ex.name, p, warm, ex.step, stepFrom = ex.stepFrom, restOwn = ownRest)
+    }
+
+    /**
+     * The ramp before a main lift to [work], on [ex]'s steps: from the empty bar or the stack; for pull-ups or dips with
+     * extra weight, from the body alone (before, a weighted pull-up as the day's main lift had no ramp and no word).
+     */
+    private fun ramp(ex: Exercise, work: Double): List<WarmUpSet> = when (ex.load) {
+        LoadKind.EXTERNAL -> WarmUp.sets(work, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null, ex.stepFrom)
+        LoadKind.BODYWEIGHT_PLUS -> WarmUp.extra(work, ex.step)
+        LoadKind.TIMED -> emptyList()
     }
 
     // ---------- exercise swaps and own exercises ----------
@@ -1480,21 +1495,48 @@ class TrainingRepository(
     }
 
     /**
-     * The step of [exerciseId] changed during a session: its places there without sets yet start on the new step too
-     * (the weight down to it), as the next sessions will — not only from the next one.
+     * The step of [exerciseId] changed during a session (or its heaviest weight): its places there without sets yet start
+     * on the new steps too (the weight down to them, no heavier than the heaviest), as the next sessions will — not only
+     * from the next one. The first time's start weight and the warm-ups too: left as they were, the field showed 15 on a
+     * stack of 9, 14, 19, and the ramp led to a weight off it.
      */
     private suspend fun restepActive(exerciseId: String) {
         val w = db.workouts().active()?.takeIf { it.kind == Kind.LIFT } ?: return
         val plan = planOf(w) ?: return
         val started = db.sets().forWorkout(w.id).map { it.position }.toSet()
         val ex = exercise(exerciseId, store.settingsNow())
+        val lightest = Progression.minWeight(ex, store.profileNow()?.bodyWeightKg ?: 75.0)
         val items = plan.items.map { i ->
-            if (i.exerciseId != exerciseId || i.position in started || i.prescription.phase == Phase.TEST) i
-            else i.copy(step = ex.step, stepFrom = ex.stepFrom, prescription = i.prescription.weight?.let { wt ->
-                i.prescription.copy(weight = ex.floorW(wt).coerceAtLeast(Progression.minWeight(ex, store.profileNow()?.bodyWeightKg ?: 75.0)))
-            } ?: i.prescription)
+            if (i.exerciseId != exerciseId || i.position in started || i.prescription.phase == Phase.TEST) return@map i
+            val p = i.prescription
+            val weight = p.weight?.let { ex.atMost(ex.floorW(it)).coerceAtLeast(lightest) }
+            val hint = p.startHint?.let { ex.atMost(ex.roundW(it)).coerceAtLeast(lightest) }
+            // The warm-ups to the new weight: the main lift's ramp as long as it was (the last two on warm muscles), or the
+            // one set before a heavy secondary lift.
+            val work = weight ?: hint?.takeIf { p.calibrate && it > 0 }
+            val warmups = when {
+                i.warmups.isEmpty() -> i.warmups
+                work == null || work <= 0 -> emptyList()
+                i.slot.role == SlotRole.MAIN -> ramp(ex, work).takeLast(i.warmups.size)
+                else -> WarmUp.single(work, ex.step, if (ex.equipment == Equipment.BARBELL) ex.bar else null, ex.stepFrom)
+            }
+            val none = warmups.isEmpty() && i.warmups.isNotEmpty()
+            i.copy(
+                step = ex.step, stepFrom = ex.stepFrom, prescription = p.copy(weight = weight, startHint = hint), warmups = warmups,
+                noWarmUp = if (none) (if (ex.load == LoadKind.BODYWEIGHT_PLUS) BODY_FIRST else NO_LIGHTER) else i.noWarmUp,
+            )
         }
         if (items != plan.items) replacePlan(w.id, plan.copy(items = items))
+    }
+
+    /**
+     * The heaviest weight of [exerciseId] in this gym from now on (Denis's lat pulldown: a stack that ends at 92 kg): the
+     * plan goes no heavier, the reps grow there instead. Null or 0 — no such limit. A session under way follows at once.
+     */
+    suspend fun setHeaviest(exerciseId: String, kg: Double?) {
+        store.editSettings { s -> s.copy(heaviest = if (kg != null && kg > 0) s.heaviest + (exerciseId to kg) else s.heaviest - exerciseId) }
+        restepActive(exerciseId)
+        onChange()
     }
 
     /** Takes [planId] out of every session from now on, or brings it back. */

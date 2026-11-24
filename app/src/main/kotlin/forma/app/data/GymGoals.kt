@@ -2,6 +2,7 @@ package forma.app.data
 
 import forma.core.analytics.Stats
 import forma.core.model.Catalog
+import forma.core.model.Equipment
 import forma.core.model.Experience
 import forma.core.model.LiftGoal
 import forma.core.model.LoadKind
@@ -124,13 +125,14 @@ object GymGoals {
     }
 
     /**
-     * The test of [goal]'s max on its day: from the max the way measures ([path]), on the lift's step in this gym. Null
-     * when the lift has not been done (nothing to test from).
+     * The test of [goal]'s max on its day: from the max the way measures ([path]), on the lift's weights in this gym — its
+     * step, a stack's first weight (9, 14, 19 …), never under the empty bar. Null when the lift has not been done (nothing
+     * to test from).
      */
     suspend fun testDay(repo: TrainingRepository, goal: LiftGoal): GymGoal.TestDay? {
         val max = path(repo, goal)?.current ?: repo.db.state().stat(goal.exerciseId)?.e1rm ?: return null
-        val step = repo.store.settingsNow().steps[goal.exerciseId] ?: Catalog[goal.exerciseId].stepAt(max)
-        return GymGoal.testDay(max, GymGoal.target(goal), step)
+        val ex = repo.store.settingsNow().onSteps(Catalog[goal.exerciseId])
+        return GymGoal.testDay(max, GymGoal.target(goal), ex.stepAt(max), ex.stepFrom, if (ex.equipment == Equipment.BARBELL) ex.bar else null)
     }
 
     /** The way to [goal] in words, for the screens and the coach. */

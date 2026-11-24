@@ -62,6 +62,11 @@ data class Exercise(
      * lateral raise machine). 0: multiples of the step. Set with the person's own step, never in the catalog.
      */
     val stepFrom: Double = 0.0,
+    /**
+     * The heaviest weight this person's gym has for it (Denis's lat pulldown: a stack that ends at 92 kg); null — no such
+     * limit. The plan never asks more: the reps grow there instead. Set with the person's own step, never in the catalog.
+     */
+    val heaviest: Double? = null,
 ) {
     val perHand: Boolean get() = equipment == Equipment.DUMBBELL
 
@@ -70,6 +75,12 @@ data class Exercise(
 
     /** [x] down to a weight this exercise can be set to (by [step] from [stepFrom], never below it). */
     fun floorW(x: Double, step: Double = stepAt(x)): Double = forma.core.floorTo(x, step, stepFrom)
+
+    /** Whether the gym has [w]: not past [heaviest] (on the steps). */
+    fun fits(w: Double): Boolean = heaviest == null || w <= floorW(heaviest) + 1e-9
+
+    /** [w], or the heaviest weight there is when [w] is past it. */
+    fun atMost(w: Double): Double = heaviest?.let { h -> minOf(w, floorW(h)) } ?: w
 
     /** [x] to the nearest weight this exercise can be set to. */
     fun roundW(x: Double, step: Double = stepAt(x)): Double = forma.core.roundTo(x, step, stepFrom)

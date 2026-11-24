@@ -334,10 +334,14 @@ private fun TemplateCard(t: Template) {
             defaultStep = ex?.step ?: 2.5,
             stepFrom = settings.stepsFrom[exId] ?: 0.0,
             stack = ex?.equipment == forma.core.model.Equipment.MACHINE || ex?.equipment == forma.core.model.Equipment.CABLE,
-            onSave = { n, reps, rest, st, from ->
+            heaviest = settings.heaviest[exId] ?: 0.0,
+            // Where «Самый большой вес» starts when it is set: the weight the plan gives now.
+            current = item?.prescription?.weight ?: 0.0,
+            onSave = { n, reps, rest, st, from, most ->
                 scope.launch {
                     repo.tunePlan(key, planned, n, reps, rest)
                     if (st != null && ex != null) repo.setStep(exId, st, ex.step, from)
+                    if (ex != null && most != (settings.heaviest[exId] ?: 0.0)) repo.setHeaviest(exId, most.takeIf { it > 0 })
                 }
                 editing = -1
             },
@@ -408,7 +412,8 @@ internal fun swapNote(was: forma.core.strength.SlotSpec, now: forma.core.strengt
 private fun PlanExerciseDialog(
     name: String, sets: Int, planned: Int, reps: Pair<Int, Int>, plannedReps: Pair<Int, Int>, timed: Boolean,
     rest: Int, plannedRest: Int, canRemove: Boolean, step: Double?, defaultStep: Double, stepFrom: Double = 0.0, stack: Boolean = false,
-    onSave: (Int, Pair<Int, Int>, Int, Double?, Double?) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, removeNote: String,
+    heaviest: Double = 0.0, current: Double = 0.0,
+    onSave: (Int, Pair<Int, Int>, Int, Double?, Double?, Double) -> Unit, onSwap: () -> Unit, onRemove: () -> Unit, removeNote: String,
     swapNote: String?, onHistory: () -> Unit, onDismiss: () -> Unit,
 ) {
     var n by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(sets) }
@@ -418,6 +423,8 @@ private fun PlanExerciseDialog(
     var st by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(step) }
     // Buttons, not a text field: a field in this dialog never lets the screen settle (tests hang on it).
     var from by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableDoubleStateOf(stepFrom) }
+    // The stack's last weight; 0 — none set.
+    var most by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableDoubleStateOf(heaviest) }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = F.c.surface,
@@ -476,6 +483,22 @@ private fun PlanExerciseDialog(
                         else "Вес кратен шагу: ${listOf(1, 2, 3).joinToString(", ") { Ru.kg(it * chosen) }} … кг.",
                         style = T.secondary(12.sp),
                     )
+                    // The stack's last weight (Denis's lat pulldown ends at 92): the plan goes no heavier, the reps grow there.
+                    if (stack || most > 0) {
+                        Text("Самый большой вес тренажёра", style = T.secondary(13.sp))
+                        // Not set yet: the first press gives the plan's weight now (on the steps), then a step at a time.
+                        val start = forma.core.floorTo(current.takeIf { it > 0 } ?: (from + 20 * chosen), chosen, from)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            forma.app.ui.components.Stepper(
+                                if (most > 0) Ru.kg(most) else "нет", if (most > 0) "кг" else "",
+                                onMinus = { most = if (most <= 0) start else (most - chosen).takeIf { it >= maxOf(chosen, from) - 1e-9 } ?: most },
+                                onPlus = { most = if (most <= 0) start else most + chosen },
+                                modifier = Modifier.weight(1f), minusLabel = "Самый большой вес меньше", plusLabel = "Самый большой вес больше",
+                            )
+                            forma.app.ui.components.Chip("Нет", most <= 0, { most = 0.0 }, minWidth = 56.dp)
+                        }
+                        if (most > 0) Text("${Ru.kg(most)}\u00A0кг — самый большой вес, дальше растут повторы.", style = T.secondary(12.sp))
+                    }
                 }
                 GhostButton("История и прогресс", onHistory, Modifier.fillMaxWidth())
                 GhostButton("Заменить упражнение", onSwap, Modifier.fillMaxWidth())
@@ -486,7 +509,7 @@ private fun PlanExerciseDialog(
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton({ onSave(n, lo to hi, rs, st, from) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
+            androidx.compose.material3.TextButton({ onSave(n, lo to hi, rs, st, from, most) }) { Text("Сохранить", style = T.body(15.sp, FontWeight.Bold).copy(color = F.c.accent)) }
         },
         dismissButton = { androidx.compose.material3.TextButton(onDismiss) { Text("Отмена", style = T.body(15.sp)) } },
     )
