@@ -14,7 +14,10 @@ import kotlin.math.roundToInt
  * ones that went well, the line sits between the two. So it is theirs, not a rule of thumb.
  */
 object LoadStory {
-    /** Weeks with training (not ill, not paused) the usual week needs; with fewer it is not below the plan's week. */
+    /**
+     * Weeks with training (not ill, not paused, not lighter by plan) the usual week is the person's own from; with fewer
+     * the plan's week stands in. It is the usual's floor either way (research spike-label, 25 November).
+     */
     const val FULL_WEEKS = 4
 
     /** The common line: below it most people need rest. */
@@ -85,15 +88,30 @@ object LoadStory {
         val zone: Zone?,
         /** Fitness now against four weeks ago, percent; null when it was not yet measured then. */
         val fitnessChange: Double?,
-        /** The person's usual week (median of recent weeks with training). */
+        /** The person's usual week (median of recent weeks with training, not below the plan's week). */
         val usualWeek: Double?,
-        /** [usualWeek] is the plan's: fewer than [FULL_WEEKS] weeks to go by, and they were lighter than it asks. */
+        /** [usualWeek] is the plan's: the weeks to go by were lighter than it asks (missed sessions), or there are none. */
         val usualFromPlan: Boolean = false,
         val weeks: List<Week>,
         val dips: List<Dip>,
         /** Days since the last training. */
         val daysSinceTraining: Int?,
-    )
+        /** The plan's full week, null without a plan. */
+        val plannedWeek: Double? = null,
+        /** The weeks [usualWeek] went by (of the four before this one: with training, not ill, paused or lighter by plan). */
+        val ownWeeks: Int = 0,
+    ) {
+        /**
+         * The week under way far above the usual by now ([Level.SPIKE]) and already above both the whole usual week and
+         * the plan's full week: the one week «Прогресс» warns of. A full week by plan after missed ones never is (research
+         * spike-label, Denis's decision of 25 November: «На этой неделе нагрузка резко выше обычной» at his first full week
+         * after a lighter and a thin one).
+         */
+        val warn: Boolean
+            get() = weeks.lastOrNull()?.let { w ->
+                w.soFar && w.level == Level.SPIKE && w.load > (usualWeek ?: 0.0) && w.load > (plannedWeek ?: 0.0)
+            } == true
+    }
 
     fun zone(pct: Double, restBelow: Double): Zone = when {
         pct < restBelow -> Zone.REST
@@ -159,6 +177,10 @@ object LoadStory {
 
         val thisMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         fun offIn(monday: LocalDate) = (0 until 7L).any { monday.plusDays(it) in base.off }
+        // A lighter week by plan is no usual one either (research spike-label, 25 November): Denis's lighter week of 257
+        // among the four before had his usual at 1291, and his next full week by plan read 147 %, «резкий скачок».
+        fun notUsual(monday: LocalDate) = offIn(monday) || (0 until 7L).any { monday.plusDays(it) in base.lighter }
+        val plannedFull = base.plannedWeek
         val all = (0 until weeks + 4).map { thisMonday.minusWeeks((weeks + 3 - it).toLong()) }.map { m ->
             val days = series.filter { !it.date.isBefore(m) && it.date.isBefore(m.plusDays(7)) }
             Triple(m, days, days.sumOf { it.load })
@@ -171,14 +193,17 @@ object LoadStory {
             if (i < 4) return@mapIndexedNotNull null
             // Weeks before the first session say nothing.
             if (first == null || m.plusDays(6).isBefore(first)) return@mapIndexedNotNull null
-            // Weeks ill or paused are not the usual: they would make the next ordinary week look like a jump.
-            val priorWeeks = all.subList(i - 4, i).filter { it.third > 0 && !offIn(it.first) }
+            // Weeks ill, paused or lighter by plan are not the usual: they would make the next ordinary week look like a jump.
+            val priorWeeks = all.subList(i - 4, i).filter { it.third > 0 && !notUsual(it.first) }
             val current = m == thisMonday
             val own = if (!current) median(priorWeeks.map { it.third })
             else median(priorWeeks.map { (pm, pd, _) -> pd.filter { it.date.isBefore(pm.plusDays(daysIn.toLong())) }.sumOf { it.load } })
-            // Few weeks to go by (the app new, a week ill): the usual is not below what the plan asks.
-            val planned = if (current) base.plannedThrough(daysIn) else base.plannedWeek ?: 0.0
-            val usual = if (priorWeeks.isNotEmpty() && priorWeeks.size < FULL_WEEKS && planned > 0) maxOf(own ?: 0.0, planned) else own
+            // The usual is not below what the plan asks: with few weeks to go by (the app new, a week ill), and whenever the
+            // weeks before fell short of it. The plan's week is made of this person's own sessions, so weeks below it are
+            // missed sessions, and a week as planned after them is the usual one (research spike-label, Denis's decision
+            // of 25 November; until then only with fewer than FULL_WEEKS weeks, and his full week read 147 % after two thin ones).
+            val planned = if (current) base.plannedThrough(daysIn) else plannedFull ?: 0.0
+            val usual = if (priorWeeks.isNotEmpty() && planned > 0) maxOf(own ?: 0.0, planned) else own
             val soFar = if (current) days.filter { !it.date.isAfter(upTo) }.sumOf { it.load } else load
             val ratio = usual?.takeIf { it > 0 }?.let { soFar / it }
             val raw = when {
@@ -187,6 +212,9 @@ object LoadStory {
                 ratio < 0.7 -> Level.LIGHT
                 ratio <= 1.1 -> Level.USUAL
                 ratio <= 1.3 -> Level.MORE
+                // No heavier than the plan's full week: never a jump, not even a week under way with sessions done ahead of
+                // their days (Saturday's gym on Wednesday) — more than usual by now at most (research spike-label, 25 November).
+                plannedFull != null && load <= plannedFull -> Level.MORE
                 else -> Level.SPIKE
             }
             // A day or so in, one session more or less is all the difference; and before the usual training days there is
@@ -200,11 +228,11 @@ object LoadStory {
             val pcts = days.mapNotNull { pctOn(it) }
             Week(m, load, days.count { it.load > 0 }, ratio, level, pcts.minOrNull(), days.lastOrNull()?.let { pctOn(it) }, soFar = current)
         }
-        val recent = all.takeLast(5).dropLast(1).filter { it.third > 0 && !offIn(it.first) && first != null && !it.first.plusDays(6).isBefore(first) }
+        val recent = all.takeLast(5).dropLast(1).filter { it.third > 0 && !notUsual(it.first) && first != null && !it.first.plusDays(6).isBefore(first) }
         val ownUsual = median(recent.map { it.third })
-        val plannedWeek = base.plannedWeek
-        val usualFromPlan = recent.size < FULL_WEEKS && plannedWeek != null && plannedWeek > (ownUsual ?: 0.0)
-        val usualWeek = if (usualFromPlan) plannedWeek else ownUsual
+        // As for each week: the plan's week is the floor, with four weeks to go by too (research spike-label, 25 November).
+        val usualFromPlan = plannedFull != null && plannedFull > (ownUsual ?: 0.0)
+        val usualWeek = if (usualFromPlan) plannedFull else ownUsual
 
         // Freshness of the morning (the day before's numbers), as for the rest line: a hard session's own load does not
         // make its evening a dip that "needed rest".
@@ -251,6 +279,7 @@ object LoadStory {
             zone = if (history) zone(now.formPct, personal.restBelow) else null,
             fitnessChange = fitnessChange, usualWeek = usualWeek, usualFromPlan = usualFromPlan, weeks = rows, dips = dips,
             daysSinceTraining = lastTraining?.let { (today.toEpochDay() - it.toEpochDay()).toInt() },
+            plannedWeek = plannedFull, ownWeeks = recent.size,
         )
     }
 

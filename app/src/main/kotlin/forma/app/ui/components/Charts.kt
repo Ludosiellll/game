@@ -285,7 +285,8 @@ internal fun trendX(day: Long, from: Long, to: Long): Float {
  * Weeks side by side on a baseline, one bar each (at most 20 dp wide, rounded at the top only), past weeks muted;
  * [current]: the last one is under way — in the text colour so far, nothing while it is empty, «эта неделя» under it;
  * [usual]: a hairline named «обычная» at the person's usual week; [spikes]: weeks far over that line, the only colour on
- * the chart, named «скачок» (a review on 23 November: a spike measured against another yardstick sat on the line).
+ * the chart (a review on 23 November: a spike measured against another yardstick sat on the line), each with its word over
+ * it — by how much, «+45 %», not «скачок» (research spike-label, 25 November).
  */
 @Composable
 fun WeekBars(
@@ -294,7 +295,7 @@ fun WeekBars(
     modifier: Modifier = Modifier,
     current: Boolean = true,
     usual: Double? = null,
-    spikes: Set<Int> = emptySet(),
+    spikes: Map<Int, String> = emptyMap(),
     startLabel: String? = null,
     height: Dp = 112.dp,
 ) {
@@ -307,7 +308,7 @@ fun WeekBars(
     Canvas(modifier.fillMaxWidth().height(height).semantics { contentDescription = description }) {
         if (values.isEmpty()) return@Canvas
         val xBand = 16.dp.toPx()
-        // Room above the tallest bar for its word («скачок»).
+        // Room above the tallest bar for its word («+45 %»).
         val top = 20.dp.toPx()
         // Room on the right only for the usual line's name.
         val right = if (usual != null && usual > 0) measurer.measure("обычная", small).size.width + 10.dp.toPx() else 0f
@@ -331,7 +332,7 @@ fun WeekBars(
             }
             drawPath(bar, color)
             if (spike) {
-                val l = measurer.measure("скачок", small.copy(color = warn))
+                val l = measurer.measure(spikes.getValue(i), small.copy(color = warn))
                 drawText(l, topLeft = Offset((x + bw / 2 - l.size.width / 2).coerceIn(0f, size.width - l.size.width), (base - bh - l.size.height - 2.dp.toPx()).coerceAtLeast(0f)))
             }
         }

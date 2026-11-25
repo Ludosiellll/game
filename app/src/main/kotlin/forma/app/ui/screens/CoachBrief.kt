@@ -181,12 +181,16 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             }
         }
         // Freshness now, the number «Сегодня» shows: said first, so a dip's lowest or a week's below is not taken for it.
-        repo.loadStoryNow(today)?.takeIf { it.history }?.let { st ->
+        val story = repo.loadStoryNow(today)
+        story?.takeIf { it.history }?.let { st ->
             appendLine(
                 "Свежесть сейчас: ${Ru.pct(st.today.formPct)} (как на экране «Сегодня»; это число на сегодня, а не вчерашнее). " +
                     "В разделе «Нагрузка и восстановление» ниже минимумы — прошлых дней.",
             )
         }
+        // The line at the top of «Прогресс», in its words: only a week above both the usual and the plan's full week
+        // (research spike-label, 25 November).
+        story?.let { forma.core.load.LoadExplain.alert(it) }?.let { appendLine(it) }
         val now = inProgress(repo)
         if (now.isNotEmpty()) {
             appendLine()

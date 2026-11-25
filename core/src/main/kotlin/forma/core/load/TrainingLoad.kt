@@ -21,10 +21,15 @@ data class LoadDay(
 
 /**
  * What the numbers lean on while there is little history. [planned]: what the person's plan asks each day, Monday first
- * (7 values, load units), null without a plan — the floor of the usual week while there are few weeks. [off]: days not
- * to judge by — marked sick or paused.
+ * (7 values, load units), null without a plan — the floor of the usual week. [off]: days not to judge by — marked sick
+ * or paused. [lighter]: days with a session of a lighter week by plan (the block's, the app's own after setbacks, one
+ * asked for): its week is no usual one, though its sessions count for freshness as any (research spike-label, 25 November).
  */
-data class LoadBase(val planned: List<Double>? = null, val off: Set<LocalDate> = emptySet()) {
+data class LoadBase(
+    val planned: List<Double>? = null,
+    val off: Set<LocalDate> = emptySet(),
+    val lighter: Set<LocalDate> = emptySet(),
+) {
     /** The plan's week, null without one (or an empty one). */
     val plannedWeek: Double? get() = planned?.sum()?.takeIf { it > 0 }
 

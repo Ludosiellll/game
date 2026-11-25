@@ -148,7 +148,9 @@ private fun Alerts(today: LocalDate) {
     val hard = program?.week?.days?.any { d -> d.sessions.any { it.kind == forma.core.plan.SessionKind.RUN_QUALITY } } != false
     val lines = listOfNotNull(
         "В неделе нет тяжёлых пробежек. К забегу так не подготовиться: добавь день в «Плане».".takeIf { profile?.runGoal != null && !hard },
-        "На этой неделе нагрузка резко выше обычной.".takeIf { story?.weeks?.lastOrNull()?.level == LoadStory.Level.SPIKE },
+        // Only a week above both the usual week and the plan's full week, said as what happened (research spike-label,
+        // Denis's decision of 25 November: this line met his first full week by plan after a lighter and a thin one).
+        story?.let { LoadExplain.alert(it) },
     )
     lines.forEach { Text(it, style = T.body(15.sp, FontWeight.SemiBold).copy(color = F.c.warn)) }
 }
@@ -482,10 +484,11 @@ private fun LoadSection(today: LocalDate) {
     val usual = st.usualWeek
     if (weeks.isNotEmpty()) WeekBars(
         weeks.map { it.load }, "Нагрузка по неделям", current = current, usual = usual,
-        // A spike against the line drawn as well as against the weeks before it: a week as tall as «обычная» is none.
-        spikes = weeks.indices.filter { i ->
-            !(current && i == weeks.lastIndex) && weeks[i].level == LoadStory.Level.SPIKE && usual != null && weeks[i].load > usual * 1.3
-        }.toSet(),
+        // A spike against the line drawn as well as against the weeks before it: a week as tall as «обычная» is none. Named
+        // by how much it is above the line, not «скачок» (research spike-label, 25 November).
+        spikes = if (usual == null) emptyMap() else weeks.indices.filter { i ->
+            !(current && i == weeks.lastIndex) && weeks[i].level == LoadStory.Level.SPIKE && weeks[i].load > usual * 1.3
+        }.associateWith { i -> Ru.pct((weeks[i].load / usual - 1) * 100) },
         startLabel = shortDate(weeks.first().monday),
     )
     More("Подробнее о нагрузке") { LoadDetails(today) }
@@ -559,7 +562,8 @@ private fun LoadDetails(today: LocalDate) {
                     Text(
                         LoadExplain.level(w), style = T.body(13.sp, FontWeight.SemiBold).copy(
                             color = when (w.level) {
-                                LoadStory.Level.SPIKE -> F.c.warn
+                                // The week under way in the warning colour only when the top of the screen warns of it too.
+                                LoadStory.Level.SPIKE -> if (!w.soFar || st.warn) F.c.warn else F.c.load
                                 LoadStory.Level.MORE -> F.c.load
                                 LoadStory.Level.NONE, LoadStory.Level.LIGHT, LoadStory.Level.ONGOING -> F.c.text2
                                 else -> F.c.text

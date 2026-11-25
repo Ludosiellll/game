@@ -93,9 +93,14 @@ object LoadExplain {
         Level.LIGHT -> "легче обычной"
         Level.USUAL -> "обычная"
         Level.MORE -> "выше обычной"
-        Level.SPIKE -> "резкий скачок"
+        // What the week was, not a forecast (research spike-label, Denis's decision of 25 November: «резкий скачок» without
+        // scare words).
+        Level.SPIKE -> "намного выше обычной"
         Level.ONGOING -> "неделя идёт"
     }
+
+    /** By how much the week is above its usual one, "45 %" (a no-break space before the sign). */
+    private fun over(w: LoadStory.Week): String = "${r(((w.ratio ?: 1.0) - 1) * 100)}\u00A0%"
 
     fun week(w: LoadStory.Week): String = buildString {
         append(n(w.load))
@@ -108,17 +113,33 @@ object LoadExplain {
 
     /** What the week level means; null when there is nothing to say. */
     fun levelNote(w: LoadStory.Week): String? = when (w.level) {
-        Level.SPIKE -> "Нагрузка резко выросла, больше чем на 30 % от обычной недели. Так чаще всего и перегружаются. Следующую неделю лучше не наращивать."
+        // What happened and plain advice, not a prediction of overload (research spike-label, 25 November: the ratio to the
+        // usual week does not foretell injury, and «Так чаще всего и перегружаются» met Denis's first full week by plan).
+        Level.SPIKE -> "На ${over(w)} больше обычной недели" + (if (w.soFar) " к этому дню" else "") + ": следующую неделю лучше не наращивать."
         Level.LIGHT -> "Неделя легче обычной: разгрузка, пропуски или болезнь. Тренированность за неё почти не теряется."
         // Monday's one session, or a Thursday of someone who trains at weekends: either way the usual days are still ahead.
         Level.ONGOING -> "Неделя ещё идёт. Сравнить её с обычной можно, когда пройдут дни, в которые ты обычно тренируешься."
         else -> null
     }
 
+    /**
+     * The line at the top of «Прогресс» for the week under way, null when there is none: only a week above both the usual
+     * week and the plan's full week ([LoadStory.Story.warn]), with the number and the advice of its own line ([levelNote]).
+     */
+    fun alert(s: LoadStory.Story): String? = s.weeks.lastOrNull()?.takeIf { s.warn }?.let {
+        "Эта неделя на ${over(it)} больше обычной к этому дню: следующую неделю лучше не наращивать."
+    }
+
     fun usual(s: LoadStory.Story): String? = s.usualWeek?.let {
-        if (s.usualFromPlan) "Твоя обычная неделя — около ${n(it)}: столько просит твой план. Своих полных недель в приложении пока мало " +
-            "(недели болезни и паузы не считаются), поэтому сравнение идёт с планом. «Выше обычной» — до +30 %, больше — уже скачок."
-        else "Твоя обычная неделя — около ${n(it)}. Это середина последних четырёх недель с тренировками. «Выше обычной» — до +30 %, больше — уже скачок."
+        val scale = "«Выше обычной» значит до +30\u00A0%, больше — «намного выше обычной»."
+        when {
+            s.usualFromPlan && s.ownWeeks < LoadStory.FULL_WEEKS -> "Твоя обычная неделя — около ${n(it)}: столько просит твой план. " +
+                "Своих полных недель в приложении пока мало (недели болезни, паузы и лёгкие по плану не считаются), поэтому сравнение идёт с планом. $scale"
+            // Four weeks and more, short of the plan through missed sessions (research spike-label, 25 November).
+            s.usualFromPlan -> "Твоя обычная неделя — около ${n(it)}: столько просит твой план. Последние недели легче плана, поэтому сравнение идёт с ним. $scale"
+            else -> "Твоя обычная неделя — около ${n(it)}. Это середина последних недель с тренировками (недели болезни, паузы и лёгкие по плану " +
+                "не считаются). $scale"
+        }
     }
 
     /**

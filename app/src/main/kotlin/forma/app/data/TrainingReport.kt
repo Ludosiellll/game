@@ -198,7 +198,12 @@ object TrainingReport {
             LoadExplain.usual(st)?.let { appendLine("- $it") }
             appendLine()
             appendLine("Недели (сначала новые):")
-            st.weeks.reversed().forEach { w -> appendLine("- ${Ru.dates(w.monday, w.monday.plusDays(6))}: ${LoadExplain.level(w)} — ${LoadExplain.week(w)}") }
+            // A week far above the usual with its line as «Прогресс» says it: by how much and the plain advice, not a label
+            // alone (research spike-label, 25 November: the coach got «резкий скачок» for a full week by plan).
+            st.weeks.reversed().forEach { w ->
+                val note = LoadExplain.levelNote(w)?.takeIf { w.level == forma.core.load.LoadStory.Level.SPIKE }
+                appendLine("- ${Ru.dates(w.monday, w.monday.plusDays(6))}: ${LoadExplain.level(w)} — ${LoadExplain.week(w)}" + (note?.let { ". $it" } ?: ""))
+            }
             appendLine()
             if (st.history) {
                 if (st.dips.isEmpty()) appendLine(LoadExplain.noDips(8))

@@ -621,6 +621,7 @@ class TrainingRepository(
          * What the load numbers start from while there is little history ([forma.core.load.LoadBase]). The plan's week by
          * day: each session at this person's own mean load for its kind (a lift by its template, else any lift; a run as
          * easy, hard or long), a common one before there is any. And the days not to judge by: marked «Болею» or paused.
+         * And the days of lighter weeks by plan, left out of the usual week ([forma.core.load.LoadBase.lighter]).
          */
         fun loadBaseOf(program: Program?, settings: Settings, ws: List<WorkoutEntity>): forma.core.load.LoadBase {
             val done = ws.filter { (it.load ?: 0.0) > 0 && !it.deload }
@@ -640,7 +641,17 @@ class TrainingRepository(
             val sick = settings.feels.filterValues { it == Feel.SICK.name }.keys
             val pauses = listOfNotNull(settings.pauseUntil?.let { listOf(settings.pauseFrom ?: it, it) }) + settings.pastPauses.filter { it.size == 2 }
             val paused = pauses.flatMap { (a, b) -> (a..minOf(b, a + 366)).toList() }
-            return forma.core.load.LoadBase(planned, (sick + paused).map { LocalDate.ofEpochDay(it) }.toSet())
+            // Lighter weeks by plan are no usual ones (research spike-label, Denis's decision of 25 November: his lighter
+            // week of 257 had the usual at 1291 and his next full week read as a jump). The block's lighter week (without
+            // blocks, the runs' every fourth), and a gym session done as a lighter one — the app's own week after setbacks,
+            // one asked for, the first back after being sick — but not a «Так себе» day's, which is no lighter week.
+            val runsPlanned = program?.week?.days?.any { d -> d.sessions.any { it.isRun } } == true
+            fun lighterByPlan(day: LocalDate) = program != null &&
+                (ProgramGenerator.isDeloadWeek(program, day) || runsPlanned && ProgramGenerator.isRunCutbackWeek(program, day))
+            val lighter = ws.filter { (it.load ?: 0.0) > 0 }.map { w -> w to LocalDate.ofEpochDay(w.epochDay) }.filter { (w, day) ->
+                lighterByPlan(day) || w.kind == Kind.LIFT && w.deload && settings.feels[w.epochDay] != Feel.LOW.name
+            }.map { it.second }.toSet()
+            return forma.core.load.LoadBase(planned, (sick + paused).map { LocalDate.ofEpochDay(it) }.toSet(), lighter)
         }
 
         /**
