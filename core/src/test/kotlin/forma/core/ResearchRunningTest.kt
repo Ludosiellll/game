@@ -155,7 +155,7 @@ class ResearchRunningTest {
     @Test fun theIntervalsSayTheirLapsAreSlowerThanTheRacePaceRepsOnPurpose() {
         val how = RunExplain.of(RunPlan.intervals(denis), goal).how
         assertTrue("медленнее, чем в отрезках темпа цели" in how, how)
-        assertTrue("так задумано" in how, how)
+        assertTrue("так и задумано" in how, how)
         assertTrue("темпа цели" !in RunExplain.of(RunPlan.intervals(denis), null).how)
     }
 
