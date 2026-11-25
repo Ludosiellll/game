@@ -40,10 +40,15 @@ object RirScale {
         return m.toInt().coerceIn(0, MAX)
     }
 
-    /** The pair in one exercise's sets of one session ([target] reps), if there is one. */
+    /**
+     * The pair in one exercise's sets of one session ([target] reps), if there is one. A set rated 0 (done to failure)
+     * starts no pair: it promised no more reps, and a shorter set after it is the fatigue of that failure — counted, it
+     * read whoever trains to failure as over-rating (Denis, 22.11: 30 × 10 at 0, then 30 × 6, and a correction of 2 that
+     * held the weight after every «5+»).
+     */
     fun pairOf(sets: List<DoneSet>, target: Int): Pair? {
         sets.forEachIndexed { i, s ->
-            val rir = s.rir ?: return@forEachIndexed
+            val rir = s.rir?.takeIf { it > 0 } ?: return@forEachIndexed
             if (s.reps < target) return@forEachIndexed
             for (j in i + 1 until sets.size) {
                 val f = sets[j]

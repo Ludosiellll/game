@@ -54,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -224,6 +225,16 @@ fun WorkoutScreen(workoutId: Long) {
     val rirBias by produceState(0, workoutId) { value = repo.rirBias(before = workoutId) }
     fun corrected(s: SetEntity) = DoneSet(s.weight, s.reps, forma.core.strength.RirScale.correct(s.rir, rirBias))
 
+    /**
+     * A set as the person rated it: what the next set of this session goes by. Read through the person's correction
+     * ([corrected]) the hint right after a set held the weight («5+» taken as «ещё 3»), while this screen opened again
+     * worked it out before the correction was read and raised it (Denis, 25 November: «вес не сразу повышается, а только
+     * при обновлении экрана»). As rated, at once and after coming back; rated too high, the next set shows it and the
+     * hint takes the weight down again. The correction stays for the session's end (the next session's weights) and for
+     * the records.
+     */
+    fun rated(s: SetEntity) = DoneSet(s.weight, s.reps, s.rir)
+
     // Keep the screen on in the gym.
     val view = LocalView.current
     DisposableEffect(settings.keepScreenOn) {
@@ -254,7 +265,7 @@ fun WorkoutScreen(workoutId: Long) {
     fun nextOf(item: LiftItem, logged: List<SetEntity>): Triple<Double, Int, Pair<String, Int>?> {
         val e = exerciseOf(item.exerciseId, stored, item)
         val last = logged.lastOrNull() ?: return Triple(planStart(item), item.prescription.reps, null)
-        val ns = Progression.nextSet(e, item.prescription, logged.map(::corrected), bw)
+        val ns = Progression.nextSet(e, item.prescription, logged.map(::rated), bw)
         return Triple(ns?.weight ?: last.weight, ns?.reps ?: last.reps, ns?.let { Texts.nextSet(e, it) to it.change })
     }
 
@@ -632,6 +643,26 @@ fun WorkoutScreen(workoutId: Long) {
                     advice[keyOf(item)]?.let { (text, change) ->
                         Hint(text, when { change > 0 -> F.c.good; change < 0 -> F.c.warn; else -> F.c.strength }, when { change > 0 -> Ic.up; change < 0 -> Ic.down; else -> Ic.info })
                     }
+                    // The set just done left unrated (Denis, 25 November: «нужно сделать напоминание … потому что можно забыть
+                    // нажать»): asked here, where the eyes are after «Подход сделан», and answered with one tap — no dialog. The
+                    // last set of the session by time, whichever exercise it was (the screen moves on after an exercise's last
+                    // set, the one that matters most); gone once rated or once the next set is written.
+                    val unrated = sets.maxByOrNull { it.doneAt }?.takeIf { s ->
+                        s.rir == null && plan.items.firstOrNull { it.position == s.position }?.let { exerciseOf(it.exerciseId, stored, it).load != LoadKind.TIMED } == true
+                    }
+                    if (unrated != null) {
+                        Column(Modifier.testTag("rate-last"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Hint("Прошлый подход без отметки. Сколько повторов ещё оставалось?", F.c.warn, Ic.info)
+                            RirChips(null) { v ->
+                                if (v != null) {
+                                    val fixed = unrated.copy(rir = v)
+                                    scope.launch { repo.updateSet(fixed) }
+                                    // Of this exercise: the next set follows the rating; what was typed for it since stays.
+                                    if (unrated.position == item.position) resume(inp, item, mine.map { if (it.id == fixed.id) fixed else it }, was = mine)
+                                }
+                            }
+                        }
+                    }
                     // The «+» set's rule, its own line right above its label, whenever it is the next set: the advice above
                     // can be gone (after «Отменить», an edit, back to the exercise), and the scroll above is out of view
                     // while resting (23 November: it sat under the logged sets, behind this panel).
@@ -704,10 +735,12 @@ fun WorkoutScreen(workoutId: Long) {
                     val before = fieldsOf(logged, inp)
                     val prior = mine.map(::corrected)
                     val record = recordAfter(ex, logged.prescription, prior, doneSet, best, bw)
+                    // The next set goes by the sets as rated ([rated]), the same as when this screen is opened again.
+                    val asRated = mine.map(::rated) + DoneSet(inp.weight, inp.reps, inp.rir)
                     scope.launch {
                         val id = repo.logSet(workoutId, logged, inp.weight, inp.reps, inp.rir)
                         // The next set, with the numbers already in the fields — or, the exercise done, where to go on.
-                        val ns = Progression.nextSet(ex, logged.prescription, prior + doneSet, bw)
+                        val ns = Progression.nextSet(ex, logged.prescription, asRated, bw)
                         val closes = n + 1 >= planned
                         val nx = if (closes) nextOpen(plan.items, logged.position, ::count) else null
                         val recordText = record?.let {

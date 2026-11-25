@@ -274,7 +274,6 @@ internal suspend fun inProgress(repo: TrainingRepository): String = buildString 
     val sets = repo.db.sets().forWorkout(w.id).sortedBy { it.doneAt }
     val settings = repo.store.settingsNow()
     val bw = repo.store.profileNow()?.bodyWeightKg ?: 75.0
-    val bias = repo.rirBias(before = w.id)
     val zone = java.time.ZoneId.systemDefault()
     val start = java.time.Instant.ofEpochMilli(w.startedAt).atZone(zone)
     val minutes = ((repo.nowMs() - w.startedAt) / 60_000).coerceAtLeast(0)
@@ -321,7 +320,8 @@ internal suspend fun inProgress(repo: TrainingRepository): String = buildString 
         }
         appendLine("- ${i.name} [${i.exerciseId}]: план $planned; $doneText$mark")
         if (i === current && done.isNotEmpty()) {
-            val ns = Progression.nextSet(ex, p, done.map { DoneSet(it.weight, it.reps, forma.core.strength.RirScale.correct(it.rir, bias)) }, bw)
+            // As the gym screen works the next set out: by the sets as rated (not through the person's correction).
+            val ns = Progression.nextSet(ex, p, done.map { DoneSet(it.weight, it.reps, it.rir) }, bw)
             ns?.let { appendLine("  Подход ${done.size + 1}: приложение даёт ${kg(it.weight)} × ${it.reps}" + (if (it.plus) "+" else "") + ".") }
         }
     }

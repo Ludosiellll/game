@@ -36,4 +36,24 @@ class RirScaleTest {
         // Another weight says nothing about this one.
         assertNull(RirScale.pairOf(listOf(DoneSet(80.0, 8, 4), DoneSet(85.0, 6, 0)), 8))
     }
+
+    /**
+     * Denis, 25 November: from 22.11 the weight stopped going up right after a set rated «5+». His fourth "pair" was a set
+     * rated 0 (30 × 10 to failure, then 30 × 6): a set done to failure promises no more reps, and the shorter set after
+     * it is the fatigue of that failure, not a reserve rated too high. Such a set says nothing of how the person rates.
+     */
+    @Test fun aSetRatedToFailureIsNoEvidenceOfOverRating() {
+        assertNull(RirScale.pairOf(listOf(DoneSet(30.0, 10, 0), DoneSet(30.0, 6, 1)), 10))
+        // A rated set before it still pairs with the set that ran out.
+        assertEquals(RirScale.Pair(10, 2, 6, 2), RirScale.pairOf(listOf(DoneSet(30.0, 10, 2), DoneSet(30.0, 10, 0), DoneSet(30.0, 6, 1)), 10))
+        // His real pairs up to 22.11 (pull-ups 7 at 0 then 6; 11 and 10 at «ещё 2» then 10 and 9; 10 at 0 then 6): no
+        // correction comes of them.
+        val his = listOfNotNull(
+            RirScale.pairOf(listOf(DoneSet(30.0, 7, 0), DoneSet(30.0, 6, 0)), 7),
+            RirScale.pairOf(listOf(DoneSet(29.0, 11, 2), DoneSet(29.0, 10, 0)), 11),
+            RirScale.pairOf(listOf(DoneSet(22.5, 10, 2), DoneSet(22.5, 9, 0)), 10),
+            RirScale.pairOf(listOf(DoneSet(30.0, 10, 0), DoneSet(30.0, 6, 1)), 10),
+        )
+        assertEquals(0, RirScale.bias(his))
+    }
 }

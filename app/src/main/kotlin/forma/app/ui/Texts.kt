@@ -21,13 +21,13 @@ object Texts {
             ex.load == LoadKind.TIMED -> "Удержишь во всех подходах, в следующий раз будет дольше."
             n.calibrate && n.change > 0 -> "Легко, можно тяжелее."
             n.calibrate && n.change < 0 -> "Тяжеловато, чуть легче."
-            // The chips under this line are for the next set: the one done is marked by a tap on its row.
-            n.calibrate && r == null -> "Не отмечено, сколько повторов ещё оставалось, вес пока тот же. Чтобы отметить, нажми на последний подход в списке."
+            // The set done is asked about right under this line (one tap); the chips lower down are for the next set.
+            n.calibrate && r == null -> "Запас не отмечен, вес пока тот же."
             n.calibrate -> "Вес подходящий."
             n.change > 0 -> "Было легко, прибавляем."
             n.change < 0 && r != null && r < 0 -> "Не хватило повторов, убавляем."
             n.change < 0 -> "Было тяжело, убавляем."
-            r == null -> "Не отмечено, сколько повторов ещё оставалось, вес тот же. Чтобы отметить, нажми на последний подход в списке."
+            r == null -> "Запас не отмечен, вес тот же."
             r < 0 -> "Чуть не хватило. Вес тот же, попробуй добрать."
             r > n.plannedReserve -> "Легковато, но вес пока тот же."
             r < n.plannedReserve -> "Тяжеловато, но вес тот же."
