@@ -46,7 +46,8 @@ class FreshLegsTest {
         }
         assertTrue(types.filterIndexed { i, _ -> i % 2 == 1 }.all { it == RunType.GOAL_PACE }, types.toString())
         assertTrue(types.filterIndexed { i, _ -> i % 2 == 0 }.none { it == RunType.GOAL_PACE }, types.toString())
-        // The same mix as before: three race pace, two tempo, one intervals in six.
+        // The same mix as before: three race pace, two tempo, one intervals in six — near the goal (49 for 48.9); far from
+        // it the cycle has intervals every other run since MD-1 (25 November), with race pace put off the same way.
         assertEquals(6, types.count { it == RunType.GOAL_PACE })
         assertEquals(4, types.count { it == RunType.TEMPO })
         assertEquals(2, types.count { it == RunType.INTERVALS })

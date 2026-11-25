@@ -44,7 +44,7 @@ data class RunState(
     val longMinutes: Int = 45,
     val intervalStage: Int = 0,
     val tempoStage: Int = 0,
-    /** Alternates intervals and tempo for the weekly quality day. */
+    /** Hard sessions done: the order of them counts by it ([RunPlan.hardCycle]; without a middle-distance goal intervals and tempo by turns). */
     val qualityCount: Int = 0,
     val week: Int = 0,
     val runs: Int = 0,
@@ -708,7 +708,8 @@ object RunPlan {
 
     /**
      * Upper limit for any single run: 110 % of the longest run in the previous 30 days
-     * (Frandsen et al., BJSM 2025: bigger single-session spikes raise overuse injury risk).
+     * (Frandsen et al., BJSM 2025: bigger single-session spikes were linked with more overuse injuries — an observed
+     * link, hard sessions counted too). Easy and long runs, and hard training sessions as a whole ([hardSession], MD-3).
      */
     fun singleRunCap(state: RunState, day: Long?): Int? {
         if (day == null) return null
@@ -738,20 +739,122 @@ object RunPlan {
         return state.recent.filter { it.day > last - 14 }.sumOf { it.minutes } / 2
     }
 
-    private fun hardCap(state: RunState, floor: Int): Int? = weekMinutes(state)?.let { max(floor, (it * 60 * 0.10).roundToInt()) }
+    /**
+     * The hard work of one session at most, seconds: [floor] or about 10 % of the week ([weekMinutes]). Built for a [day]
+     * of the plan with fewer than three runs known, the plan's own week ([ownWeek]) is the week, not no limit at all
+     * (hard-session-spike / MD-3 of the research of 24 November, approved by the owner on 25 November: a full step of
+     * 45–53 minutes came with no limit then). Without a day (a ladder's step shown as written) as before.
+     */
+    private fun hardCap(state: RunState, floor: Int, day: Long? = null): Int? =
+        (weekMinutes(state) ?: day?.let { ownWeek(state) })?.let { max(floor, (it * 60 * 0.10).roundToInt()) }
 
-    fun intervals(state: RunState, cutback: Boolean = false): RunWorkout {
+    /** The warm-up and cool-down of intervals and tempo, minutes. */
+    private const val HARD_WARM = 10
+    private const val HARD_COOL = 10
+
+    /** The warm-up and cool-down of race-pace reps, minutes. */
+    private const val GOAL_WARM = 12
+    private const val GOAL_COOL = 8
+
+    /** The shortest warm-up a hard session is cut to, minutes: it still holds its strides ([RunTimeline.stridesFrom] needs 8). */
+    private const val WARM_FLOOR = 8
+
+    /** The shortest cool-down a hard session is cut to, minutes. */
+    private const val COOL_FLOOR = 5
+
+    /** A session [fit] within a cap: [workout], built with [warm] and [cool] minutes and [option]; [cut] — shorter than it was. */
+    private class Fitted<T>(val workout: RunWorkout, val warm: Int, val cool: Int, val option: T, val cut: Boolean)
+
+    /**
+     * The session [build] makes, as a whole no longer than [cap] minutes (null: no cap): as it is when it fits; else the
+     * cool-down shorter first, then the warm-up (to [COOL_FLOOR] and [WARM_FLOOR], or as they are when shorter), then the
+     * next of [options] (the session's own first, then less of it), the minutes left given back to the warm-up first.
+     * Null when even the least of the last option is over the cap.
+     */
+    private fun <T> fit(cap: Int?, warm: Int, cool: Int, options: List<T>, build: (Int, Int, T) -> RunWorkout): Fitted<T>? {
+        val full = build(warm, cool, options.first())
+        if (cap == null || full.totalSeconds <= cap * 60) return Fitted(full, warm, cool, options.first(), cut = false)
+        val w0 = min(warm, WARM_FLOOR)
+        val c0 = min(cool, COOL_FLOOR)
+        for (o in options) {
+            val least = build(w0, c0, o).totalSeconds
+            if (least > cap * 60) continue
+            val spare = (cap * 60 - least) / 60
+            val w = min(warm, w0 + spare)
+            val c = min(cool, c0 + spare - (w - w0))
+            return Fitted(build(w, c, o), w, c, o, cut = true)
+        }
+        return null
+    }
+
+    /** Reps from [n] down to 2 (or [n] alone when it is less): what a hard session may drop to fit its cap. */
+    private fun fewer(n: Int): List<Int> = (n downTo min(n, 2)).toList()
+
+    /**
+     * A tempo run of [n] × [work] seconds and less of it: fewer reps (2 at least), then those reps shorter by whole
+     * minutes (5 at least, one long rep 10) — the tempo's own way to fewer minutes, as the week's share cuts it ([tempo]).
+     */
+    private fun tempoCuts(n: Int, work: Int): List<Pair<Int, Int>> = buildList {
+        for (k in fewer(n)) add(k to work)
+        val k = min(n, 2)
+        val floor = if (k == 1) 10 * 60 else 5 * 60
+        var s = (work - 1) / 60 * 60
+        while (s >= floor) {
+            add(k to s)
+            s -= 60
+        }
+    }
+
+    /**
+     * The order of hard sessions with a middle-distance goal (MD-1 of the research of 24 November, approved by the owner
+     * on 25 November), counted by hard sessions done ([RunState.qualityCount]: a day missed only shifts it) and chosen by
+     * how far the fitness ([RunState.fitness]: the trial counted or the estimate) is below the goal's own. 1500 m rests
+     * mostly on the aerobic ceiling, and intervals near it raise it best (Milanović 2015, Helgerud 2007; studied two or
+     * three times a week, not once in six hard runs as before). More than 3 points below: intervals every other session,
+     * race pace and tempo by turns between them ([FAR]; Denis, hard runs on Monday and Thursday: intervals on one day, tempo
+     * and race pace by turns on the other). Within 3: intervals and race pace by turns, tempo one in six ([WITHIN]). Within
+     * a point, or the race 8 weeks away or nearer: race pace every other session, as near the goal before ([NEAR]). Race
+     * pace stays first, as before: the gentlest start for a new runner.
+     */
+    private val FAR = listOf(RunType.GOAL_PACE, RunType.INTERVALS, RunType.TEMPO, RunType.INTERVALS)
+    private val WITHIN = listOf(RunType.GOAL_PACE, RunType.INTERVALS, RunType.GOAL_PACE, RunType.INTERVALS, RunType.GOAL_PACE, RunType.TEMPO)
+    private val NEAR = listOf(RunType.GOAL_PACE, RunType.TEMPO, RunType.GOAL_PACE, RunType.INTERVALS, RunType.GOAL_PACE, RunType.TEMPO)
+
+    /** The race this close or closer, days: the hard sessions go by [NEAR]. */
+    const val RACE_NEAR_DAYS = 56
+
+    /** The cycle of hard sessions for a middle-distance [goal] on [day] ([FAR], [WITHIN], [NEAR]); with no fitness known, [NEAR]. */
+    fun hardCycle(state: RunState, goal: RunGoal, day: Long? = null): List<RunType> {
+        val v = state.fitness ?: return NEAR
+        val gap = Vdot.fromRace(goal.meters.toDouble(), goal.seconds.toDouble()) - v
+        val raceSoon = day != null && goal.date?.let { it - day in 0..RACE_NEAR_DAYS } == true
+        return when {
+            raceSoon || gap <= 1.0 -> NEAR
+            gap <= 3.0 -> WITHIN
+            else -> FAR
+        }
+    }
+
+    /** The hard session the cycle ([hardCycle]) holds after [count] hard sessions done. */
+    fun hardDue(state: RunState, goal: RunGoal, day: Long? = null, count: Int = state.qualityCount): RunType =
+        hardCycle(state, goal, day).let { it[count.coerceAtLeast(0) % it.size] }
+
+    fun intervals(state: RunState, cutback: Boolean = false): RunWorkout = intervalsOf(state, cutback, null, HARD_WARM, HARD_COOL, null)
+
+    /** [intervals] for [day] (its week's share, [hardCap]) with [warmMin] and [coolMin] minutes and at most [maxReps] reps. */
+    private fun intervalsOf(state: RunState, cutback: Boolean, day: Long?, warmMin: Int, coolMin: Int, maxReps: Int?): RunWorkout {
         val stage = state.intervalStage.coerceIn(0, INTERVALS.lastIndex)
         val (n0, work, rest) = INTERVALS[stage]
-        val cap = hardCap(state, 12 * 60)
+        val cap = hardCap(state, 12 * 60, day)
         val n = (if (cutback) max(2, n0 - 2) else n0).let { if (cap != null) min(it, max(2, cap / work)) else it }
+            .let { if (maxReps != null) min(it, maxReps) else it }
         val p = paces(state)
-        val segs = mutableListOf(Segment(SegmentKind.WARMUP, 10 * 60, p?.easy))
+        val segs = mutableListOf(Segment(SegmentKind.WARMUP, warmMin * 60, p?.easy))
         repeat(n) { i ->
             segs += Segment(SegmentKind.WORK, work, p?.let { PaceRange(it.interval - 4, it.interval + 4) })
             if (i < n - 1) segs += Segment(SegmentKind.RECOVERY, rest, p?.easy)
         }
-        segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
+        segs += Segment(SegmentKind.COOLDOWN, coolMin * 60, p?.easy)
         val note = "Отрезки тяжёлые, но ровные: последний не медленнее первого. Отдых трусцой. $STRIDES_NOTE" +
             if (state.estimated) " Темп примерный." else ""
         return RunWorkout(RunType.INTERVALS, "Интервалы · $n × ${work / 60} мин", segs, note, targetRpe = 8, stage = stage, cutback = cutback && n < n0)
@@ -833,10 +936,13 @@ object RunPlan {
      * Before the first trial the reps get their pace from the estimate (approximate, said so): without one, a tempo run by
      * feel is easily run far too fast (Denis, 5 November: 59 s laps for 61).
      */
-    fun tempo(state: RunState, cutback: Boolean = false): RunWorkout {
-        val stage = state.tempoStage.coerceIn(0, TEMPO.lastIndex)
-        val (n0, work, rest) = tempoNow(state)
-        val cap = hardCap(state, 20 * 60)
+    fun tempo(state: RunState, cutback: Boolean = false): RunWorkout =
+        tempoReps(state, cutback, null).let { (n, work) -> tempoOf(state, cutback, n, work, HARD_WARM, HARD_COOL) }
+
+    /** The tempo run's reps and their seconds for [day]: [tempoNow], lighter in a lighter week and kept to the week's share. */
+    private fun tempoReps(state: RunState, cutback: Boolean, day: Long?): Pair<Int, Int> {
+        val (n0, work, _) = tempoNow(state)
+        val cap = hardCap(state, 20 * 60, day)
         var n = if (cutback && n0 > 1) n0 - 1 else n0
         var workSec = if (cutback && n0 == 1) (work * 0.75).roundToInt() else work
         if (cap != null && n * workSec > cap) {
@@ -849,15 +955,22 @@ object RunPlan {
                 if (n == 1) workSec = min(workSec, (cap / 60) * 60)
             }
         }
+        return n to workSec
+    }
+
+    /** The tempo run of [n] × [workSec] with [warmMin] and [coolMin] minutes of easy running before and after. */
+    private fun tempoOf(state: RunState, cutback: Boolean, n: Int, workSec: Int, warmMin: Int, coolMin: Int): RunWorkout {
+        val stage = state.tempoStage.coerceIn(0, TEMPO.lastIndex)
+        val (n0, work, rest) = tempoNow(state)
         val guessed = state.estimated
         val p = paces(state)
         val t = p?.let { it.threshold + state.tempoSoft }
-        val segs = mutableListOf(Segment(SegmentKind.WARMUP, 10 * 60, p?.easy))
+        val segs = mutableListOf(Segment(SegmentKind.WARMUP, warmMin * 60, p?.easy))
         repeat(n) { i ->
             segs += Segment(SegmentKind.WORK, workSec, t?.let { PaceRange(it - 5, it + 5) })
             if (i < n - 1 && rest > 0) segs += Segment(SegmentKind.RECOVERY, rest, p?.easy)
         }
-        segs += Segment(SegmentKind.COOLDOWN, 10 * 60, p?.easy)
+        segs += Segment(SegmentKind.COOLDOWN, coolMin * 60, p?.easy)
         val title = if (n == 1) "Темповый бег · ${minutes(workSec)} мин" else "Темповый бег · $n × ${minutes(workSec)} мин"
         val note = "Тяжело, но держишь: пару слов сказать можешь, болтать уже нет." +
             if (guessed) " Темп примерный, быстрее не беги." else ""
@@ -883,7 +996,11 @@ object RunPlan {
      * Reps at the goal race pace (a lap of 230 m at 51–52 s for 1500 m in 5:35). On a track the reps are whole laps with a
      * beep at every lap time; the last step runs the race in two parts, both from the line.
      */
-    fun goalPace(state: RunState, goal: RunGoal, lapMeters: Int?, cutback: Boolean = false): RunWorkout {
+    fun goalPace(state: RunState, goal: RunGoal, lapMeters: Int?, cutback: Boolean = false): RunWorkout =
+        goalPaceOf(state, goal, lapMeters, cutback, GOAL_WARM, GOAL_COOL, null)
+
+    /** [goalPace] with [warmMin] and [coolMin] minutes before and after the reps, and at most [maxReps] of them (not the race in two parts). */
+    private fun goalPaceOf(state: RunState, goal: RunGoal, lapMeters: Int?, cutback: Boolean, warmMin: Int, coolMin: Int, maxReps: Int?): RunWorkout {
         val stage = state.goalStage.coerceIn(0, GOAL.lastIndex)
         val step = GOAL[stage]
         val scale = (goal.meters / 1500.0).coerceIn(0.5, 2.0)
@@ -895,7 +1012,7 @@ object RunPlan {
         val range = PaceRange((pace - 3).roundToInt(), (pace + 3).roundToInt())
         val lapSec = lapMeters?.let { Track.lapSec(pace, it) }
         val p = paces(state)
-        val segs = mutableListOf(Segment(SegmentKind.WARMUP, 12 * 60, p?.easy))
+        val segs = mutableListOf(Segment(SegmentKind.WARMUP, warmMin * 60, p?.easy))
         // On a track: whole laps, from the line to the line; a rep no lap count fits stays timed. The race in two parts:
         // the rest of the race laps after the first part — or the race in one go when nothing is left.
         var laps: List<Double?> = reps.map { m -> lapMeters?.let { goalRepLaps(m, scale, it) } }
@@ -922,13 +1039,18 @@ object RunPlan {
             laps = if (race - first >= 0.5) listOf(first, race - first) else listOf(race)
             reps = laps.map { it!! * lapMeters }
         }
+        // Fewer reps to fit the cap of one run ([hardSession]); the race in two parts is never cut.
+        if (maxReps != null && !last && reps.size > maxReps) {
+            reps = reps.take(maxReps)
+            laps = laps.take(maxReps)
+        }
         reps.forEachIndexed { i, m ->
             val l = laps[i]
             val meters = if (l != null) l * lapMeters!! else (m / 50).roundToInt() * 50.0
             segs += Segment(SegmentKind.WORK, (meters / 1000 * pace).roundToInt(), range, l, if (l != null) lapSec else null)
             if (i < reps.lastIndex) segs += Segment(SegmentKind.RECOVERY, rest)
         }
-        segs += Segment(SegmentKind.COOLDOWN, 8 * 60, p?.easy)
+        segs += Segment(SegmentKind.COOLDOWN, coolMin * 60, p?.easy)
         val work = segs.filter { it.kind == SegmentKind.WORK }
         fun len(s: Segment) = s.laps?.let { Ru.laps(it) } ?: "${(s.seconds / pace * 1000 / 50).roundToInt() * 50} м"
         val title = "Темп цели · " + if (work.all { it.seconds == work.first().seconds }) "${work.size} × ${len(work.first())}"
@@ -1159,34 +1281,93 @@ object RunPlan {
     }
 
     /**
-     * The hard session; while coming back from a long break it is an easy run. With a middle-distance goal every other one
-     * is at race pace and of the rest two of three are tempo (threshold), one intervals (VO2max): 1500 m is mostly aerobic.
-     * [goalLater]: the legs are not fresh today and a fresher hard day comes later in the week — race pace due today goes
-     * there, and today runs the cycle's next session ([RunState.goalDeferred]).
+     * The hard session; while coming back from a long break it is an easy run. With a middle-distance goal the cycle of
+     * [hardCycle] decides it (MD-1, 25 November: it was race pace every other one, tempo two of the rest and intervals one,
+     * whatever the gap to the goal); without one, intervals and tempo by turns. [goalLater]: the legs are not fresh today
+     * and a fresher hard day comes later in the week — race pace due today goes there, and today runs the cycle's next
+     * session ([RunState.goalDeferredOn]). [day]: the day it is for — the race date and the cap of one run ([hardSession])
+     * go by it; without one, the session as the ladder has it.
      */
-    fun quality(state: RunState, cutback: Boolean = false, goal: RunGoal? = null, lapMeters: Int? = null, goalLater: Boolean = false): RunWorkout {
-        val w = when {
-            state.returnEasy > 0 -> easy(state, cutback).let {
-                val n = state.returnEasy
-                it.copy(note = "После перерыва тяжёлый бег вернётся через $n " +
-                    "${Ru.plural(n, "лёгкую пробежку", "лёгкие пробежки", "лёгких пробежек")}. " + it.note)
-            }
-            // Tempo twice for every intervals: fading after 800 m is the threshold more than VO2max.
+    fun quality(state: RunState, cutback: Boolean = false, goal: RunGoal? = null, lapMeters: Int? = null, goalLater: Boolean = false, day: Long? = null): RunWorkout {
+        if (state.returnEasy > 0) {
+            val n = state.returnEasy
+            val e = easy(state, cutback, day)
+            val w = e.copy(note = "После перерыва тяжёлый бег вернётся через $n " +
+                "${Ru.plural(n, "лёгкую пробежку", "лёгкие пробежки", "лёгких пробежек")}. " + e.note)
+            return if (lapMeters != null) onTrack(w, lapMeters) else w
+        }
+        val type = when {
             goal != null && goal.middleDistance -> {
-                val pos = state.qualityCount % 6
+                val due = hardDue(state, goal, day)
                 // Race pace when it is due or owed, unless the legs are tired and a fresher day comes; else the cycle's
                 // other session (the next one when race pace was due).
-                val other = if (pos % 2 == 0) pos + 1 else pos
+                val other = if (due == RunType.GOAL_PACE) hardDue(state, goal, day, state.qualityCount + 1) else due
                 when {
-                    !goalLater && (state.goalDeferredOn != null || pos % 2 == 0) -> goalPace(state, goal, lapMeters, cutback)
-                    other == 3 -> intervals(state, cutback)
-                    else -> tempo(state, cutback)
+                    !goalLater && (state.goalDeferredOn != null || due == RunType.GOAL_PACE) -> RunType.GOAL_PACE
+                    other == RunType.INTERVALS -> RunType.INTERVALS
+                    else -> RunType.TEMPO
                 }
             }
-            state.qualityCount % 2 == 0 -> intervals(state, cutback)
-            else -> tempo(state, cutback)
+            state.qualityCount % 2 == 0 -> RunType.INTERVALS
+            else -> RunType.TEMPO
         }
+        val w = hardSession(state, type, cutback, goal, lapMeters, day)
         return if (lapMeters != null) onTrack(w, lapMeters) else w
+    }
+
+    /**
+     * The hard training session of [type] — intervals, tempo, or race-pace reps of [goal] (tempo without one) — for [day]:
+     * as a whole, warm-up, rests and cool-down in it, no longer than one run may be ([singleRunCap]: 110 % of the longest
+     * of the last 30 days), as easy and long runs already were (hard-session-spike / MD-3 of the research of 24 November,
+     * approved by the owner on 25 November: Frandsen 2025 counted every session, hard ones too, and a step of a ladder
+     * could be 16–30 % over the month's longest). Over it: the cool-down shorter first, then the warm-up jog (8 minutes at
+     * least, so its strides before fast reps stay), then fewer reps (2 at least; tempo's reps then shorter), else the day's
+     * easy run (the cycle waits: it moves only when a hard session is done). In minutes, not metres: on a small loop GPS
+     * cuts the bends. A race and a trial are not built here, so they are never cut. Without a [day], as the ladder has it.
+     */
+    fun hardSession(state: RunState, type: RunType, cutback: Boolean = false, goal: RunGoal? = null, lapMeters: Int? = null, day: Long? = null): RunWorkout {
+        val cap = singleRunCap(state, day)
+        fun track(x: RunWorkout) = if (lapMeters != null) onTrack(x, lapMeters) else x
+        val fitted: Fitted<*>? = when {
+            type == RunType.GOAL_PACE && goal != null -> {
+                val reps = goalPaceOf(state, goal, lapMeters, cutback, GOAL_WARM, GOAL_COOL, null).reps
+                fit(cap, GOAL_WARM, GOAL_COOL, fewer(reps)) { w, c, n -> goalPaceOf(state, goal, lapMeters, cutback, w, c, n) }
+            }
+            type == RunType.INTERVALS -> {
+                val reps = intervalsOf(state, cutback, day, HARD_WARM, HARD_COOL, null).reps
+                fit(cap, HARD_WARM, HARD_COOL, fewer(reps)) { w, c, n -> track(intervalsOf(state, cutback, day, w, c, n)) }
+            }
+            else -> {
+                val (n, work) = tempoReps(state, cutback, day)
+                fit(cap, HARD_WARM, HARD_COOL, tempoCuts(n, work)) { w, c, s -> track(tempoOf(state, cutback, s.first, s.second, w, c)) }
+            }
+        }
+        if (cap == null || day == null) return fitted!!.workout
+        if (fitted == null) {
+            val e = easy(state, cutback, day)
+            return e.copy(note = "${capWords(state, day, cap)}, поэтому сегодня лёгкий бег вместо тяжёлого. " + e.note)
+        }
+        val w = fitted.workout
+        return if (fitted.cut) w.copy(note = w.note + " ${capWords(state, day, cap)}.") else w
+    }
+
+    /** «27 мин на всю пробежку, это 110 % самой длинной за месяц»: one run's [cap] on [day] and what it comes from ([singleRunCap]). */
+    fun capWords(state: RunState, day: Long, cap: Int): String =
+        "$cap\u00A0мин на всю пробежку, " + (if (state.longestRecent(day) != null) "это 110\u00A0% самой длинной за месяц" else "пока пробежек за месяц нет")
+
+    /**
+     * A hard run of the coach's own making ([custom], on a stadium of [lapMeters]) within the cap of one run on [day], as
+     * the plan's hard sessions are ([hardSession], MD-3 of 25 November): the cool-down shorter first, then the warm-up
+     * (8 minutes at least), then fewer reps (2 at least). [c] itself when it fits or is easy; null when even the least of
+     * it is over the cap, or its reps' length cannot be told.
+     */
+    fun customWithinCap(state: RunState, goal: RunGoal?, c: CustomRun, day: Long, lapMeters: Int? = null): CustomRun? {
+        if (!c.pace.hard) return c
+        if (custom(state, goal, c, lapMeters) == null) return null
+        val f = fit(singleRunCap(state, day), c.warmupMin, c.cooldownMin, fewer(c.reps)) { w, cool, n ->
+            custom(state, goal, c.copy(reps = n, warmupMin = w, cooldownMin = cool), lapMeters)!!
+        } ?: return null
+        return if (f.cut) c.copy(reps = f.option, warmupMin = f.warm, cooldownMin = f.cool) else c
     }
 
     private fun scaled(min: Int, cutback: Boolean) = if (cutback) max(15, (min * 0.75 / 5).roundToInt() * 5) else min
@@ -1596,8 +1777,11 @@ object RunPlan {
                         out += RunOutcome.TempoPace(soft - 3, softer = false)
                     }
                 }
-                // Run in place of race pace put off to a fresher day: race pace comes next.
-                if (goal?.middleDistance == true && state.qualityCount % 2 == 0 && state.goalDeferredOn == null) s = s.copy(goalDeferredOn = day)
+                // Run in place of race pace put off to a fresher day: race pace comes next. Due by the cycle of this fitness
+                // (MD-1, 25 November), no longer by an even count alone.
+                if (goal != null && goal.middleDistance && state.goalDeferredOn == null && hardDue(state, goal, day) == RunType.GOAL_PACE) {
+                    s = s.copy(goalDeferredOn = day)
+                }
                 val v = s.vdot
                 // Paces held a month (Daniels raises them after about four weeks); with a race goal the time trial measures
                 // the form instead, and its first half must not be paced from a guess.

@@ -136,8 +136,13 @@ class RaceGoalTest {
     }
 
     @Test fun everyOtherHardSessionIsAtRacePace() {
-        val types = (0 until 4).map { RunPlan.quality(RunState(vdot = 44.0, walkStage = -1, qualityCount = it), goal = goal, lapMeters = lap).type }
+        // Since MD-1 (approved 25 November) the order goes by the gap to the goal's fitness (48.1 here): race pace every
+        // other session within a point of it, as this test pinned for any fitness before (it ran at 44, now far).
+        val types = (0 until 4).map { RunPlan.quality(RunState(vdot = 47.5, walkStage = -1, qualityCount = it), goal = goal, lapMeters = lap).type }
         assertEquals(listOf(RunType.GOAL_PACE, RunType.TEMPO, RunType.GOAL_PACE, RunType.INTERVALS), types)
+        // Four points below it: intervals every other session, race pace and tempo by turns between them.
+        val far = (0 until 4).map { RunPlan.quality(RunState(vdot = 44.0, walkStage = -1, qualityCount = it), goal = goal, lapMeters = lap).type }
+        assertEquals(listOf(RunType.GOAL_PACE, RunType.INTERVALS, RunType.TEMPO, RunType.INTERVALS), far)
         // Intervals on the track are whole laps at interval pace.
         val i = RunPlan.quality(RunState(vdot = 44.0, walkStage = -1, qualityCount = 1), goal = goal, lapMeters = lap)
         val rep = i.segments.first { it.kind == SegmentKind.WORK }

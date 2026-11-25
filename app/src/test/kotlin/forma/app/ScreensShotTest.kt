@@ -295,7 +295,8 @@ class ScreensShotTest {
         val pace = runBlocking {
             store.clear()
             repo.completeOnboarding(profile)
-            store.setRunState(store.runStateNow().copy(vdot = 43.5, runs = 4, goalStage = 2, qualityCount = 2, lastTestDay = repo.today().toEpochDay() - 10))
+            // Race pace is due: at 0 hard runs done in every cycle (MD-1, 25 November: at 43.5, two done, it is tempo now).
+            store.setRunState(store.runStateNow().copy(vdot = 43.5, runs = 4, goalStage = 2, qualityCount = 0, lastTestDay = repo.today().toEpochDay() - 10))
             repo.runFor(SessionKind.RUN_QUALITY, repo.today())
         }
         // After the warm-up the plan waits on the line; then the third rep of 8 × 1 lap: the second was a bit fast.

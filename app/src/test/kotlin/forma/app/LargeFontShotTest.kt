@@ -81,7 +81,8 @@ class LargeFontShotTest {
         val (pace, lift) = runBlocking {
             store.clear()
             repo.completeOnboarding(profile)
-            store.setRunState(store.runStateNow().copy(vdot = 43.5, runs = 4, goalStage = 2, qualityCount = 2, lastTestDay = repo.today().toEpochDay() - 10))
+            // Race pace is due: at 0 hard runs done in every cycle (MD-1, 25 November: at 43.5, two done, it is tempo now).
+            store.setRunState(store.runStateNow().copy(vdot = 43.5, runs = 4, goalStage = 2, qualityCount = 0, lastTestDay = repo.today().toEpochDay() - 10))
             val id = repo.startLift(store.programNow()!!.templates.first().id)
             val plan = repo.planOf(repo.db.workouts().get(id)!!)!!
             val first = plan.items.first()

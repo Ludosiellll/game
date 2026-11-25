@@ -209,7 +209,7 @@ object CoachActions {
             exercise, Param("place", "string", "first — первым, last — последним, номер места (1, 2, 3 …) или reset — порядок приложения"), session)
         fn(EASE_DAY, "В этот день недели вместо тяжёлого бега — лёгкий, на weeks недель (0 — вернуть тяжёлый). Когда тяжёлых пробежек слишком много, ноги не успевают восстановиться, болят голени — или человек хочет один тяжёлый бег в неделю. При боли — на 1–2 недели, потом спроси снова. До 2 недель делается сразу, можно вернуть; дольше, или когда при цели по бегу в неделе не остаётся тяжёлого бега, — человек подтверждает.",
             Param("day", "string", "день недели: пн, вт, ср, чт, пт, сб или вс"), Param("weeks", "integer", "0–$MAX_WEEKS"))
-        fn(RUN_CUSTOM, "Своя пробежка на СЕГОДНЯ, какой нет в плане: reps отрезков по work_sec секунд (или work_m метров) в темпе pace, между ними rest_sec трусцой; до и после — лёгкий бег. Примеры: «8 по 200 быстро через минуту» — reps 8, work_m 200, pace fast, rest_sec 60; «20 минут спокойно» — reps 1, work_sec 1200, pace easy; «фартлек 6 по 2 минуты» — reps 6, work_sec 120, pace interval, rest_sec 120. Темп отрезков даёт приложение по форме человека; на стадионе отрезки станут целыми кругами. Заменяет сегодняшнюю пробежку плана, засчитывается, шаги плана не двигает. Тяжёлую человек подтверждает; тяжёлая не ставится рядом с другим тяжёлым бегом и в день ног. Для постоянных изменений — set_tempo, set_run_step, set_easy_run_minutes.",
+        fn(RUN_CUSTOM, "Своя пробежка на СЕГОДНЯ, какой нет в плане: reps отрезков по work_sec секунд (или work_m метров) в темпе pace, между ними rest_sec трусцой; до и после — лёгкий бег. Примеры: «8 по 200 быстро через минуту» — reps 8, work_m 200, pace fast, rest_sec 60; «20 минут спокойно» — reps 1, work_sec 1200, pace easy; «фартлек 6 по 2 минуты» — reps 6, work_sec 120, pace interval, rest_sec 120. Темп отрезков даёт приложение по форме человека; на стадионе отрезки станут целыми кругами. Заменяет сегодняшнюю пробежку плана, засчитывается, шаги плана не двигает. Тяжёлую человек подтверждает; тяжёлая не ставится рядом с другим тяжёлым бегом и в день ног, целиком — до 110 % самой длинной за 30 дней (длиннее урежется). Для постоянных изменений — set_tempo, set_run_step, set_easy_run_minutes.",
             Param("reps", "integer", "сколько отрезков, 1–20 (1 — один непрерывный бег)"),
             Param("work_sec", "integer", "секунд в отрезке, 20–3600; или укажи work_m", required = false),
             Param("work_m", "integer", "метров в отрезке, 100–10000; или укажи work_sec", required = false),
@@ -1122,15 +1122,26 @@ object CoachActions {
                     if (work < 10 * 60) return no("Лёгкий бег — не короче 10 минут.")
                 }
                 val lap = profile?.lapMeters
-                val w = forma.core.run.RunPlan.custom(st, goal, spec) ?: return no("Не получилось собрать пробежку.")
+                // A hard one no longer as a whole than one run may be, as the plan's hard sessions (MD-3, approved on 25
+                // November): the cool-down shorter first, then the warm-up, then fewer reps (2 at least) — or refused.
+                val capText = forma.core.run.RunPlan.singleRunCap(st, today.toEpochDay())?.let { forma.core.run.RunPlan.capWords(st, today.toEpochDay(), it) }
+                val use = if (!hard) spec else forma.core.run.RunPlan.customWithinCap(st, goal, spec, today.toEpochDay(), lap)
+                    ?: return no(
+                        "Эта не входит даже с 2 отрезками и короткой разминкой" + (capText?.let { ": $it" } ?: "") + ". " +
+                            "Могу поставить лёгкую пробежку (pace easy).",
+                    )
+                val w = forma.core.run.RunPlan.custom(st, goal, use) ?: return no("Не получилось собрать пробежку.")
                 val shown = if (lap != null) forma.core.run.RunPlan.onTrack(w, lap) else w
                 val instead = planned.firstOrNull { it.isRun }?.let { repo.runFor(it.kind, today).title }
                 val paceText = shown.segments.firstOrNull { it.kind == forma.core.run.SegmentKind.WORK || it.kind == forma.core.run.SegmentKind.RUN }?.let { seg ->
                     seg.lapSec?.let { "круг за ${Ru.lap(it)}" } ?: seg.pace?.let { "${Ru.pace(it.fast.toDouble())}–${Ru.pace(it.slow.toDouble())} /км" }
                 }
+                val warmUsed = use.warmupMin
+                val coolUsed = use.cooldownMin
                 val text = "Пробежка на сегодня: «${shown.title.substringAfter(" · ")}»" +
-                    (if (warm > 0 || cool > 0) " (разминка $warm мин, заминка $cool мин" + (if (reps > 1 && rest > 0) ", отдых ${Ru.clock(rest)}" else "") + ")" else "") +
+                    (if (warmUsed > 0 || coolUsed > 0) " (разминка $warmUsed мин, заминка $coolUsed мин" + (if (use.reps > 1 && rest > 0) ", отдых ${Ru.clock(rest)}" else "") + ")" else "") +
                     ", ${pace.ru}" + (paceText?.let { ": $it" } ?: "") + ". " +
+                    (if (use != spec && capText != null) "$capText, поэтому она короче. " else "") +
                     (instead?.let { "Вместо «$it» по плану. " } ?: "Вне плана. ") + "Шаги плана она не двигает. На экране «Сегодня» — «Начать»."
                 either(!hard, text) {
                     val old = repo.store.settingsNow().coachRun

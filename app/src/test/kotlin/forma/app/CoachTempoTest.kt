@@ -63,8 +63,9 @@ class CoachTempoTest {
                 aim = Aim(LiftFocus.POWERBUILDING, RunFocus.ENDURANCE, Emphasis.BALANCED),
             ),
         )
-        // Running for weeks, no trial counted: the next hard run is a tempo run.
-        store.setRunState(store.runStateNow().copy(walkStage = -1, easyMinutes = 25, runs = 20, qualityCount = 1, vdot = null))
+        // Running for weeks, no trial counted: the next hard run is a tempo run. Far from the goal tempo is the third of
+        // the cycle since MD-1 (25 November: race pace, intervals, tempo, intervals), so two hard runs done, not one.
+        store.setRunState(store.runStateNow().copy(walkStage = -1, easyMinutes = 25, runs = 20, qualityCount = 2, vdot = null))
     }
 
     @After fun tearDown() = db.close()

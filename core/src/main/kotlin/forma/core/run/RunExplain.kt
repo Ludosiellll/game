@@ -67,7 +67,11 @@ object RunExplain {
                     if (middle) " Чем он выше, тем легче тебе скорость забега на ${goal!!.meters} м." else "",
                 body = "Отрезки по 2–5 минут держат сердце и дыхание почти на пределе. От этого сердце качает больше, а мышцы " +
                     "берут больше кислорода. Отдых трусцой даёт сделать столько работы, сколько подряд не выдержать.",
-                how = "Не беги первые отрезки быстрее плана, иначе последние развалятся.",
+                // MD-1 (25 November): with a race goal the intervals come every other hard run while it is far, and their laps
+                // are slower than the race-pace reps (Denis: 57.6 s against 45 s) — on purpose, for the minutes near the
+                // ceiling, and said so before it reads as a session too easy.
+                how = "Не беги первые отрезки быстрее плана, иначе последние развалятся." +
+                    if (middle) " Темп медленнее, чем в отрезках темпа цели, так и задумано: здесь важны минуты почти на пределе дыхания." else "",
                 recoveryHours = 48,
                 next = ladder(w, RunPlan.intervalLadderSize, w.targetRpe, "в темпе"),
             )

@@ -80,6 +80,8 @@ class DenisWeekTest {
     }
 
     @Test fun tempoComesTwiceForEveryIntervals() {
+        // At 49 the goal (48.9) is reached: the cycle near the goal, as before. Far from it intervals come every other
+        // hard run since MD-1 (25 November, ResearchRunningTest).
         val types = (0 until 6).map { RunPlan.quality(RunState(vdot = 49.0, walkStage = -1, qualityCount = it), goal = goal, lapMeters = lap).type }
         assertEquals(2, types.count { it == forma.core.run.RunType.TEMPO })
         assertEquals(1, types.count { it == forma.core.run.RunType.INTERVALS })

@@ -2328,15 +2328,18 @@ class TrainingRepository(
                 it.copy(note = "До забега ${toRace} ${Ru.plural(toRace.toInt(), "день", "дня", "дней")}: только размяться, без усталости. " + it.note)
             }
             // While easy runs are owed after a long break the hard day is one of them ([RunPlan.quality], below).
+            // Within the cap of one run as every hard training session (MD-3, 25 November); too long even cut, the easy run.
             toRace != null && toRace in 3..5 && kind == SessionKind.RUN_QUALITY && st.returnEasy == 0 -> (
-                if (goal?.middleDistance == true) RunPlan.goalPace(st, goal, lap, cutback = true) else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap)
-            ).let { it.copy(note = "Последняя тяжёлая перед забегом. Она короткая: освежить темп и не устать. " + it.note) }
+                if (goal?.middleDistance == true) RunPlan.hardSession(st, RunType.GOAL_PACE, cutback = true, goal = goal, lapMeters = lap, day = date.toEpochDay())
+                else RunPlan.quality(st, cutback = true, goal = goal, lapMeters = lap, day = date.toEpochDay())
+            ).let { if (it.type == RunType.EASY) it else it.copy(note = "Последняя тяжёлая перед забегом. Она короткая: освежить темп и не устать. " + it.note) }
             toRace != null && toRace in 3..7 && kind != SessionKind.RUN_QUALITY ->
                 RunPlan.easy(st.copy(easyMinutes = (minOf(st.easyMinutes, st.longMinutes) * 0.7).toInt().coerceAtLeast(20)), strides = taperStrides)
             kind == SessionKind.RUN_LONG || longEasy ->
                 if (guess != null) RunPlan.provisional(RunPlan.long(guess, lighter, date.toEpochDay())) else RunPlan.long(st, lighter, date.toEpochDay())
             kind == SessionKind.RUN_QUALITY -> when {
-                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date))
+                // The day decides the cycle near a race (MD-1) and the cap of one run (MD-3); a trial is never cut.
+                !trial || !needsTest(st, date, goal) -> RunPlan.quality(st, lighter, goal, lap, goalLater = goalLater(program, date), day = date.toEpochDay())
                 goal?.middleDistance == true -> RunPlan.goalTest(st, goal, lap)
                 else -> RunPlan.test(st)
             }

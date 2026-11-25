@@ -265,9 +265,10 @@ class RepositoryTest {
         val st = repo.store.runStateNow()
         assertNotNull(st.vdot)
         assertEquals(sat.toEpochDay(), st.lastTestDay)
-        // The next hard day: tempo (twice for every intervals), in whole laps at the new paces.
+        // The next hard day, in whole laps at the new paces: intervals — the trial's 47 is within 3 points of the goal's
+        // 48.1, where intervals and race pace go by turns (MD-1, 25 November; it was tempo, twice for every intervals).
         val next = repo.runFor(SessionKind.RUN_QUALITY, tue.plusDays(9))
-        assertEquals(RunType.TEMPO, next.type)
+        assertEquals(RunType.INTERVALS, next.type)
         assertTrue(next.segments.filter { it.kind == forma.core.run.SegmentKind.WORK }.all { it.laps != null && it.lapSec != null })
     }
 
