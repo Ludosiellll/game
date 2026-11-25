@@ -7,7 +7,9 @@ import forma.core.model.Emphasis
  *
  * Only on a free day, and only when it breaks none of the layout rules against what was done yesterday and what is
  * planned tomorrow (on Sunday: next Monday): no heavy legs on consecutive days, no two hard runs in a row, no hard
- * run and heavy legs on consecutive days in either order.
+ * run and heavy legs on consecutive days in either order. One exception: legs owed ([LEGS_OWED] days or more without a
+ * leg session) before a hard run tomorrow, offered with that run made easy for the day or moved a day later
+ * ([Suggestion.beforeHard]).
  */
 object CatchUp {
     /**
@@ -26,8 +28,28 @@ object CatchUp {
         val doneInstead: List<Boolean> = emptyList(),
     )
 
-    /** [easy]: the missed [session] is a hard run that cannot be today (a hard day around it): done as an easy run. */
-    data class Suggestion(val session: PlannedSession, val plannedOn: Int, val easy: Boolean = false)
+    /**
+     * [easy]: the missed [session] is a hard run that cannot be today (a hard day around it): done as an easy run.
+     * [beforeHard]: the missed [session] is legs, owed ([legsDaysAgo] days without a leg session, [LEGS_OWED] or more),
+     * with a hard run tomorrow: offered only with that run made easy for its day, or ([moveOk]) moved to the day after
+     * it, the person's pick on the card (research D1, approved by Denis on 25 November).
+     */
+    data class Suggestion(
+        val session: PlannedSession,
+        val plannedOn: Int,
+        val easy: Boolean = false,
+        val beforeHard: Boolean = false,
+        val moveOk: Boolean = false,
+        val legsDaysAgo: Int? = null,
+    )
+
+    /**
+     * Days without a leg session from which a missed one comes first and may go before a hard run (eased or moved). Denis
+     * missed Saturday's «Низ» on 21.11 and was offered «Верх · А» on Sunday: his legs went from 7.11 to 28.11 without a
+     * full session (research one-leg-day+D1; one leg session a week kept strength and sprint, one every second week lost
+     * them — Rønnestad 2011).
+     */
+    const val LEGS_OWED = 7
 
     /**
      * A planned session closed by a done one: the [index]-th planned session of [day] by the [doneIndex]-th done one of
@@ -96,8 +118,16 @@ object CatchUp {
         return out
     }
 
-    /** [today] is ISO 1..7; [week] holds Monday..Sunday of this week; days before [firstDay] (ISO) are ignored. */
-    fun suggest(program: Program, today: Int, week: List<Day>, firstDay: Int = 1): Suggestion? {
+    /**
+     * [today] is ISO 1..7; [week] holds Monday..Sunday of this week; days before [firstDay] (ISO) are ignored.
+     * [legsDaysAgo]: days since the last leg session done (null: none known). [next]: the sessions of the days after
+     * today (tomorrow first, up to three) as they stand, with a hard run made easy for its day as an easy one and a moved
+     * one on its new day; null: as planned (this week's days, then next week's plan). The checks read it, not the plan
+     * alone: an eased Monday no longer blocks Sunday's legs (research D1, 25 November).
+     */
+    fun suggest(
+        program: Program, today: Int, week: List<Day>, firstDay: Int = 1, legsDaysAgo: Int? = null, next: List<List<PlannedSession>>? = null,
+    ): Suggestion? {
         val todayPlan = week.firstOrNull { it.day == today } ?: return null
         if (todayPlan.planned.isNotEmpty() || todayPlan.done.isNotEmpty()) return null
 
@@ -112,7 +142,11 @@ object CatchUp {
 
         val yesterdayDay = week.firstOrNull { it.day == today - 1 }
         val yesterday = yesterdayDay?.done.orEmpty().mapIndexed { i, s -> s to yesterdayDay?.doneLegs?.getOrNull(i) }
-        val tomorrow = (if (today == 7) program.week.on(1) else week.firstOrNull { it.day == today + 1 }?.planned.orEmpty()).map { it to null }
+        // The days after today: tomorrow (on Sunday next Monday), the day after it and the one after that.
+        val ahead = next ?: (1..3).map { k ->
+            if (today + k <= 7) week.firstOrNull { it.day == today + k }?.planned.orEmpty() else program.week.on(today + k - 7)
+        }
+        val tomorrow = ahead.getOrElse(0) { emptyList() }.map { it to null }
         fun legs(s: PlannedSession, own: Boolean? = null) =
             s.kind == SessionKind.LIFT && (own ?: program.templates.firstOrNull { it.id == s.templateId }?.legs ?: true)
         val around = yesterday + tomorrow
@@ -121,12 +155,30 @@ object CatchUp {
             s.isHardRun -> around.none { (x, own) -> x.isHardRun || legs(x, own) }
             else -> true
         }
+        // Legs owed with only tomorrow's hard run in the way (nothing hard and no legs yesterday, no legs tomorrow, a hard
+        // run that can be eased or moved, not a long one): offered only with that run eased or moved, so the legs and a hard
+        // run still never fall on consecutive days.
+        val owed = legsDaysAgo != null && legsDaysAgo >= LEGS_OWED
+        fun beforeHard(s: PlannedSession): Boolean = owed && legs(s) &&
+            yesterday.none { (x, own) -> legs(x, own) || x.isHardRun } &&
+            tomorrow.none { (x, _) -> legs(x) || x.kind == SessionKind.RUN_LONG } && tomorrow.any { (x, _) -> x.kind == SessionKind.RUN_QUALITY }
+        // Moved to the day after tomorrow: 48 h after today's legs, onto a day with no legs or hard run of its own, and the
+        // day after it free of both (48 h before the next hard run). Not into the next week (tomorrow a Sunday): the moved
+        // run counts for its own day, which [closes] books within one week.
+        val moveOk = today != 6 && listOf(1, 2).all { k -> ahead.getOrElse(k) { emptyList() }.none { it.isHardRun || legs(it) } }
         val emphasis = program.aim.normalized().emphasis
-        val fitting = missed.filter { fits(it.session) }
+        val fitting = missed.mapNotNull { m ->
+            when {
+                fits(m.session) -> m
+                beforeHard(m.session) -> m.copy(beforeHard = true, moveOk = moveOk, legsDaysAgo = legsDaysAgo)
+                else -> null
+            }
+        }
         // Nothing fits, but a hard run was missed: it can be today as an easy one (an easy run fits any day).
         if (fitting.isEmpty()) return missed.lastOrNull { it.session.isHardRun }?.copy(easy = true)
         return fitting.sortedWith(
-            compareByDescending<Suggestion> {
+            // Owed legs first, whatever the emphasis: a week or more without them (research D1, 25 November).
+            compareByDescending<Suggestion> { owed && legs(it.session) }.thenByDescending {
                 when (emphasis) {
                     Emphasis.GYM -> if (it.session.kind == SessionKind.LIFT) 1 else 0
                     Emphasis.RUN -> if (it.session.isRun) 1 else 0

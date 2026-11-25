@@ -2146,15 +2146,90 @@ class TrainingRepository(
     private fun firstDay(program: Program?, monday: LocalDate): Int =
         program?.createdEpochDay?.let { (it - monday.toEpochDay() + 1).toInt().coerceIn(1, 8) } ?: 1
 
-    /** A session missed earlier this week that fits [day] — never while paused, never from before the plan existed. */
+    /**
+     * A session missed earlier this week that fits [day]: never while paused, never from before the plan existed, never
+     * on the day a hard run was moved to (that run is the day's). The checks read the next days as they stand
+     * ([standing]): a hard run eased for its day as an easy one, a moved one on its new day. A missed leg session comes
+     * first after [CatchUp.LEGS_OWED] days without one ([legsDaysAgo]), and may then go before a hard run, eased or moved
+     * (research D1, approved by Denis on 25 November).
+     */
     suspend fun catchUp(day: LocalDate = today()): CatchUp.Suggestion? {
         val program = store.programNow() ?: return null
         val settings = store.settingsNow()
         if (paused(settings, day)) return null
+        val moved = movedRun(day)
+        if (moved?.to == day.toEpochDay()) return null
         val monday = mondayOf(day)
-        val done = db.workouts().allDone().filter { it.epochDay in monday.toEpochDay()..monday.toEpochDay() + 6 }
-        return CatchUp.suggest(program, day.dayOfWeek.value, catchUpWeek(program, settings, monday, done), firstDay(program, monday))
+        val all = db.workouts().allDone()
+        val done = all.filter { it.epochDay in monday.toEpochDay()..monday.toEpochDay() + 6 }
+        val next = (1L..3L).map { standing(program, settings, moved, day.plusDays(it)) }
+        return CatchUp.suggest(
+            program, day.dayOfWeek.value, catchUpWeek(program, settings, monday, done), firstDay(program, monday), legsDaysAgo(program, all, day), next,
+        )
     }
+
+    /**
+     * The sessions of [date] as they stand: none on a pause day, a hard run made easy for its day ([easedUntil]) as an
+     * easy run, the hard run [moved] off its own day and onto the new one. CatchUp read the plan alone, so Monday's hard
+     * run eased by the coach still kept Sunday's legs out.
+     */
+    private fun standing(program: Program, settings: Settings, moved: MovedRun?, date: LocalDate): List<PlannedSession> {
+        if (paused(settings, date)) return emptyList()
+        val hard = PlannedSession(SessionKind.RUN_QUALITY)
+        var s = program.week.on(date.dayOfWeek.value)
+        if (moved?.from == date.toEpochDay()) s = s - hard
+        if (easedUntil(settings, date) != null) s = s.map { if (it.kind == SessionKind.RUN_QUALITY) PlannedSession(SessionKind.RUN_EASY) else it }
+        if (moved?.to == date.toEpochDay()) s = listOf(hard) + s
+        return s
+    }
+
+    /**
+     * Days from the last leg session done up to [day]: a template with legs, a friend's copied workout by its exercises, a
+     * template the plan no longer has counted as legs. With no leg session at all, from the first workout done; null
+     * before any. From [CatchUp.LEGS_OWED] days a missed «Низ» comes first (research D1, 25 November).
+     */
+    suspend fun legsDaysAgo(day: LocalDate = today()): Int? = legsDaysAgo(store.programNow(), db.workouts().allDone(), day)
+
+    private fun legsDaysAgo(program: Program?, all: List<WorkoutEntity>, day: LocalDate): Int? {
+        val done = all.filter { it.epochDay <= day.toEpochDay() }
+        val legs = done.filter { w ->
+            w.kind == Kind.LIFT && (legsOf(w) ?: program?.templates?.firstOrNull { it.id == w.templateId }?.legs ?: true)
+        }
+        val from = legs.maxOfOrNull { it.epochDay } ?: done.minOfOrNull { it.epochDay } ?: return null
+        return (day.toEpochDay() - from).toInt()
+    }
+
+    /**
+     * The pick on the card of a missed «Низ» owed before tomorrow's hard run ([CatchUp.Suggestion.beforeHard]), made with
+     * [day] as today: that run easy for that one day ([Settings.easyRunDays], the lever of the coach's ease_run_day), or
+     * ([move]) run the day after it instead, where it counts for its own day ([Settings.movedRun]).
+     */
+    suspend fun chooseForLegs(day: LocalDate, move: Boolean) {
+        val tomorrow = day.plusDays(1)
+        updateSettings { s ->
+            when {
+                move -> s.copy(movedRun = MovedRun(tomorrow.toEpochDay(), day.plusDays(2).toEpochDay()))
+                easedUntil(s, tomorrow) != null -> s
+                else -> s.copy(easyRunDays = s.easyRunDays + (tomorrow.dayOfWeek.value to tomorrow.toEpochDay()))
+            }
+        }
+    }
+
+    /**
+     * The hard run moved on the missed «Низ» card ([Settings.movedRun]) while it is still to run: until its new day is
+     * over, and while its own day is not done (run there after all, or on the new day, which closes it as a caught-up
+     * session does). On [MovedRun.from] it is not run, on [MovedRun.to] it is.
+     */
+    suspend fun movedRun(day: LocalDate = today()): MovedRun? {
+        val m = store.settingsNow().movedRun ?: return null
+        if (day.toEpochDay() > m.to) return null
+        val from = LocalDate.ofEpochDay(m.from)
+        val own = weekFlow(mondayOf(from)).first().firstOrNull { it.date == from }
+        return m.takeIf { own?.isDone(PlannedSession(SessionKind.RUN_QUALITY)) != true }
+    }
+
+    /** The moved hard run back on its own day («Бежать сегодня» on that day). */
+    suspend fun unmoveRun() = updateSettings { it.copy(movedRun = null) }
 
     /** Average training energy per week over the last four weeks (or since the first session), kcal. */
     suspend fun trainingKcalPerWeek(kg: Double, day: LocalDate = today()): Double {

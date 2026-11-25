@@ -107,6 +107,8 @@ fun TodayScreen() {
         scope.launch { repo.updateSettings { it.withFeel(today, f) } }
     }
     val catchUp by produceState<CatchUp.Suggestion?>(null, week, settings, today) { value = repo.catchUp(today) }
+    // The hard run moved a day later on the missed «Низ» card, while it is still to run (research D1, 25 November).
+    val moved by produceState<forma.app.data.MovedRun?>(null, week, settings, today) { value = repo.movedRun(today) }
     // Being sick lately changes the day's sessions and the trial; «Снять отметку «Болею»» changes them back on this screen.
     val sick = repo.sickEnd(settings, today)
     val trialOn by produceState<LocalDate?>(null, program, today, week, sick) { value = repo.trialDay(today) }
@@ -196,7 +198,9 @@ fun TodayScreen() {
             RaceCard(g, today, raceDone, runToday) { scope.launch { nav.push(Screen.RunSetup(repo.runFor(SessionKind.RUN_QUALITY, today), SessionKind.RUN_QUALITY)) } }
         }
 
-        val todays = todayItem?.planned.orEmpty()
+        val m = moved
+        // The hard run moved off today on the missed «Низ» card: today is without it (run the day after, counted for today).
+        val todays = todayItem?.planned.orEmpty().let { l -> if (m?.from == today.toEpochDay()) l - PlannedSession(SessionKind.RUN_QUALITY) else l }
         val extra = todayItem?.offPlan.orEmpty()
         // The goal in the gym's day: the test of the max, whatever else the day holds.
         GoalTestDayCard(today)
@@ -218,6 +222,14 @@ fun TodayScreen() {
             val w = if (lap != null) forma.core.run.RunPlan.onTrack(r.workout, lap) else r.workout
             CoachOwnRunCard(w, replaces = todays.any { it.isRun }) { nav.push(Screen.RunSetup(w, todays.firstOrNull { it.isRun }?.kind ?: SessionKind.RUN_EASY)) }
         }
+        // The moved hard run: on its own day said so, with the way back; on the new day run first, counted for its own.
+        if (m != null && !repo.paused(settings, today) && feel != Feel.SICK) when (today.toEpochDay()) {
+            m.from -> MovedRunCard(LocalDate.ofEpochDay(m.to), away = true, isToday = true, gym = false) { scope.launch { repo.unmoveRun() } }
+            m.to -> MovedRunCard(LocalDate.ofEpochDay(m.from), away = false, isToday = true, gym = todays.any { it.kind == SessionKind.LIFT }) {
+                scope.launch { nav.push(Screen.RunSetup(repo.runFor(SessionKind.RUN_QUALITY, today, light = feel == Feel.LOW), SessionKind.RUN_QUALITY)) }
+            }
+            else -> Unit
+        }
         when {
             repo.paused(settings, today) -> {
                 // The pause that holds today: a short one an older version began inside a holiday ended days ago.
@@ -236,6 +248,8 @@ fun TodayScreen() {
                 extra.forEach { w -> OffPlanCard(w, todayItem?.catchUps?.get(w.id)) }
                 NextPlannedCard(today)
             }
+            // A free day the moved hard run went to: its card above is the day, not a rest day.
+            todays.isEmpty() && m?.to == today.toEpochDay() -> afterSick?.let { AfterSickNote(it) { askNotSick = true } }
             todays.isEmpty() -> {
                 afterSick?.let { AfterSickNote(it) { askNotSick = true } }
                 RestCard(
@@ -247,6 +261,13 @@ fun TodayScreen() {
                             else nav.push(Screen.RunSetup(repo.runFor(s.kind, today).let { if (catchUp?.easy == true && s.kind == SessionKind.RUN_EASY) it.copy(instead = true) else it }, s.kind))
                         }
                     },
+                    // Owed legs before tomorrow's hard run: the pick first (that run easy, or the day after), then the lift.
+                    onLegsChoice = { s, move ->
+                        scope.launch {
+                            repo.chooseForLegs(today, move)
+                            startLift(s.templateId!!, false)
+                        }
+                    },
                 )
             }
             else -> {
@@ -255,7 +276,7 @@ fun TodayScreen() {
                 val order by produceState<forma.app.data.DayOrder?>(null, todays, feel, week, sick) { value = repo.dayOrder(today, feel == Feel.LOW) }
                 if (feel == Feel.SICK) {
                     SickCard(today, onTrainAnyway = { setFeel(Feel.UNSET) }, onPause = { scope.launch { repo.pause(today, today.plusDays(SICK_PAUSE_DAYS - 1L)) } })
-                } else order?.let { o -> OrderCard(o, runDone = todayItem?.isDone(o.run) == true, liftDone = todayItem?.isDone(o.lift) == true) }
+                } else order?.takeIf { it.run in todays }?.let { o -> OrderCard(o, runDone = todayItem?.isDone(o.run) == true, liftDone = todayItem?.isDone(o.lift) == true) }
                 afterSick?.let { AfterSickNote(it) { askNotSick = true } }
                 if (feel != Feel.SICK) (order?.ordered(todays) ?: todays).forEach { s ->
                     val light = feel == Feel.LOW
@@ -676,9 +697,17 @@ private fun RunCard(
 private fun RestCard(
     week: List<DayItem>, today: LocalDate, program: Program, catchUp: CatchUp.Suggestion?,
     onCatchUp: (PlannedSession) -> Unit,
+    onLegsChoice: (PlannedSession, Boolean) -> Unit,
 ) {
     val next = week.firstOrNull { it.date.isAfter(today) && it.planned.isNotEmpty() }
-    if (catchUp != null) {
+    if (catchUp != null && catchUp.beforeHard) {
+        val s = catchUp.session
+        FCard(outline = F.c.strength) {
+            SectionLabel("Пропущено", color = F.c.strength)
+            Text(sessionTitle(s, program), style = T.title(22.sp))
+            LegsOwedChoice(catchUp, sessionTitle(s, program), today) { move -> onLegsChoice(s, move) }
+        }
+    } else if (catchUp != null) {
         val s = catchUp.session
         FCard(outline = if (s.isRun) F.c.endurance else F.c.strength) {
             SectionLabel("Пропущено", color = if (s.isRun) F.c.endurance else F.c.strength)
@@ -717,6 +746,53 @@ private fun CoachRunCard(minutes: Int, onStart: () -> Unit) {
         Text(if (minutes > 0) "Лёгкий бег · $minutes мин" else "Лёгкий бег", style = T.title(22.sp))
         Text("Вне плана, по твоей просьбе. Спокойно, чтобы получалось болтать, без ускорений.", style = T.secondary(14.sp))
         PrimaryButton("Начать", onStart, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData)
+    }
+}
+
+/**
+ * The pick on the card of a missed leg session [c] owed before tomorrow's hard run ([CatchUp.Suggestion.beforeHard]),
+ * [today] a free day: the session today with that run easy, or with it run hard the day after ([CatchUp.Suggestion.moveOk]);
+ * [onPick] (move) applies the pick and starts the session. Research D1, approved by Denis on 25 November: a Saturday «Низ»
+ * missed never came back on Sunday, Monday's hard run stood in the way.
+ */
+@Composable
+internal fun LegsOwedChoice(c: CatchUp.Suggestion, title: String, today: LocalDate, onPick: (move: Boolean) -> Unit) {
+    val tomorrow = onDayFull(today.plusDays(1).dayOfWeek)
+    val after = onDayFull(today.plusDays(2).dayOfWeek)
+    val days = c.legsDaysAgo ?: CatchUp.LEGS_OWED
+    Text(
+        "$days\u00A0${Ru.plural(days, "день", "дня", "дней")} без тренировки ног: «$title» сегодня, а $tomorrow лёгкий бег" +
+            (if (c.moveOk) " или тяжёлый $after" else "") + ".",
+        style = T.secondary(14.sp),
+    )
+    PrimaryButton("Лёгкий бег $tomorrow", { onPick(false) }, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
+    if (c.moveOk) PrimaryButton("Тяжёлый бег $after", { onPick(true) }, Modifier.fillMaxWidth(), color = F.c.strength, textColor = F.c.onData)
+}
+
+/**
+ * The hard run moved a day later on the missed «Низ» card ([forma.app.data.TrainingRepository.movedRun]). On its own day ([away]):
+ * where it went ([other]), counted for this day. On the new day: the run, counted for its own day ([other]), before the
+ * gym when the day has one ([gym]). [onClick]: on its own day takes it back, on the new one starts it; null — no button
+ * (the day screen of another day).
+ */
+@Composable
+internal fun MovedRunCard(other: LocalDate, away: Boolean, isToday: Boolean, gym: Boolean, onClick: (() -> Unit)?) {
+    FCard(outline = F.c.endurance) {
+        SectionLabel("Перенесено", color = F.c.endurance)
+        Text(if (away) "Тяжёлый бег ${onDayFull(other.dayOfWeek)}" else "Тяжёлый бег", style = T.title(22.sp))
+        val own = "за " + onDayFull(other.dayOfWeek).substringAfter(' ')
+        Text(
+            when {
+                away -> "Засчитается за ${if (isToday) "сегодня" else "этот день"}."
+                gym -> "Перед залом, засчитается $own."
+                else -> "Засчитается $own."
+            },
+            style = T.secondary(14.sp),
+        )
+        if (onClick != null) {
+            if (away) GhostButton("Бежать сегодня", onClick, Modifier.fillMaxWidth())
+            else PrimaryButton("Начать пробежку", onClick, Modifier.fillMaxWidth(), color = F.c.endurance, textColor = F.c.onData, icon = Ic.play)
+        }
     }
 }
 

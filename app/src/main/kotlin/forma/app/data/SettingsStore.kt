@@ -140,6 +140,8 @@ data class Settings(
     val easyRunDays: Map<Int, Long> = emptyMap(),
     /** A run the coach made for one day (its own reps, off the ladders): shown on that day until a run is done. */
     val coachRun: CoachRun? = null,
+    /** A hard run moved a day later from the missed «Низ» card, once: run on its new day, counted for its own one. */
+    val movedRun: MovedRun? = null,
 ) {
     /**
      * [ex] on this gym's weights: the person's own step, going from its first weight when the stack starts at one, and
@@ -197,6 +199,15 @@ data class Settings(
 /** A run the coach made for [day] (epoch day): [workout] as it will be run. */
 @Serializable
 data class CoachRun(val day: Long, val workout: forma.core.run.RunWorkout)
+
+/**
+ * The hard run planned on [from] (epoch day) run on [to] instead, the day after it: picked on the card of a missed «Низ»
+ * owed before that run ([forma.core.plan.CatchUp.Suggestion.beforeHard]; research D1, approved by Denis on 25 November).
+ * On [to] it is a hard run that counts for [from], as a caught-up session does ([forma.core.plan.CatchUp.closes]); the
+ * plan itself does not change.
+ */
+@Serializable
+data class MovedRun(val from: Long, val to: Long)
 
 /** A change of the coach's that lasts until [until] (epoch day, inclusive): [value] as the change says. */
 @Serializable

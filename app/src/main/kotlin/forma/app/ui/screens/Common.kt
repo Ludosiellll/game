@@ -338,7 +338,15 @@ fun NextPlannedCard(today: LocalDate) {
     val monday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
     val week by androidx.compose.runtime.remember(monday) { repo.weekFlow(monday) }.collectAsState(initial = emptyList())
     val p = program ?: return
-    fun left(d: LocalDate) = p.week.on(d.dayOfWeek.value).filter { s -> week.firstOrNull { it.date == d }?.isDone(s) != true }
+    // The hard run moved on the missed «Низ» card, not yet run (research D1, 25 November): next on its new day, not its own.
+    val hard = PlannedSession(SessionKind.RUN_QUALITY)
+    val moved = settings.movedRun?.takeIf { m ->
+        m.to >= today.toEpochDay() && week.firstOrNull { it.date.toEpochDay() == m.from }?.isDone(hard) != true
+    }
+    fun left(d: LocalDate): List<PlannedSession> {
+        val own = p.week.on(d.dayOfWeek.value).let { l -> if (moved?.from == d.toEpochDay()) l - hard else l }
+        return (if (moved?.to == d.toEpochDay()) listOf(hard) + own else own).filter { s -> week.firstOrNull { it.date == d }?.isDone(s) != true }
+    }
     val next = androidx.compose.runtime.remember(p, today, settings, week) {
         (1..14).map { today.plusDays(it.toLong()) }.firstOrNull { d -> !repo.paused(settings, d) && left(d).isNotEmpty() }
     } ?: return

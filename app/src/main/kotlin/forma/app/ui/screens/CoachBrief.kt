@@ -116,7 +116,23 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
     fun aheadWords(w: forma.app.data.WorkoutEntity, other: Boolean) =
         " — сделано заранее, ${onDayFull(LocalDate.ofEpochDay(w.epochDay).dayOfWeek)}" + (if (other) " («${w.title}»)" else "") +
             ": засчитано за сегодня (можно ещё раз вне плана)"
-    val todayLines = if (paused) emptyList() else program?.week?.on(today.dayOfWeek.value).orEmpty().map { s ->
+    // The hard run moved on the missed «Низ» card (research D1, 25 November): not today's on its own day, today's on the
+    // new one, counted for its own; said as «Сегодня» shows it, or the coach would send him to run it on the wrong day.
+    val moved = if (paused) null else repo.movedRun(today)
+    val movedAway = moved?.from == today.toEpochDay()
+    val planned = program?.week?.on(today.dayOfWeek.value).orEmpty().let { l -> if (movedAway) l - forma.core.plan.PlannedSession(SessionKind.RUN_QUALITY) else l }
+    val movedLine = moved?.let { m ->
+        val from = LocalDate.ofEpochDay(m.from)
+        val to = LocalDate.ofEpochDay(m.to)
+        when (today) {
+            from -> "- Тяжёлый бег сегодня не делать: человек выбрал перенести его ${onDayFull(to.dayOfWeek)} (после «Низа» накануне), там он засчитается за сегодня."
+            to -> runCatching { repo.runFor(SessionKind.RUN_QUALITY, today, light) }.getOrNull()?.let { w ->
+                "- Бег «${w.title}» — тяжёлый бег, перенесённый сюда по выбору человека, засчитается за ${onDayFull(from.dayOfWeek).substringAfter(' ')}: ${w.note}"
+            }
+            else -> null
+        }
+    }
+    val todayLines = if (paused) emptyList() else listOfNotNull(movedLine?.takeIf { !movedAway }) + planned.map { s ->
         if (s.kind == SessionKind.LIFT) {
             val early = ahead(s)
             val state = when {
@@ -163,6 +179,7 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             val day = WEEKDAY[today.dayOfWeek.value - 1]
             val head = if (feel == Feel.SICK) "По плану было (человек болеет, не делает):" else "По плану сегодня ($day):"
             appendLine(if (todayLines.isEmpty()) "По плану сегодня ($day) отдых." else head + "\n" + todayLines.joinToString("\n"))
+            if (movedAway) movedLine?.let { appendLine(it) }
             // A missed session the app offers today, and the coach's own run of today (run_today).
             repo.catchUp(today)?.let { c ->
                 val what = when (c.session.kind) {
@@ -172,8 +189,15 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
                     SessionKind.RUN_EASY -> "лёгкий бег"
                 }
                 appendLine(
-                    "Пропущено на этой неделе: $what (было в ${WEEKDAY[c.plannedOn - 1]}). Приложение предлагает сегодня " +
-                        if (c.easy) "сделать его лёгким бегом: тяжёлым нельзя, рядом тяжёлый день." else "сделать его — кнопка на «Сегодня».",
+                    "Пропущено на этой неделе: $what (было в ${WEEKDAY[c.plannedOn - 1]}). Приложение предлагает сегодня " + when {
+                        c.easy -> "сделать его лёгким бегом: тяжёлым нельзя, рядом тяжёлый день."
+                        // Legs owed before tomorrow's hard run (research D1, 25 November): the card's two choices in one
+                        // line, so the coach neither forbids the «Низ» nor keeps tomorrow hard.
+                        c.beforeHard -> "сделать её (ног не было ${Ru.days(c.legsDaysAgo ?: forma.core.plan.CatchUp.LEGS_OWED)}), а завтрашний тяжёлый бег тогда лёгкий" +
+                            (if (c.moveOk) " или переносится ${onDayFull(today.plusDays(2).dayOfWeek)} и засчитается за завтра" else "") +
+                            " — человек выбирает кнопкой на «Сегодня»; тяжёлый бег назавтра после «Низа» не советуй."
+                        else -> "сделать его — кнопка на «Сегодня»."
+                    },
                 )
             }
             settings.coachRunToday?.takeIf { it.until == today.toEpochDay() }?.let {
@@ -441,10 +465,15 @@ private suspend fun running(repo: TrainingRepository, today: LocalDate): String 
     profile?.finish?.let { appendLine("- Цель: пробежать $it м без остановки (время не задано).") }
     appendLine("- " + (profile?.lapMeters?.let { "Бегает на стадионе, круг $it м." } ?: "Бегает не на стадионе (по GPS)."))
     appendLine("- Ближайшие пробежки:")
+    // The hard run moved on the missed «Низ» card: on its new day, not on its own.
+    val moved = repo.movedRun(today)
     for (d in 0L..6L) {
         val date = today.plusDays(d)
         if (repo.paused(repo.store.settingsNow(), date)) continue
-        program.week.on(date.dayOfWeek.value).filter { it.isRun }.forEach { s ->
+        val e = date.toEpochDay()
+        val runs = listOfNotNull(forma.core.plan.PlannedSession(SessionKind.RUN_QUALITY).takeIf { moved?.to == e }) +
+            program.week.on(date.dayOfWeek.value).filter { it.isRun && !(moved?.from == e && it.kind == SessionKind.RUN_QUALITY) }
+        runs.forEach { s ->
             runCatching { repo.runFor(s.kind, date) }.getOrNull()?.let { appendLine("  - ${Ru.date(date)}: ${it.title}") }
         }
     }
@@ -467,6 +496,9 @@ private suspend fun changes(repo: TrainingRepository, today: LocalDate): String 
         s.coachStrides?.takeIf { it.on(today) }?.let { "ускорений после лёгкого — ${it.value}, до ${Ru.date(LocalDate.ofEpochDay(it.until))}" },
         s.coachLong?.takeIf { it.on(today) }?.let { "последний лёгкий бег недели — длинный, до ${Ru.date(LocalDate.ofEpochDay(it.until))}" },
         s.coachRun?.takeIf { it.day == today.toEpochDay() }?.let { "на сегодня своя пробежка (run_custom): «${it.workout.title.substringAfter(" · ")}»" },
+        repo.movedRun(today)?.let { m ->
+            "тяжёлый бег ${Ru.date(LocalDate.ofEpochDay(m.from))} перенесён на ${Ru.date(LocalDate.ofEpochDay(m.to))} (выбор человека на карточке пропущенного «Низа»), засчитается за свой день"
+        },
     ) + s.easyRunDays.filterValues { it >= today.toEpochDay() }.map { (d, until) ->
         "${listOf("пн", "вт", "ср", "чт", "пт", "сб", "вс")[d - 1]}: вместо тяжёлого бега лёгкий, до ${Ru.date(LocalDate.ofEpochDay(until))} (ease_run_day)"
     } + s.order.map { (t, ids) ->
