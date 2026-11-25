@@ -331,6 +331,10 @@ object PlanAdvisor {
         }
         // Never what the person turned away from; hard unusual exercises never for one who avoids them.
         val usable = { id: String -> find(id)?.archived == false && id !in h.avoided && !(h.avoidsHard != null && id in HARD) }
+        // Calf work taken out of the plan or marked «не хочу» is turned down as a whole, not one exercise of it: another
+        // calf exercise is not offered in its place, nor the calves counted as short (Denis took the calf raise out and said
+        // twice not to bring calf work back, 24 November — and was still offered the seated raise).
+        val noCalves = input.habits.avoided.keys.any { find(it)?.pattern == Pattern.CALF }
         // Options in the person's order: machines first for one who goes for them, hard unusual ones last unless liked.
         fun prefer(ids: List<String>): List<String> {
             val ok = ids.filter(usable)
@@ -440,7 +444,7 @@ object PlanAdvisor {
                     }
                 }
             }
-            if (!raceSoon && !has { it.id == "seated_calf" }) legDay()?.let { d ->
+            if (!raceSoon && !noCalves && !has { it.id == "seated_calf" }) legDay()?.let { d ->
                 changes += Change(
                     "add:seated_calf", Kind.ADD, d.templateId, d.title, null, null, listOf("seated_calf").filter(usable), null, 3, 12 to 20, 60,
                     "На каждом шаге бега больше всего работает камбаловидная мышца, она лежит под икроножной. Подъёмы на носки стоя " +
@@ -559,6 +563,7 @@ object PlanAdvisor {
         // more sets where it works already, else an exercise for it. Far over: a set less on its single-muscle work.
         for (m in MUSCLES) {
             if (raceSoon && m in LEGS) continue
+            if (noCalves && m == Muscle.CALVES) continue
             val (low, high) = ranges.getValue(m)
             val floor = floorOf(m)
             // Decided with the changes so far (one already proposed may cover it), said in the plan's own numbers.
