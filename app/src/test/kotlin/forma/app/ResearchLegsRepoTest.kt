@@ -97,7 +97,7 @@ class ResearchLegsRepoTest {
         val s = repo.store.settingsNow()
         val key = TrainingRepository.addedKey(extra.templateId, extra.to!!)
         assertEquals(before.sets + mapOf("leg_curl" to 3, "bulgarian" to 4, key to 2), s.sets)
-        assertEquals(listOf(extra.to), s.added[extra.templateId])
+        assertEquals(listOf(extra.to!!), s.added[extra.templateId])
         // Nothing else of his settings, his plan's week or its templates (an upper template stays an upper one).
         assertEquals(before.copy(sets = s.sets, added = s.added), s)
         assertEquals(program, repo.store.programNow())
