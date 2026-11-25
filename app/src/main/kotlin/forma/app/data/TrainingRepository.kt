@@ -1049,7 +1049,16 @@ class TrainingRepository(
             item(t.slots.size + j, overrides(addedSpec(id), settings, key), key).copy(planId = id, addedForGood = true)
         }
         val why = if (deload && !forceDeload && liftAfterSick(date) && !ProgramGenerator.isDeloadWeek(program, date)) SICK_LIFT else null
-        val items = warmUps(inOrder(own + extra, goal?.exerciseId, settings.order[t.id]))
+        // Leg work on a day without legs — the two sets of «Идеальный план» after the week's second hard run (research
+        // one-leg-day (a), the owner's decision of 25 Nov): no «+» set, 2 or more in reserve. The day stays an upper one
+        // ([forma.core.plan.Template.legs]), so the checks that keep the legs fresh for hard runs do not see these sets:
+        // they stay light by themselves.
+        fun light(item: LiftItem): LiftItem {
+            val ex = Catalog.find(item.exerciseId)
+            if (t.legs || ex == null || !ex.lowerBody || ex.compound) return item
+            return item.copy(prescription = item.prescription.copy(top = false, rir = maxOf(item.prescription.rir, 2)))
+        }
+        val items = warmUps(inOrder((own + extra).map(::light), goal?.exerciseId, settings.order[t.id]))
         val test = goal?.date == date.toEpochDay() && !unwell
         return LiftPlan(t.id, t.title, if (test) testOn(items, goal!!) else items, deload, why)
     }
@@ -2374,7 +2383,10 @@ class TrainingRepository(
                 days, program.aim, program.experience,
                 runs = sessions.count { it.isRun }, sessionMinutes = profile.sessionMinutes,
                 stalled = weeksWithoutBest(today), tiredOften = lows >= 3 || zone == forma.core.load.LoadStory.Zone.REST || lighter,
-                daysToRace = daysToRace(today), habits = habitsOf(program, settings, today), find = Catalog::find,
+                daysToRace = daysToRace(today), habits = habitsOf(program, settings, today),
+                // The leg band follows the accents too, and the week says where the hard runs are (research
+                // legs-norm-for-runners+D3, one-leg-day (a), the owner's decision of 25 Nov).
+                accents = profile.accents, week = program.week, find = Catalog::find,
             ),
         )
     }

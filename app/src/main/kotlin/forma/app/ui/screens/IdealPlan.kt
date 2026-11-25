@@ -172,7 +172,9 @@ fun IdealPlanScreen() {
         }
         Text(
             "Подход идёт в счёт целиком для главной мышцы упражнения и наполовину — для помогающих. " +
-                "Норма зависит от цели и опыта. Если ты бегаешь, ногам нужно меньше: бег тоже их нагружает.",
+                // Since 25 Nov a runner who wants bigger legs has the size floor, only the ceiling is lower (research
+                // legs-norm-for-runners+D3): «ногам нужно меньше» no longer holds.
+                "Норма зависит от цели и опыта. Если ты бегаешь, потолок для ног ниже: бег тоже их нагружает.",
             style = T.secondary(13.sp),
         )
 

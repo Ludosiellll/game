@@ -50,8 +50,11 @@ class PlanAdvisorTest {
         val chest = a.changes.first { it.id.startsWith("vol:CHEST") }
         assertEquals("db_incline", chest.planId)
         assertEquals(3 to 4, chest.setsFrom to chest.setsTo)
-        // Nothing else: the back, shoulders, arms are in range, pushing and pulling are even, the sessions fit.
-        assertEquals(2, ids.size, ids.toString())
+        // Since 25 Nov (research legs-norm-for-runners+D3, approved by the owner) his legs, 6–6,5 sets against the 8–12 of
+        // a size aim beside running, get a set more of the leg curl and of the leg extension (ResearchLegsTest); this input
+        // has no week, so no add-on after a hard run. Nothing else: the back, shoulders, arms are in range, pushing and
+        // pulling are even, the sessions fit.
+        assertEquals(listOf("add:seated_calf", "legs:HAMSTRINGS", "legs:QUADS", "vol:CHEST:db_incline"), ids)
         assertTrue(a.fine.any { "Жимы и тяги в балансе" in it }, a.fine.toString())
         assertTrue(a.fine.any { "По времени укладываешься" in it }, a.fine.toString())
         val calves = a.volume.first { it.muscle == Muscle.CALVES }

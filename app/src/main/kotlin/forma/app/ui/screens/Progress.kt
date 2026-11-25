@@ -64,7 +64,6 @@ import forma.core.load.LoadExplain
 import forma.core.load.LoadStory
 import forma.core.load.TrainingLoad
 import forma.core.model.Catalog
-import forma.core.model.LiftFocus
 import forma.core.model.Muscle
 import forma.core.run.PaceTable
 import forma.core.run.RunPlan
@@ -605,18 +604,25 @@ private fun MusclesSection(today: LocalDate) {
     if (week.values.none { it > 0 }) return
     val planned by produceState<Map<Muscle, Double>?>(null, program, end, rows) { value = repo.plannedSets(end.minusDays(6), end) }
     val plan = planned ?: return
+    val pr = profile ?: return
     val hasPlan = plan.values.any { it > 0 }
-    val band = setsTarget(profile?.aim?.lift)
+    // The advisor's own table of weekly sets (research legs-norm-for-runners+D3, the owner's decision of 25 Nov): one band
+    // for «Идеальный план», the wizard and here, a runner's legs by the aim.
+    val runs = program?.week?.days?.sumOf { d -> d.sessions.count { it.isRun } } ?: 0
+    val ranges = forma.core.plan.PlanAdvisor.ranges(pr.aim, pr.experience, runs, pr.accents)
     val tones = Muscle.entries.mapNotNull { m ->
         val v = week[m] ?: 0.0
         val p = plan[m] ?: 0.0
         when {
             v <= 0.0 && p <= 0.0 -> null
             v < p * 0.75 -> m to Tone.LOW
-            v > maxOf(p, band.second) * 1.25 -> m to Tone.HIGH
+            v > maxOf(p, (ranges[m]?.second ?: 0).toDouble()) * 1.25 -> m to Tone.HIGH
             else -> m to Tone.OK
         }
     }.toMap()
+    // Where the leg sets stand against that band, not only against the plan.
+    val thighs = listOf(Muscle.QUADS, Muscle.HAMSTRINGS, Muscle.GLUTES)
+    val legs = if (thighs.any { (week[it] ?: 0.0) > 0 || (plan[it] ?: 0.0) > 0 }) forma.core.plan.PlanAdvisor.legsLine(week, ranges, "за 7\u00A0дней") else null
     val few = tones.filterValues { it == Tone.LOW }.keys
     val many = tones.filterValues { it == Tone.HIGH }.keys
     fun names(set: Set<Muscle>) = set.joinToString(", ") { it.ru.lowercase() }
@@ -633,6 +639,7 @@ private fun MusclesSection(today: LocalDate) {
             many.size >= 4 -> "Больше плана: ${groups(many.size)}"
             else -> "Много: ${names(many)}"
         },
+        line = legs,
     )
     forma.app.ui.components.BodyMap(
         emptyMap(), Modifier.fillMaxWidth().padding(horizontal = 24.dp), tones = tones, labels = false,
@@ -674,36 +681,31 @@ private fun FinishAnswer(meters: Int?, st: forma.core.run.RunState?, runs: List<
 /** Sets as counted: whole ones as whole numbers («6», not «6,0»), a half from a helping muscle as «2,5». */
 internal fun setsText(v: Double): String = if (v % 1.0 == 0.0) v.roundToInt().toString() else Ru.one(v)
 
-/** Weekly hard sets per muscle that suit the gym focus (more for hypertrophy, fewer heavy ones for strength). */
-fun setsTarget(lift: LiftFocus?): Pair<Double, Double> = when (lift) {
-    LiftFocus.MUSCLE -> 10.0 to 20.0
-    LiftFocus.POWERBUILDING -> 8.0 to 16.0
-    LiftFocus.STRENGTH -> 6.0 to 12.0
-    else -> 6.0 to 14.0
-}
-
 /**
- * The week's work on the body: the person lit where it was trained (full at the top of the range for the gym focus), and
- * each group's sets against that range, the most worked first.
+ * The week's work on the body: the person lit where it was trained (full at the top of each group's range), and each
+ * group's sets against its range, the most worked first. [ranges]: weekly sets per group for this person — the advisor's
+ * own table ([forma.core.plan.PlanAdvisor.ranges]; research legs-norm-for-runners+D3, the owner's decision of 25 Nov: one
+ * band on every screen, a runner's legs by the aim).
  */
 @Composable
-fun MuscleWeek(sets: Map<Muscle, Double>, target: Pair<Double, Double>, title: String = "Мышцы за неделю", note: String? = null) {
+fun MuscleWeek(sets: Map<Muscle, Double>, ranges: Map<Muscle, Pair<Int, Int>>, title: String = "Мышцы за неделю", note: String? = null) {
+    fun band(m: Muscle) = ranges[m] ?: (0 to 12)
     SectionLabel(title)
     FCard(gap = 10.dp) {
         forma.app.ui.components.BodyMap(
-            sets.mapValues { (_, v) -> (v / target.second).toFloat() }, Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            sets.mapValues { (m, v) -> (v / band(m).second.coerceAtLeast(1)).toFloat() }, Modifier.fillMaxWidth().padding(horizontal = 24.dp),
             description = "Нагрузка на мышцы: " + sets.entries.sortedByDescending { it.value }.filter { it.value > 0 }.joinToString(", ") { "${it.key.ru} ${setsText(it.value)}" },
         )
         Muscle.entries.sortedByDescending { sets[it] ?: 0.0 }.forEach { m ->
             val v = sets[m] ?: 0.0
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(m.ru, style = T.body(13.sp), modifier = Modifier.width(110.dp))
-                RangeBar(v, 24.0, target.first, target.second, F.c.strength, Modifier.weight(1f))
+                RangeBar(v, 24.0, band(m).first.toDouble(), band(m).second.toDouble(), F.c.strength, Modifier.weight(1f))
                 NumText(setsText(v), style = T.number(13.sp, FontWeight.Bold), modifier = Modifier.width(36.dp))
             }
         }
         Text(
-            note ?: ("Подходы за 7 дней. Полоса — сколько в неделю хорошо для твоей цели: ${target.first.roundToInt()}–${target.second.roundToInt()}. " +
+            note ?: ("Подходы за 7 дней. Полоса у каждой мышцы показывает, сколько в неделю хорошо для твоей цели. " +
                 "Если мышца в упражнении только помогает, подход идёт за половину."),
             style = T.secondary(12.sp),
         )

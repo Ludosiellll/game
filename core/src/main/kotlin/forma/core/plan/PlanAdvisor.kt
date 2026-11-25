@@ -71,6 +71,10 @@ object PlanAdvisor {
         val daysToRace: Long? = null,
         /** What the person does: their choices and their sessions. */
         val habits: Habits = Habits(),
+        /** The groups the person asked to work more (the wizard's «акценты»): their own band in [range]. */
+        val accents: Set<Muscle> = emptySet(),
+        /** The week as laid out (which day has which run and session, in order); null — not known. */
+        val week: WeekPlan? = null,
         val find: (String) -> Exercise?,
     )
 
@@ -162,6 +166,11 @@ object PlanAdvisor {
         val held: List<String> = emptyList(),
         /** How many changes the person said not to propose (they can bring them back). */
         val hidden: Int = 0,
+        /**
+         * One line for the plan screen's card when an offer should be seen without opening this screen (a runner who wants
+         * bigger legs below the band); null otherwise.
+         */
+        val nudge: String? = null,
     )
 
     /** The muscles the week is weighed by (the core works in everything heavy). */
@@ -186,23 +195,60 @@ object PlanAdvisor {
     const val MAX_SETS_ADVISED = 4
 
     /** Running that asks things of the legs (endurance or speed, twice a week or more): not a jog for health. */
-    fun runner(input: Input) = input.aim.normalized().run.let { it == RunFocus.ENDURANCE || it == RunFocus.SPEED } && input.runs >= 2
+    fun runner(aim: Aim, runs: Int) = aim.normalized().run.let { it == RunFocus.ENDURANCE || it == RunFocus.SPEED } && runs >= 2
 
-    /** Weekly sets a muscle wants: by focus and experience; the legs lower beside running; the arms work in presses and pulls too. */
-    fun range(input: Input, m: Muscle): Pair<Int, Int> {
-        val (lo, hi) = when (input.aim.normalized().lift) {
+    fun runner(input: Input) = runner(input.aim, input.runs)
+
+    /** The leg muscles a size aim grows; not the calves (no calf work is added for size). */
+    private val THIGHS = setOf(Muscle.QUADS, Muscle.HAMSTRINGS, Muscle.GLUTES)
+
+    /**
+     * Below this many hard sets a week a leg muscle still grows, but little: about 4 is the smallest dose with growth that
+     * shows, 10 and more is where growth is clear (Pelland 2026, Currier 2026) — 8 is the least a runner's legs grow on.
+     */
+    const val LEG_GROWTH = 8
+
+    /** A runner's legs: the least that works, and the most before more sets cost the running more than they add. */
+    const val RUNNER_LEGS_MIN = 4
+    const val RUNNER_LEGS_MAX = 12
+
+    /** A runner's thigh muscle the person wants bigger: a size focus («Мышцы», «Сила и масса») or an accent on it. */
+    fun growsLegs(aim: Aim, runs: Int, accents: Set<Muscle>, m: Muscle): Boolean =
+        runner(aim, runs) && m in THIGHS && (aim.normalized().lift.let { it == LiftFocus.MUSCLE || it == LiftFocus.POWERBUILDING } || m in accents)
+
+    /** Weekly sets a muscle wants for [input]: the table of [range] (the screens read it too, [ranges]). */
+    fun range(input: Input, m: Muscle): Pair<Int, Int> = range(input.aim, input.experience, input.runs, input.accents, m)
+
+    /** [range] for every muscle: one table for «Идеальный план», the program wizard and «Мышцы за 7 дней». */
+    fun ranges(aim: Aim, experience: Experience, runs: Int, accents: Set<Muscle>): Map<Muscle, Pair<Int, Int>> =
+        Muscle.entries.associateWith { range(aim, experience, runs, accents, it) }
+
+    /**
+     * Weekly sets a muscle wants: by focus and experience; a runner's legs by the aim; the arms work in presses and pulls
+     * too; an accented group up to the accents' own weekly ceiling ([Accents.MAX_WEEK]), not «too many» below it.
+     */
+    fun range(aim: Aim, experience: Experience, runs: Int, accents: Set<Muscle>, m: Muscle): Pair<Int, Int> {
+        val (lo, hi) = when (aim.normalized().lift) {
             LiftFocus.MUSCLE -> 10 to 20
             LiftFocus.POWERBUILDING -> 8 to 18
             LiftFocus.STRENGTH -> 6 to 15
             else -> 6 to 12
         }
-        val low = if (input.experience == Experience.NOVICE) lo - 2 else lo
-        return when {
-            m == Muscle.CALVES -> if (runner(input)) 4 to 12 else 0 to hi
-            runner(input) && m in LEGS -> 4 to minOf(hi, 12)
+        val low = if (experience == Experience.NOVICE) lo - 2 else lo
+        val runner = runner(aim, runs)
+        val band = when {
+            m == Muscle.CALVES -> if (runner) 4 to 12 else 0 to hi
+            // Research legs-norm-for-runners+D3, the owner's decision of 25 Nov: running does not stop leg growth on average
+            // (Schumann 2022), so a runner who wants bigger legs has the size floor — 10 for «Мышцы», 8 for «Сила и масса»
+            // or an accent — not the 4 that only works; 12 stays the ceiling (12, 18 and 24 sets grew thighs alike, Aube
+            // 2022, and the legs still run). The floor is the growth floor, so a novice's is not lower.
+            runner && growsLegs(aim, runs, accents, m) -> maxOf(lo, LEG_GROWTH) to minOf(hi, RUNNER_LEGS_MAX)
+            runner && m in THIGHS -> RUNNER_LEGS_MIN to minOf(hi, RUNNER_LEGS_MAX)
             m == Muscle.BICEPS || m == Muscle.TRICEPS -> (low - 2).coerceAtLeast(2) to hi
             else -> low to hi
         }
+        // The accent itself adds up to this much: more is what the person asked for, not sets that only tire.
+        return if (m in accents) band.first to maxOf(band.second, Accents.MAX_WEEK.toInt()) else band
     }
 
     /** Weekly sets per muscle of [days]: the first muscles fully, the helping ones half. */
@@ -416,25 +462,111 @@ object PlanAdvisor {
             )
         }
 
+        // Short of sets in the steps below: under the band less one. A runner's legs only under the 4 that works — one who
+        // wants bigger legs gets them a step at a time (3b), not every set up to the band at once.
+        fun floorOf(m: Muscle) = ranges.getValue(m).first.let { if (runner && m in THIGHS) minOf(it, RUNNER_LEGS_MIN) else it }
+
         // One gym session a week short for many muscles: a second day helps, cramming them into one does not.
         val sessions = days.sumOf { it.times }
-        val shortNow = volume(cur(), find).let { v -> MUSCLES.filter { m -> ranges.getValue(m).first.let { lo -> lo > 0 && (v[m] ?: 0.0) < lo - 1 } } }
+        val shortNow = volume(cur(), find).let { v -> MUSCLES.filter { m -> floorOf(m).let { lo -> lo > 0 && (v[m] ?: 0.0) < lo - 1 } } }
         val oneDayShort = sessions == 1 && shortNow.size >= 3
         if (oneDayShort) held += "Зал раз в неделю, а подходов не хватает сразу на ${shortNow.size} " +
             "${Ru.plural(shortNow.size, "мышцу", "мышцы", "мышц")} (${shortNow.joinToString(", ") { it.ru.lowercase() }}). В одну тренировку " +
             "всё не влезет. Лучше добавь второй день в зале: «План» → «Изменить цель, дни и данные». Тогда предложу, что в него поставить."
+
+        // 3b. A runner who wants bigger legs, below the band (research legs-norm-for-runners+D3 and part (a) of one-leg-day,
+        // the owner's decision of 25 Nov: his gym plan changes only by what he takes, Egor's copy decides for itself). A
+        // step at a time, the back of the thigh first — squats barely grow it (Kubo 2019): a set more of the leg curl, then
+        // of the leg extension, on the leg day (added there when the week has none); then two light sets of one of them at
+        // the end of the upper session after the week's second hard run, the run first that day — legs twice a week, so a
+        // missed leg day still leaves some leg work (Schoenfeld 2019: at equal weekly sets, how often barely matters). That
+        // session stays an upper one ([Template.legs]): the week's layout and the checks around hard runs stay as they are.
+        // No calf or shin work: the calves are not among these muscles.
+        // Over the time there is with [c] and everything proposed before it: the minutes it would take, else null.
+        fun over(c: Change): Int? = input.sessionMinutes?.let { sm ->
+            minutes(apply(cur(), listOf(c)).first { it.templateId == c.templateId }, input.timeRatio).takeIf { it > sm + 10 }
+        }
+        fun nb(v: Double) = Ru.nobreak(setsText(v))
+        val legsShort = listOf(Muscle.HAMSTRINGS, Muscle.QUADS).filter { m ->
+            growsLegs(input.aim, input.runs, input.accents, m) && (volume(cur(), find)[m] ?: 0.0) < ranges.getValue(m).first
+        }
+        if (legsShort.isNotEmpty() && !raceSoon) {
+            val v0 = volume(days, find)
+            if (input.tiredOften) {
+                val m = legsShort.first()
+                val (low, high) = ranges.getValue(m)
+                held += "${nb(v0[m] ?: 0.0)} в неделю на ${m.ru.lowercase()} при норме $low–$high, но пока ты часто устаёшь, больше подходов не предлагаю."
+            } else {
+                for (m in legsShort) {
+                    val (low, high) = ranges.getValue(m)
+                    val flexion = m == Muscle.HAMSTRINGS
+                    val ids = if (flexion) listOf("leg_curl", "seated_leg_curl") else listOf("leg_ext")
+                    val pattern = if (flexion) Pattern.KNEE_FLEXION else Pattern.KNEE_EXTENSION
+                    val why = "${nb(v0[m] ?: 0.0)} в неделю на ${m.ru.lowercase()} при норме $low–$high, " +
+                        if (flexion) "а приседания его почти не качают." else "а разгибание ног бегу почти не мешает."
+                    val leg = legDay()
+                    // The same movement there already, on the leg day first: a set more of it, as it is done. Another exercise
+                    // of it (a Nordic curl, proposed or done) is left as it is; none in the week — the exercise is added.
+                    val there = cur().flatMap { d -> d.items.map { d to it } }.filter { (_, i) -> find(i.exerciseId)?.pattern == pattern }
+                        .sortedBy { (d, _) -> if (d.templateId == leg?.templateId) 0 else 1 }
+                    val more = when {
+                        there.isNotEmpty() -> there.firstOrNull { (d, i) ->
+                            i.exerciseId in ids && usable(i.exerciseId) && i.sets < MAX_SETS_ADVISED && !touched(d, i) && !cutShort(d, i)
+                        }?.let { (d, i) ->
+                            Change(
+                                "legs:${m.name}", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets,
+                                i.sets + 1, null, null, why, 2, added = i.added,
+                            )
+                        }
+                        oneDayShort -> null
+                        else -> leg?.let { d ->
+                            prefer(ids).takeIf { it.isNotEmpty() }?.let { opts ->
+                                Change("legs:${m.name}", Kind.ADD, d.templateId, d.title, null, null, opts, null, 2, 10 to 15, 90, why, 2)
+                            }
+                        }
+                    }
+                    val c = more ?: continue
+                    val longer = over(c)
+                    if (longer == null) changes += c
+                    else held += "${nb(v0[m] ?: 0.0)} в неделю на ${m.ru.lowercase()} при норме $low–$high, но «${c.dayTitle}» с этим займёт около " +
+                        "$longer\u00A0мин из твоих ${input.sessionMinutes}."
+                }
+                // Two light sets after the week's second hard run: the curl while the hamstrings are short, else the extension.
+                val after = input.week?.let { afterHardRun(it, days, find) }
+                if (after != null && !oneDayShort) {
+                    val (weekday, d) = after
+                    val vNow = volume(cur(), find)
+                    val stillShort = legsShort.filter { m -> (vNow[m] ?: 0.0) < ranges.getValue(m).first }
+                    val opts = prefer(if (Muscle.QUADS in stillShort && Muscle.HAMSTRINGS !in stillShort) listOf("leg_ext", "leg_curl") else listOf("leg_curl", "leg_ext"))
+                    val legTitle = legDay()?.title
+                    if (opts.isNotEmpty()) {
+                        val c = Change(
+                            "legs:after-run", Kind.ADD, d.templateId, d.title, null, null, opts, null, 2, 10 to 15, 90,
+                            "2\u00A0подхода ${ON_DAY[weekday - 1]} в конце тренировки после бега, с запасом 2–3\u00A0повтора и без «+»: так ноги " +
+                                "работают дважды в неделю" + (legTitle?.let { ", и пропуск тренировки «$it» не оставит неделю без них" } ?: "") + ".",
+                            2,
+                        )
+                        val longer = over(c)
+                        if (longer == null) changes += c
+                        else held += "2\u00A0подхода на ноги ${ON_DAY[weekday - 1]} не влезут, «${d.title}» с ними займёт около " +
+                            "$longer\u00A0мин из твоих ${input.sessionMinutes}."
+                    }
+                }
+            }
+        }
 
         // 4. Weekly sets per muscle. Short, with another muscle to spare: one exercise swapped for the other. Short alone:
         // more sets where it works already, else an exercise for it. Far over: a set less on its single-muscle work.
         for (m in MUSCLES) {
             if (raceSoon && m in LEGS) continue
             val (low, high) = ranges.getValue(m)
+            val floor = floorOf(m)
             // Decided with the changes so far (one already proposed may cover it), said in the plan's own numbers.
             val vol = volume(cur(), find)
             val vol0 = volume(days, find)
             val v = vol[m] ?: 0.0
             val v0 = vol0[m] ?: 0.0
-            if (low > 0 && v < low - 1) {
+            if (floor > 0 && v < floor - 1) {
                 val iso = prefer(isolations(m, runner))
                     .filter { id -> (days + cur()).none { d -> d.items.any { it.exerciseId == id } } }
                 // A single-muscle exercise for a muscle with sets to spare (in the upper half of its range, still in it
@@ -466,7 +598,7 @@ object PlanAdvisor {
                     continue
                 }
                 // More sets where it is worked first already: single-muscle and secondary lifts, not the main ones.
-                var need = ceil(low - v).toInt()
+                var need = ceil(floor - v).toInt()
                 val targets = cur().flatMap { d -> d.items.map { d to it } }
                     .filter { (d, i) -> find(i.exerciseId)?.primary?.contains(m) == true && i.sets < MAX_SETS_ADVISED && i.role != SlotRole.MAIN && !touched(d, i) && !cutShort(d, i) }
                     .sortedWith(compareBy({ -it.second.role.ordinal }, { minutes(it.first, input.timeRatio) }))
@@ -508,10 +640,12 @@ object PlanAdvisor {
                     .firstOrNull()
                 if (target != null) {
                     val (d, i) = target
+                    // Research legs-norm-for-runners+D3 (owner, 25 Nov): more sets still grow a muscle, only less and less
+                    // (Pelland 2026) — not «они уже не растут».
                     changes += Change(
                         "less:${m.name}:${i.planId}", Kind.SETS, d.templateId, d.title, i.planId, i.exerciseId, listOf(i.exerciseId), i.sets, i.sets - 1, null, null,
-                        "${m.ru}: ${setsText(v0)} в неделю — это больше нормы ($low–$high)" + (if (runner && m in LEGS) ", а ногам ещё бегать" else "") +
-                            ". Лишние подходы только утомляют, мышцы от них уже не растут.",
+                        "${m.ru}: ${Ru.nobreak(setsText(v0))} в неделю при норме $low–$high, от лишних подходов мышцы растут уже мало, а усталость копится" +
+                            (if (runner && m in LEGS) " и мешает бегу." else "."),
                         3, added = i.added,
                     )
                 }
@@ -583,9 +717,25 @@ object PlanAdvisor {
         val a = volume(days, find)
         val b = volume(apply(days, final), find)
         val table = MUSCLES.map { m -> ranges.getValue(m).let { (lo, hi) -> Volume(m, a[m] ?: 0.0, b[m] ?: 0.0, lo, hi) } }
-        // What is right already.
-        val inRange = table.filter { it.low > 0 && it.now >= it.low - 1 && it.now <= it.high + 2 }.map { it.muscle.ru.lowercase() }
+        // What is right already. A runner's legs only from the growth floor (research legs-norm-for-runners+D3, owner 25 Nov):
+        // 4–7 sets work but grow little — said so, never «в норме».
+        val inRange = table.filter {
+            it.low > 0 && it.now >= (if (runner && it.muscle in THIGHS) maxOf(it.low, LEG_GROWTH).toDouble() else it.low - 1.0) && it.now <= it.high + 2
+        }.map { it.muscle.ru.lowercase() }
         if (inRange.isNotEmpty()) fine.add(0, "Подходов в неделю в норме: ${inRange.joinToString(", ")}.")
+        val little = table.filter { runner && it.muscle in THIGHS && it.low < LEG_GROWTH && it.now >= it.low - 1 && it.now < LEG_GROWTH }
+        if (little.isNotEmpty()) {
+            val lo = little.minOf { it.now }
+            val hi = little.maxOf { it.now }
+            val names = little.map { it.muscle.ru.lowercase() }.let { l -> if (l.size == 1) l[0] else l.dropLast(1).joinToString(", ") + " и " + l.last() }
+            held += (if (lo == hi) "" else "${num(lo)}–") + Ru.nobreak(setsText(hi)) + " в неделю на $names работают, но для роста мышц это мало."
+        }
+        // An offer for the legs is seen on the plan's card too, without opening this screen.
+        val legOffers = final.count { it.id.startsWith("legs:") }
+        val nudge = if (legOffers == 0) null else table.filter { it.muscle in THIGHS && it.now < it.low }.minByOrNull { it.now - it.low }?.let { v ->
+            "$legOffers\u00A0${Ru.plural(legOffers, "предложение", "предложения", "предложений")} для ног: ${Ru.nobreak(setsText(v.now))} в неделю " +
+                "на ${v.muscle.ru.lowercase()} при норме ${v.low}–${v.high}."
+        }
         if (input.stalled.isNotEmpty() && stuck.isEmpty()) fine += "Веса в основных упражнениях растут."
         if (sm != null) days.maxByOrNull { minutes(it, input.timeRatio) }?.let { d ->
             val min = minutes(d, input.timeRatio)
@@ -599,7 +749,50 @@ object PlanAdvisor {
             else -> "$n ${Ru.plural(n, "предложение", "предложения", "предложений")} на выбор. План и так рабочий, это мелкие улучшения. " +
                 "Поменяется только то, что ты отметишь."
         }
-        return Advice(days, final, table, fine, ranges, summary, warning, held, hidden = h.hidden.size)
+        return Advice(days, final, table, fine, ranges, summary, warning, held, hidden = h.hidden.size, nudge = nudge)
+    }
+
+    /** "в понедельник", "во вторник": a day of the week after «в», by its ISO number less one. */
+    private val ON_DAY = listOf("в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу", "в воскресенье")
+
+    /**
+     * The upper-body day done after the week's second hard run, the same day and after it (research one-leg-day (a), owner
+     * 25 Nov: Denis's Thursday): the day for a little leg work. Not when a hard run follows within two days (legs and a hard
+     * run about 48 h apart), nor on a day with leg work already. With its weekday (ISO); null when the week has none.
+     */
+    private fun afterHardRun(week: WeekPlan, days: List<Day>, find: (String) -> Exercise?): Pair<Int, Day>? {
+        val hard = (1..7).flatMap { d -> week.on(d).withIndex().filter { it.value.isHardRun }.map { d to it.index } }
+        val (day, at) = hard.getOrNull(1) ?: return null
+        val id = week.on(day).drop(at + 1).firstOrNull { it.kind == SessionKind.LIFT }?.templateId ?: return null
+        if ((1..2).any { k -> week.on((day - 1 + k) % 7 + 1).any { it.isHardRun } }) return null
+        val d = days.firstOrNull { it.templateId == id } ?: return null
+        if (d.items.any { find(it.exerciseId)?.lowerBody == true }) return null
+        return day to d
+    }
+
+    /**
+     * Where a week's leg sets stand against their band ([ranges], the advisor's own table): one line for «Мышцы за 7 дней»
+     * (research legs-norm-for-runners+D3, owner 25 Nov: against the band, not only against the plan). The muscle furthest
+     * below its band first; [span]: the days counted ("за 7 дней"). Null without a band for the legs.
+     */
+    fun legsLine(sets: Map<Muscle, Double>, ranges: Map<Muscle, Pair<Int, Int>>, span: String): String? {
+        val legs = listOf(Muscle.QUADS, Muscle.HAMSTRINGS, Muscle.GLUTES).mapNotNull { m -> ranges[m]?.let { Triple(m, sets[m] ?: 0.0, it) } }
+        if (legs.isEmpty()) return null
+        fun n(v: Double) = Ru.nobreak(setsText(v))
+        fun band(r: Pair<Int, Int>) = "${r.first}–${r.second}"
+        if (legs.all { it.second <= 0.0 }) return "0\u00A0подходов на ноги $span при норме ${band(legs.first().third)}."
+        legs.filter { (_, v, r) -> v < r.first }.minByOrNull { (_, v, r) -> v - r.first }?.let { (m, v, r) ->
+            return "${n(v)} на ${m.ru.lowercase()} $span при норме ${band(r)}."
+        }
+        legs.filter { (_, v, _) -> v < LEG_GROWTH }.minByOrNull { it.second }?.let { (m, v, _) ->
+            return "${n(v)} на ${m.ru.lowercase()} $span работают, но для роста мышц это мало."
+        }
+        legs.filter { (_, v, r) -> v > r.second }.maxByOrNull { (_, v, r) -> v - r.second }?.let { (m, v, r) ->
+            return "${n(v)} на ${m.ru.lowercase()} $span, это выше нормы ${band(r)}."
+        }
+        val lo = legs.minOf { it.second }
+        val hi = legs.maxOf { it.second }
+        return (if (lo == hi) "" else "${num(lo)}–") + n(hi) + " на ноги $span при норме ${band(legs.first().third)}."
     }
 
     /** What the advisor itself proposes to protect (a runner's hamstrings and calves): never the one swapped away for sets elsewhere. */
@@ -654,4 +847,7 @@ object PlanAdvisor {
     /** "6 подходов", "6,5 подхода". */
     fun setsText(v: Double): String =
         if (v % 1.0 == 0.0) Ru.sets(v.roundToInt()) else "${Ru.one(v)} подхода"
+
+    /** "6", "6,5": the number of sets alone (the first of a range, "5–6,5 подхода"). */
+    private fun num(v: Double): String = if (v % 1.0 == 0.0) v.roundToInt().toString() else Ru.one(v)
 }

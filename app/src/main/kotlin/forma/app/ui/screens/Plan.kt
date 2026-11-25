@@ -192,6 +192,8 @@ fun PlanScreen() {
                             },
                             style = T.body(16.sp, FontWeight.SemiBold),
                         )
+                        // An offer for the legs is seen here, not only inside (research legs-norm-for-runners+D3, owner 25 Nov).
+                        advice?.nudge?.let { Text(it, style = T.body(14.sp).copy(color = F.c.accent)) }
                         Text("Поменяется только то, что ты выберешь.", style = T.secondary(13.sp))
                     }
                     Icon(Ic.chevron, null, tint = F.c.text3, modifier = Modifier.size(18.dp))

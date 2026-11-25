@@ -593,10 +593,14 @@ private fun ResultStep(d: ProfileDraft) {
     }
     Column(Modifier.scale(0.96f + 0.04f * t.value), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         if (lifts.isNotEmpty()) {
-            val target = setsTarget(profile.aim.lift)
+            // The advisor's own table, a runner's legs by the aim (research legs-norm-for-runners+D3, the owner's decision of
+            // 25 Nov): the same band here, in «Идеальный план» and in «Мышцы за 7 дней».
+            val ranges = forma.core.plan.PlanAdvisor.ranges(profile.aim, profile.experience, runs.size, profile.accents)
+            val legs = ranges.getValue(Muscle.QUADS)
             MuscleWeek(
-                Accents.weekly(program), target, title = "Нагрузка на мышцы",
-                note = "Подходы в неделю по плану. Полоса — сколько хорошо для твоей цели: ${target.first.toInt()}–${target.second.toInt()} на мышцу.",
+                Accents.weekly(program), ranges, title = "Нагрузка на мышцы",
+                note = "Подходы в неделю по плану, полоса показывает норму для твоей цели" +
+                    (if (forma.core.plan.PlanAdvisor.runner(profile.aim, runs.size)) ", у ног при беге ${legs.first}–${legs.second}." else "."),
             )
             SectionLabel("Тренировки в зале")
             val used = lifts.mapNotNull { it.templateId }.distinct().mapNotNull { id -> program.templates.firstOrNull { it.id == id } }
