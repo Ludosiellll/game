@@ -196,7 +196,8 @@ fun GoalTestDayCard(today: LocalDate) {
     // The test as the day's session has it (from the max the way measures), and whether a session today has the lift.
     val day by produceState<GymGoal.TestDay?>(null, goal) { value = GymGoals.testDay(repo, goal) }
     val inPlan by produceState<Boolean?>(null, goal, program) {
-        value = program?.week?.on(today.dayOfWeek.value).orEmpty().filter { it.kind == forma.core.plan.SessionKind.LIFT }.any { s ->
+        // Today as its week stands (days changed places for the week hold each other's sessions).
+        value = program?.on(today, repo.store.settingsNow().daySwaps).orEmpty().filter { it.kind == forma.core.plan.SessionKind.LIFT }.any { s ->
             runCatching { repo.liftPlan(s.templateId!!, today).items.any { it.exerciseId == goal.exerciseId } }.getOrDefault(false)
         }
     }

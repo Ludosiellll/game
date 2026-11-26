@@ -119,11 +119,19 @@ object CatchUp {
     }
 
     /**
+     * Whether [s] works the legs, as the layout rules count it: a lift whose template has legs — a template the plan no
+     * longer has counts as legs; [own] says it where the template cannot (a friend's copied workout, by its exercises).
+     */
+    fun legs(program: Program, s: PlannedSession, own: Boolean? = null): Boolean =
+        s.kind == SessionKind.LIFT && (own ?: program.templates.firstOrNull { it.id == s.templateId }?.legs ?: true)
+
+    /**
      * [today] is ISO 1..7; [week] holds Monday..Sunday of this week; days before [firstDay] (ISO) are ignored.
      * [legsDaysAgo]: days since the last leg session done (null: none known). [next]: the sessions of the days after
      * today (tomorrow first, up to three) as they stand, with a hard run made easy for its day as an easy one and a moved
-     * one on its new day; null: as planned (this week's days, then next week's plan). The checks read it, not the plan
-     * alone: an eased Monday no longer blocks Sunday's legs (research D1, 25 November).
+     * one on its new day; null: as planned (this week's days, then next week's plan — [program]'s week is read for the
+     * days of next week only, so with days changed places ([DaySwaps]) it is next week's own, [Program.forWeek]). The
+     * checks read it, not the plan alone: an eased Monday no longer blocks Sunday's legs (research D1, 25 November).
      */
     fun suggest(
         program: Program, today: Int, week: List<Day>, firstDay: Int = 1, legsDaysAgo: Int? = null, next: List<List<PlannedSession>>? = null,
@@ -147,8 +155,7 @@ object CatchUp {
             if (today + k <= 7) week.firstOrNull { it.day == today + k }?.planned.orEmpty() else program.week.on(today + k - 7)
         }
         val tomorrow = ahead.getOrElse(0) { emptyList() }.map { it to null }
-        fun legs(s: PlannedSession, own: Boolean? = null) =
-            s.kind == SessionKind.LIFT && (own ?: program.templates.firstOrNull { it.id == s.templateId }?.legs ?: true)
+        fun legs(s: PlannedSession, own: Boolean? = null) = legs(program, s, own)
         val around = yesterday + tomorrow
         fun fits(s: PlannedSession): Boolean = when {
             legs(s) -> around.none { (x, own) -> legs(x, own) || x.isHardRun }

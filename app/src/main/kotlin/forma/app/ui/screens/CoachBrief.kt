@@ -11,6 +11,7 @@ import forma.app.data.LiftPlan
 import forma.app.data.RunSummary
 import forma.app.data.TrainingReport
 import forma.app.data.TrainingRepository
+import forma.core.plan.DaySwaps
 import forma.core.plan.ProgramGenerator
 import forma.core.plan.SessionKind
 import forma.core.strength.DoneSet
@@ -62,8 +63,8 @@ internal const val COACH_RULES = """## Как решает приложение
  * making a place up. Denis, 5 November: the coach sent him to «План → день → настройка отрезков», which does not exist.
  */
 internal const val COACH_MAP = """## Что где в приложении (это человек делает сам; кнопку «Открыть» на экран даёт open_screen по ключу)
-- today «Сегодня»: «Начать» тренировку дня; «Как ты сегодня?» (хорошо, так себе, болею); пропущенная тренировка недели; карточка пробежки от тренера; внизу в любой день «Силовая» (любая силовая плана; «Другая силовая», когда сегодня своя) и «Свободный бег». Не успевает в свой день — пусть сделает силовую или лёгкий бег в другой день этой недели этими кнопками, дни плана не меняются: сделанное заранее засчитывается за свой день, пропущенное приложение само предложит в свободный день недели.
-- plan «План»: неделя по дням (нажать день — что, зачем и почему в этот день); ниже упражнения каждой тренировки (нажать упражнение: заменить, подходы, повторы, отдых, шаг веса, первый вес тренажёра, убрать), «Добавить упражнение», «Пауза», «Идеальный план», «Мои упражнения».
+- today «Сегодня»: «Начать» тренировку дня; «Как ты сегодня?» (хорошо, так себе, болею); пропущенная тренировка недели; карточка пробежки от тренера; внизу в любой день «Силовая» (любая силовая плана; «Другая силовая», когда сегодня своя) и «Свободный бег». Не успевает в свой день — пусть сделает силовую или лёгкий бег в другой день этой недели этими кнопками, дни плана не меняются: сделанное заранее засчитывается за свой день, пропущенное приложение само предложит в свободный день недели. Тренировки дня целиком можно поменять местами с другим днём этой недели (сегодня день ног с его бегом, а сегодняшнее в субботу) — это делаешь ты, функцией swap_days, человек подтверждает; дни недели насовсем — set_week.
+- plan «План»: неделя по дням, как она стоит сейчас (нажать день — что, зачем и почему в этот день; дни поменяны местами — строка над неделей с «Вернуть»); ниже упражнения каждой тренировки (нажать упражнение: заменить, подходы, повторы, отдых, шаг веса, первый вес тренажёра, убрать), «Добавить упражнение», «Пауза», «Идеальный план», «Мои упражнения».
 - progress «Прогресс»: одна страница сверху вниз. «Сила»: изменение за 8 недель, основные упражнения (нажать — история упражнения), «Поставить цель в зале». «Бег»: лучший контрольный или средний круг в отрезках в темпе цели, шаг до контрольного; «Подробнее о беге» — прогноз, контрольные, отрезки, темпы плана. «Вес тела» (средний и последний замер). «Нагрузка» по неделям; «Подробнее о нагрузке» — тренированность, усталость, свежесть, недели. «Мышцы за 7 дней» на фигуре. Внизу выгрузка тренировок в файл.
 - history «История»: все тренировки и пробежки; открыть тренировку — «Изменить оценку», поправить круги пробежки, «Удалить из истории».
 - exercises «Упражнения»: поиск упражнения, как делать, своё упражнение.
@@ -123,7 +124,8 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
     // new one, counted for its own; said as «Сегодня» shows it, or the coach would send him to run it on the wrong day.
     val moved = if (paused) null else repo.movedRun(today)
     val movedAway = moved?.from == today.toEpochDay()
-    val planned = program?.week?.on(today.dayOfWeek.value).orEmpty().let { l -> if (movedAway) l - forma.core.plan.PlannedSession(SessionKind.RUN_QUALITY) else l }
+    // The day as its week stands: with days changed places (swap_days) today holds the other day's sessions.
+    val planned = program?.on(today, settings.daySwaps).orEmpty().let { l -> if (movedAway) l - forma.core.plan.PlannedSession(SessionKind.RUN_QUALITY) else l }
     val movedLine = moved?.let { m ->
         val from = LocalDate.ofEpochDay(m.from)
         val to = LocalDate.ofEpochDay(m.to)
@@ -231,6 +233,18 @@ suspend fun coachContext(repo: TrainingRepository, today: LocalDate = repo.today
             val gym = days { it.kind == SessionKind.LIFT }
             val run = days { it.isRun }
             appendLine("Неделя: " + (if (gym.isEmpty()) "без зала" else "зал — ${gym.joinToString(", ")}") + "; " + (if (run.isEmpty()) "без бега" else "бег — ${run.joinToString(", ")}") + ".")
+        }
+        // Days of this week changed places (swap_days): said as the screens show them, or the coach would send the person
+        // to the plan's own day (the leg day moved to today, today's upper body to Saturday).
+        val swapped = DaySwaps.of(today, settings.daySwaps)
+        if (program != null && swapped.isNotEmpty()) {
+            val monday = DaySwaps.monday(today)
+            val days = swapped.flatMap { listOf(it.a, it.b) }.distinct().sorted().filter { it in 1..7 }
+            appendLine(
+                "На этой неделе поменяны местами ${DaySwaps.names(swapped)} (swap_days), тренировки дня целиком. " +
+                    days.joinToString(" ") { d -> "${WEEKDAY[d - 1].replaceFirstChar { it.uppercase() }}: ${DaySwaps.words(program, program.on(monday.plusDays(d - 1L), settings.daySwaps))}." } +
+                    " Со следующей недели как в плане.",
+            )
         }
         // The block's week as «План» says it, and the next lighter week: the report gives the day the plan was made, which
         // a new layout of the days moves while the block stays (the audit of 24 November: «когда разгрузка?»).
@@ -470,12 +484,14 @@ private suspend fun running(repo: TrainingRepository, today: LocalDate): String 
     appendLine("- Ближайшие пробежки:")
     // The hard run moved on the missed «Низ» card: on its new day, not on its own.
     val moved = repo.movedRun(today)
+    // Each date as its week stands (days changed places for a week hold each other's runs).
+    val swaps = repo.store.settingsNow().daySwaps
     for (d in 0L..6L) {
         val date = today.plusDays(d)
         if (repo.paused(repo.store.settingsNow(), date)) continue
         val e = date.toEpochDay()
         val runs = listOfNotNull(forma.core.plan.PlannedSession(SessionKind.RUN_QUALITY).takeIf { moved?.to == e }) +
-            program.week.on(date.dayOfWeek.value).filter { it.isRun && !(moved?.from == e && it.kind == SessionKind.RUN_QUALITY) }
+            program.on(date, swaps).filter { it.isRun && !(moved?.from == e && it.kind == SessionKind.RUN_QUALITY) }
         runs.forEach { s ->
             runCatching { repo.runFor(s.kind, date) }.getOrNull()?.let { appendLine("  - ${Ru.date(date)}: ${it.title}") }
         }

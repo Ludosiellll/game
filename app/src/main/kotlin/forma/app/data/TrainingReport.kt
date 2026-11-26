@@ -364,7 +364,7 @@ object TrainingReport {
             val dates = (0..6L).map { monday.plusDays(it) }.filter { !it.isBefore(start) && !it.isAfter(today) }
             // Today's sessions count once done: in the morning they are not missed yet.
             val planned = dates.filter { !paused(it) }.flatMap { d ->
-                val on = prog.week.on(d.dayOfWeek.value)
+                val on = prog.on(d, b.settings.daySwaps)
                 if (d != today) on
                 else on.filter { !it.isRun }.take(doneToday.count { it.kind == Kind.LIFT }) + on.filter { it.isRun }.take(doneToday.count { it.kind == Kind.RUN })
             }

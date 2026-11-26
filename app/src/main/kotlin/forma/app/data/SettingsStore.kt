@@ -142,6 +142,12 @@ data class Settings(
     val coachRun: CoachRun? = null,
     /** A hard run moved a day later from the missed «Низ» card, once: run on its new day, counted for its own one. */
     val movedRun: MovedRun? = null,
+    /**
+     * Days of a week that changed places, whole, for that week only ([forma.core.plan.DaySwap], the coach's swap_days):
+     * the plan of a date is read through them ([forma.core.plan.Program.on]). This week's and the next one's are kept;
+     * a week laid out anew keeps none ([SettingsStore.setProgram]).
+     */
+    val daySwaps: List<forma.core.plan.DaySwap> = emptyList(),
 ) {
     /**
      * [ex] on this gym's weights: the person's own step, going from its first weight when the stack starts at one, and
@@ -405,7 +411,19 @@ class SettingsStore(context: Context, name: String = "forma") {
     suspend fun setLiftState(l: LiftState) = write(Keys.lift, LiftState.serializer(), l)
 
     suspend fun setProfile(p: Profile) = write(Keys.profile, Profile.serializer(), p)
-    suspend fun setProgram(p: Program) = write(Keys.program, Program.serializer(), p)
+    /**
+     * [p] as the program. A week laid out in other days takes the days changed places with it ([Settings.daySwaps]):
+     * they were of the old layout, and would move the new week's days about.
+     */
+    suspend fun setProgram(p: Program) {
+        store.edit { prefs ->
+            val was = prefs[Keys.program]?.let { runCatching { AppJson.decodeFromString(Program.serializer(), it) }.getOrNull() }
+            prefs[Keys.program] = AppJson.encodeToString(Program.serializer(), p)
+            if (was == null || was.week.days == p.week.days) return@edit
+            val s = prefs[Keys.settings]?.let { runCatching { AppJson.decodeFromString(Settings.serializer(), it) }.getOrNull() } ?: return@edit
+            if (s.daySwaps.isNotEmpty()) prefs[Keys.settings] = AppJson.encodeToString(Settings.serializer(), s.copy(daySwaps = emptyList()))
+        }
+    }
     suspend fun setRunState(r: RunState) = write(Keys.runState, RunState.serializer(), r)
     suspend fun setSettings(s: Settings) = write(Keys.settings, Settings.serializer(), s)
 

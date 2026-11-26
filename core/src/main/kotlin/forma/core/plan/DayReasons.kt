@@ -10,15 +10,24 @@ object DayReasons {
      * [hard]: whether a run is a hard one as things stand — after a long break the hard sessions are easy runs for a while,
      * and before running continuously every run is run/walk; the reasons follow what the day holds now.
      */
-    fun of(program: Program, day: Int, hard: (PlannedSession) -> Boolean = { it.isHardRun }): List<String> {
-        val today = program.week.on(day)
+    fun of(program: Program, day: Int, hard: (PlannedSession) -> Boolean = { it.isHardRun }): List<String> =
+        of(program, day, program.week.on(day), program.week.on(if (day == 1) 7 else day - 1), program.week.on(if (day == 7) 1 else day + 1), hard)
+
+    /**
+     * The reasons of [date] as its week stands: with days changed places ([swaps], [DaySwaps]) the day and the days
+     * around it are read by the date — on Sunday the day after is next week's Monday, which has its own swaps or none.
+     */
+    fun of(program: Program, date: java.time.LocalDate, swaps: List<DaySwap>, hard: (PlannedSession) -> Boolean = { it.isHardRun }): List<String> =
+        of(program, date.dayOfWeek.value, program.on(date, swaps), program.on(date.minusDays(1), swaps), program.on(date.plusDays(1), swaps), hard)
+
+    private fun of(
+        program: Program, day: Int, today: List<PlannedSession>, prev: List<PlannedSession>, next: List<PlannedSession>, hard: (PlannedSession) -> Boolean,
+    ): List<String> {
         if (today.isEmpty()) return emptyList()
         // Whose week has no running hears nothing of runs, and whose has no gym nothing of the gym.
         val sessions = program.week.days.flatMap { it.sessions }
         val runs = sessions.any { it.isRun }
         val gym = sessions.any { it.kind == SessionKind.LIFT }
-        val prev = program.week.on(if (day == 1) 7 else day - 1)
-        val next = program.week.on(if (day == 7) 1 else day + 1)
         fun template(s: PlannedSession) = program.templates.firstOrNull { it.id == s.templateId }
         fun legs(list: List<PlannedSession>) = list.any { it.kind == SessionKind.LIFT && template(it)?.legs != false }
         val lift = today.firstOrNull { it.kind == SessionKind.LIFT }

@@ -597,12 +597,14 @@ private fun MusclesSection(today: LocalDate) {
     val workouts by remember { repo.db.workouts().observeHistory() }.collectAsState(initial = emptyList())
     val program by repo.store.program.collectAsState(initial = null)
     val profile by repo.store.profile.collectAsState(initial = null)
-    val liftToday = program?.week?.on(today.dayOfWeek.value)?.any { it.kind == forma.core.plan.SessionKind.LIFT } == true
+    // Today as its week stands: days changed places for the week hold each other's sessions (the plan's sets follow).
+    val swaps = repo.store.settings.collectAsState(initial = forma.app.data.Settings()).value.daySwaps
+    val liftToday = program?.on(today, swaps)?.any { it.kind == forma.core.plan.SessionKind.LIFT } == true
     val doneToday = workouts.any { it.epochDay == today.toEpochDay() && it.kind == Kind.LIFT }
     val end = if (liftToday && !doneToday) today.minusDays(1) else today
     val week = remember(rows, end) { Stats.setsLast7Days(rows, end) }
     if (week.values.none { it > 0 }) return
-    val planned by produceState<Map<Muscle, Double>?>(null, program, end, rows) { value = repo.plannedSets(end.minusDays(6), end) }
+    val planned by produceState<Map<Muscle, Double>?>(null, program, end, rows, swaps) { value = repo.plannedSets(end.minusDays(6), end) }
     val plan = planned ?: return
     val pr = profile ?: return
     val hasPlan = plan.values.any { it > 0 }

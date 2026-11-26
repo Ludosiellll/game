@@ -56,6 +56,7 @@ fun PlanScreen() {
     val today = forma.app.ui.rememberToday(repo)
     val weekNo = ProgramGenerator.programWeek(p, today)
     val lifting by repo.store.liftState.collectAsState(initial = forma.app.data.LiftState())
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     ScrollScreen {
         FitTitle(titleText("План"), style = T.screenTitle(), modifier = Modifier.padding(top = 8.dp))
         val goal = aimTitle(p.aim) + (p.copiedFrom?.let { " · программа друга ($it)" } ?: "")
@@ -78,16 +79,33 @@ fun PlanScreen() {
         SectionLabel("Неделя")
         // A due trial is the next hard day only: the hard days after it show what comes after the trial.
         val runState by repo.store.runState.collectAsState(initial = null)
-        val trialOn by produceState<java.time.LocalDate?>(null, p, today, runState) { value = repo.trialDay(today) }
+        val weekSettings by repo.store.settings.collectAsState(initial = forma.app.data.Settings())
+        val trialOn by produceState<java.time.LocalDate?>(null, p, today, runState, weekSettings.daySwaps) { value = repo.trialDay(today) }
         val weekMonday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
         val weekItems by remember(weekMonday) { repo.weekFlow(weekMonday) }.collectAsState(initial = emptyList())
+        // Days of this week changed places (the coach's swap_days, [forma.core.plan.DaySwap]): the list below is the week
+        // as it stands, said in one line with the way back — the last change, while nothing of its two days is done or
+        // started.
+        val swapped = forma.core.plan.DaySwaps.of(today, weekSettings.daySwaps)
+        if (swapped.isNotEmpty()) {
+            val active by remember { repo.db.workouts().observeActive() }.collectAsState(initial = null)
+            val back by produceState(false, swapped, weekItems, active, today) { value = repo.canSwapBack(swapped.last(), today) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("На этой неделе ${forma.core.plan.DaySwaps.names(swapped)} поменяны местами.", style = T.secondary(14.sp), modifier = Modifier.weight(1f))
+                if (back) Text(
+                    "Вернуть", style = T.body(14.sp, FontWeight.SemiBold).copy(color = F.c.accent),
+                    modifier = Modifier.clickable(onClickLabel = "Вернуть дни на свои места") { scope.launch { repo.swapBack(swapped.last(), today) } }
+                        .padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+                )
+            }
+        }
         FCard(gap = 0.dp) {
             (1..7).forEach { day ->
                 if (day > 1) Hairline()
                 val dayDate = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).plusDays(day - 1L)
                 // A pause day holds no sessions (as on «Сегодня» and the day's screen): «Пауза», no session, no how-to.
                 val paused = weekItems.firstOrNull { it.date == dayDate }?.paused == true
-                val sessions = if (paused) emptyList() else p.week.on(day)
+                val sessions = if (paused) emptyList() else p.on(dayDate, weekSettings.daySwaps)
                 // A tap opens the day in full: what each session is, what it is for, why on this day.
                 Row(
                     Modifier.fillMaxWidth().clickable(onClickLabel = "Подробнее о дне") { nav.push(Screen.Day(dayDate.toEpochDay())) }
@@ -115,7 +133,7 @@ fun PlanScreen() {
                                 } else {
                                     // Each row on its own date this week: an easy run on a lifting day is shorter.
                                     val free = done != null && done.templateId == forma.core.run.RunType.FREE.name
-                                    val w by produceState<RunWorkout?>(null, s.kind, dayDate, trialOn, done?.id) {
+                                    val w by produceState<RunWorkout?>(null, s.kind, dayDate, trialOn, done?.id, weekSettings.daySwaps) {
                                         value = when {
                                             free -> null
                                             done != null -> repo.runPlanOf(done.id) ?: repo.runFor(s.kind, dayDate, trial = dayDate == trialOn)

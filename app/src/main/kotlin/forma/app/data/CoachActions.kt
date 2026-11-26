@@ -16,6 +16,8 @@ import forma.core.model.RunFocus
 import forma.core.model.RunGoal
 import forma.core.model.RunLevel
 import forma.core.model.Sex
+import forma.core.plan.DaySwap
+import forma.core.plan.DaySwaps
 import forma.core.plan.GoalRisk
 import forma.core.plan.ProgramGenerator
 import forma.core.plan.SessionKind
@@ -88,6 +90,7 @@ object CoachActions {
     const val LIGHTER = "set_lighter_week"
     const val ORDER = "move_exercise"
     const val EASE_DAY = "ease_run_day"
+    const val SWAP_DAYS = "swap_days"
     const val RUN_CUSTOM = "run_custom"
 
     /** The screens [OPEN] can show, by their key: the name said to the person. */
@@ -209,6 +212,8 @@ object CoachActions {
             exercise, Param("place", "string", "first — первым, last — последним, номер места (1, 2, 3 …) или reset — порядок приложения"), session)
         fn(EASE_DAY, "В этот день недели вместо тяжёлого бега — лёгкий, на weeks недель (0 — вернуть тяжёлый). Когда тяжёлых пробежек слишком много, ноги не успевают восстановиться, болят голени — или человек хочет один тяжёлый бег в неделю. При боли — на 1–2 недели, потом спроси снова. До 2 недель делается сразу, можно вернуть; дольше, или когда при цели по бегу в неделе не остаётся тяжёлого бега, — человек подтверждает.",
             Param("day", "string", "день недели: пн, вт, ср, чт, пт, сб или вс"), Param("weeks", "integer", "0–$MAX_WEEKS"))
+        fn(SWAP_DAYS, "Поменять местами два дня ЭТОЙ недели целиком: все тренировки одного дня встают на другой, и обратно («поменяй четверг и субботу», «поставь сегодня день ног, а сегодняшнее на субботу»; с днём отдыха — «перенеси сегодняшнее на завтра»). Только на эту неделю: со следующей всё как в плане; дни недели насовсем — set_week. Оба дня — сегодня или позже на этой неделе, не в паузу и не день, где что-то уже сделано или начато. Приложение само проверит, что ноги и тяжёлый бег не окажутся в соседние дни и два тяжёлых бега не встанут подряд; откажет — объясни причину или предложи другие дни. Человек подтверждает кнопкой.",
+            Param("day_a", "string", "первый день: пн, вт, ср, чт, пт, сб, вс (можно «сегодня», «завтра»)"), Param("day_b", "string", "второй день, так же"))
         fn(RUN_CUSTOM, "Своя пробежка на СЕГОДНЯ, какой нет в плане: reps отрезков по work_sec секунд (или work_m метров) в темпе pace, между ними rest_sec трусцой; до и после — лёгкий бег. Примеры: «8 по 200 быстро через минуту» — reps 8, work_m 200, pace fast, rest_sec 60; «20 минут спокойно» — reps 1, work_sec 1200, pace easy; «фартлек 6 по 2 минуты» — reps 6, work_sec 120, pace interval, rest_sec 120. Темп отрезков даёт приложение по форме человека; на стадионе отрезки станут целыми кругами. Заменяет сегодняшнюю пробежку плана, засчитывается, шаги плана не двигает. Тяжёлую человек подтверждает; тяжёлая не ставится рядом с другим тяжёлым бегом и в день ног, целиком — до 110 % самой длинной за 30 дней (длиннее урежется). Для постоянных изменений — set_tempo, set_run_step, set_easy_run_minutes.",
             Param("reps", "integer", "сколько отрезков, 1–20 (1 — один непрерывный бег)"),
             Param("work_sec", "integer", "секунд в отрезке, 20–3600; или укажи work_m", required = false),
@@ -496,7 +501,7 @@ object CoachActions {
         val profile = repo.store.profileNow()
         val saved = repo.runStateToGo(profile?.runGoal)
         val week = forma.core.run.RunPlan.weekCap(saved, day.toEpochDay())
-        val gym = program.week.on(day.dayOfWeek.value).filter { it.kind == SessionKind.LIFT }
+        val gym = program.on(day, repo.store.settingsNow().daySwaps).filter { it.kind == SessionKind.LIFT }
         val legs = gym.any { g -> program.templates.firstOrNull { it.id == g.templateId }?.legs == true }
         val why = when {
             real >= (minutes ?: saved.easyMinutes) -> null
@@ -516,7 +521,7 @@ object CoachActions {
         val s = repo.store.settingsNow()
         val ran = repo.db.workouts().allDone().filter { it.kind == Kind.RUN }.map { it.epochDay }.toSet()
         return (0L..6L).map { from.plusDays(it) }.firstNotNullOfOrNull { d ->
-            if (repo.paused(s, d) || d.toEpochDay() in ran || program.week.on(d.dayOfWeek.value).none { it.kind == SessionKind.RUN_EASY }) null
+            if (repo.paused(s, d) || d.toEpochDay() in ran || program.on(d, s.daySwaps).none { it.kind == SessionKind.RUN_EASY }) null
             else easyOn(repo, d, minutes)
         }
     }
@@ -1041,10 +1046,16 @@ object CoachActions {
                 }
             }
             EASE_DAY -> {
-                val day = a.str("day")?.let { weekDays(it) }?.singleOrNull() ?: return no("День недели — один: пн, вт, ср, чт, пт, сб или вс.")
+                val asked = a.str("day")?.let { weekDays(it) }?.singleOrNull() ?: return no("День недели — один: пн, вт, ср, чт, пт, сб или вс.")
                 val w = a.int("weeks")?.takeIf { it in 0..MAX_WEEKS } ?: return no("Срок — от 0 до $MAX_WEEKS недель.")
                 val program = repo.store.programNow() ?: return no("Нет плана.")
-                val dayName = listOf("понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье")[day - 1]
+                val names = listOf("понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье")
+                // The ease is kept by the plan's weekday and follows its session ([TrainingRepository.easedUntil]). In a week
+                // whose days changed places (swap_days) the day named may hold another day's hard run: that one is meant
+                // («в субботу тяжёлый сделай лёгким» while Thursday's is on Saturday), and the card names the plan's day.
+                val held = DaySwaps.origin(today.with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.of(asked))), s.daySwaps)
+                val day = held.takeIf { program.week.on(it).any { p -> p.kind == SessionKind.RUN_QUALITY } } ?: asked
+                val dayName = names[day - 1] + if (day == asked) "" else " (на этой неделе его тренировки ${ON_DAY[asked - 1]})"
                 if (program.week.on(day).none { it.kind == SessionKind.RUN_QUALITY }) return no("В $dayName тяжёлого бега по плану нет.")
                 val was = s.easyRunDays[day]?.takeIf { it >= today.toEpochDay() }
                 if (w == 0 && was == null) return no("В $dayName тяжёлый бег и так по плану.")
@@ -1067,6 +1078,33 @@ object CoachActions {
                     val old = repo.store.settingsNow().easyRunDays[day]
                     repo.updateSettings { if (w == 0) it.copy(easyRunDays = it.easyRunDays - day) else it.copy(easyRunDays = it.easyRunDays + (day to until.toEpochDay())) }
                     CoachCall("undo_ease_day", args("day" to day, "old" to old, "expect" to if (w == 0) null else until.toEpochDay()))
+                }
+            }
+            SWAP_DAYS -> {
+                // Two days of this week change places, whole — the hard run goes with the upper body ([DaySwap], asked for by
+                // Denis on 26 November); the plan stays, the next week is as planned. The days for good are set_week's.
+                fun dayOf(key: String) = a.str(key)?.let { d ->
+                    // «сегодня» and «завтра» are days too: the model often passes the person's own word.
+                    when (d.lowercase()) { "сегодня" -> today.dayOfWeek.value; "завтра" -> today.plusDays(1).dayOfWeek.value; else -> weekDays(d)?.singleOrNull() }
+                }
+                val named = listOfNotNull(dayOf("day_a"), dayOf("day_b"))
+                if (named.size < 2) return no("Нужны два дня недели: пн, вт, ср, чт, пт, сб или вс.")
+                // In the week's order, whichever was named first.
+                val (x, y) = named.sorted()
+                val program = repo.store.programNow() ?: return no("Нет плана.")
+                repo.swapRefusal(x, y, today)?.let { return no(it) }
+                val monday = DaySwaps.monday(today)
+                val swap = DaySwap(monday.toEpochDay(), x, y)
+                val after = s.daySwaps + swap
+                val accusative = listOf("понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье")
+                val nominative = listOf("Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье")
+                fun holds(d: Int) = "${nominative[d - 1]}: ${DaySwaps.words(program, program.on(monday.plusDays(d - 1L), after))}."
+                // Always with «Принять»: it moves two days of the week at once.
+                confirm("Поменять местами ${accusative[x - 1]} и ${accusative[y - 1]} на этой неделе. ${holds(x)} ${holds(y)} Со следующей недели как в плане.") {
+                    repo.swapDays(x, y, today)?.let { error(it) }
+                    // The same two days changed back leave the week as planned with nothing to take back (asked again, they change again).
+                    if (DaySwaps.without(repo.store.settingsNow().daySwaps, swap) == null) null
+                    else CoachCall("undo_swap_days", args("week" to swap.week, "a" to x, "b" to y))
                 }
             }
             RUN_CUSTOM -> {
@@ -1092,7 +1130,7 @@ object CoachActions {
                 val each = forma.core.run.RunPlan.customRepSeconds(st, goal, spec)
                     ?: return no("Темпа пока нет, поэтому метры не перевести во время: задай отрезок в секундах (work_sec).")
                 val work = reps * each
-                val planned = program.week.on(today.dayOfWeek.value)
+                val planned = program.on(today, s.daySwaps)
                 val hard = pace.hard && !(pace == forma.core.run.CustomRun.Pace.FREE && reps == 1)
                 if (hard) {
                     // The minutes of hard running in one session: what the plan's own hardest sessions hold, no more.
@@ -1109,7 +1147,7 @@ object CoachActions {
                         return no("Сегодня в зале ноги: тяжёлый бег в такой день не ставим.")
                     }
                     val own = planned.any { it.kind == SessionKind.RUN_QUALITY }
-                    fun hardOn(d: LocalDate) = program.week.on(d.dayOfWeek.value).any { it.kind == SessionKind.RUN_QUALITY } && repo.easedUntil(s, d) == null && !repo.paused(s, d)
+                    fun hardOn(d: LocalDate) = program.on(d, s.daySwaps).any { it.kind == SessionKind.RUN_QUALITY } && repo.easedUntil(s, d) == null && !repo.paused(s, d)
                     val doneHard = repo.db.workouts().allDone().any { w -> w.kind == Kind.RUN && w.epochDay == today.toEpochDay() - 1 && (w.rpe ?: 0) >= 7 }
                     if (!own && (hardOn(today.plusDays(1)) || hardOn(today.minusDays(1)) || doneHard)) {
                         return no("Рядом (вчера или завтра) уже стоит тяжёлый бег: два тяжёлых дня подряд не ставим. Могу поставить лёгкую пробежку (pace easy) или эту — в день тяжёлого бега по плану.")
@@ -1159,7 +1197,7 @@ object CoachActions {
                 if (!st.canRunContinuously) return no("Пока бег чередуется с ходьбой: пробежки ведёт лестница приложения.")
                 if (repo.paused(s, today)) return no("Сейчас пауза в плане.")
                 if (s.feelOn(today) == forma.app.data.Feel.SICK) return no("Сегодня отмечено «Болею»: бегать не нужно.")
-                if (program.week.on(today.dayOfWeek.value).any { it.isRun }) return no("Сегодня по плану уже есть пробежка — она на экране «Сегодня».")
+                if (program.on(today, s.daySwaps).any { it.isRun }) return no("Сегодня по плану уже есть пробежка — она на экране «Сегодня».")
                 if (repo.db.workouts().allDone().any { it.kind == Kind.RUN && it.epochDay == today.toEpochDay() }) return no("Сегодня пробежка уже сделана.")
                 if (s.coachRunToday?.until == today.toEpochDay() && (s.coachRunToday?.value ?: 0) == (min ?: 0)) return no("Эта пробежка на сегодня уже стоит.")
                 val middle = repo.store.profileNow()?.runGoal?.middleDistance == true
@@ -1973,6 +2011,9 @@ object CoachActions {
                 if (repo.store.settingsNow().easyRunDays[day] != expect) false
                 else { repo.updateSettings { s -> if (old == null) s.copy(easyRunDays = s.easyRunDays - day) else s.copy(easyRunDays = s.easyRunDays + (day to old)) }; true }
             }
+            // The two days back where they were: only while nothing of them is done or started since, and no swap of the
+            // week came after it ([TrainingRepository.swapBack]).
+            "undo_swap_days" -> repo.swapBack(DaySwap(a.long("week") ?: return false, a.int("a") ?: return false, a.int("b") ?: return false))
             "undo_run_custom" -> {
                 fun run(key: String) = (a[key] as? JsonObject)?.let { AppJson.decodeFromJsonElement(CoachRun.serializer(), it) }
                 if (repo.store.settingsNow().coachRun != run("expect")) false

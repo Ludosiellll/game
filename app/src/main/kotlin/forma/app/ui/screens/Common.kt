@@ -344,7 +344,8 @@ fun NextPlannedCard(today: LocalDate) {
         m.to >= today.toEpochDay() && week.firstOrNull { it.date.toEpochDay() == m.from }?.isDone(hard) != true
     }
     fun left(d: LocalDate): List<PlannedSession> {
-        val own = p.week.on(d.dayOfWeek.value).let { l -> if (moved?.from == d.toEpochDay()) l - hard else l }
+        // The date as its week stands: days changed places for a week hold each other's sessions.
+        val own = p.on(d, settings.daySwaps).let { l -> if (moved?.from == d.toEpochDay()) l - hard else l }
         return (if (moved?.to == d.toEpochDay()) listOf(hard) + own else own).filter { s -> week.firstOrNull { it.date == d }?.isDone(s) != true }
     }
     val next = androidx.compose.runtime.remember(p, today, settings, week) {

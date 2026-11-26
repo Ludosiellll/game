@@ -67,7 +67,7 @@ fun DayScreen(date: LocalDate) {
     val item = week.firstOrNull { it.date == date }
     val paused = repo.paused(settings, date)
     // A pause day holds no sessions: the plan stands.
-    val sessions = if (paused) emptyList() else item?.planned ?: p.week.on(date.dayOfWeek.value)
+    val sessions = if (paused) emptyList() else item?.planned ?: p.on(date, settings.daySwaps)
     val runState by repo.store.runState.collectAsState(initial = null)
     val trialOn by produceState<LocalDate?>(null, p, today, runState) { value = repo.trialDay(today) }
     // A missed session of this week that today (a free day) can take: offered on its own day too.
@@ -150,7 +150,8 @@ fun DayScreen(date: LocalDate) {
         }
         // Done beyond the plan of the day: a missed session caught up, or one extra — on a pause day too.
         item?.offPlan?.forEach { w -> OffPlanCard(w, item.catchUps[w.id]) }
-        val reasons = if (paused) emptyList() else DayReasons.of(p, date.dayOfWeek.value, hard)
+        // Of the day as its week stands (days changed places for the week), with the days around it by their dates.
+        val reasons = if (paused) emptyList() else DayReasons.of(p, date, settings.daySwaps, hard)
         if (reasons.isNotEmpty()) {
             SectionLabel("Почему в этот день")
             FCard(gap = 8.dp) { reasons.forEach { Text(it, style = T.body(15.sp)) } }

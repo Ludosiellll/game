@@ -11,6 +11,8 @@ import forma.core.model.LoadKind
 import forma.core.model.Profile
 import forma.core.model.Sex
 import forma.core.plan.CatchUp
+import forma.core.plan.DaySwap
+import forma.core.plan.DaySwaps
 import forma.core.plan.Picks
 import forma.core.plan.PlannedSession
 import forma.core.plan.Program
@@ -1270,7 +1272,7 @@ class TrainingRepository(
             stat?.e1rm, profile.bodyWeightKg, hint,
             daysSinceLast = lastDay?.let { date.toEpochDay() - it },
             // Legs a day or two before a hard run: the "+" set stops with 2 in reserve, the run gets fresher legs.
-            topRir = if (ex.lowerBody && hardRunSoon(program, date)) 2 else 1,
+            topRir = if (ex.lowerBody && hardRunSoon(program, settings.daySwaps, date)) 2 else 1,
             // A novice's gentle first time, unless the person set this exercise's sets themselves.
             novice = profile.experience == Experience.NOVICE && (restKey == null || restKey !in settings.sets),
             // The latest session without help: help left from before goes for whoever did five and more with the body alone.
@@ -2137,12 +2139,15 @@ class TrainingRepository(
     /** What a finished workout stands for in the weekly plan. */
     private fun asSession(w: WorkoutEntity): PlannedSession = sessionOf(w)
 
-    /** The catch-up's week of [monday]: planned (none on pause days) and done, a copied workout's legs by its exercises. */
+    /**
+     * The catch-up's week of [monday]: planned (none on pause days; days changed places for the week as they stand,
+     * [Settings.daySwaps]) and done, a copied workout's legs by its exercises.
+     */
     private fun catchUpWeek(program: Program?, settings: Settings, monday: LocalDate, done: List<WorkoutEntity>): List<CatchUp.Day> =
         (1..7).map { d ->
             val date = monday.plusDays(d - 1L)
             val pause = paused(settings, date)
-            val planned = if (program == null || pause) emptyList() else program.week.on(d)
+            val planned = if (program == null || pause) emptyList() else program.on(date, settings.daySwaps)
             val mine = done.filter { it.epochDay == date.toEpochDay() }.sortedBy { it.startedAt }
             CatchUp.Day(d, planned, mine.map(::asSession), mine.map(::legsOf), paused = pause, doneInstead = mine.map(::insteadOf))
         }
@@ -2172,20 +2177,24 @@ class TrainingRepository(
         val all = db.workouts().allDone()
         val done = all.filter { it.epochDay in monday.toEpochDay()..monday.toEpochDay() + 6 }
         val next = (1L..3L).map { standing(program, settings, moved, day.plusDays(it)) }
+        // The days after today are given as they stand ([next]); the plan's own week, read for next week's days only, is
+        // next week's too (its days may have changed places, or not, apart from this week's).
         return CatchUp.suggest(
-            program, day.dayOfWeek.value, catchUpWeek(program, settings, monday, done), firstDay(program, monday), legsDaysAgo(program, all, day), next,
+            program.forWeek(monday.plusWeeks(1), settings.daySwaps), day.dayOfWeek.value, catchUpWeek(program, settings, monday, done),
+            firstDay(program, monday), legsDaysAgo(program, all, day), next,
         )
     }
 
     /**
      * The sessions of [date] as they stand: none on a pause day, a hard run made easy for its day ([easedUntil]) as an
-     * easy run, the hard run [moved] off its own day and onto the new one. CatchUp read the plan alone, so Monday's hard
-     * run eased by the coach still kept Sunday's legs out.
+     * easy run, the hard run [moved] off its own day and onto the new one, days changed places for the week
+     * ([Settings.daySwaps]) holding each other's sessions. CatchUp read the plan alone, so Monday's hard run eased by the
+     * coach still kept Sunday's legs out.
      */
     private fun standing(program: Program, settings: Settings, moved: MovedRun?, date: LocalDate): List<PlannedSession> {
         if (paused(settings, date)) return emptyList()
         val hard = PlannedSession(SessionKind.RUN_QUALITY)
-        var s = program.week.on(date.dayOfWeek.value)
+        var s = program.on(date, settings.daySwaps)
         if (moved?.from == date.toEpochDay()) s = s - hard
         if (easedUntil(settings, date) != null) s = s.map { if (it.kind == SessionKind.RUN_QUALITY) PlannedSession(SessionKind.RUN_EASY) else it }
         if (moved?.to == date.toEpochDay()) s = listOf(hard) + s
@@ -2219,7 +2228,8 @@ class TrainingRepository(
             when {
                 move -> s.copy(movedRun = MovedRun(tomorrow.toEpochDay(), day.plusDays(2).toEpochDay()))
                 easedUntil(s, tomorrow) != null -> s
-                else -> s.copy(easyRunDays = s.easyRunDays + (tomorrow.dayOfWeek.value to tomorrow.toEpochDay()))
+                // By the plan's weekday whose hard run tomorrow holds ([easedUntil]): its own, or another's this week.
+                else -> s.copy(easyRunDays = s.easyRunDays + (DaySwaps.origin(tomorrow, s.daySwaps) to tomorrow.toEpochDay()))
             }
         }
     }
@@ -2239,6 +2249,88 @@ class TrainingRepository(
 
     /** The moved hard run back on its own day («Бежать сегодня» on that day). */
     suspend fun unmoveRun() = updateSettings { it.copy(movedRun = null) }
+
+    // ---------- two days of this week changed places ----------
+
+    /**
+     * What the swap rules ([DaySwaps.refusal]) need to know of the days of [monday]'s week and the two around it, beyond
+     * the plan: a pause, «Болею», what is done — and anything of the day done or started, on it or (a session of it) on
+     * another day — and what keeps a day where it is: a run put on it by hand (the coach's own run of the day, the hard
+     * run [moved] off it or onto it on the missed «Низ» card) and, with [fixed], a time trial due or the race.
+     */
+    private suspend fun swapFacts(monday: LocalDate, today: LocalDate, settings: Settings, moved: MovedRun?, fixed: Boolean): Map<LocalDate, DaySwaps.Day> {
+        val week = weekFlow(monday).first()
+        val all = db.workouts().allDone()
+        // Started: a gym session left open on its day, or a run going on now (it is today's, saved or not yet).
+        val going = setOfNotNull(db.workouts().active()?.epochDay, today.toEpochDay().takeIf { forma.app.run.RunSession.tracker != null })
+        val trial = if (fixed) trialDay(today) else null
+        val race = if (fixed) store.profileNow()?.runGoal?.date else null
+        return (-1L..7L).map { monday.plusDays(it) }.associateWith { date ->
+            val e = date.toEpochDay()
+            val done = all.filter { it.epochDay == e }.sortedBy { it.startedAt }
+            val item = week.firstOrNull { it.date == date }
+            val ran = done.any { it.kind == Kind.RUN }
+            DaySwaps.Day(
+                paused = paused(settings, date), sick = settings.feels[e] == Feel.SICK.name,
+                begun = e in going || done.isNotEmpty() || item?.planned?.any { item.isDone(it) } == true,
+                held = when {
+                    race == e -> "забег"
+                    trial == date -> "контрольный забег"
+                    moved != null && (moved.from == e || moved.to == e) -> "перенесённый тяжёлый бег"
+                    !ran && (settings.coachRun?.day == e || settings.coachRunToday?.until == e) -> "пробежка от тренера"
+                    else -> null
+                },
+                done = done.map(::asSession), doneLegs = done.map(::legsOf),
+            )
+        }
+    }
+
+    /**
+     * Why days [a] and [b] (ISO weekdays) of [today]'s week cannot change places ([DaySwap]), in words; null when they
+     * can ([DaySwaps.refusal], with the days around read as they stand: [standing]).
+     */
+    suspend fun swapRefusal(a: Int, b: Int, today: LocalDate = today()): String? {
+        val program = store.programNow() ?: return "Нет плана."
+        val settings = store.settingsNow()
+        val moved = movedRun(today)
+        val days = swapFacts(mondayOf(today), today, settings, moved, fixed = true)
+        return DaySwaps.refusal(program, settings.daySwaps, swapOf(a, b, today), today, { days[it] ?: DaySwaps.Day() }) { d, swaps ->
+            standing(program, settings.copy(daySwaps = swaps), moved, d)
+        }
+    }
+
+    /** Days [a] and [b] of [today]'s week as a swap: the earlier day first, whichever was named first. */
+    private fun swapOf(a: Int, b: Int, today: LocalDate) = DaySwap(mondayOf(today).toEpochDay(), minOf(a, b), maxOf(a, b))
+
+    /**
+     * Days [a] and [b] of [today]'s week change places for this week: every session of the one is on the other and back,
+     * and whatever reads a date's plan follows ([Program.on]). Null when done; why not otherwise ([swapRefusal]).
+     */
+    suspend fun swapDays(a: Int, b: Int, today: LocalDate = today()): String? {
+        swapRefusal(a, b, today)?.let { return it }
+        updateSettings { it.copy(daySwaps = DaySwaps.with(it.daySwaps, swapOf(a, b, today), today)) }
+        return null
+    }
+
+    /**
+     * Whether [swap] can be taken back: while it is the last one of its week, nothing is done or started on either of its
+     * days (nor a session of theirs on another day), and no run was put on one of them by hand since (the coach's own, a
+     * hard run moved there) — those were set for the days as they stand.
+     */
+    suspend fun canSwapBack(swap: DaySwap, today: LocalDate = today()): Boolean {
+        val settings = store.settingsNow()
+        if (DaySwaps.without(settings.daySwaps, swap) == null) return false
+        val monday = LocalDate.ofEpochDay(swap.week)
+        val days = swapFacts(monday, today, settings, movedRun(today), fixed = false)
+        return listOf(swap.a, swap.b).none { d -> days[monday.plusDays(d - 1L)]?.let { it.begun || it.held != null } != false }
+    }
+
+    /** [swap] taken back («Вернуть» on the coach's card and on «План»): its days are where they were before it. False when it cannot be ([canSwapBack]). */
+    suspend fun swapBack(swap: DaySwap, today: LocalDate = today()): Boolean {
+        if (!canSwapBack(swap, today)) return false
+        updateSettings { s -> DaySwaps.without(s.daySwaps, swap)?.let { s.copy(daySwaps = it) } ?: s }
+        return true
+    }
 
     /** Average training energy per week over the last four weeks (or since the first session), kcal. */
     suspend fun trainingKcalPerWeek(kg: Double, day: LocalDate = today()): Double {
@@ -2300,7 +2392,7 @@ class TrainingRepository(
         val lighter = cutback || taper
         val settings = store.settingsNow()
         val coachLong = settings.coachLong?.on(date) == true
-        val longEasy = kind == SessionKind.RUN_EASY && program != null && longEasyDay(program, date, goal?.middleDistance == true, coachLong)
+        val longEasy = kind == SessionKind.RUN_EASY && program != null && longEasyDay(program, settings.daySwaps, date, goal?.middleDistance == true, coachLong)
         // Back from being sick: the first runs easy, no reps and no strides, whatever the day holds.
         val sickLeft = easyAfterSick(date)
         val sickNote = "После болезни начинаем мягко: ещё $sickLeft ${Ru.plural(sickLeft, "лёгкая пробежка", "лёгкие пробежки", "лёгких пробежек")}, " +
@@ -2345,12 +2437,12 @@ class TrainingRepository(
             }
             else -> {
                 // On a lifting day the easy run comes after the gym: short, unless the plan was built for shared days.
-                val liftDay = program?.week?.on(date.dayOfWeek.value)?.any { it.kind == SessionKind.LIFT } == true
+                val liftDay = program?.on(date, settings.daySwaps)?.any { it.kind == SessionKind.LIFT } == true
                 val short = liftDay && profile?.doubleDays != true
                 val base = guess ?: st
                 // The coach's count, where the plan has strides (no more than 4 in a lighter week).
                 val own = settings.coachStrides?.takeIf { it.on(date) }?.value?.let { if (lighter) minOf(it, 4) else it }
-                val strides = if (program != null && stridesOn(program, date, goal?.middleDistance == true, coachLong) && st.returnEasy == 0) own ?: RunPlan.strides(st, lighter) else 0
+                val strides = if (program != null && stridesOn(program, settings.daySwaps, date, goal?.middleDistance == true, coachLong) && st.returnEasy == 0) own ?: RunPlan.strides(st, lighter) else 0
                 RunPlan.easy(if (short) base.copy(easyMinutes = minOf(base.easyMinutes, 30)) else base, lighter, date.toEpochDay(), strides)
                     .let { if (guess != null) RunPlan.provisional(it) else it }
             }
@@ -2545,7 +2637,7 @@ class TrainingRepository(
         val program = store.programNow() ?: return null
         val settings = store.settingsNow()
         if (paused(settings, date)) return null
-        val sessions = program.week.on(date.dayOfWeek.value)
+        val sessions = program.on(date, settings.daySwaps)
         val run = sessions.firstOrNull { it.isRun } ?: return null
         val lift = sessions.firstOrNull { it.kind == SessionKind.LIFT && it.templateId != null } ?: return null
         val templateId = lift.templateId ?: return null
@@ -2602,19 +2694,21 @@ class TrainingRepository(
      * one is free of it) is a long easy run of up to an hour — the aerobic base the reps stand on. [coach]: the coach set a
      * long easy run ([Settings.coachLong]) — then any week with an easy run and no long one has it, on the same day.
      */
-    private fun longEasyDay(program: Program, date: LocalDate, middle: Boolean, coach: Boolean = false): Boolean {
+    private fun longEasyDay(program: Program, swaps: List<DaySwap>, date: LocalDate, middle: Boolean, coach: Boolean = false): Boolean {
         if (!middle && !coach || program.week.days.any { d -> d.sessions.any { it.kind == SessionKind.RUN_LONG } }) return false
-        val easy = easyDays(program)
-        if (easy.isEmpty() || easy.size < 2 && !coach) return false
         val monday = date.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
-        val pick = easy.lastOrNull { !legsOn(program, monday.plusDays(it - 1L)) } ?: easy.last()
+        // The easy days of the week as it stands: days changed places ([swaps]) hold each other's runs.
+        val easy = easyDays(program.forWeek(monday, swaps))
+        if (easy.isEmpty() || easy.size < 2 && !coach) return false
+        val pick = easy.lastOrNull { !legsOn(program, swaps, monday.plusDays(it - 1L)) } ?: easy.last()
         return date.dayOfWeek.value == pick
     }
 
     /** Strides go with the first two easy runs of a week that has hard runs (not the long easy one). */
-    private fun stridesOn(program: Program, date: LocalDate, middle: Boolean, coachLong: Boolean = false): Boolean {
+    private fun stridesOn(program: Program, swaps: List<DaySwap>, date: LocalDate, middle: Boolean, coachLong: Boolean = false): Boolean {
         if (program.week.days.none { d -> d.sessions.any { it.kind == SessionKind.RUN_QUALITY } }) return false
-        return date.dayOfWeek.value in easyDays(program).filter { !longEasyDay(program, date.with(java.time.DayOfWeek.of(it)), middle, coachLong) }.take(2)
+        val week = program.forWeek(mondayOf(date), swaps)
+        return date.dayOfWeek.value in easyDays(week).filter { !longEasyDay(program, swaps, date.with(java.time.DayOfWeek.of(it)), middle, coachLong) }.take(2)
     }
 
     /**
@@ -2626,45 +2720,52 @@ class TrainingRepository(
         val program = store.programNow() ?: return null
         val middle = store.profileNow()?.runGoal?.middleDistance == true
         val caps = ProgramGenerator.runCaps(program, middle)
-        val legs = legsOn(program, date)
+        val settings = store.settingsNow()
+        val legs = legsOn(program, settings.daySwaps, date)
         // The long easy run of a middle-distance week: up to an hour (after the legs, as an easy run after them).
-        val coach = store.settingsNow().coachLong?.on(date) == true
+        val coach = settings.coachLong?.on(date) == true
         // The coach's long run on a day with the gym (any): no longer than an easy run after the legs.
-        val gym = coach && program.week.on(date.dayOfWeek.value).any { it.kind == SessionKind.LIFT }
-        val long = if (longEasyDay(program, date, middle, coach)) min(caps.longMax, if (legs || gym) AFTER_LEGS_EASY else 60) else caps.longMax
+        val gym = coach && program.on(date, settings.daySwaps).any { it.kind == SessionKind.LIFT }
+        val long = if (longEasyDay(program, settings.daySwaps, date, middle, coach)) min(caps.longMax, if (legs || gym) AFTER_LEGS_EASY else 60) else caps.longMax
         return caps.copy(easyMax = if (legs) min(caps.easyMax, AFTER_LEGS_EASY) else caps.easyMax, longMax = long)
     }
 
-    /** Whether the plan has a leg session on [date]. */
-    private fun legsOn(program: Program, date: LocalDate) = program.week.on(date.dayOfWeek.value).any { s ->
+    /** Whether the plan has a leg session on [date], as its week stands (days changed places, [swaps]). */
+    private fun legsOn(program: Program, swaps: List<DaySwap>, date: LocalDate) = program.on(date, swaps).any { s ->
         s.kind == SessionKind.LIFT && program.templates.firstOrNull { it.id == s.templateId }?.legs == true
     }
 
     /** A hard run planned on [date] or one or two days after it. */
-    private fun hardRunSoon(program: Program, date: LocalDate) = (0L..2L).any { k ->
-        program.week.on(date.plusDays(k).dayOfWeek.value).any { it.kind == SessionKind.RUN_QUALITY }
+    private fun hardRunSoon(program: Program, swaps: List<DaySwap>, date: LocalDate) = (0L..2L).any { k ->
+        program.on(date.plusDays(k), swaps).any { it.kind == SessionKind.RUN_QUALITY }
     }
 
     /** Legs worked one or two days before [date]: running economy is down for a day or two after strength work. */
-    private fun legsBefore(program: Program, date: LocalDate) = (1L..2L).any { legsOn(program, date.minusDays(it)) }
+    private fun legsBefore(program: Program, swaps: List<DaySwap>, date: LocalDate) = (1L..2L).any { legsOn(program, swaps, date.minusDays(it)) }
 
     /**
      * Race pace is better on a fresher hard day: when the legs worked a day or two before [date] and another hard day of
      * the next four is fresh — and not the trial's — race pace due today goes there (the cycle's next session today).
      */
     private suspend fun goalLater(program: Program?, date: LocalDate): Boolean {
-        if (program == null || !legsBefore(program, date)) return false
+        val settings = store.settingsNow()
+        val swaps = settings.daySwaps
+        if (program == null || !legsBefore(program, swaps, date)) return false
         // Owed for two weeks (the fresh days were missed): race pace now, tired legs or not.
         if (store.runStateNow().goalDeferredOn?.let { date.toEpochDay() - it >= 14 } == true) return false
-        val settings = store.settingsNow()
         val fresh = (1L..4L).map { date.plusDays(it) }.firstOrNull { d ->
-            program.week.on(d.dayOfWeek.value).any { it.kind == SessionKind.RUN_QUALITY } && !legsBefore(program, d) && !paused(settings, d)
+            program.on(d, swaps).any { it.kind == SessionKind.RUN_QUALITY } && !legsBefore(program, swaps, d) && !paused(settings, d)
         } ?: return false
         return trialDay(date) != fresh
     }
 
-    /** The day until which [date]'s weekday has an easy run for its hard one ([Settings.easyRunDays]); null — as planned. */
-    fun easedUntil(settings: Settings, date: LocalDate): Long? = settings.easyRunDays[date.dayOfWeek.value]?.takeIf { date.toEpochDay() <= it }
+    /**
+     * The day until which the hard run of [date] is an easy one ([Settings.easyRunDays]); null — as planned. The ease is
+     * kept by the plan's weekday and follows its session: in a week whose days changed places ([Settings.daySwaps]) it is
+     * read by the weekday whose sessions the date holds.
+     */
+    fun easedUntil(settings: Settings, date: LocalDate): Long? =
+        settings.easyRunDays[DaySwaps.origin(date, settings.daySwaps)]?.takeIf { date.toEpochDay() <= it }
 
     /**
      * A test calibrates paces. Without a goal: when they are unknown, and again every 8 weeks. With a goal the paces come
@@ -2706,16 +2807,16 @@ class TrainingRepository(
             // Not the first run after more than a week without running: a trial is not run cold.
             if (RunPlan.breakDays(st, d.toEpochDay()) != null && (from.toEpochDay() until d.toEpochDay()).none { e ->
                     val day = LocalDate.ofEpochDay(e)
-                    !paused(settings, day) && program.week.on(day.dayOfWeek.value).any { it.isRun }
+                    !paused(settings, day) && program.on(day, settings.daySwaps).any { it.isRun }
                 }
             ) return@filter false
-            val planned = program.week.on(d.dayOfWeek.value)
+            val planned = program.on(d, settings.daySwaps)
             val item = DayItem(d, planned, done.filter { it.epochDay == d.toEpochDay() })
             planned.any { it.kind == SessionKind.RUN_QUALITY && !item.isDone(it) }
         }
         // A trial wants fresh legs: at least three days after a leg session (strength work on the legs costs running
         // economy for one to two days), when the next week holds such a hard day; otherwise the first hard day.
-        return hard.firstOrNull { it.isBefore(hard.first().plusDays(7)) && !legsBefore(program, it) } ?: hard.firstOrNull()
+        return hard.firstOrNull { it.isBefore(hard.first().plusDays(7)) && !legsBefore(program, settings.daySwaps, it) } ?: hard.firstOrNull()
     }
 
     /**
@@ -3033,7 +3134,7 @@ class TrainingRepository(
         while (!d.isAfter(to)) {
             val off = settings.pausedOn(d) || settings.feels[d.toEpochDay()] == Feel.SICK.name
             val day = d.toEpochDay()
-            for (s in program.week.on(d.dayOfWeek.value)) {
+            for (s in program.on(d, settings.daySwaps)) {
                 val id = s.templateId
                 if (off || s.kind != SessionKind.LIFT || id == null || program.templates.none { it.id == id }) continue
                 val items = given.firstOrNull { it.epochDay == day && it.templateId == id }?.let { planOf(it) }?.items

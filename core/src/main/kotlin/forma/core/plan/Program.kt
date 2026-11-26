@@ -75,6 +75,19 @@ data class Program(
     fun template(id: String): Template = templates.first { it.id == id }
 
     /**
+     * The sessions on [date]: the plan's week with that week's [swaps] applied ([DaySwaps]) — two days changed places
+     * for one week hold each other's sessions. Whatever asks what a date holds reads it here, not [week] by the weekday.
+     */
+    fun on(date: java.time.LocalDate, swaps: List<DaySwap>): List<PlannedSession> = week.on(DaySwaps.origin(date, swaps))
+
+    /** This program with [week] as the week of [monday] stands with its [swaps]; itself when that week is as planned. */
+    fun forWeek(monday: java.time.LocalDate, swaps: List<DaySwap>): Program {
+        val at = DaySwaps.layout(monday.toEpochDay(), swaps)
+        if (at == (1..7).toList()) return this
+        return copy(week = week.copy(days = (1..7).map { d -> DayPlan(d, week.on(at[d - 1])) }))
+    }
+
+    /**
      * The program made safe to use when it comes from someone else: exercises this phone does not know ([known] says
      * which it does) are dropped, numbers are kept within sane bounds, and every planned lift must name a template with
      * exercises left. Null when nothing usable remains.
